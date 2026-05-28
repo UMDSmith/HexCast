@@ -1,9 +1,3 @@
-
-
-https://github.com/user-attachments/assets/f21ada2d-950f-4295-800d-889c66f543e5
-
-
-
 # Hexcast
 
 <p align="center">
@@ -12,7 +6,7 @@ https://github.com/user-attachments/assets/f21ada2d-950f-4295-800d-889c66f543e5
 
 A self-hosted, folder-watching soundboard for OBS streams. Drop GIFs, sounds, and video clips into a folder, click buttons in a web control panel, and they fire into your OBS overlay. Includes a clean HTTP API so chat bots can trigger media too.
 
-Local, no accounts, no rate limits, and you own your library.
+Think Blerp, but local, no accounts, no rate limits, and you own your library.
 
 ## ⚠️ Security: local network use only
 
@@ -54,7 +48,7 @@ Safe ways to run it:
 ### Linux / macOS
 
 ```bash
-git clone https://github.com/UMDSmith/HexCast.git
+git clone https://github.com/YOUR_USERNAME/hexcast.git
 cd hexcast
 chmod +x start.sh
 ./start.sh
@@ -73,7 +67,7 @@ python soundboard.py
 ### Windows
 
 ```cmd
-git clone https://github.com/UMDSmith/HexCast.git
+git clone https://github.com/YOUR_USERNAME/hexcast.git
 cd hexcast
 start.bat
 ```
@@ -154,13 +148,23 @@ The folder watcher picks up new files instantly.
 
 Click any button in the control panel. Multiple clicks layer naturally — spam them, they'll all fire.
 
-### 5. Position GIFs and Videos visually
+### 5. Position GIFs and Videos, set volume
 
-Toggle **Edit Mode** in the top-right. Click any GIF or video → the drag editor opens with a 16:9 preview of your OBS canvas. Drag the clip where you want, scrub the scale slider, click **Test in OBS** to preview, then **Save**. The position is stored in a `.json` sidecar next to the media file.
+Toggle **Edit Mode** in the top-right (clip buttons get an amber border + ✎).
+
+- **GIF** → drag editor: 16:9 canvas preview, drag to position, scale slider.
+- **Video** → same editor plus a **Volume** slider.
+- **Sound** → a compact editor with just a **Volume** slider.
+
+Click **Test in OBS** to preview the current settings without saving, then **Save**. Settings are stored in a `.json` sidecar next to the media file (`{x,y,scale}` for gifs, `{x,y,scale,volume}` for videos, `{volume}` for sounds). The overlay reads these whenever a clip fires — including from the bot API.
 
 ### 6. Delete media
 
-Toggle **Delete Mode**. Click any button → confirms → removes the file, its sidecar, and its thumbnail.
+Toggle **Delete Mode** (buttons get a red border + ✕). Click any button → confirms → removes the file, its sidecar, and its thumbnail.
+
+### 7. Panic / Stop All
+
+The **⏹ Stop All** button in the top-right instantly clears every visual from the overlay and stops all playing audio. Also available to bots at `GET /api/stop`.
 
 ## Configuration
 
@@ -242,10 +246,12 @@ GET /api                         → endpoint reference
 GET /api/list                    → JSON: { sounds: [...], gifs: [...], videos: [...] }
 GET|POST /api/play/{name}        → fuzzy: searches sounds, gifs, videos
 GET|POST /api/play/{kind}/{name} → explicit: kind = sound | gif | video
-    ?x=&y=&scale=                → optional position override
+    ?x=&y=&scale=                → optional position override (gifs/videos)
+    ?volume=                     → optional volume override 0.0-1.0 (sounds/videos)
+GET|POST /api/stop               → clear all visuals + stop all audio (panic button)
 ```
 
-Names are case-insensitive and match either the filename stem (`airhorn`) or full filename (`airhorn.mp3`).
+Names are case-insensitive and match either the filename stem (`airhorn`) or full filename (`airhorn.mp3`). If you don't pass overrides, the values saved in the editor (position, scale, volume) are applied automatically.
 
 ### Examples
 
@@ -253,7 +259,8 @@ Names are case-insensitive and match either the filename stem (`airhorn`) or ful
 curl http://localhost:4747/api/list
 curl http://localhost:4747/api/play/airhorn
 curl http://localhost:4747/api/play/gif/wow
-curl "http://localhost:4747/api/play/video/cheer?x=80&y=20&scale=2"
+curl "http://localhost:4747/api/play/video/cheer?x=80&y=20&scale=2&volume=0.6"
+curl http://localhost:4747/api/stop
 ```
 
 **Python:**
@@ -266,6 +273,10 @@ requests.get("http://localhost:4747/api/play/airhorn")
 ```js
 await fetch(`http://localhost:4747/api/play/${name}`);
 ```
+
+### Triggering from a chat bot / Twitch redemptions
+
+There's no dedicated Twitch script — Hexcast stays generic. If you already have a bot monitoring Twitch chat, channel-point redemptions, or events, just have it call `GET /api/play/{name}` when the relevant trigger fires. Map a redemption title or chat command to a media name and hit the endpoint. The overlay applies the saved position/scale/volume automatically, so the bot only needs to know the clip name.
 
 ## Network access & firewall
 
@@ -378,30 +389,13 @@ You can edit the `.json` by hand if you prefer: `{"x": 50, "y": 80, "scale": 2.5
 
 ## Roadmap
 
-- Twitch channel-point redemption integration (consumer of `/api/play/{name}`)
 - Per-clip cooldowns to prevent spam
 - Hotkey triggers via OBS WebSocket
+- Search/filter box in the control panel for large libraries
 - Multi-track audio splitting (separate OBS audio source per clip kind)
+
+Twitch integration is intentionally out of scope — point any bot at `GET /api/play/{name}` (see [Triggering from a chat bot](#triggering-from-a-chat-bot--twitch-redemptions)).
 
 ## License
 
 MIT — see [LICENSE](LICENSE).
-
-
-
-<img width="1219" height="1067" alt="image" src="https://github.com/user-attachments/assets/fe07e6ae-96b2-4372-9d44-1baacd37830b" />
-<img width="1560" height="1025" alt="image" src="https://github.com/user-attachments/assets/faf593e7-765d-4311-b93e-c32474c38e36" />
-<img width="1219" height="1067" alt="image" src="https://github.com/user-attachments/assets/78f89072-fb07-4f9a-a823-535cd23a1275" />
-<img width="1560" height="1025" alt="image" src="https://github.com/user-attachments/assets/c286a815-3836-49fe-8a75-1d5a3d676633" />
-<img width="1599" height="898" alt="image" src="https://github.com/user-attachments/assets/a6b3a8d0-a3af-480e-b153-350ad4ca2bbf" />
-This is only washed out in brightness in the screenshot.
-
-https://github.com/user-attachments/assets/ec9da90b-3dea-4b4d-8cf4-5b51e2034e97
-
-
-
-
-[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/UMDSmith)
-
-
-

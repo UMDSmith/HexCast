@@ -104,24 +104,25 @@ def kind_for_ext(ext: str) -> str | None:
 
 
 def read_sidecar(media_path: Path) -> dict:
-    """Read position/scale sidecar JSON next to a media file. Returns defaults if missing/bad."""
+    """Read the sidecar JSON next to a media file. Returns all keys with defaults.
+    x/y/scale apply to gifs+videos; volume applies to sounds+videos."""
+    out = {"x": DEFAULT_X, "y": DEFAULT_Y, "scale": DEFAULT_SCALE, "volume": 1.0}
     sidecar = media_path.with_suffix(".json")
     if sidecar.exists():
         try:
             data = json.loads(sidecar.read_text())
-            return {
-                "x": float(data.get("x", DEFAULT_X)),
-                "y": float(data.get("y", DEFAULT_Y)),
-                "scale": float(data.get("scale", DEFAULT_SCALE)),
-            }
+            for k in out:
+                if k in data:
+                    out[k] = float(data[k])
         except Exception:
             pass
-    return {"x": DEFAULT_X, "y": DEFAULT_Y, "scale": DEFAULT_SCALE}
+    return out
 
 
-def write_sidecar(media_path: Path, x: float, y: float, scale: float):
+def write_sidecar(media_path: Path, data: dict):
+    """Write a sidecar JSON with only the keys relevant to the media kind."""
     sidecar = media_path.with_suffix(".json")
-    sidecar.write_text(json.dumps({"x": x, "y": y, "scale": scale}, indent=2))
+    sidecar.write_text(json.dumps(data, indent=2))
 
 
 def check_ffmpeg() -> bool:
@@ -193,10 +194,11 @@ def cleanup_orphan_posters(dir_: Path, exts: set[str]):
 
 
 def scan() -> dict:
-    def collect(dir_: Path, exts: set[str], url_prefix: str, with_pos: bool = False) -> list[dict]:
+    def collect(dir_: Path, exts: set[str], url_prefix: str,
+                visual: bool = False, audio: bool = False) -> list[dict]:
         if not dir_.exists():
             return []
-        if with_pos:
+        if visual:
             cleanup_orphan_posters(dir_, exts)
         out = []
         for p in sorted(dir_.iterdir(), key=lambda x: x.name.lower()):
@@ -205,17 +207,21 @@ def scan() -> dict:
             if p.name.endswith(".poster.jpg"):
                 continue
             entry = {"name": p.stem, "file": p.name, "url": f"{url_prefix}/{p.name}"}
-            if with_pos:
-                entry["pos"] = read_sidecar(p)
-                poster = ensure_poster(p)
-                entry["poster"] = f"{url_prefix}/{poster.name}" if poster else entry["url"]
+            if visual or audio:
+                sc = read_sidecar(p)
+                if visual:
+                    entry["pos"] = {"x": sc["x"], "y": sc["y"], "scale": sc["scale"]}
+                    poster = ensure_poster(p)
+                    entry["poster"] = f"{url_prefix}/{poster.name}" if poster else entry["url"]
+                if audio:
+                    entry["volume"] = sc["volume"]
             out.append(entry)
         return out
 
     return {
-        "gifs": collect(GIFS_DIR, GIF_EXTS, "/media/gifs", with_pos=True),
-        "sounds": collect(SOUNDS_DIR, SOUND_EXTS, "/media/sounds"),
-        "videos": collect(VIDEOS_DIR, VIDEO_EXTS, "/media/videos", with_pos=True),
+        "gifs": collect(GIFS_DIR, GIF_EXTS, "/media/gifs", visual=True),
+        "sounds": collect(SOUNDS_DIR, SOUND_EXTS, "/media/sounds", audio=True),
+        "videos": collect(VIDEOS_DIR, VIDEO_EXTS, "/media/videos", visual=True, audio=True),
     }
 
 
@@ -326,6 +332,9 @@ CONTROL_HTML_TEMPLATE = r"""<!doctype html>
   .editmode-btn:hover { background: #2a1e1e; border-color: var(--border-hover); }
   body.edit-mode #editmode { background: var(--amber-deep); border-color: var(--amber); color: var(--amber-soft); }
   body.delete-mode #deletemode { background: #3a1818; border-color: var(--red); color: var(--red-soft); }
+  #stopall { background: #3a1414; border-color: var(--red-deep); color: var(--red-soft); font-weight: 600; }
+  #stopall:hover { background: #4a1a1a; border-color: var(--red); }
+  #stopall:active { background: #5a2020; transform: translateY(1px); }
 
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
   button { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 10px;
@@ -340,7 +349,10 @@ CONTROL_HTML_TEMPLATE = r"""<!doctype html>
                     text-shadow: 0 1px 2px rgba(0,0,0,0.9); }
   body.edit-mode #gifs button, body.edit-mode #videos button { border-color: var(--amber); }
   body.edit-mode #gifs button:hover, body.edit-mode #videos button:hover { border-color: var(--amber-soft); }
-  body.edit-mode #gifs button::after, body.edit-mode #videos button::after {
+  body.edit-mode #sounds button { border-color: var(--amber); position: relative; }
+  body.edit-mode #sounds button:hover { border-color: var(--amber-soft); }
+  body.edit-mode #gifs button::after, body.edit-mode #videos button::after,
+  body.edit-mode #sounds button::after {
     content: "✎"; position: absolute; top: 4px; right: 6px; color: var(--amber-soft);
     text-shadow: 0 1px 2px #000; font-size: 14px;
   }
@@ -456,6 +468,7 @@ CONTROL_HTML_TEMPLATE = r"""<!doctype html>
       <h1>Hexcast</h1>
     </div>
     <div style="display:flex;gap:6px;">
+      <button class="editmode-btn" id="stopall" title="Clear all visuals and stop all audio">⏹ Stop All</button>
       <button class="editmode-btn" id="editmode">Edit Mode</button>
       <button class="editmode-btn" id="deletemode">Delete Mode</button>
     </div>
@@ -519,6 +532,11 @@ delBtn.onclick = () => {
   delBtn.textContent = deleteMode ? "✕ Delete Mode" : "Delete Mode";
 };
 
+$("#stopall").onclick = async () => {
+  try { await fetch("/api/stop"); toast("stopped all"); }
+  catch (e) { toast(`stop failed: ${e.message}`, true); }
+};
+
 async function deleteItem(kind, item) {
   if (!confirm(`Delete ${kind} "${item.name}"?\n\nFile, saved position, and thumbnail will be removed.`)) return;
   try {
@@ -547,9 +565,10 @@ function render(idx) {
   for (const s of idx.sounds) {
     const b = document.createElement("button");
     b.textContent = s.name;
-    b.title = s.file;
+    b.title = s.file + (s.volume !== undefined && s.volume !== 1 ? ` (vol ${Math.round(s.volume*100)}%)` : "");
     b.onclick = () => {
       if (deleteMode) deleteItem("sound", s);
+      else if (editMode) openSoundEditor(s);
       else fire("sound", s);
     };
     sounds.appendChild(b);
@@ -577,11 +596,16 @@ function render(idx) {
   renderVisual(idx.gifs, gifs, "gif", "drop gifs/images/clips into ./media/gifs/");
 }
 
-async function fire(type, item, overridePos) {
+async function fire(type, item, override) {
   const payload = {type, url: item.url, name: item.name, file: item.file};
-  const pos = overridePos || item.pos;
-  if (pos && (type === "gif" || type === "video")) {
-    payload.x = pos.x; payload.y = pos.y; payload.scale = pos.scale;
+  const o = override || {};
+  if (type === "gif" || type === "video") {
+    const pos = override || item.pos;
+    if (pos) { payload.x = pos.x; payload.y = pos.y; payload.scale = pos.scale; }
+  }
+  if (type === "video" || type === "sound") {
+    const vol = (o.volume !== undefined) ? o.volume : item.volume;
+    if (vol !== undefined) payload.volume = vol;
   }
   await fetch("/trigger", {
     method: "POST", headers: {"Content-Type": "application/json"},
@@ -589,11 +613,18 @@ async function fire(type, item, overridePos) {
   });
 }
 
-// ---- editor modal ----
+// ---- editor modal (gifs + videos) ----
 function openEditor(item, kind) {
   kind = kind || "gif";
   const pos = Object.assign({x:50,y:50,scale:3}, item.pos || {});
   let x = pos.x, y = pos.y, scale = pos.scale;
+  let volume = (item.volume !== undefined) ? item.volume : 1.0;
+  const volumeRow = (kind === "video") ? `
+        <div class="editor-row">
+          <label>Volume</label>
+          <input type="range" id="volslider" min="0" max="1" step="0.01" value="${volume}">
+          <div class="value" id="volval">${Math.round(volume*100)}%</div>
+        </div>` : "";
 
   const ov = document.createElement("div");
   ov.className = "modal-overlay";
@@ -629,7 +660,7 @@ function openEditor(item, kind) {
             <button data-pos="50,85" title="Bottom">↓</button>
             <button data-pos="85,85" title="Bottom Right">↘</button>
           </div>
-        </div>
+        </div>${volumeRow}
       </div>
       <div class="modal-actions">
         <div class="left">
@@ -698,6 +729,15 @@ function openEditor(item, kind) {
   // Scale slider
   slider.oninput = () => { scale = parseFloat(slider.value); update(); };
 
+  // Volume slider (videos only)
+  const volSlider = ov.querySelector("#volslider");
+  if (volSlider) {
+    volSlider.oninput = () => {
+      volume = parseFloat(volSlider.value);
+      ov.querySelector("#volval").textContent = Math.round(volume * 100) + "%";
+    };
+  }
+
   // Quick positions
   ov.querySelectorAll(".quick-positions button").forEach(b => {
     b.onclick = () => {
@@ -713,15 +753,19 @@ function openEditor(item, kind) {
   ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
 
   ov.querySelector(".test").onclick = () => {
-    fire(kind, item, {x, y, scale});
+    const override = {x, y, scale};
+    if (kind === "video") override.volume = volume;
+    fire(kind, item, override);
     toast("fired to OBS — not saved yet");
   };
 
   ov.querySelector(".save").onclick = async () => {
     try {
+      const body = {file: item.file, kind, x, y, scale};
+      if (kind === "video") body.volume = volume;
       const r = await fetch("/position", {
         method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({file: item.file, kind, x, y, scale})
+        body: JSON.stringify(body)
       });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
@@ -729,20 +773,101 @@ function openEditor(item, kind) {
         return;
       }
       item.pos = {x, y, scale};
-      toast(`saved position for ${item.name}`);
+      if (kind === "video") item.volume = volume;
+      toast(`saved ${item.name}`);
       close();
     } catch (e) { toast(`save failed: ${e.message}`, true); }
   };
 
   ov.querySelector(".reset").onclick = async () => {
-    if (!confirm("Reset to default position (center, scale 3.0)?")) return;
+    if (!confirm("Reset to default (center, scale 3.0" + (kind === "video" ? ", volume 100%" : "") + ")?")) return;
     try {
       await fetch("/position", {
         method: "POST", headers: {"Content-Type": "application/json"},
         body: JSON.stringify({file: item.file, kind, reset: true})
       });
       item.pos = {x: 50, y: 50, scale: 3};
-      toast(`reset position for ${item.name}`);
+      if (kind === "video") item.volume = 1.0;
+      toast(`reset ${item.name}`);
+      close();
+    } catch (e) { toast(`reset failed: ${e.message}`, true); }
+  };
+}
+
+// ---- sound editor (volume only) ----
+function openSoundEditor(item) {
+  let volume = (item.volume !== undefined) ? item.volume : 1.0;
+  const ov = document.createElement("div");
+  ov.className = "modal-overlay";
+  ov.innerHTML = `
+    <div class="modal" style="min-width:420px;">
+      <div class="modal-header">
+        <span class="title">${item.name}</span>
+        <button class="close" title="Close">×</button>
+      </div>
+      <div class="editor-controls">
+        <div class="editor-row">
+          <label>Volume</label>
+          <input type="range" id="volslider" min="0" max="1" step="0.01" value="${volume}">
+          <div class="value" id="volval">${Math.round(volume*100)}%</div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <div class="left">
+          <button class="reset">Reset to 100%</button>
+          <button class="test">Test in OBS</button>
+        </div>
+        <div class="right">
+          <button class="cancel">Cancel</button>
+          <button class="save">Save</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(ov);
+
+  const volSlider = ov.querySelector("#volslider");
+  volSlider.oninput = () => {
+    volume = parseFloat(volSlider.value);
+    ov.querySelector("#volval").textContent = Math.round(volume * 100) + "%";
+  };
+
+  const close = () => ov.remove();
+  ov.querySelector(".close").onclick = close;
+  ov.querySelector(".cancel").onclick = close;
+  ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
+
+  ov.querySelector(".test").onclick = () => {
+    fire("sound", item, {volume});
+    toast("fired to OBS — not saved yet");
+  };
+
+  ov.querySelector(".save").onclick = async () => {
+    try {
+      const r = await fetch("/position", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({file: item.file, kind: "sound", volume})
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        toast(`save failed: ${j.detail || r.statusText}`, true);
+        return;
+      }
+      item.volume = volume;
+      toast(`saved volume for ${item.name}`);
+      close();
+    } catch (e) { toast(`save failed: ${e.message}`, true); }
+  };
+
+  ov.querySelector(".reset").onclick = async () => {
+    if (!confirm("Reset volume to 100%?")) return;
+    try {
+      await fetch("/position", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({file: item.file, kind: "sound", reset: true})
+      });
+      item.volume = 1.0;
+      toast(`reset volume for ${item.name}`);
       close();
     } catch (e) { toast(`reset failed: ${e.message}`, true); }
   };
@@ -884,10 +1009,26 @@ OVERLAY_HTML = r"""<!doctype html>
 <script>
 const stage = document.getElementById("stage");
 const GIF_DURATION_MS = 4000;
+const activeAudio = new Set();
 
-function playSound(url) {
+function clampVol(v) { return Math.max(0, Math.min(1, v)); }
+
+function playSound(url, volume) {
   const a = new Audio(url);
+  if (volume !== undefined) a.volume = clampVol(volume);
+  activeAudio.add(a);
+  a.addEventListener("ended", () => activeAudio.delete(a));
   a.play().catch(e => console.error("audio play failed:", e));
+}
+
+function stopAll() {
+  // Remove all visuals (this also stops any playing video audio)
+  stage.innerHTML = "";
+  // Stop all tracked sound-effect audio
+  for (const a of activeAudio) {
+    try { a.pause(); a.currentTime = 0; } catch (_) {}
+  }
+  activeAudio.clear();
 }
 
 function removeWithFade(el) {
@@ -914,7 +1055,7 @@ function showGif(url, x, y, scale) {
   stage.appendChild(el);
 }
 
-function showVideo(url, x, y, scale) {
+function showVideo(url, x, y, scale, volume) {
   if (x === undefined) x = 50;
   if (y === undefined) y = 50;
   if (scale === undefined) scale = 3;
@@ -924,6 +1065,7 @@ function showVideo(url, x, y, scale) {
   el.style.top = y + "%";
   el.style.transform = `translate(-50%, -50%) scale(${scale})`;
   el.autoplay = true; el.muted = false; el.playsInline = true; el.loop = false;
+  el.volume = (volume !== undefined) ? clampVol(volume) : 1.0;
   el.onended = () => removeWithFade(el);
   stage.appendChild(el);
   // Force playback and recover from autoplay restrictions by trying muted as fallback
@@ -942,9 +1084,10 @@ function connect() {
   ws = new WebSocket(`ws://${location.host}/ws/overlay`);
   ws.onmessage = (e) => {
     const m = JSON.parse(e.data);
-    if (m.type === "sound") playSound(m.url);
+    if (m.type === "sound") playSound(m.url, m.volume);
     else if (m.type === "gif") showGif(m.url, m.x, m.y, m.scale);
-    else if (m.type === "video") showVideo(m.url, m.x, m.y, m.scale);
+    else if (m.type === "video") showVideo(m.url, m.x, m.y, m.scale, m.volume);
+    else if (m.type === "stop") stopAll();
   };
   ws.onclose = () => setTimeout(connect, 1000);
 }
@@ -970,15 +1113,27 @@ async def get_index():
 
 
 async def _broadcast_trigger(payload: dict) -> dict:
-    """Broadcast a trigger to all overlays. Auto-merges sidecar position for gifs/videos."""
-    if payload.get("type") in ("gif", "video") and "x" not in payload:
-        url = payload.get("url", "")
-        for prefix, d in (("/media/gifs/", GIFS_DIR), ("/media/videos/", VIDEOS_DIR)):
-            if url.startswith(prefix):
-                path = d / url[len(prefix):]
-                if path.exists():
-                    payload.update(read_sidecar(path))
-                break
+    """Broadcast a trigger to all overlays. Auto-merges saved sidecar values when not
+    explicitly provided: position (x/y/scale) for gifs/videos, volume for sounds/videos."""
+    t = payload.get("type")
+    url = payload.get("url", "")
+    dir_map = {
+        "gif": ("/media/gifs/", GIFS_DIR),
+        "video": ("/media/videos/", VIDEOS_DIR),
+        "sound": ("/media/sounds/", SOUNDS_DIR),
+    }
+    if t in dir_map:
+        prefix, d = dir_map[t]
+        if url.startswith(prefix):
+            path = d / url[len(prefix):]
+            if path.exists():
+                sc = read_sidecar(path)
+                if t in ("gif", "video") and "x" not in payload:
+                    payload.setdefault("x", sc["x"])
+                    payload.setdefault("y", sc["y"])
+                    payload.setdefault("scale", sc["scale"])
+                if t in ("sound", "video"):
+                    payload.setdefault("volume", sc["volume"])
 
     msg = json.dumps(payload)
     dead = set()
@@ -1018,11 +1173,14 @@ async def api_root():
         "list":          "GET /api/list",
         "play_by_name":  "GET|POST /api/play/{name}",
         "play_by_kind":  "GET|POST /api/play/{kind}/{name}    (kind = sound|gif|video)",
+        "stop_all":      "GET|POST /api/stop",
         "position_override (gif/video)": "?x=50&y=50&scale=2",
+        "volume_override (sound/video)": "?volume=0.5  (0.0-1.0)",
         "examples": [
             "curl http://host:4747/api/play/airhorn",
             "curl http://host:4747/api/play/gif/wow",
-            "curl 'http://host:4747/api/play/video/cheer?x=80&y=20&scale=2'",
+            "curl 'http://host:4747/api/play/video/cheer?x=80&y=20&scale=2&volume=0.6'",
+            "curl http://host:4747/api/stop",
         ],
     }
 
@@ -1039,7 +1197,8 @@ async def api_list():
 
 @app.api_route("/api/play/{kind}/{name}", methods=["GET", "POST"])
 async def api_play_kind(kind: str, name: str,
-                        x: float | None = None, y: float | None = None, scale: float | None = None):
+                        x: float | None = None, y: float | None = None,
+                        scale: float | None = None, volume: float | None = None):
     if kind not in ("sound", "gif", "video"):
         raise HTTPException(400, "kind must be sound, gif, or video")
     found = find_media(name, kind=kind)
@@ -1047,24 +1206,27 @@ async def api_play_kind(kind: str, name: str,
         raise HTTPException(404, f"no {kind} named '{name}'")
     _, item = found
     payload = {"type": kind, "url": item["url"], "name": item["name"], "file": item["file"]}
-    if x is not None:     payload["x"] = x
-    if y is not None:     payload["y"] = y
-    if scale is not None: payload["scale"] = scale
+    if x is not None:      payload["x"] = x
+    if y is not None:      payload["y"] = y
+    if scale is not None:  payload["scale"] = scale
+    if volume is not None: payload["volume"] = volume
     return await _broadcast_trigger(payload)
 
 
 @app.api_route("/api/play/{name}", methods=["GET", "POST"])
 async def api_play_fuzzy(name: str,
-                         x: float | None = None, y: float | None = None, scale: float | None = None):
+                         x: float | None = None, y: float | None = None,
+                         scale: float | None = None, volume: float | None = None):
     """Trigger by name across all kinds. Search order: sounds, gifs, videos. First match wins."""
     found = find_media(name)
     if not found:
         raise HTTPException(404, f"no media named '{name}'")
     kind, item = found
     payload = {"type": kind, "url": item["url"], "name": item["name"], "file": item["file"]}
-    if x is not None:     payload["x"] = x
-    if y is not None:     payload["y"] = y
-    if scale is not None: payload["scale"] = scale
+    if x is not None:      payload["x"] = x
+    if y is not None:      payload["y"] = y
+    if scale is not None:  payload["scale"] = scale
+    if volume is not None: payload["volume"] = volume
     return await _broadcast_trigger(payload)
 
 
@@ -1095,12 +1257,13 @@ async def delete_media(payload: dict):
 
 @app.post("/position")
 async def set_position(payload: dict):
+    """Save sidecar settings. gif → {x,y,scale}; video → {x,y,scale,volume}; sound → {volume}."""
     file = payload.get("file")
     kind = payload.get("kind")
-    if kind not in ("gif", "video") or not file:
-        raise HTTPException(400, "file and kind ('gif' or 'video') required")
+    if kind not in ("gif", "video", "sound") or not file:
+        raise HTTPException(400, "file and kind ('gif', 'video', 'sound') required")
 
-    target_dir = GIFS_DIR if kind == "gif" else VIDEOS_DIR
+    target_dir = {"gif": GIFS_DIR, "video": VIDEOS_DIR, "sound": SOUNDS_DIR}[kind]
     path = target_dir / safe_filename(file)
     if not path.exists():
         raise HTTPException(404, f"media file not found: {file}")
@@ -1110,12 +1273,30 @@ async def set_position(payload: dict):
         if sidecar.exists():
             sidecar.unlink()
     else:
-        x = float(payload.get("x", DEFAULT_X))
-        y = float(payload.get("y", DEFAULT_Y))
-        scale = float(payload.get("scale", DEFAULT_SCALE))
-        write_sidecar(path, x, y, scale)
+        if kind == "sound":
+            data = {"volume": float(payload.get("volume", 1.0))}
+        elif kind == "video":
+            data = {
+                "x": float(payload.get("x", DEFAULT_X)),
+                "y": float(payload.get("y", DEFAULT_Y)),
+                "scale": float(payload.get("scale", DEFAULT_SCALE)),
+                "volume": float(payload.get("volume", 1.0)),
+            }
+        else:  # gif
+            data = {
+                "x": float(payload.get("x", DEFAULT_X)),
+                "y": float(payload.get("y", DEFAULT_Y)),
+                "scale": float(payload.get("scale", DEFAULT_SCALE)),
+            }
+        write_sidecar(path, data)
     # No reindex. /trigger reads the sidecar fresh when it fires.
     return {"ok": True}
+
+
+@app.api_route("/api/stop", methods=["GET", "POST"])
+async def api_stop():
+    """Clear all overlay visuals and stop all playing audio."""
+    return await _broadcast_trigger({"type": "stop"})
 
 
 @app.post("/upload")
