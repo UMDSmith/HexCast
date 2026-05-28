@@ -400,3 +400,8 @@ https://github.com/user-attachments/assets/ec9da90b-3dea-4b4d-8cf4-5b51e2034e97
 
 
 
+
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/UMDSmith)
+
+
+
