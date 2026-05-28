@@ -45,6 +45,12 @@ GIFS_DIR = MEDIA_DIR / "gifs"
 SOUNDS_DIR = MEDIA_DIR / "sounds"
 VIDEOS_DIR = MEDIA_DIR / "videos"
 
+# Create the media tree at import time. StaticFiles (mounted below) refuses to mount a
+# directory that doesn't exist, and the mount runs before the lifespan startup handler —
+# so on a fresh clone these must exist now, not later.
+for _d in (MEDIA_DIR, GIFS_DIR, SOUNDS_DIR, VIDEOS_DIR):
+    _d.mkdir(parents=True, exist_ok=True)
+
 # Canvas dimensions — match your OBS canvas. Affects only the editor preview.
 CANVAS_W = 1920
 CANVAS_H = 1080
@@ -247,10 +253,9 @@ class WatchHandler(FileSystemEventHandler):
 async def lifespan(app: FastAPI):
     global main_loop
     main_loop = asyncio.get_running_loop()
-    MEDIA_DIR.mkdir(exist_ok=True)
-    GIFS_DIR.mkdir(exist_ok=True)
-    SOUNDS_DIR.mkdir(exist_ok=True)
-    VIDEOS_DIR.mkdir(exist_ok=True)
+    # Dirs are created at import time; re-ensure here in case they were removed while idle.
+    for d in (MEDIA_DIR, GIFS_DIR, SOUNDS_DIR, VIDEOS_DIR):
+        d.mkdir(parents=True, exist_ok=True)
     reindex()
 
     obs = Observer()
