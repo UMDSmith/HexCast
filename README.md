@@ -380,3 +380,7 @@ You can edit the `.json` by hand if you prefer: `{"x": 50, "y": 80, "scale": 2.5
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+
+
+<img width="1219" height="1067" alt="image" src="https://github.com/user-attachments/assets/fe07e6ae-96b2-4372-9d44-1baacd37830b" />
