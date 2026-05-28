@@ -6,7 +6,7 @@
 
 A self-hosted, folder-watching soundboard for OBS streams. Drop GIFs, sounds, and video clips into a folder, click buttons in a web control panel, and they fire into your OBS overlay. Includes a clean HTTP API so chat bots can trigger media too.
 
-Think Blerp, but local, no accounts, no rate limits, and you own your library.
+Local, no accounts, no rate limits, and you own your library.
 
 ## ⚠️ Security: local network use only
 
@@ -48,7 +48,7 @@ Safe ways to run it:
 ### Linux / macOS
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/hexcast.git
+git clone https://github.com/UMDSmith/HexCast.git
 cd hexcast
 chmod +x start.sh
 ./start.sh
@@ -67,7 +67,7 @@ python soundboard.py
 ### Windows
 
 ```cmd
-git clone https://github.com/YOUR_USERNAME/hexcast.git
+git clone https://github.com/UMDSmith/HexCast.git
 cd hexcast
 start.bat
 ```
