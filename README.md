@@ -4,7 +4,7 @@
   <img src="assets/hexcast.png" width="96" alt="Hexcast">
 </p>
 
-A self-hosted, folder-watching soundboard for OBS streams. Drop GIFs, sounds, and video clips into a folder, click buttons in a web control panel, and they fire into your OBS overlay. Includes a clean HTTP API so chat bots can trigger media too.
+A self-hosted, folder-watching set of media stream tools for OBS streams. Drop GIFs, sounds, and video clips into a folder, click buttons in a web control panel, and they fire into your OBS overlay. Includes a clean HTTP API so chat bots can trigger media too.
 
 Think Blerp, but local, no accounts, no rate limits, and you own your library.
 
