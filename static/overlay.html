@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<title>Hexcast Overlay</title>
+<style>
+  html, body { margin: 0; padding: 0; background: transparent; overflow: hidden;
+               width: 100vw; height: 100vh; }
+  #stage { position: fixed; inset: 0; pointer-events: none; }
+  #stage > * {
+    position: absolute;
+    transform-origin: center center;
+    max-width: none; max-height: none;
+    filter: drop-shadow(0 8px 24px rgba(0,0,0,0.5));
+    animation: pop 200ms ease-out;
+  }
+  @keyframes pop {
+    0%   { opacity: 0; }
+    100% { opacity: 1; }
+  }
+  .fade-out { animation: fade 300ms ease-in forwards !important; }
+  @keyframes fade { to { opacity: 0; } }
+</style></head>
+<body>
+<div id="stage"></div>
+<script>
+const stage = document.getElementById("stage");
+const STATIC_IMAGE_MS = 4000;     // fallback display time for static images with no end set
+const activeAudio = new Set();
+
+function clampVol(v) { return Math.max(0, Math.min(1, v)); }
+
+// Seek a media element to `start` once it has metadata, then watch playback
+// until it reaches `end` and call onFinish().
+function applyMediaTrim(el, start, end, onFinish) {
+  const seekIn = () => { try { if (start) el.currentTime = start; } catch (_) {} };
+  if (el.readyState >= 1) seekIn();
+  else el.addEventListener("loadedmetadata", seekIn, { once: true });
+
+  if (end !== undefined && end !== null) {
+    const tick = () => {
+      if (el.currentTime >= end) {
+        el.removeEventListener("timeupdate", tick);
+        try { el.pause(); } catch (_) {}
+        onFinish();
+      }
+    };
+    el.addEventListener("timeupdate", tick);
+  }
+}
+
+function playAudio(url, volume, start, end) {
+  const a = new Audio(url);
+  if (volume !== undefined) a.volume = clampVol(volume);
+  activeAudio.add(a);
+  const cleanup = () => activeAudio.delete(a);
+  a.addEventListener("ended", cleanup);
+  applyMediaTrim(a, start || 0, end, cleanup);
+  a.play().catch(e => console.error("audio play failed:", e));
+}
+
+function stopAll() {
+  // Visual elements: removing them stops any embedded audio.
+  stage.innerHTML = "";
+  // Bare Audio objects need explicit pause.
+  for (const a of activeAudio) {
+    try { a.pause(); a.currentTime = 0; } catch (_) {}
+  }
+  activeAudio.clear();
+}
+
+function removeWithFade(el) {
+  el.classList.add("fade-out");
+  setTimeout(() => { if (el.parentNode === stage) stage.removeChild(el); }, 320);
+}
+
+// Single visual renderer. The file extension determines whether we use
+// <video> (seekable, has audio support) or <img> (static, no seek).
+function showVisual(url, x, y, scale, volume, start, end, hasAudio) {
+  if (x === undefined) x = 50;
+  if (y === undefined) y = 50;
+  if (scale === undefined) scale = 3;
+
+  const isVideo = /\.(mp4|webm|mov|mkv)$/i.test(url);
+  const el = isVideo ? document.createElement("video") : document.createElement("img");
+  el.src = url;
+  el.style.left = x + "%";
+  el.style.top = y + "%";
+  el.style.transform = `translate(-50%, -50%) scale(${scale})`;
+
+  if (isVideo) {
+    el.autoplay = true; el.playsInline = true; el.loop = false;
+    // Mute when the file has no audio track; this also avoids browser
+    // autoplay blocking for silent content.
+    el.muted = !hasAudio;
+    if (hasAudio && volume !== undefined) el.volume = clampVol(volume);
+    el.onended = () => removeWithFade(el);
+    applyMediaTrim(el, start || 0, end, () => removeWithFade(el));
+    const tryPlay = el.play();
+    if (tryPlay && typeof tryPlay.catch === "function") {
+      tryPlay.catch((err) => {
+        console.error("video autoplay blocked, retrying muted:", err);
+        el.muted = true;
+        el.play().catch(e => console.error("muted retry also failed:", e));
+      });
+    }
+  } else {
+    // Static image — can't seek. Use trim window as display duration if set,
+    // otherwise fall back to STATIC_IMAGE_MS.
+    const s = start || 0;
+    const displayMs = (end !== undefined && end !== null)
+      ? Math.max(100, (end - s) * 1000)
+      : STATIC_IMAGE_MS;
+    setTimeout(() => removeWithFade(el), displayMs);
+  }
+  stage.appendChild(el);
+}
+
+let ws;
+function connect() {
+  ws = new WebSocket(`ws://${location.host}/ws/overlay`);
+  ws.onmessage = (e) => {
+    const m = JSON.parse(e.data);
+    if (m.type === "audio") {
+      playAudio(m.url, m.volume, m.start, m.end);
+    } else if (m.type === "video") {
+      showVisual(m.url, m.x, m.y, m.scale, m.volume, m.start, m.end, m.has_audio);
+    } else if (m.type === "stop") {
+      stopAll();
+    }
+  };
+  ws.onclose = () => setTimeout(connect, 1000);
+}
+connect();
+</script>
+</body></html>

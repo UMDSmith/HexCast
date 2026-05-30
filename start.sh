@@ -10,4 +10,4 @@ if [ ! -d .venv ]; then
     .venv/bin/pip install -r requirements.txt
 fi
 
-exec .venv/bin/python soundboard.py
+exec .venv/bin/python hexcast.py

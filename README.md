@@ -4,7 +4,7 @@
   <img src="assets/hexcast.png" width="96" alt="Hexcast">
 </p>
 
-A self-hosted, folder-watching set of media stream tools for OBS streams. Drop GIFs, sounds, and video clips into a folder, click buttons in a web control panel, and they fire into your OBS overlay. Includes a clean HTTP API so chat bots can trigger media too.
+A self-hosted, folder-watching soundboard for OBS streams. Drop GIFs, sounds, and video clips into a folder, click buttons in a web control panel, and they fire into your OBS overlay. Includes a clean HTTP API so chat bots can trigger media too.
 
 Think Blerp, but local, no accounts, no rate limits, and you own your library.
 
@@ -21,26 +21,30 @@ Anyone who can reach the port can:
 There is no rate limiting and no input gating beyond file-extension checks. Do **not** port-forward this, do **not** put it on a public VPS, and do **not** assume "nobody knows the URL" protects you.
 
 Safe ways to run it:
-- On the same machine as OBS, accessed only via `localhost` (set `host="127.0.0.1"` near the bottom of `soundboard.py`).
+- On the same machine as OBS, accessed only via `localhost` (set `host="127.0.0.1"` near the bottom of `hexcast.py`).
 - On a LAN, with a firewall rule restricting the port to your local subnet (see [Network access & firewall](#network-access--firewall)).
 - If you genuinely need remote access, put it behind a reverse proxy (nginx/Caddy) that enforces authentication and TLS, on a private network or VPN — that's on you to set up correctly.
 
 ## Features
 
-- **Folder-watch**: drop media into `media/sounds/`, `media/gifs/`, or `media/videos/` and it appears in the control panel instantly
-- **Drag-and-drop uploads** from the control panel with smart routing (videos with audio → `videos/`, silent MP4s → `gifs/`)
-- **Web search** for GIFs (Tenor) and sounds (Freesound) with one-click import — optional, requires free API keys
-- **Per-clip positioning**: drag-to-position editor with scale slider, saved to sidecar JSON next to each file
-- **Concurrent playback**: spam-click to layer multiple gifs and sounds at once
-- **Video clips with audio** routed through OBS's PipeWire/audio path
-- **Edit Mode** for positioning, **Delete Mode** for cleanup — no manual filesystem digging
+- **Folder-watch**: drop media into `media/audio/` or `media/video/` and it appears in the control panel instantly
+- **Drag-and-drop uploads** from the control panel — audio extensions route to `audio/`, everything visual to `video/`
+- **Auto-conversion**: dropped `.gif`/`.webp`/`.apng` files get transcoded to `.mp4` on the spot, so every clip is frame-precise seekable
+- **Web search** for video clips (Tenor) and audio (Freesound) with one-click import — optional, requires free API keys
+- **Per-clip editor** for video: drag-to-position canvas, scale, volume (when the clip has audio), and a dual-thumb start/end trim slider with **▶ Preview** that plays the trimmed range live in the canvas
+- **Per-clip editor** for audio: volume, start/end trim, and live preview through your speakers
+- **Rename in editor**: change a clip's filename without touching the filesystem; the sidecar and poster follow automatically
+- **Per-clip cooldown**: set ms-level cooldown on any clip so spam clicks don't queue up — `0` = current spam-friendly behavior
+- **🔊 audio badge** on video buttons that carry an audio track
+- **Concurrent playback**: spam-click to layer multiple clips at once (cooldowns are per-clip, so other clips still overlap freely)
+- **Edit Mode** for tuning, **Delete Mode** for cleanup — no manual filesystem digging
 - **Bot API**: trigger anything by name via a simple HTTP GET, no auth needed (designed for trusted LAN)
-- **Static thumbnails**: first-frame poster generation via ffmpeg keeps the picker calm
+- **⏹ Stop All** panic button to clear every visual and stop every playing sound at once
 
 ## Prerequisites
 
 - **Python 3.10+** (uses modern type union syntax)
-- **ffmpeg** (for poster thumbnails and audio detection on upload)
+- **ffmpeg** — for gif/webp → mp4 conversion, thumbnail generation, and duration/audio probing. Hexcast still runs without it, but animated GIFs won't be seekable, thumbnails won't generate, and the audio badge won't appear on video buttons.
 - **OBS Studio 28+** with browser source support
 
 ## Install
@@ -61,7 +65,7 @@ If you prefer manual setup:
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-python soundboard.py
+python hexcast.py
 ```
 
 ### Windows
@@ -79,12 +83,12 @@ Manual setup:
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-python soundboard.py
+python hexcast.py
 ```
 
 ### Installing ffmpeg
 
-Without ffmpeg the server still runs, but gifs animate in the picker (no static thumbnails) and uploaded MP4s can't be auto-routed by audio content.
+Without ffmpeg the server still runs, but: animated GIFs/WebPs won't convert to MP4 (they stay as `<img>` elements with limited functionality), thumbnails won't generate (videos show empty cards), and the 🔊 audio badge won't appear on video buttons.
 
 **Linux (Debian/Ubuntu):**
 ```bash
@@ -140,23 +144,33 @@ After clicking OK, select the source in the canvas and press **Ctrl+F** to fit t
 Three ways:
 - **Drag-and-drop** onto the dropzone in the control panel
 - **Search** Tenor/Freesound (requires API keys, see below)
-- **Drop directly** into `media/sounds/`, `media/gifs/`, or `media/videos/`
+- **Drop directly** into `media/audio/` or `media/video/`
 
-The folder watcher picks up new files instantly.
+The folder watcher picks up new files instantly. Animated `.gif`/`.webp`/`.apng` files auto-convert to `.mp4` on first sight so the editor can seek into them frame-precisely.
 
 ### 4. Trigger clips
 
-Click any button in the control panel. Multiple clicks layer naturally — spam them, they'll all fire.
+Click any button in the control panel. Multiple clicks layer naturally — spam them, they'll all fire (unless you've set a per-clip cooldown).
 
-### 5. Position GIFs and Videos, set volume
+### 5. Edit a clip: position, volume, trim, rename, cooldown
 
-Toggle **Edit Mode** in the top-right (clip buttons get an amber border + ✎).
+Toggle **Edit Mode** in the top-right (clip buttons get an amber border + ✎). Click any clip to open its editor.
 
-- **GIF** → drag editor: 16:9 canvas preview, drag to position, scale slider.
-- **Video** → same editor plus a **Volume** slider.
-- **Sound** → a compact editor with just a **Volume** slider.
+**Video editor** (any visual file — mp4, gif, png, etc.):
+- **Position** — drag the clip around a 16:9 preview of your OBS canvas, or use the 3×3 quick-position grid
+- **Scale** slider
+- **Volume** slider — only shown for video files that actually have an audio track (the ones with a 🔊 badge on the button)
+- **Playback range** — a dual-thumb slider on a single bar. Drag the start (◀) and end (▶) thumbs to trim. As you drag, the preview canvas scrubs to that frame so you can see exactly where you are.
+- **▶ Preview** — plays the trimmed range inside the editor canvas with current position, scale, and volume so you can fine-tune everything before committing. ⏸ to stop.
+- **Rename** — change the clip's filename. Sidecar and poster follow automatically.
+- **Cooldown (ms)** — if > 0, after this clip fires, further triggers of *this clip* are dropped until the clip finishes playing plus the cooldown elapses. `0` means no cooldown (current spam-friendly behavior). Per-clip only; other clips still overlap freely.
 
-Click **Test in OBS** to preview the current settings without saving, then **Save**. Settings are stored in a `.json` sidecar next to the media file (`{x,y,scale}` for gifs, `{x,y,scale,volume}` for videos, `{volume}` for sounds). The overlay reads these whenever a clip fires — including from the bot API.
+**Audio editor**:
+- Volume, trim, rename, cooldown — same as above. **▶ Preview** plays through your speakers.
+
+Static images (`.png`, `.jpg`) can't be seeked; for those the trim becomes a single "Display duration" slider, and Preview is disabled.
+
+Click **Test in OBS** to fire the current (unsaved) settings to OBS, **Save** to write them to the sidecar JSON. Defaults are omitted from the JSON to keep it clean: a clip with only a custom end time saves as just `{"volume": 1.0, "end": 3.5}`.
 
 ### 6. Delete media
 
@@ -170,17 +184,19 @@ The **⏹ Stop All** button in the top-right instantly clears every visual from 
 
 ### Media library location
 
-By default media lives in `media/` next to the script. To store it elsewhere — a different drive, a NAS mount, a shared folder — set the `SOUNDBOARD_MEDIA_DIR` environment variable. The `sounds/`, `gifs/`, and `videos/` subfolders are created automatically inside it.
+By default media lives in `media/` next to the script. To store it elsewhere — a different drive, a NAS mount, a shared folder — set the `HEXCAST_MEDIA_DIR` environment variable. The `audio/` and `video/` subfolders are created automatically inside it.
+
+If you're upgrading from a previous version with `sounds/`, `gifs/`, and `videos/` folders, Hexcast migrates them automatically on first run: contents of `sounds/` move to `audio/`, contents of `gifs/` and `videos/` merge into `video/`, and the old folders are removed when empty.
 
 **Linux/macOS:**
 ```bash
-export SOUNDBOARD_MEDIA_DIR="/mnt/storage/soundboard"
+export HEXCAST_MEDIA_DIR="/mnt/storage/hexcast"
 ./start.sh
 ```
 
 **Windows:**
 ```cmd
-set SOUNDBOARD_MEDIA_DIR=D:\soundboard-media
+set HEXCAST_MEDIA_DIR=D:\hexcast-media
 start.bat
 ```
 
@@ -188,7 +204,7 @@ To make it permanent on Windows, set it via System Properties → Environment Va
 
 ### Other settings
 
-Edit the constants at the top of `soundboard.py`:
+Edit the constants at the top of `hexcast.py`:
 
 ```python
 PORT = 4747              # change if conflicting with another service
@@ -243,23 +259,27 @@ The server exposes an HTTP API designed for triggering media from chat bots, str
 
 ```
 GET /api                         → endpoint reference
-GET /api/list                    → JSON: { sounds: [...], gifs: [...], videos: [...] }
-GET|POST /api/play/{name}        → fuzzy: searches sounds, gifs, videos
-GET|POST /api/play/{kind}/{name} → explicit: kind = sound | gif | video
-    ?x=&y=&scale=                → optional position override (gifs/videos)
-    ?volume=                     → optional volume override 0.0-1.0 (sounds/videos)
+GET /api/list                    → JSON: { audio: [...], video: [...] }
+GET|POST /api/play/{name}        → fuzzy: searches audio, then video
+GET|POST /api/play/{kind}/{name} → explicit: kind = audio | video
+    ?x=&y=&scale=                → optional position override (video)
+    ?volume=                     → optional volume override 0.0-1.0 (audio, or video with audio)
+    ?start=&end=                 → optional trim window in seconds (both kinds; static images use end only)
 GET|POST /api/stop               → clear all visuals + stop all audio (panic button)
+POST /rename                     → {file, kind, new_stem} → renames media file + sidecar + poster
 ```
 
-Names are case-insensitive and match either the filename stem (`airhorn`) or full filename (`airhorn.mp3`). If you don't pass overrides, the values saved in the editor (position, scale, volume) are applied automatically.
+Names are case-insensitive and match either the filename stem (`airhorn`) or full filename (`airhorn.mp3`). If you don't pass overrides, the values saved in the editor (position, scale, volume, trim) are applied automatically.
+
+**Cooldowns**: if a clip has a non-zero `cooldown_ms` saved in its sidecar, triggers that arrive while the clip is still in its cooldown window return `{"ok": true, "delivered": 0, "suppressed": true, "next_in_ms": N}` and don't fire. Cooldowns are per-clip — other clips can still overlap freely.
 
 ### Examples
 
 ```bash
 curl http://localhost:4747/api/list
 curl http://localhost:4747/api/play/airhorn
-curl http://localhost:4747/api/play/gif/wow
-curl "http://localhost:4747/api/play/video/cheer?x=80&y=20&scale=2&volume=0.6"
+curl http://localhost:4747/api/play/video/wow
+curl "http://localhost:4747/api/play/video/cheer?x=80&y=20&scale=2&volume=0.6&end=3"
 curl http://localhost:4747/api/stop
 ```
 
@@ -309,7 +329,7 @@ After=network.target
 
 [Service]
 WorkingDirectory=%h/hexcast
-ExecStart=%h/hexcast/.venv/bin/python %h/hexcast/soundboard.py
+ExecStart=%h/hexcast/.venv/bin/python %h/hexcast/hexcast.py
 Restart=on-failure
 # Optional API keys:
 # Environment=TENOR_API_KEY=AIza...
@@ -337,9 +357,10 @@ journalctl --user -u hexcast -f   # watch logs
 
 ## Supported media formats
 
-**Sounds:** `.mp3`, `.wav`, `.ogg`, `.m4a`, `.flac`, `.opus`
-**Images / animated:** `.gif`, `.webp`, `.apng`, `.png`, `.jpg`, `.jpeg`
-**Videos:** `.mp4`, `.webm`, `.mov`, `.mkv`
+**Audio:** `.mp3`, `.wav`, `.ogg`, `.m4a`, `.flac`, `.opus`
+**Video — static images:** `.png`, `.jpg`, `.jpeg` (no seeking, shown for a fixed duration)
+**Video — animated images:** `.gif`, `.webp`, `.apng` (auto-converted to `.mp4` on first sight)
+**Video — native:** `.mp4`, `.webm`, `.mov`, `.mkv`
 
 For best video compatibility, transcode unfamiliar formats to H.264 + AAC MP4:
 
@@ -351,23 +372,35 @@ ffmpeg -i input.whatever -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k -m
 
 ```
 hexcast/
-├── soundboard.py        # the server (single file)
+├── hexcast.py            # the server
+├── static/
+│   ├── control.html         # control panel UI (HTML + CSS + JS)
+│   └── overlay.html         # OBS browser-source overlay
 ├── requirements.txt
-├── start.sh / start.bat # launcher scripts
+├── start.sh / start.bat     # launcher scripts
 ├── README.md
 ├── LICENSE
-└── media/               # auto-created on first run
-    ├── sounds/          # .mp3, .wav, etc.
-    ├── gifs/            # .gif, .png, silent .mp4, etc.
-    └── videos/          # .mp4, .webm with audio
+└── media/                   # auto-created on first run
+    ├── audio/               # .mp3, .wav, .ogg, .m4a, .flac, .opus
+    └── video/               # .mp4, .webm, .png/.jpg (static), and animated images auto-converted to .mp4
 ```
 
-Each gif/video can have two adjacent files:
+Each clip can have two adjacent files:
 - `airhorn.mp4` — the media
-- `airhorn.json` — saved position (created by Edit Mode)
-- `airhorn.poster.jpg` — first-frame thumbnail (auto-generated by ffmpeg)
+- `airhorn.json` — saved settings (created by Edit Mode)
+- `airhorn.poster.jpg` — first-frame thumbnail (auto-generated by ffmpeg for video clips)
 
-You can edit the `.json` by hand if you prefer: `{"x": 50, "y": 80, "scale": 2.5}`.
+The sidecar JSON contains only non-default values. A typical video sidecar might be:
+```json
+{"x": 80, "y": 20, "scale": 2.5, "volume": 0.6, "end": 3.5, "cooldown_ms": 1500}
+```
+
+A typical audio sidecar:
+```json
+{"volume": 0.8, "start": 0.5, "cooldown_ms": 500}
+```
+
+You can hand-edit these if you prefer — the watcher ignores `.json` writes so it won't trigger a reindex loop.
 
 ## Troubleshooting
 
@@ -389,10 +422,9 @@ You can edit the `.json` by hand if you prefer: `{"x": 50, "y": 80, "scale": 2.5
 
 ## Roadmap
 
-- Per-clip cooldowns to prevent spam
 - Hotkey triggers via OBS WebSocket
 - Search/filter box in the control panel for large libraries
-- Multi-track audio splitting (separate OBS audio source per clip kind)
+- Multi-track audio splitting (separate OBS audio source per clip)
 
 Twitch integration is intentionally out of scope — point any bot at `GET /api/play/{name}` (see [Triggering from a chat bot](#triggering-from-a-chat-bot--twitch-redemptions)).
 

@@ -1,0 +1,1094 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<title>Hexcast</title>
+<link rel="icon" href="__ICON__">
+<style>
+  :root {
+    --bg: #0e0808;
+    --panel: #1a1212;
+    --card: #1f1414;
+    --border: #3a2020;
+    --border-hover: #5a2828;
+    --text: #f0e0e0;
+    --muted: #b89494;
+    --dim: #806060;
+    --red: #c92020;
+    --red-soft: #e85050;
+    --red-deep: #7a1010;
+    --amber: #a06820;
+    --amber-soft: #d4a040;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
+               font-family: system-ui, -apple-system, sans-serif; font-size: 14px; }
+  body { padding: 14px; }
+
+  .topbar { display: flex; align-items: center; justify-content: space-between;
+            margin-bottom: 14px; padding: 4px 0; }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .logo { width: 32px; height: 32px; }
+  h1 { font-size: 18px; margin: 0; color: var(--red-soft); }
+  h2 { font-size: 14px; margin: 14px 0 6px; color: var(--muted);
+       text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
+
+  .editmode-btn { background: var(--card); border: 1px solid var(--border); color: var(--text);
+                  padding: 6px 10px; font-size: 13px; border-radius: 6px; cursor: pointer; }
+  .editmode-btn:hover { background: #2a1c1c; }
+  body.edit-mode #editmode { background: #3a2a18; border-color: var(--amber); color: var(--amber-soft); }
+  body.delete-mode #deletemode { background: #3a1818; border-color: var(--red); color: var(--red-soft); }
+  #stopall { background: #3a1414; border-color: var(--red-deep); color: var(--red-soft); font-weight: 600; }
+  #stopall:hover { background: #4a1a1a; border-color: var(--red); }
+  #stopall:active { background: #5a2020; transform: translateY(1px); }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+          gap: 8px; }
+  button { background: var(--card); border: 1px solid var(--border); color: var(--text);
+           padding: 10px 12px; font-size: 13px; border-radius: 6px; cursor: pointer;
+           text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+           font-family: inherit; }
+  button:hover { background: #2a1e1e; border-color: var(--border-hover); }
+  button:active { background: #341f1f; transform: translateY(1px); }
+  button.gif { aspect-ratio: 4/3; background-size: cover; background-position: center;
+               background-color: #120c0c; position: relative; padding: 0; }
+  button.gif span.label { position: absolute; bottom: 0; left: 0; right: 0; padding: 6px 8px;
+                          background: linear-gradient(transparent, rgba(0,0,0,0.85));
+                          text-shadow: 0 1px 2px rgba(0,0,0,0.9); }
+  span.audio-badge { position: absolute; top: 4px; left: 6px;
+                     background: rgba(0,0,0,0.65); border-radius: 4px; padding: 0px 5px;
+                     font-size: 13px; line-height: 1.3; text-shadow: 0 1px 2px #000;
+                     pointer-events: none; }
+
+  body.edit-mode #video button { border-color: var(--amber); }
+  body.edit-mode #video button:hover { border-color: var(--amber-soft); }
+  body.edit-mode #audio button { border-color: var(--amber); position: relative; }
+  body.edit-mode #audio button:hover { border-color: var(--amber-soft); }
+  body.edit-mode #video button::after, body.edit-mode #audio button::after {
+    content: "✎"; position: absolute; top: 4px; right: 6px; color: var(--amber-soft);
+    text-shadow: 0 1px 2px #000; font-size: 14px;
+  }
+  body.delete-mode #audio button,
+  body.delete-mode #video button {
+    border-color: var(--red); position: relative;
+  }
+  body.delete-mode #audio button:hover,
+  body.delete-mode #video button:hover {
+    border-color: var(--red-soft); background: #2a1414;
+  }
+  body.delete-mode #audio button::after,
+  body.delete-mode #video button::after {
+    content: "✕"; position: absolute; top: 4px; right: 6px; color: var(--red-soft);
+    text-shadow: 0 1px 2px #000; font-size: 14px; font-weight: bold;
+  }
+  .empty { color: var(--dim); padding: 8px; font-style: italic; font-size: 13px; }
+  .status { position: fixed; bottom: 8px; right: 10px; font-size: 11px; color: var(--dim); }
+  .status.connected { color: var(--red-soft); }
+
+  /* add-media panel */
+  .addmedia { background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+              padding: 12px; margin-bottom: 4px; }
+  .dropzone { border: 2px dashed var(--border-hover); border-radius: 6px; padding: 14px;
+              text-align: center; color: var(--muted); cursor: pointer;
+              transition: background 100ms, border-color 100ms; margin-bottom: 8px; }
+  .dropzone:hover, .dropzone.over { border-color: var(--red-soft); background: #1f1414; color: var(--text); }
+  .dropzone a { color: var(--red-soft); text-decoration: underline; }
+  .searchrow { display: flex; gap: 6px; }
+  .searchrow select, .searchrow input { background: var(--bg); color: var(--text);
+                                        border: 1px solid var(--border); border-radius: 4px;
+                                        padding: 6px 8px; font-family: inherit; font-size: 13px; }
+  .searchrow select { min-width: 110px; }
+  .searchrow input { flex: 1; }
+  .results { margin-top: 8px; display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+             gap: 6px; max-height: 280px; overflow-y: auto; padding: 4px; }
+  .results .r { background: var(--card); border: 1px solid var(--border); border-radius: 4px;
+                cursor: pointer; aspect-ratio: 4/3; background-size: cover; background-position: center;
+                position: relative; overflow: hidden; }
+  .results .r:hover { border-color: var(--red-soft); }
+  .results .r .lbl { position: absolute; bottom: 0; left: 0; right: 0; padding: 3px 5px;
+                     background: linear-gradient(transparent, rgba(0,0,0,0.85)); font-size: 11px;
+                     text-shadow: 0 1px 2px #000; }
+  .results .r.sound { aspect-ratio: 2/1; background: var(--card); }
+  .results .r.sound .lbl { background: none; position: static; padding: 8px 6px; text-shadow: none; }
+  .results .r.imported { opacity: 0.4; pointer-events: none; }
+  .results .r.imported::after { content: "✓"; position: absolute; top: 4px; right: 6px;
+                                color: var(--red-soft); font-size: 16px; font-weight: bold; }
+
+  /* modal */
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+                   display: flex; align-items: center; justify-content: center; z-index: 100;
+                   padding: 20px; }
+  .modal { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+           padding: 16px; max-width: 720px; width: 100%; max-height: 90vh; overflow-y: auto;
+           box-shadow: 0 10px 40px rgba(0,0,0,0.6); display: flex; flex-direction: column; gap: 10px; }
+  .modal-header { display: flex; justify-content: space-between; align-items: center;
+                  margin-bottom: 4px; }
+  .modal-header .title { font-size: 15px; font-weight: 600; color: var(--red-soft); }
+  .modal-header .close { background: transparent; border: none; color: var(--muted);
+                         font-size: 22px; cursor: pointer; padding: 0 4px; }
+  .modal-header .close:hover { color: var(--text); }
+  .canvas-preview { background: #050303; border: 1px solid var(--border); border-radius: 6px;
+                    aspect-ratio: 16/9; position: relative; overflow: hidden; cursor: grab; }
+  .canvas-preview.dragging { cursor: grabbing; }
+  .canvas-preview .grid-overlay {
+    position: absolute; inset: 0; pointer-events: none;
+    background-image:
+      linear-gradient(to right, rgba(120,30,30,0.18) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(120,30,30,0.18) 1px, transparent 1px);
+    background-size: 12.5% 12.5%;
+  }
+  .canvas-preview .media-wrapper {
+    position: absolute; transform-origin: center center;
+    will-change: transform, left, top;
+  }
+  .canvas-preview .media-wrapper > img,
+  .canvas-preview .media-wrapper > video {
+    display: block; max-width: none; max-height: none;
+    pointer-events: none; user-select: none;
+  }
+  .editor-controls { display: flex; flex-direction: column; gap: 8px; }
+  .editor-row { display: flex; align-items: center; gap: 10px; }
+  .editor-row label { min-width: 60px; font-size: 12px; color: var(--muted); }
+  .editor-row input[type=range] { flex: 1; }
+  .editor-row input[type=text], .editor-row input[type=number] {
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; padding: 5px 7px; font-family: inherit; font-size: 13px;
+    flex: 1; min-width: 0;
+  }
+  .editor-row input[type=number] { max-width: 120px; flex: 0 0 120px; }
+  .editor-row .value { font-family: ui-monospace, monospace; font-size: 12px;
+                       color: var(--red-soft); min-width: 56px; text-align: right; }
+  .quick-positions { display: grid; grid-template-columns: repeat(3, 26px); gap: 2px; }
+  .quick-positions button { padding: 2px; font-size: 12px; min-width: 0;
+                            text-align: center; line-height: 1; }
+  .modal-actions { display: flex; justify-content: space-between; gap: 6px;
+                   padding-top: 8px; border-top: 1px solid var(--border); }
+  .modal-actions .left, .modal-actions .right { display: flex; gap: 6px; }
+  .modal-actions .reset { background: #2a1818; color: var(--muted); border-color: var(--border); }
+  .modal-actions .reset:hover { background: #3a1818; color: var(--red-soft); }
+  .modal-actions .save { background: #2a3a1f; border-color: #3f5028; color: #c5e0a0; }
+  .modal-actions .save:hover { background: #344b28; }
+  .modal-actions .test { background: #3a2a18; border-color: var(--amber); color: var(--amber-soft); }
+  .modal-actions .test:hover { background: #5a4520; }
+  .modal-actions .preview { background: #1f2a3a; border-color: #2a3a52; color: #9ab; }
+  .modal-actions .preview:hover { background: #2a3a52; border-color: #3a4a68; color: #cde; }
+  .modal-actions .preview.playing { background: #4a2020; border-color: var(--red); color: var(--red-soft); }
+
+  /* Trim range UI */
+  .trim-section { display: flex; flex-direction: column; gap: 6px; }
+  .trim-header { display: flex; justify-content: space-between; align-items: center;
+                 font-size: 12px; color: var(--muted); }
+  .trim-header .dur { font-family: ui-monospace, monospace; color: var(--dim); }
+  .trim-values { display: flex; justify-content: space-between; font-size: 11px;
+                 color: var(--dim); font-family: ui-monospace, monospace; }
+  .trim-values .l, .trim-values .r { color: var(--red-soft); }
+  .trim-help { font-size: 11px; color: var(--dim); font-style: italic; }
+
+  /* Single-thumb (static images) */
+  .single-range { display: flex; align-items: center; gap: 8px; }
+  .single-range label { min-width: 60px; font-size: 12px; color: var(--muted); }
+  .single-range input[type=range] { flex: 1; }
+  .single-range .val { font-family: ui-monospace, monospace; font-size: 12px;
+                       color: var(--red-soft); min-width: 56px; text-align: right; }
+
+  /* Dual-thumb single-bar range */
+  .dual-range { position: relative; height: 28px; padding: 11px 9px 11px 9px; }
+  .dual-range .track { position: absolute; left: 9px; right: 9px; top: 50%;
+                       transform: translateY(-50%); height: 6px;
+                       background: #2a1818; border: 1px solid var(--border); border-radius: 4px; }
+  .dual-range .active { position: absolute; top: 50%; transform: translateY(-50%);
+                        height: 6px; background: var(--red); opacity: 0.85;
+                        transition: left 0.04s linear, right 0.04s linear; }
+  .dual-range input[type=range] {
+    position: absolute; left: 0; right: 0; top: 0; bottom: 0; width: 100%; height: 100%;
+    margin: 0; padding: 0; background: transparent;
+    -webkit-appearance: none; appearance: none;
+    pointer-events: none;
+  }
+  .dual-range input[type=range]::-webkit-slider-runnable-track {
+    background: transparent; border: none; height: 28px;
+  }
+  .dual-range input[type=range]::-moz-range-track {
+    background: transparent; border: none; height: 28px;
+  }
+  .dual-range input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    pointer-events: auto;
+    width: 18px; height: 18px; border-radius: 50%;
+    background: var(--red-soft); border: 2px solid #1a0e0e;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+    cursor: grab; margin-top: -6px; position: relative; z-index: 2;
+  }
+  .dual-range input[type=range]::-webkit-slider-thumb:active { cursor: grabbing; background: var(--red); }
+  .dual-range input[type=range]::-moz-range-thumb {
+    pointer-events: auto;
+    width: 18px; height: 18px; border-radius: 50%;
+    background: var(--red-soft); border: 2px solid #1a0e0e;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+    cursor: grab;
+  }
+  .dual-range input[type=range]::-moz-range-thumb:active { cursor: grabbing; background: var(--red); }
+
+  .toast { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);
+           background: #2a1414; border: 1px solid var(--red-deep); color: var(--red-soft);
+           padding: 8px 14px; border-radius: 6px; font-size: 13px;
+           opacity: 0; transition: opacity 200ms; pointer-events: none; z-index: 200; }
+  .toast.show { opacity: 1; }
+  .toast.err { background: #3a1414; border-color: var(--red); color: #ffaaaa; }
+</style></head>
+<body data-canvas-w="__CANVAS_W__" data-canvas-h="__CANVAS_H__">
+  <div class="topbar">
+    <div class="brand">
+      <img class="logo" src="__ICON__" alt="Hexcast">
+      <h1>Hexcast</h1>
+    </div>
+    <div style="display:flex;gap:6px;">
+      <button class="editmode-btn" id="stopall" title="Clear all visuals and stop all audio">⏹ Stop All</button>
+      <button class="editmode-btn" id="editmode">Edit Mode</button>
+      <button class="editmode-btn" id="deletemode">Delete Mode</button>
+    </div>
+  </div>
+
+  <div class="addmedia">
+    <div class="dropzone" id="dropzone">
+      <input type="file" id="fileinput" multiple accept="audio/*,video/*,image/*" style="display:none">
+      <span>Drop files here or <a id="browse">click to browse</a></span>
+    </div>
+    <div class="searchrow">
+      <select id="searchtype">
+        <option value="video">Videos / GIFs</option>
+        <option value="audio">Audio</option>
+      </select>
+      <input id="searchbox" placeholder="search Tenor / Freesound…" type="search">
+      <button id="searchbtn">Search</button>
+    </div>
+    <div id="results" class="results" hidden></div>
+  </div>
+
+  <h2>Audio</h2>
+  <div id="audio" class="grid"></div>
+  <h2>Video</h2>
+  <div id="video" class="grid"></div>
+
+  <div class="status" id="status">connecting…</div>
+  <div class="toast" id="toast"></div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const CANVAS_W = parseInt(document.body.dataset.canvasW, 10);
+const CANVAS_H = parseInt(document.body.dataset.canvasH, 10);
+
+let index = {audio: [], video: []};
+let editMode = false;
+let deleteMode = false;
+
+const editBtn = $("#editmode");
+const delBtn = $("#deletemode");
+
+editBtn.onclick = () => {
+  editMode = !editMode;
+  if (editMode && deleteMode) {
+    deleteMode = false;
+    document.body.classList.remove("delete-mode");
+    delBtn.textContent = "Delete Mode";
+  }
+  document.body.classList.toggle("edit-mode", editMode);
+  editBtn.textContent = editMode ? "✓ Edit Mode" : "Edit Mode";
+};
+
+delBtn.onclick = () => {
+  deleteMode = !deleteMode;
+  if (deleteMode && editMode) {
+    editMode = false;
+    document.body.classList.remove("edit-mode");
+    editBtn.textContent = "Edit Mode";
+  }
+  document.body.classList.toggle("delete-mode", deleteMode);
+  delBtn.textContent = deleteMode ? "✕ Delete Mode" : "Delete Mode";
+};
+
+$("#stopall").onclick = async () => {
+  try { await fetch("/api/stop"); toast("stopped all"); }
+  catch (e) { toast(`stop failed: ${e.message}`, true); }
+};
+
+async function deleteItem(kind, item) {
+  if (!confirm(`Delete ${kind} "${item.name}"?\n\nFile, saved settings, and thumbnail will be removed.`)) return;
+  try {
+    const r = await fetch("/delete", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({kind, file: item.file})
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) toast(`delete failed: ${j.detail || r.statusText}`, true);
+    else toast(`deleted ${kind}: ${item.name}`);
+  } catch (e) { toast(`delete failed: ${e.message}`, true); }
+}
+
+function toast(msg, isErr) {
+  const t = $("#toast");
+  t.textContent = msg;
+  t.className = "toast show" + (isErr ? " err" : "");
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.classList.remove("show"), 2800);
+}
+
+// ---- library render ----
+function render(idx) {
+  const audioEl = $("#audio"), videoEl = $("#video");
+
+  audioEl.innerHTML = (idx.audio || []).length
+    ? ""
+    : '<div class="empty">drop audio (mp3/wav/ogg/m4a/flac/opus) into ./media/audio/</div>';
+  for (const s of (idx.audio || [])) {
+    const b = document.createElement("button");
+    b.textContent = s.name;
+    const parts = [s.file];
+    if (s.volume !== undefined && s.volume !== 1) parts.push(`vol ${Math.round(s.volume*100)}%`);
+    if (s.cooldown_ms) parts.push(`cooldown ${s.cooldown_ms}ms`);
+    b.title = parts.join(" — ");
+    b.onclick = () => {
+      if (deleteMode) deleteItem("audio", s);
+      else if (editMode) openAudioEditor(s);
+      else fire("audio", s);
+    };
+    audioEl.appendChild(b);
+  }
+
+  videoEl.innerHTML = (idx.video || []).length
+    ? ""
+    : '<div class="empty">drop videos, gifs, or images into ./media/video/ (gifs auto-convert to mp4)</div>';
+  for (const v of (idx.video || [])) {
+    const b = document.createElement("button");
+    b.className = "gif";
+    b.style.backgroundImage = `url("${v.poster || v.url}")`;
+    const label = document.createElement("span");
+    label.className = "label";
+    label.textContent = v.name;
+    b.appendChild(label);
+    if (v.has_audio) {
+      const badge = document.createElement("span");
+      badge.className = "audio-badge";
+      badge.textContent = "🔊";
+      badge.title = "has audio";
+      b.appendChild(badge);
+    }
+    const pos = v.pos || {x:50,y:50,scale:3};
+    const tips = [v.file];
+    if (v.has_audio) tips.push("has audio");
+    tips.push(`x:${pos.x.toFixed(0)} y:${pos.y.toFixed(0)} scale:${pos.scale.toFixed(1)}`);
+    if (v.cooldown_ms) tips.push(`cooldown ${v.cooldown_ms}ms`);
+    b.title = tips.join(" — ");
+    b.onclick = () => {
+      if (deleteMode) deleteItem("video", v);
+      else if (editMode) openEditor(v);
+      else fire("video", v);
+    };
+    videoEl.appendChild(b);
+  }
+}
+
+async function fire(type, item, override) {
+  const payload = {type, url: item.url, name: item.name, file: item.file};
+  const o = override || {};
+  if (type === "video") {
+    const pos = override || item.pos;
+    if (pos) { payload.x = pos.x; payload.y = pos.y; payload.scale = pos.scale; }
+  }
+  if (type === "audio" || (type === "video" && item.has_audio)) {
+    const vol = (o.volume !== undefined) ? o.volume : item.volume;
+    if (vol !== undefined) payload.volume = vol;
+  }
+  const start = (o.start !== undefined) ? o.start : item.start;
+  if (start !== undefined && start !== null && start > 0) payload.start = start;
+  const end = (o.end !== undefined) ? o.end : item.end;
+  if (end !== undefined && end !== null) payload.end = end;
+  try {
+    const r = await fetch("/trigger", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload)
+    });
+    const j = await r.json().catch(() => ({}));
+    if (j.suppressed) toast(`cooldown — try again in ${j.next_in_ms}ms`);
+  } catch (e) { console.error("fire failed:", e); }
+}
+
+// ---- shared trim-control builder ----
+// Returns {html, attach(ov, onChange), getState()}. onChange(state, source) fires as
+// the user drags either thumb so the caller can scrub the preview video.
+function buildTrim(item, kind) {
+  const url = item.url || "";
+  const isImg = (kind === "video") && /\.(png|jpe?g)$/i.test(url);
+  const dur = item.duration;
+  const haveDur = (typeof dur === "number" && dur > 0);
+
+  let start = (typeof item.start === "number") ? item.start : 0;
+  let end;
+  if (item.end !== undefined && item.end !== null) end = item.end;
+  else if (haveDur) end = dur;
+  else end = 4;
+
+  const maxBound = haveDur ? dur : 30;
+  const step = (maxBound >= 10) ? 0.05 : 0.02;
+  const fmt = (v) => v.toFixed(2) + "s";
+
+  let html;
+  if (isImg) {
+    html = `
+      <div class="trim-section">
+        <div class="trim-header">
+          <span>Display duration</span>
+          <span class="dur">static image</span>
+        </div>
+        <div class="single-range">
+          <label>Length</label>
+          <input type="range" id="trimend" min="0.1" max="${maxBound}" step="${step}" value="${end}">
+          <span class="val" id="trimendval">${fmt(end)}</span>
+        </div>
+        <div class="trim-help">static images can't be seeked; this is just how long the image stays on screen.</div>
+      </div>`;
+  } else {
+    html = `
+      <div class="trim-section">
+        <div class="trim-header">
+          <span>Playback range — drag start (◀) and end (▶) thumbs</span>
+          <span class="dur">${haveDur ? "duration: " + dur.toFixed(2) + "s" : "unknown duration"}</span>
+        </div>
+        <div class="dual-range">
+          <div class="track"></div>
+          <div class="active" id="trimactive"></div>
+          <input type="range" id="trimstart" min="0" max="${maxBound}" step="${step}" value="${start}">
+          <input type="range" id="trimend"   min="0" max="${maxBound}" step="${step}" value="${end}">
+        </div>
+        <div class="trim-values">
+          <span class="l">start <span id="trimstartval">${fmt(start)}</span></span>
+          <span class="r">end <span id="trimendval">${fmt(end)}</span></span>
+        </div>
+      </div>`;
+  }
+
+  function attach(ov, onChange) {
+    const active = ov.querySelector("#trimactive");
+    const sEl = ov.querySelector("#trimstart");
+    const eEl = ov.querySelector("#trimend");
+    const sVal = ov.querySelector("#trimstartval");
+    const eVal = ov.querySelector("#trimendval");
+
+    function repaint() {
+      if (active) {
+        const lo = (start / maxBound) * 100;
+        const hi = ((maxBound - end) / maxBound) * 100;
+        active.style.left = Math.max(0, lo) + "%";
+        active.style.right = Math.max(0, hi) + "%";
+      }
+      if (sVal) sVal.textContent = fmt(start);
+      if (eVal) eVal.textContent = fmt(end);
+    }
+    repaint();
+
+    if (sEl) {
+      sEl.oninput = () => {
+        start = parseFloat(sEl.value);
+        if (start > end - 0.05) { start = Math.max(0, end - 0.05); sEl.value = start; }
+        repaint();
+        if (onChange) onChange({start, end}, "start");
+      };
+    }
+    if (eEl) {
+      eEl.oninput = () => {
+        end = parseFloat(eEl.value);
+        if (end < start + 0.05) { end = start + 0.05; eEl.value = end; }
+        repaint();
+        if (onChange) onChange({start, end}, "end");
+      };
+    }
+  }
+
+  return {
+    html,
+    attach,
+    getState: () => {
+      const e = (haveDur && Math.abs(end - dur) < 0.01) ? null : end;
+      return { start: isImg ? 0 : start, end: e };
+    },
+  };
+}
+
+// ---- rename + cooldown row builder (shared between editors) ----
+function buildMetaRows(item) {
+  const cooldownMs = item.cooldown_ms || 0;
+  // Default rename value is the stem (filename without extension)
+  const stem = item.file.replace(/\.[^.]+$/, "");
+  const html = `
+    <div class="editor-row">
+      <label>Rename</label>
+      <input type="text" id="renamefield" value="${stem.replace(/"/g, "&quot;")}" placeholder="new name (no extension)">
+    </div>
+    <div class="editor-row">
+      <label>Cooldown</label>
+      <input type="number" id="cooldownfield" min="0" max="60000" step="50" value="${cooldownMs}">
+      <span class="value">ms</span>
+      <span style="font-size: 11px; color: var(--dim); font-style: italic;">0 = no cooldown</span>
+    </div>`;
+  return {
+    html,
+    // Returns the entered values. Caller decides whether to call /rename.
+    getState: (ov) => ({
+      newStem: (ov.querySelector("#renamefield").value || "").trim(),
+      cooldownMs: parseInt(ov.querySelector("#cooldownfield").value || "0", 10) || 0,
+    }),
+  };
+}
+
+// If the user changed the name, call /rename and update item.file.
+// Returns true on success or no-op, false on failure.
+async function maybeRename(kind, item, newStem) {
+  if (!newStem) return true;
+  const currentStem = item.file.replace(/\.[^.]+$/, "");
+  if (newStem === currentStem) return true;
+  try {
+    const r = await fetch("/rename", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({kind, file: item.file, new_stem: newStem})
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { toast(`rename failed: ${j.detail || r.statusText}`, true); return false; }
+    item.file = j.new;
+    item.name = j.new.replace(/\.[^.]+$/, "");
+    return true;
+  } catch (e) { toast(`rename failed: ${e.message}`, true); return false; }
+}
+
+// ---- video editor ----
+function openEditor(item) {
+  const kind = "video";
+  const pos = Object.assign({x:50,y:50,scale:3}, item.pos || {});
+  let x = pos.x, y = pos.y, scale = pos.scale;
+  let volume = (item.volume !== undefined) ? item.volume : 1.0;
+  const hasVolume = !!item.has_audio;
+
+  const volumeRow = hasVolume ? `
+        <div class="editor-row">
+          <label>Volume</label>
+          <input type="range" id="volslider" min="0" max="1" step="0.01" value="${volume}">
+          <div class="value" id="volval">${Math.round(volume*100)}%</div>
+        </div>` : "";
+
+  const trim = buildTrim(item, kind);
+  const meta = buildMetaRows(item);
+
+  const ov = document.createElement("div");
+  ov.className = "modal-overlay";
+  ov.innerHTML = `
+    <div class="modal">
+      <div class="modal-header">
+        <span class="title">${item.name}</span>
+        <button class="close" title="Close">×</button>
+      </div>
+      <div class="canvas-preview" id="preview">
+        <div class="grid-overlay"></div>
+        <div class="media-wrapper" id="wrapper"></div>
+      </div>
+      <div class="editor-controls">
+        <div class="editor-row">
+          <label>Scale</label>
+          <input type="range" id="scaleslider" min="0.2" max="10" step="0.1" value="${scale}">
+          <div class="value" id="scaleval">${scale.toFixed(1)}x</div>
+        </div>
+        <div class="editor-row">
+          <label>Position</label>
+          <div class="value" style="flex:1;text-align:left;">
+            x:<span id="xval">${x.toFixed(0)}</span>% y:<span id="yval">${y.toFixed(0)}</span>%
+          </div>
+          <div class="quick-positions">
+            <button data-pos="15,15" title="Top Left">↖</button>
+            <button data-pos="50,15" title="Top">↑</button>
+            <button data-pos="85,15" title="Top Right">↗</button>
+            <button data-pos="15,50" title="Left">←</button>
+            <button data-pos="50,50" title="Center">●</button>
+            <button data-pos="85,50" title="Right">→</button>
+            <button data-pos="15,85" title="Bottom Left">↙</button>
+            <button data-pos="50,85" title="Bottom">↓</button>
+            <button data-pos="85,85" title="Bottom Right">↘</button>
+          </div>
+        </div>${volumeRow}
+        ${trim.html}
+        ${meta.html}
+      </div>
+      <div class="modal-actions">
+        <div class="left">
+          <button class="reset">Reset</button>
+          <button class="preview">▶ Preview</button>
+          <button class="test">Test in OBS</button>
+        </div>
+        <div class="right">
+          <button class="cancel">Cancel</button>
+          <button class="save">Save</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+
+  const wrapper = ov.querySelector("#wrapper");
+  const preview = ov.querySelector("#preview");
+  const slider = ov.querySelector("#scaleslider");
+
+  // Preview state. Starts as a static poster image. Switching to live preview
+  // replaces it with a <video> we can scrub and play.
+  const isStaticImage = /\.(png|jpe?g)$/i.test(item.url);
+  const previewable = !isStaticImage;
+  let previewVideo = null;
+  let previewActive = false;
+  let previewTimeupdate = null;
+
+  function buildPoster() {
+    wrapper.innerHTML = "";
+    const img = document.createElement("img");
+    img.src = item.poster || item.url;
+    img.draggable = false;
+    wrapper.appendChild(img);
+  }
+  function buildPreviewVideo() {
+    wrapper.innerHTML = "";
+    const v = document.createElement("video");
+    v.src = item.url;
+    v.muted = !item.has_audio;
+    v.playsInline = true;
+    v.loop = false;
+    if (item.has_audio) v.volume = volume;
+    v.draggable = false;
+    wrapper.appendChild(v);
+    previewVideo = v;
+  }
+  if (previewable) {
+    // Use a <video> element from the start so we can scrub frames with the slider.
+    buildPreviewVideo();
+    previewVideo.addEventListener("loadedmetadata", () => {
+      const ts = trim.getState();
+      try { previewVideo.currentTime = ts.start || 0; } catch (_) {}
+    }, { once: true });
+  } else {
+    buildPoster();
+  }
+
+  function previewRatio() {
+    return preview.getBoundingClientRect().width / CANVAS_W;
+  }
+
+  function update() {
+    const r = previewRatio();
+    wrapper.style.left = x + "%";
+    wrapper.style.top = y + "%";
+    wrapper.style.transform = `translate(-50%, -50%) scale(${scale * r})`;
+    ov.querySelector("#xval").textContent = x.toFixed(0);
+    ov.querySelector("#yval").textContent = y.toFixed(0);
+    ov.querySelector("#scaleval").textContent = scale.toFixed(1) + "x";
+  }
+  requestAnimationFrame(update);
+
+  // Drag-to-position
+  let dragging = false, startX, startY, startMx, startMy;
+  wrapper.addEventListener("pointerdown", (e) => {
+    if (previewActive) return;  // don't drag while previewing
+    dragging = true;
+    startX = x; startY = y;
+    startMx = e.clientX; startMy = e.clientY;
+    wrapper.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+  wrapper.addEventListener("pointermove", (e) => {
+    if (!dragging) return;
+    const rect = preview.getBoundingClientRect();
+    const dx = ((e.clientX - startMx) / rect.width) * 100;
+    const dy = ((e.clientY - startMy) / rect.height) * 100;
+    x = Math.max(0, Math.min(100, startX + dx));
+    y = Math.max(0, Math.min(100, startY + dy));
+    update();
+  });
+  wrapper.addEventListener("pointerup", (e) => {
+    dragging = false;
+    try { wrapper.releasePointerCapture(e.pointerId); } catch (_) {}
+  });
+
+  // Scale slider
+  slider.oninput = () => { scale = parseFloat(slider.value); update(); };
+
+  // Volume slider
+  const volSlider = ov.querySelector("#volslider");
+  if (volSlider) {
+    volSlider.oninput = () => {
+      volume = parseFloat(volSlider.value);
+      ov.querySelector("#volval").textContent = Math.round(volume * 100) + "%";
+      if (previewVideo) previewVideo.volume = volume;
+    };
+  }
+
+  // Quick positions
+  ov.querySelectorAll(".quick-positions button").forEach(b => {
+    b.onclick = () => {
+      const [px, py] = b.dataset.pos.split(",").map(Number);
+      x = px; y = py; update();
+    };
+  });
+
+  // Trim: as user drags, scrub the preview video to that timestamp.
+  trim.attach(ov, ({start: s, end: e}, source) => {
+    if (!previewVideo || previewActive) return;
+    try { previewVideo.currentTime = (source === "end") ? Math.max(0, e - 0.05) : s; }
+    catch (_) {}
+  });
+
+  // ---- Preview button: play the trimmed range in the editor canvas ----
+  const previewBtn = ov.querySelector(".preview");
+  if (!previewable) {
+    previewBtn.disabled = true;
+    previewBtn.title = "static images can't be previewed";
+  }
+
+  function stopPreview() {
+    if (!previewVideo) return;
+    if (previewTimeupdate) {
+      previewVideo.removeEventListener("timeupdate", previewTimeupdate);
+      previewTimeupdate = null;
+    }
+    try { previewVideo.pause(); } catch (_) {}
+    previewActive = false;
+    previewBtn.classList.remove("playing");
+    previewBtn.textContent = "▶ Preview";
+    // Reseek to start so the visible frame matches the slider
+    const ts = trim.getState();
+    try { previewVideo.currentTime = ts.start || 0; } catch (_) {}
+  }
+
+  previewBtn.onclick = () => {
+    if (!previewable) return;
+    if (previewActive) { stopPreview(); return; }
+    const ts = trim.getState();
+    const s = ts.start || 0;
+    const e = ts.end;
+    previewActive = true;
+    previewBtn.classList.add("playing");
+    previewBtn.textContent = "⏸ Stop";
+
+    try { previewVideo.currentTime = s; } catch (_) {}
+    if (e !== null && e !== undefined) {
+      previewTimeupdate = () => {
+        if (previewVideo.currentTime >= e) stopPreview();
+      };
+      previewVideo.addEventListener("timeupdate", previewTimeupdate);
+    }
+    previewVideo.addEventListener("ended", stopPreview, { once: true });
+    previewVideo.play().catch(err => {
+      console.error("preview play failed:", err);
+      stopPreview();
+    });
+  };
+
+  // Actions
+  const close = () => { stopPreview(); ov.remove(); };
+  ov.querySelector(".close").onclick = close;
+  ov.querySelector(".cancel").onclick = close;
+  ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
+
+  ov.querySelector(".test").onclick = () => {
+    const ts = trim.getState();
+    const override = {x, y, scale, start: ts.start, end: ts.end};
+    if (hasVolume) override.volume = volume;
+    fire(kind, item, override);
+    toast("fired to OBS — not saved yet");
+  };
+
+  ov.querySelector(".save").onclick = async () => {
+    stopPreview();
+    const { newStem, cooldownMs } = meta.getState(ov);
+    // Rename first if needed (changes item.file)
+    if (!(await maybeRename(kind, item, newStem))) return;
+    try {
+      const ts = trim.getState();
+      const body = {file: item.file, kind, x, y, scale, start: ts.start, end: ts.end,
+                    cooldown_ms: cooldownMs};
+      if (hasVolume) body.volume = volume;
+      const r = await fetch("/position", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(body)
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        toast(`save failed: ${j.detail || r.statusText}`, true);
+        return;
+      }
+      item.pos = {x, y, scale};
+      if (hasVolume) item.volume = volume;
+      item.start = ts.start;
+      item.end = ts.end;
+      item.cooldown_ms = cooldownMs;
+      toast(`saved ${item.name}`);
+      close();
+    } catch (e) { toast(`save failed: ${e.message}`, true); }
+  };
+
+  ov.querySelector(".reset").onclick = async () => {
+    if (!confirm("Reset all settings to defaults (name unchanged)?")) return;
+    stopPreview();
+    try {
+      await fetch("/position", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({file: item.file, kind, reset: true})
+      });
+      item.pos = {x: 50, y: 50, scale: 3};
+      if (hasVolume) item.volume = 1.0;
+      item.start = 0;
+      item.end = null;
+      item.cooldown_ms = 0;
+      toast(`reset ${item.name}`);
+      close();
+    } catch (e) { toast(`reset failed: ${e.message}`, true); }
+  };
+}
+
+// ---- audio editor ----
+function openAudioEditor(item) {
+  const kind = "audio";
+  let volume = (item.volume !== undefined) ? item.volume : 1.0;
+  const trim = buildTrim(item, kind);
+  const meta = buildMetaRows(item);
+
+  const ov = document.createElement("div");
+  ov.className = "modal-overlay";
+  ov.innerHTML = `
+    <div class="modal" style="max-width:560px;">
+      <div class="modal-header">
+        <span class="title">${item.name}</span>
+        <button class="close" title="Close">×</button>
+      </div>
+      <div class="editor-controls">
+        <div class="editor-row">
+          <label>Volume</label>
+          <input type="range" id="volslider" min="0" max="1" step="0.01" value="${volume}">
+          <div class="value" id="volval">${Math.round(volume*100)}%</div>
+        </div>
+        ${trim.html}
+        ${meta.html}
+      </div>
+      <div class="modal-actions">
+        <div class="left">
+          <button class="reset">Reset</button>
+          <button class="preview">▶ Preview</button>
+          <button class="test">Test in OBS</button>
+        </div>
+        <div class="right">
+          <button class="cancel">Cancel</button>
+          <button class="save">Save</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+
+  // Hidden audio element so we can scrub on slider drag and play preview.
+  const audio = new Audio(item.url);
+  audio.preload = "metadata";
+  audio.volume = volume;
+  let previewActive = false;
+  let previewTimeupdate = null;
+  const previewBtn = ov.querySelector(".preview");
+
+  function stopPreview() {
+    if (previewTimeupdate) {
+      audio.removeEventListener("timeupdate", previewTimeupdate);
+      previewTimeupdate = null;
+    }
+    try { audio.pause(); } catch (_) {}
+    previewActive = false;
+    previewBtn.classList.remove("playing");
+    previewBtn.textContent = "▶ Preview";
+  }
+
+  const volSlider = ov.querySelector("#volslider");
+  volSlider.oninput = () => {
+    volume = parseFloat(volSlider.value);
+    ov.querySelector("#volval").textContent = Math.round(volume * 100) + "%";
+    audio.volume = volume;
+  };
+
+  // Trim: scrubbing the thumbs sets audio.currentTime so the next preview starts there.
+  trim.attach(ov, ({start: s, end: e}, source) => {
+    if (previewActive) return;
+    try { audio.currentTime = (source === "end") ? Math.max(0, e - 0.05) : s; }
+    catch (_) {}
+  });
+
+  previewBtn.onclick = () => {
+    if (previewActive) { stopPreview(); return; }
+    const ts = trim.getState();
+    const s = ts.start || 0;
+    const e = ts.end;
+    previewActive = true;
+    previewBtn.classList.add("playing");
+    previewBtn.textContent = "⏸ Stop";
+
+    const startPlay = () => {
+      try { audio.currentTime = s; } catch (_) {}
+      if (e !== null && e !== undefined) {
+        previewTimeupdate = () => {
+          if (audio.currentTime >= e) stopPreview();
+        };
+        audio.addEventListener("timeupdate", previewTimeupdate);
+      }
+      audio.addEventListener("ended", stopPreview, { once: true });
+      audio.play().catch(err => {
+        console.error("preview play failed:", err);
+        stopPreview();
+      });
+    };
+    if (audio.readyState >= 1) startPlay();
+    else audio.addEventListener("loadedmetadata", startPlay, { once: true });
+  };
+
+  const close = () => { stopPreview(); ov.remove(); };
+  ov.querySelector(".close").onclick = close;
+  ov.querySelector(".cancel").onclick = close;
+  ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
+
+  ov.querySelector(".test").onclick = () => {
+    const ts = trim.getState();
+    fire("audio", item, {volume, start: ts.start, end: ts.end});
+    toast("fired to OBS — not saved yet");
+  };
+
+  ov.querySelector(".save").onclick = async () => {
+    stopPreview();
+    const { newStem, cooldownMs } = meta.getState(ov);
+    if (!(await maybeRename(kind, item, newStem))) return;
+    try {
+      const ts = trim.getState();
+      const r = await fetch("/position", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({file: item.file, kind: "audio", volume,
+                              start: ts.start, end: ts.end,
+                              cooldown_ms: cooldownMs})
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        toast(`save failed: ${j.detail || r.statusText}`, true);
+        return;
+      }
+      item.volume = volume;
+      item.start = ts.start;
+      item.end = ts.end;
+      item.cooldown_ms = cooldownMs;
+      toast(`saved ${item.name}`);
+      close();
+    } catch (e) { toast(`save failed: ${e.message}`, true); }
+  };
+
+  ov.querySelector(".reset").onclick = async () => {
+    if (!confirm("Reset volume, trim, and cooldown to defaults (name unchanged)?")) return;
+    stopPreview();
+    try {
+      await fetch("/position", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({file: item.file, kind: "audio", reset: true})
+      });
+      item.volume = 1.0;
+      item.start = 0;
+      item.end = null;
+      item.cooldown_ms = 0;
+      toast(`reset ${item.name}`);
+      close();
+    } catch (e) { toast(`reset failed: ${e.message}`, true); }
+  };
+}
+
+// ---- upload ----
+const dropzone = $("#dropzone");
+const fileinput = $("#fileinput");
+$("#browse").onclick = (e) => { e.preventDefault(); fileinput.click(); };
+fileinput.onchange = () => { uploadFiles(fileinput.files); fileinput.value = ""; };
+["dragover", "dragenter"].forEach(ev =>
+  dropzone.addEventListener(ev, (e) => { e.preventDefault(); dropzone.classList.add("over"); }));
+["dragleave", "drop"].forEach(ev =>
+  dropzone.addEventListener(ev, (e) => { dropzone.classList.remove("over"); }));
+dropzone.addEventListener("drop", (e) => {
+  e.preventDefault();
+  if (e.dataTransfer && e.dataTransfer.files) uploadFiles(e.dataTransfer.files);
+});
+
+async function uploadFiles(files) {
+  for (const f of files) {
+    try {
+      const fd = new FormData();
+      fd.append("file", f);
+      const r = await fetch("/upload", { method: "POST", body: fd });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok) toast(`uploaded ${j.kind}: ${j.name}`);
+      else     toast(`upload failed: ${j.detail || r.statusText}`, true);
+    } catch (e) { toast(`upload failed: ${e.message}`, true); }
+  }
+}
+
+// ---- search (Tenor / Freesound) ----
+const searchType = $("#searchtype");
+const searchBox = $("#searchbox");
+const results = $("#results");
+$("#searchbtn").onclick = doSearch;
+searchBox.addEventListener("keydown", (e) => { if (e.key === "Enter") doSearch(); });
+
+async function doSearch() {
+  const q = searchBox.value.trim();
+  if (!q) { results.hidden = true; results.innerHTML = ""; return; }
+  const type = searchType.value;
+  try {
+    const r = await fetch(`/search?q=${encodeURIComponent(q)}&type=${type}`);
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { toast(`search failed: ${j.detail || r.statusText}`, true); return; }
+    renderResults(j.results || [], type);
+  } catch (e) { toast(`search failed: ${e.message}`, true); }
+}
+
+function renderResults(items, type) {
+  results.innerHTML = "";
+  results.hidden = items.length === 0;
+  for (const it of items) {
+    const r = document.createElement("div");
+    r.className = "r" + (type === "audio" ? " sound" : "");
+    if (type === "video") r.style.backgroundImage = `url("${it.preview}")`;
+    const lbl = document.createElement("div");
+    lbl.className = "lbl";
+    lbl.textContent = it.name;
+    r.appendChild(lbl);
+    r.title = it.name;
+    r.onclick = async () => {
+      r.classList.add("imported");
+      try {
+        const resp = await fetch("/import", {
+          method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({url: it.url, kind: it.kind, name: it.name, ext: it.ext})
+        });
+        const j = await resp.json().catch(() => ({}));
+        if (resp.ok) toast(`imported ${j.kind}: ${j.name}`);
+        else        { toast(`import failed: ${j.detail || resp.statusText}`, true);
+                      r.classList.remove("imported"); }
+      } catch (e) { toast(`import failed: ${e.message}`, true); r.classList.remove("imported"); }
+    };
+    results.appendChild(r);
+  }
+}
+
+// ---- websocket / live index ----
+const statusEl = $("#status");
+let ws;
+function connectWs() {
+  ws = new WebSocket(`ws://${location.host}/ws/control`);
+  ws.onopen = () => { statusEl.textContent = "live"; statusEl.classList.add("connected"); };
+  ws.onmessage = (e) => {
+    const m = JSON.parse(e.data);
+    if (m.type === "index") { index = m.data; render(index); }
+  };
+  ws.onclose = () => {
+    statusEl.textContent = "disconnected — retrying…";
+    statusEl.classList.remove("connected");
+    setTimeout(connectWs, 1500);
+  };
+}
+connectWs();
+</script>
+</body></html>

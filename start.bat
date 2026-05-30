@@ -16,5 +16,5 @@ if not exist .venv (
     .venv\Scripts\python.exe -m pip install -r requirements.txt
 )
 
-.venv\Scripts\python.exe soundboard.py
+.venv\Scripts\python.exe hexcast.py
 pause
