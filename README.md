@@ -431,3 +431,6 @@ Twitch integration is intentionally out of scope — point any bot at `GET /api/
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+
+<img width="1560" height="1178" alt="image" src="https://github.com/user-attachments/assets/fb81bb83-ff32-4376-b000-b199edfb5cae" />
