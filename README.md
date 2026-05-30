@@ -5,7 +5,7 @@
 </p>
 
 Self hosted, completely free set of stream tools to fully control audio and video to an OBS overlay. Edit position, scale, start times, stop times, volume, delay, etc. 
-Think Blerp, but local, no accounts, no rate limits, and you own your library.
+No data collection, no monthly fee, no sign ups, always free!
 
 ## ⚠️ Security: local network use only
 
