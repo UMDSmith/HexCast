@@ -3,7 +3,7 @@
 Hexcast: dead-simple folder-watching soundboard & clip overlay for OBS.
 
 Drop media into ./media/{sounds,gifs,videos}/, then:
-    python hexcast.py
+    python soundboard.py
 
 Control panel:       http://localhost:4747/
 OBS browser source:  http://localhost:4747/overlay
@@ -39,9 +39,9 @@ from watchdog.observers import Observer
 # ---- config ----------------------------------------------------------------
 PORT = 4747
 ROOT = Path(__file__).parent
-# HEXCAST_MEDIA_DIR lets you point the library anywhere (another drive, shared folder,
+# SOUNDBOARD_MEDIA_DIR lets you point the library anywhere (another drive, shared folder,
 # network mount, etc.) without editing this file. Defaults to ./media next to the script.
-MEDIA_DIR = Path(os.getenv("HEXCAST_MEDIA_DIR", str(ROOT / "media"))).expanduser().resolve()
+MEDIA_DIR = Path(os.getenv("SOUNDBOARD_MEDIA_DIR", str(ROOT / "media"))).expanduser().resolve()
 AUDIO_DIR = MEDIA_DIR / "audio"
 VIDEO_DIR = MEDIA_DIR / "video"
 
@@ -481,7 +481,7 @@ def _read_static(name: str) -> str:
     if not path.exists():
         raise FileNotFoundError(
             f"Static file '{name}' not found at {path}. "
-            f"Hexcast needs a 'static/' folder next to hexcast.py containing "
+            f"Hexcast needs a 'static/' folder next to soundboard.py containing "
             f"control.html and overlay.html. If you just upgraded, copy those two "
             f"files from the new release into ./static/."
         )
@@ -754,7 +754,10 @@ async def set_position(payload: dict):
             except (TypeError, ValueError):
                 pass
         write_sidecar(path, data)
-    # No reindex. /trigger reads the sidecar fresh when it fires.
+    # Watcher ignores .json writes (to avoid feedback loops), so we trigger a reindex
+    # manually here. Without this, re-opening the editor can show stale values when
+    # something else causes a watcher event between save and re-open.
+    reindex()
     return {"ok": True}
 
 
@@ -806,6 +809,9 @@ async def rename_media(payload: dict):
             try: old_poster.rename(new_poster)
             except OSError: pass
 
+    # Force an immediate reindex so the new name shows up without waiting for the
+    # async watcher → reindex → broadcast cycle.
+    reindex()
     return {"ok": True, "old": file, "new": new_path.name}
 
 

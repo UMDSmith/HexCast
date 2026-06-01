@@ -51,8 +51,15 @@ function applyMediaTrim(el, start, end, onFinish) {
 function playAudio(url, volume, start, end) {
   const a = new Audio(url);
   if (volume !== undefined) a.volume = clampVol(volume);
+  // CEF (OBS browser source) doesn't always mix *detached* Audio elements into
+  // the browser source's audio output — attaching to the DOM makes it reliable.
+  a.style.display = "none";
+  stage.appendChild(a);
   activeAudio.add(a);
-  const cleanup = () => activeAudio.delete(a);
+  const cleanup = () => {
+    activeAudio.delete(a);
+    if (a.parentNode === stage) stage.removeChild(a);
+  };
   a.addEventListener("ended", cleanup);
   applyMediaTrim(a, start || 0, end, cleanup);
   a.play().catch(e => console.error("audio play failed:", e));

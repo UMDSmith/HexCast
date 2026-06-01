@@ -35,6 +35,7 @@
   .editmode-btn { background: var(--card); border: 1px solid var(--border); color: var(--text);
                   padding: 6px 10px; font-size: 13px; border-radius: 6px; cursor: pointer; }
   .editmode-btn:hover { background: #2a1c1c; }
+  a.editmode-btn { text-decoration: none; display: inline-block; }
   body.edit-mode #editmode { background: #3a2a18; border-color: var(--amber); color: var(--amber-soft); }
   body.delete-mode #deletemode { background: #3a1818; border-color: var(--red); color: var(--red-soft); }
   #stopall { background: #3a1414; border-color: var(--red-deep); color: var(--red-soft); font-weight: 600; }
@@ -242,6 +243,7 @@
       <h1>Hexcast</h1>
     </div>
     <div style="display:flex;gap:6px;">
+      <a class="editmode-btn" id="openoverlay" href="/overlay" target="_blank" title="Open the OBS browser-source overlay in a new tab (this is the URL to paste into OBS)">↗ Overlay</a>
       <button class="editmode-btn" id="stopall" title="Clear all visuals and stop all audio">⏹ Stop All</button>
       <button class="editmode-btn" id="editmode">Edit Mode</button>
       <button class="editmode-btn" id="deletemode">Delete Mode</button>
@@ -552,8 +554,15 @@ async function maybeRename(kind, item, newStem) {
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) { toast(`rename failed: ${j.detail || r.statusText}`, true); return false; }
-    item.file = j.new;
-    item.name = j.new.replace(/\.[^.]+$/, "");
+    // Update every field derived from the filename so callers can keep using `item`.
+    const lastSlash = item.url.lastIndexOf("/");
+    const baseUrl = item.url.substring(0, lastSlash + 1);
+    const newFile = j.new;
+    const newName = newFile.replace(/\.[^.]+$/, "");
+    item.file = newFile;
+    item.name = newName;
+    item.url = baseUrl + newFile;
+    if (item.poster) item.poster = baseUrl + newName + ".poster.jpg";
     return true;
   } catch (e) { toast(`rename failed: ${e.message}`, true); return false; }
 }
@@ -800,8 +809,18 @@ function openEditor(item) {
   ov.querySelector(".save").onclick = async () => {
     stopPreview();
     const { newStem, cooldownMs } = meta.getState(ov);
-    // Rename first if needed (changes item.file)
+    // Rename first if needed (changes item.file/url/name)
     if (!(await maybeRename(kind, item, newStem))) return;
+
+    // Resync modal in case rename changed the file identity, so subsequent
+    // saves and previews operate on the new file.
+    ov.querySelector(".modal-header .title").textContent = item.name;
+    const renameField = ov.querySelector("#renamefield");
+    if (renameField) renameField.value = item.file.replace(/\.[^.]+$/, "");
+    if (previewVideo && !previewVideo.src.endsWith(item.url)) {
+      previewVideo.src = item.url;
+    }
+
     try {
       const ts = trim.getState();
       const body = {file: item.file, kind, x, y, scale, start: ts.start, end: ts.end,
@@ -822,7 +841,7 @@ function openEditor(item) {
       item.end = ts.end;
       item.cooldown_ms = cooldownMs;
       toast(`saved ${item.name}`);
-      close();
+      // Modal stays open so you can keep fine-tuning. Close via × / Cancel / click-outside.
     } catch (e) { toast(`save failed: ${e.message}`, true); }
   };
 
@@ -958,6 +977,15 @@ function openAudioEditor(item) {
     stopPreview();
     const { newStem, cooldownMs } = meta.getState(ov);
     if (!(await maybeRename(kind, item, newStem))) return;
+
+    // Resync modal in case rename changed the file identity.
+    ov.querySelector(".modal-header .title").textContent = item.name;
+    const renameField = ov.querySelector("#renamefield");
+    if (renameField) renameField.value = item.file.replace(/\.[^.]+$/, "");
+    if (audio && !audio.src.endsWith(item.url)) {
+      audio.src = item.url;
+    }
+
     try {
       const ts = trim.getState();
       const r = await fetch("/position", {
@@ -976,7 +1004,7 @@ function openAudioEditor(item) {
       item.end = ts.end;
       item.cooldown_ms = cooldownMs;
       toast(`saved ${item.name}`);
-      close();
+      // Modal stays open so you can keep fine-tuning. Close via × / Cancel / click-outside.
     } catch (e) { toast(`save failed: ${e.message}`, true); }
   };
 
