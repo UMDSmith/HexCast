@@ -110,6 +110,66 @@ brew install ffmpeg
 3. Add `C:\ffmpeg\bin` to your PATH (System Properties → Environment Variables → Path → New)
 4. Open a new terminal and verify: `ffmpeg -version`
 
+### Docker
+
+A `Dockerfile` is provided with a multistage build for efficient image creation. The image includes ffmpeg for full media support.
+
+#### Build a standard image
+
+For your current architecture (e.g., x86_64 on Linux, ARM64 on macOS):
+
+```bash
+docker build -t hexcast:latest .
+```
+
+#### Build for a specific architecture
+
+To build for a different architecture:
+
+```bash
+# For AMD64 (x86_64)
+docker build --platform linux/amd64 -t hexcast:latest .
+
+# For ARM64 (Apple Silicon, Raspberry Pi, etc.)
+docker build --platform linux/arm64 -t hexcast:latest .
+
+# For ARMv7 (Raspberry Pi 32-bit)
+docker build --platform linux/arm/v7 -t hexcast:latest .
+```
+
+#### Build and push multiarch images
+
+To create and push a multiarch image to a registry (requires Docker Buildx):
+
+```bash
+docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 \
+  -t your-registry/hexcast:latest \
+  --push .
+```
+
+#### Run the container
+
+```bash
+# Create media directories on the host
+mkdir -p ./hexcast-media/audio ./hexcast-media/video
+
+# Run the container
+docker run -d \
+  --name hexcast \
+  -p 4747:4747 \
+  -v ./hexcast-media:/app/media \
+  hexcast:latest
+```
+
+Access the control panel at `http://localhost:4747/`
+
+For OBS browser source, use: `http://<your-machine-ip>:4747/overlay`
+
+**Notes:**
+- The `-v ./hexcast-media:/app/media` mount persists your media library
+- Media uploaded or discovered will be saved to `./hexcast-media/audio/` and `./hexcast-media/video/`
+- Remember: **⚠️ This is for local networks only** — do not expose port 4747 to the internet
+
 ## Usage
 
 ### 1. Start the server
