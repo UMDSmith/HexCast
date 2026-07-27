@@ -51,7 +51,7 @@ Safe ways to run it:
 ### Linux / macOS
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/hexcast.git
+git clone https://github.com/UMDSmith/hexcast.git
 cd hexcast
 chmod +x start.sh
 ./start.sh
@@ -70,7 +70,7 @@ python hexcast.py
 ### Windows
 
 ```cmd
-git clone https://github.com/YOUR_USERNAME/hexcast.git
+git clone https://github.com/UMDSmith/hexcast.git
 cd hexcast
 start.bat
 ```
