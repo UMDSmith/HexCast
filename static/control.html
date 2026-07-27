@@ -3,26 +3,28 @@
 <meta charset="utf-8">
 <title>Hexcast</title>
 <link rel="icon" href="__ICON__">
+<link rel="stylesheet" href="/static/hexbar.css">
 <style>
   :root {
-    --bg: #0e0808;
-    --panel: #1a1212;
-    --card: #1f1414;
-    --border: #3a2020;
-    --border-hover: #5a2828;
-    --text: #f0e0e0;
-    --muted: #b89494;
-    --dim: #806060;
-    --red: #c92020;
-    --red-soft: #e85050;
-    --red-deep: #7a1010;
-    --amber: #a06820;
-    --amber-soft: #d4a040;
+    --bg: #0a0a0e;
+    --panel: #131319;
+    --card: #17171f;
+    --border: #232330;
+    --border-hover: #35354a;
+    --text: #e8e8ef;
+    --muted: #a0a0b0;
+    --dim: #8a8a9c;
+    --red: #ff3b30;
+    --red-soft: #ff6b62;
+    --red-deep: #8c1f1a;
+    --amber: #ffb020;
+    --amber-soft: #ffc95c;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
                font-family: system-ui, -apple-system, sans-serif; font-size: 14px; }
-  body { padding: 14px; }
+  body { padding: 0 14px 14px; }
+  #hexbar { margin-left: -14px; margin-right: -14px; }
 
   .topbar { display: flex; align-items: center; justify-content: space-between;
             margin-bottom: 14px; padding: 4px 0; }
@@ -36,16 +38,6 @@
                   padding: 6px 10px; font-size: 13px; border-radius: 6px; cursor: pointer; }
   .editmode-btn:hover { background: #2a1c1c; }
   a.editmode-btn { text-decoration: none; display: inline-block; }
-  a#opentwitch { border-color: #6441a5; }
-  a#opentwitch:hover { background: #241a33; }
-  #twitchdot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-               background: #555; margin-right: 6px; vertical-align: middle; }
-  #twitchdot.on { background: #3ddc84; }
-  a#openmusic { border-color: #ff0033; }
-  a#openmusic:hover { background: #2e1218; }
-  #musicdot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-              background: #555; margin-right: 6px; vertical-align: middle; }
-  #musicdot.on { background: #3ddc84; }
   body.edit-mode #editmode { background: #3a2a18; border-color: var(--amber); color: var(--amber-soft); }
   body.delete-mode #deletemode { background: #3a1818; border-color: var(--red); color: var(--red-soft); }
   #stopall { background: #3a1414; border-color: var(--red-deep); color: var(--red-soft); font-weight: 600; }
@@ -247,20 +239,14 @@
   .toast.err { background: #3a1414; border-color: var(--red); color: #ffaaaa; }
 </style></head>
 <body data-canvas-w="__CANVAS_W__" data-canvas-h="__CANVAS_H__">
-  <div class="topbar">
-    <div class="brand">
-      <img class="logo" src="__ICON__" alt="Hexcast">
-      <h1>Hexcast</h1>
-    </div>
-    <div style="display:flex;gap:6px;">
+  <div id="hexbar" data-section="Soundboard"></div>
+  <div id="hexbar-actions">
       <a class="editmode-btn" id="openoverlay" href="/overlay" target="_blank" title="Open the OBS browser-source overlay in a new tab (this is the URL to paste into OBS)">↗ Overlay</a>
-      <a class="editmode-btn" id="opentwitch" href="/twitch" target="_blank" title="Twitch chat overlay, alerts and settings"><span id="twitchdot"></span>Twitch</a>
-      <a class="editmode-btn" id="openmusic" href="/ytm" target="_blank" title="Now playing overlay from YouTube Music Desktop"><span id="musicdot"></span>Music</a>
       <button class="editmode-btn" id="stopall" title="Clear all visuals and stop all audio">⏹ Stop All</button>
       <button class="editmode-btn" id="editmode">Edit Mode</button>
       <button class="editmode-btn" id="deletemode">Delete Mode</button>
-    </div>
   </div>
+  <script src="/static/hexbar.js"></script>
 
   <div class="addmedia">
     <div class="dropzone" id="dropzone">

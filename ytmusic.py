@@ -38,8 +38,19 @@ import socketio
 # Audio reactivity is optional. Without these the visualiser still runs, driven
 # by playback position instead of real levels.
 try:
+    import warnings as _warnings
+
     import numpy as _np
     import soundcard as _sc
+
+    # WASAPI reports a discontinuity whenever the device goes briefly idle or
+    # resamples. It is routine for a loopback tap and says nothing useful, but
+    # soundcard warns on every occurrence and floods the console.
+    try:
+        _warnings.filterwarnings("ignore", category=_sc.SoundcardRuntimeWarning)
+    except Exception:
+        _warnings.filterwarnings("ignore", message="data discontinuity in recording")
+
     HAS_AUDIO_CAPTURE = True
     _AUDIO_IMPORT_ERROR = ""
 except Exception as _exc:          # pragma: no cover - depends on the host
@@ -162,6 +173,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "peak_hold": 0.45,
         "peak_fall": 0.5,
         "device": "",
+        "samplerate": 48000,
+        "blocksize": 2048,
+        "floor_db": -70,
     },
 }
 
@@ -273,6 +287,7 @@ class State:
             "audio_available": HAS_AUDIO_CAPTURE,
             "audio_running": AUDIO.running,
             "audio_device": AUDIO.device_name,
+            "audio_peak": round(AUDIO.peak, 4),
             "audio_error": AUDIO.error or (_AUDIO_IMPORT_ERROR if not HAS_AUDIO_CAPTURE else ""),
             "log": self.log[-25:],
         }
@@ -468,27 +483,42 @@ class AudioLevels:
     blocks; nothing starts until an overlay is actually watching.
     """
 
-    RATE = 44100
-    BLOCK = 1024
-
     def __init__(self) -> None:
         self.thread: threading.Thread | None = None
         self.stop_evt = threading.Event()
         self.loop: asyncio.AbstractEventLoop | None = None
         self.error = ""
         self.device_name = ""
+        self.peak = 0.0            # last block's level, for the panel meter
+        self.RATE = 48000
+        self.BLOCK = 2048
 
     @property
     def running(self) -> bool:
         return bool(self.thread and self.thread.is_alive())
 
-    def devices(self) -> list[str]:
+    def devices(self) -> list[dict]:
+        """Both loopback taps on playback devices and genuine capture devices.
+
+        Virtual mixers like Voicemeeter expose their buses as recording devices
+        (Voicemeeter Out B1/B2/B3), which is a far more reliable tap than
+        looping back a virtual playback endpoint."""
         if not HAS_AUDIO_CAPTURE:
             return []
+        out: list[dict] = []
         try:
-            return [str(s.name) for s in _sc.all_speakers()]
+            for sp in _sc.all_speakers():
+                out.append({"id": "loopback:" + str(sp.name),
+                            "label": str(sp.name) + "  (loopback)"})
         except Exception:
-            return []
+            pass
+        try:
+            for m in _sc.all_microphones(include_loopback=False):
+                out.append({"id": "input:" + str(m.name),
+                            "label": str(m.name) + "  (input)"})
+        except Exception:
+            pass
+        return out
 
     def start(self, loop: asyncio.AbstractEventLoop) -> bool:
         if not HAS_AUDIO_CAPTURE:
@@ -521,58 +551,88 @@ class AudioLevels:
             edges.append((b0, min(b1, nbins)))
         return edges
 
+    def _open(self):
+        """Resolve the configured device. Accepts 'loopback:<name>',
+        'input:<name>', a bare name (treated as loopback, for older configs),
+        or blank for the default speakers."""
+        want = (CONFIG.get("visualizer", {}).get("device") or "").strip()
+
+        if want.startswith("input:"):
+            name = want[6:]
+            for m in _sc.all_microphones(include_loopback=False):
+                if str(m.name) == name:
+                    self.device_name = str(m.name) + " (input)"
+                    return m
+            raise RuntimeError(f"capture device '{name}' is gone")
+
+        name = want[9:] if want.startswith("loopback:") else want
+        speaker = None
+        if name:
+            for sp in _sc.all_speakers():
+                if str(sp.name) == name:
+                    speaker = sp
+                    break
+            if speaker is None:
+                raise RuntimeError(f"playback device '{name}' is gone")
+        else:
+            speaker = _sc.default_speaker()
+        self.device_name = str(speaker.name) + " (loopback)"
+        return _sc.get_microphone(str(speaker.name), include_loopback=True)
+
     def _run(self) -> None:
+        viz = CONFIG.get("visualizer", {})
+        self.RATE = int(viz.get("samplerate", 48000))
+        self.BLOCK = int(viz.get("blocksize", 2048))
+
         try:
-            want = (CONFIG.get("visualizer", {}).get("device") or "").strip()
-            speaker = None
-            if want:
-                for sp in _sc.all_speakers():
-                    if str(sp.name) == want:
-                        speaker = sp
-                        break
-            speaker = speaker or _sc.default_speaker()
-            self.device_name = str(speaker.name)
-            mic = _sc.get_microphone(str(speaker.name), include_loopback=True)
+            mic = self._open()
         except Exception as exc:
-            self.error = f"could not open a loopback device: {exc}"
+            self.error = f"could not open audio device: {exc}"
             STATE.note(self.error)
             return
 
         self.error = ""
-        STATE.note(f"audio capture running on '{self.device_name}'")
+        STATE.note(f"audio capture running on {self.device_name} "
+                   f"at {self.RATE}Hz / {self.BLOCK} frames")
         window = _np.hanning(self.BLOCK)
         last_send = 0.0
-        bars = int(CONFIG.get("visualizer", {}).get("bars", 28))
+        bars = int(viz.get("bars", 28))
         edges = self._band_edges(bars, self.BLOCK // 2 + 1)
 
         try:
-            with mic.recorder(samplerate=self.RATE, channels=1, blocksize=self.BLOCK) as rec:
+            # channels=None takes the device's native layout, which avoids the
+            # downmix soundcard would otherwise have to do every block.
+            with mic.recorder(samplerate=self.RATE, channels=None,
+                              blocksize=self.BLOCK) as rec:
                 while not self.stop_evt.is_set():
                     data = rec.record(numframes=self.BLOCK)
                     now = time.monotonic()
-                    fps = max(4.0, float(CONFIG.get("visualizer", {}).get("fps", 18)))
+                    v = CONFIG.get("visualizer", {})
+                    fps = max(4.0, float(v.get("fps", 18)))
                     if now - last_send < 1.0 / fps:
                         continue
                     last_send = now
 
-                    want_bars = int(CONFIG.get("visualizer", {}).get("bars", 28))
+                    want_bars = int(v.get("bars", 28))
                     if want_bars != bars:
                         bars = want_bars
                         edges = self._band_edges(bars, self.BLOCK // 2 + 1)
 
-                    mono = data[:, 0] if data.ndim > 1 else data
+                    mono = data.mean(axis=1) if data.ndim > 1 else data
                     if len(mono) < self.BLOCK:
                         continue
+                    self.peak = float(_np.abs(mono).max())
+
                     spec = _np.abs(_np.fft.rfft(mono[:self.BLOCK] * window))
+                    floor = float(v.get("floor_db", -70))
+                    sens = float(v.get("sensitivity", 1.0))
 
                     vals = []
-                    sens = float(CONFIG.get("visualizer", {}).get("sensitivity", 1.0))
                     for b0, b1 in edges:
                         mag = float(spec[b0:b1].mean()) if b1 > b0 else 0.0
-                        # -70..0 dBFS mapped onto 0..1
                         db = 20.0 * _np.log10(mag + 1e-9)
-                        v = (db + 70.0) / 70.0
-                        vals.append(round(min(1.0, max(0.0, v * sens)), 3))
+                        lvl = (db - floor) / (0.0 - floor)
+                        vals.append(round(min(1.0, max(0.0, lvl * sens)), 3))
 
                     if self.loop and not self.loop.is_closed():
                         asyncio.run_coroutine_threadsafe(
@@ -580,6 +640,8 @@ class AudioLevels:
         except Exception as exc:
             self.error = f"audio capture stopped: {exc}"
             STATE.note(self.error)
+        finally:
+            self.peak = 0.0
 
 
 AUDIO = AudioLevels()
@@ -984,7 +1046,8 @@ async def api_command(request: Request):
 @router.get("/api/audio-devices")
 async def api_audio_devices():
     return {"available": HAS_AUDIO_CAPTURE, "devices": AUDIO.devices(),
-            "current": AUDIO.device_name, "error": AUDIO.error}
+            "current": AUDIO.device_name, "error": AUDIO.error,
+            "configured": CONFIG.get("visualizer", {}).get("device", "")}
 
 
 @router.get("/api/nowplaying", response_class=PlainTextResponse)

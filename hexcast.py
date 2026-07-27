@@ -469,6 +469,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 app.mount("/media", StaticFiles(directory=str(MEDIA_DIR)), name="media")
+app.mount("/static", StaticFiles(directory=str(ROOT / "static")), name="static")
 
 from twitch import attach_twitch
 attach_twitch(app, PORT)

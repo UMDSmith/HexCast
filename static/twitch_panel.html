@@ -1,28 +1,23 @@
 <!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="/static/hexcast.png">
+<link rel="stylesheet" href="/static/hexbar.css">
 <title>HexCast - Twitch</title>
 <style>
   :root{
-    --bg:#0a0a0e; --panel:#131319; --line:#232330; --ink:#e8e8ef;
-    --dim:#8a8a9c; --accent:#ff3b30; --good:#3ddc84; --warn:#ffb020;
-    --mono:'SFMono-Regular',Consolas,'Liberation Mono',monospace;
+    /* Palette lives in hexbar.css so every page matches. */
+    --bg:var(--hb-bg); --panel:var(--hb-panel); --line:var(--hb-line); --ink:var(--hb-ink);
+    --dim:var(--hb-dim); --accent:var(--hb-accent); --good:var(--hb-good); --warn:var(--hb-warn);
+    --mono:var(--hb-mono);
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);
        font:15px/1.5 'Segoe UI',system-ui,-apple-system,sans-serif;}
-  header{display:flex;align-items:center;gap:14px;padding:16px 22px;border-bottom:1px solid var(--line);
-         position:sticky;top:0;background:var(--bg);z-index:5}
-  header h1{margin:0;font-size:17px;letter-spacing:.2em;text-transform:uppercase;font-weight:800}
-  header h1 b{color:var(--accent)}
   .pill{font:600 12px/1 var(--mono);padding:6px 10px;border-radius:99px;border:1px solid var(--line);color:var(--dim)}
   .pill.on{color:var(--good);border-color:#1d4d33;background:#0e2118}
   .pill.off{color:var(--warn);border-color:#4d3a10;background:#211a0b}
-  .spacer{flex:1}
-  a.ghost{color:var(--dim);text-decoration:none;font-size:13px;border:1px solid var(--line);
-          padding:6px 11px;border-radius:8px}
-  a.ghost:hover{color:var(--ink);border-color:var(--accent)}
 
-  nav{display:flex;gap:4px;padding:14px 22px 0;flex-wrap:wrap}
+  nav{display:flex;gap:4px;padding:4px 22px 0;flex-wrap:wrap}
   nav button{background:none;border:0;border-bottom:2px solid transparent;color:var(--dim);
              font:600 13px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;
              padding:10px 14px;cursor:pointer}
@@ -81,13 +76,9 @@
 </style></head>
 <body>
 
-<header>
-  <h1>Hex<b>Cast</b> &nbsp;/&nbsp; Twitch</h1>
-  <span class="pill" id="st-conn">connecting</span>
-  <span class="pill" id="st-src">-</span>
-  <div class="spacer"></div>
-  <a class="ghost" href="/">Soundboard</a>
-</header>
+<div id="hexbar" data-section="Twitch"></div>
+<div id="hexbar-actions"><span class="pill" id="st-conn">connecting</span><span class="pill" id="st-src">-</span></div>
+
 
 <nav>
   <button data-tab="conn" class="sel">Connection</button>
@@ -522,4 +513,5 @@ setInterval(function(){
   fetch('/twitch/api/status').then(function(r){ return r.json(); }).then(paintStatus);
 }, 5000);
 </script>
+<script src="/static/hexbar.js"></script>
 </body></html>
