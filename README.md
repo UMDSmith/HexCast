@@ -39,6 +39,7 @@ Safe ways to run it:
 - **Edit Mode** for tuning, **Delete Mode** for cleanup — no manual filesystem digging
 - **Bot API**: trigger anything by name via a simple HTTP GET, no auth needed (designed for trusted LAN)
 - **⏹ Stop All** panic button to clear every visual and stop every playing sound at once
+- **Optional integrations**: Twitch chat and alert overlays, and a YouTube Music now-playing overlay — see [Integrations](#integrations)
 
 ## Prerequisites
 
@@ -357,6 +358,48 @@ await fetch(`http://localhost:4747/api/play/${name}`);
 
 There's no dedicated Twitch script — Hexcast stays generic. If you already have a bot monitoring Twitch chat, channel-point redemptions, or events, just have it call `GET /api/play/{name}` when the relevant trigger fires. Map a redemption title or chat command to a media name and hit the endpoint. The overlay applies the saved position/scale/volume automatically, so the bot only needs to know the clip name.
 
+## Integrations
+
+Two optional modules ship alongside the soundboard. Both are self-contained:
+each is a single Python file plus its own pages in `static/`, each namespaces
+all of its routes, and neither changes how the soundboard behaves. Install
+either, both, or neither.
+
+| | What it adds | Docs |
+| --- | --- | --- |
+| **Twitch** | Chat overlay, alert overlay for follows/subs/bits/raids/redeems, settings panel | [docs/twitch.md](docs/twitch.md) |
+| **YouTube Music** | Now-playing overlay with album art, live progress, audio visualiser, optional embedded music video | [docs/music.md](docs/music.md) |
+
+Both hook into the existing `GET /api/play/{name}` endpoint, so a raid or a
+track change can fire a clip from your library. Both can also POST every event
+to a URL of your choice, if you want a bot or a local model reacting to chat
+and to what you're listening to.
+
+Installing either is two lines in `hexcast.py`, after the `/media` mount:
+
+```python
+from twitch import attach_twitch
+attach_twitch(app, PORT)
+
+from ytmusic import attach_ytm
+attach_ytm(app, PORT)
+```
+
+Plus their dependencies:
+
+```
+pip install -r requirements-twitch.txt
+pip install -r requirements-ytm.txt
+```
+
+A Twitch and a Music button appear in the control panel's top bar, each with a
+status dot showing whether that integration is currently connected.
+
+**These carry the same security caveat as everything else here, and then
+some** — the Twitch module stores an OAuth token and a client secret, and the
+YouTube Music module stores a pairing token, all under `config/`. Keep that
+folder out of git and keep the port on your LAN.
+
 ## Network access & firewall
 
 The server binds to `0.0.0.0`, so the control panel is reachable from any device on your network. Limit access with your firewall.
@@ -432,10 +475,25 @@ ffmpeg -i input.whatever -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k -m
 ```
 hexcast/
 ├── hexcast.py            # the server
+├── twitch.py                # optional Twitch integration
+├── ytmusic.py               # optional YouTube Music integration
 ├── static/
 │   ├── control.html         # control panel UI (HTML + CSS + JS)
-│   └── overlay.html         # OBS browser-source overlay
+│   ├── overlay.html         # OBS browser-source overlay
+│   ├── twitch_panel.html    # Twitch settings panel
+│   ├── twitch_chat.html     # Twitch chat overlay
+│   ├── twitch_events.html   # Twitch alert overlay
+│   ├── twitch_boot.js       # shared overlay helpers
+│   ├── ytm_panel.html       # YouTube Music settings panel
+│   └── ytm_overlay.html     # YouTube Music now-playing overlay
+├── docs/
+│   ├── twitch.md
+│   └── music.md
+├── config/                  # tokens and integration settings (gitignored)
 ├── requirements.txt
+├── requirements-twitch.txt
+├── requirements-ytm.txt
+├── requirements-ytm-audio.txt
 ├── start.sh / start.bat     # launcher scripts
 ├── README.md
 ├── LICENSE
@@ -485,7 +543,10 @@ You can hand-edit these if you prefer — the watcher ignores `.json` writes so 
 - Search/filter box in the control panel for large libraries
 - Multi-track audio splitting (separate OBS audio source per clip)
 
-Twitch integration is intentionally out of scope — point any bot at `GET /api/play/{name}` (see [Triggering from a chat bot](#triggering-from-a-chat-bot--twitch-redemptions)).
+Twitch and YouTube Music now have optional modules of their own — see
+[Integrations](#integrations). The soundboard core stays independent of both:
+anything can still drive it through `GET /api/play/{name}` (see
+[Triggering from a chat bot](#triggering-from-a-chat-bot--twitch-redemptions)).
 
 ## License
 

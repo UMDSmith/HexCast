@@ -1,0 +1,38 @@
+# --- secrets and local settings -------------------------------------------
+# Twitch client secret, OAuth tokens, YouTube Music pairing token, and every
+# overlay setting live here. Never commit this folder.
+config/
+
+# --- media library ---------------------------------------------------------
+# Keep the folder structure, not the contents.
+media/*
+!media/.gitkeep
+!media/*/
+media/*/*
+!media/*/.gitkeep
+
+# Generated alongside media files
+*.poster.jpg
+
+# --- python ----------------------------------------------------------------
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- editors and OS --------------------------------------------------------
+.vscode/
+.idea/
+*.code-workspace
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# --- misc ------------------------------------------------------------------
+*.log
+.env

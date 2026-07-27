@@ -1,0 +1,154 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>HexCast chat</title>
+<style>
+  html,body{margin:0;padding:0;background:transparent;overflow:hidden;height:100%;}
+  #wrap{
+    position:absolute; inset:0;
+    display:flex; flex-direction:column;
+    padding:8px; box-sizing:border-box;
+  }
+  #wrap.bottom{ justify-content:flex-end; }
+  #wrap.top{ justify-content:flex-start; }
+  #list{ display:flex; flex-direction:column; gap:var(--gap,8px); width:var(--width,100%); }
+  #wrap.left  #list{ margin-right:auto; align-items:flex-start; text-align:left; }
+  #wrap.center #list{ margin:0 auto;     align-items:center;    text-align:center; }
+  #wrap.right #list{ margin-left:auto;  align-items:flex-end;  text-align:right; }
+
+  .msg{
+    font-family:var(--font), 'Segoe UI', system-ui, sans-serif;
+    font-size:var(--size,28px);
+    font-weight:var(--weight,600);
+    line-height:var(--lh,1.35);
+    color:var(--fg,#f2f2f7);
+    background:var(--bubble, transparent);
+    border-radius:var(--radius,14px);
+    padding:var(--pad,12px);
+    max-width:100%;
+    word-wrap:break-word;
+    overflow-wrap:anywhere;
+    -webkit-text-stroke:var(--stroke,0px) var(--stroke-color,#000);
+    paint-order:stroke fill;
+    text-shadow:var(--shadow,none);
+    transform-origin:left center;
+  }
+  .msg.first{ box-shadow: inset 4px 0 0 0 var(--highlight,#ff3b30); }
+  .msg.stacked .name{ display:block; margin-bottom:2px; }
+  .name{ font-weight:var(--nameweight,800); }
+  .colon{ opacity:.55; margin-right:.28em; }
+  .badge{ height:1em; vertical-align:-0.14em; margin-right:.22em; }
+  .emote{ height:var(--emote,34px); vertical-align:middle; margin:-0.25em 2px; }
+  .mention{ color:var(--highlight,#ff3b30); font-weight:800; }
+  .cheer{ color:#c99cff; font-weight:800; }
+  .time{ opacity:.45; font-size:.7em; margin-right:.4em; font-variant-numeric:tabular-nums; }
+  .reply{ display:block; font-size:.62em; opacity:.55; margin-bottom:2px; }
+
+  .msg.leaving{ opacity:0; transition:opacity var(--fadedur,.5s) ease; }
+  @keyframes slideIn{ from{ opacity:0; transform:translateX(-14px);} to{ opacity:1; transform:none;} }
+  @keyframes fadeIn { from{ opacity:0; } to{ opacity:1; } }
+  @keyframes popIn  { 0%{ opacity:0; transform:scale(.86);} 60%{ transform:scale(1.03);} 100%{ opacity:1; transform:scale(1);} }
+  .anim-slide{ animation:slideIn .28s cubic-bezier(.2,.8,.3,1) both; }
+  .anim-fade { animation:fadeIn .3s ease both; }
+  .anim-pop  { animation:popIn .32s cubic-bezier(.2,.9,.3,1.2) both; }
+  @media (prefers-reduced-motion: reduce){ .msg{ animation:none !important; } }
+</style></head>
+<body>
+<div id="wrap"><div id="list"></div></div>
+<script src="/twitch/boot.js"></script>
+<script>
+
+
+var CFG = null;
+var wrap = document.getElementById('wrap');
+var list = document.getElementById('list');
+
+function applyConfig(cfg){
+  CFG = cfg;
+  var c = cfg.chat, r = document.documentElement.style;
+  loadFont(c.font_family);
+  r.setProperty('--font', '"' + c.font_family + '"');
+  r.setProperty('--size', c.font_size + 'px');
+  r.setProperty('--weight', c.font_weight);
+  r.setProperty('--nameweight', c.name_weight);
+  r.setProperty('--lh', c.line_height);
+  r.setProperty('--fg', c.text_color);
+  r.setProperty('--gap', c.gap + 'px');
+  r.setProperty('--pad', c.padding + 'px');
+  r.setProperty('--radius', c.bubble_radius + 'px');
+  r.setProperty('--emote', c.emote_size + 'px');
+  r.setProperty('--highlight', c.highlight_color);
+  r.setProperty('--width', c.width_percent + '%');
+  r.setProperty('--fadedur', c.fade_duration + 's');
+  r.setProperty('--bubble', c.bubble ? hexToRgba(c.bubble_color, c.bubble_opacity) : 'transparent');
+  r.setProperty('--stroke', c.outline ? c.outline_width + 'px' : '0px');
+  r.setProperty('--stroke-color', c.outline_color);
+  r.setProperty('--shadow', c.shadow ? '0 2px 6px rgba(0,0,0,.85)' : 'none');
+  wrap.className = (c.direction === 'top' ? 'top' : 'bottom') + ' ' + c.align;
+  trim();
+}
+
+function renderFragments(frags){
+  return (frags || []).map(function(f){
+    if(f.t === 'emote') return '<img class="emote" src="' + esc(f.url) + '" alt="' + esc(f.name) + '">';
+    if(f.t === 'mention') return '<span class="mention">' + esc(f.v) + '</span>';
+    if(f.t === 'cheer') return '<span class="cheer">' + esc(f.v) + '</span>';
+    return esc(f.v);
+  }).join('');
+}
+
+function nameColor(msg){
+  var c = CFG.chat;
+  if(c.name_color_mode === 'custom') return c.name_color;
+  return msg.user.color || c.name_color;
+}
+
+function addMessage(msg){
+  if(!CFG) return;
+  var c = CFG.chat;
+  var el = document.createElement('div');
+  el.className = 'msg anim-' + c.animation + (c.layout === 'stacked' ? ' stacked' : '');
+  if(c.highlight_first && msg.flags && msg.flags.first) el.className += ' first';
+  el.dataset.id = msg.id;
+
+  var html = '';
+  if(msg.reply) html += '<span class="reply">replying to ' + esc(msg.reply.user) + '</span>';
+  if(c.show_timestamps){
+    var d = new Date(msg.ts * 1000);
+    html += '<span class="time">' + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0') + '</span>';
+  }
+  if(c.show_badges && msg.user.badges){
+    msg.user.badges.forEach(function(b){
+      html += '<img class="badge" src="' + esc(b.url) + '" title="' + esc(b.title) + '">';
+    });
+  }
+  html += '<span class="name" style="color:' + esc(nameColor(msg)) + '">' + esc(msg.user.name) + '</span>';
+  html += '<span class="colon">' + (c.layout === 'stacked' ? '' : ':') + '</span>';
+  html += renderFragments(msg.fragments);
+  el.innerHTML = html;
+
+  list.appendChild(el);
+  trim();
+
+  if(c.fade_after > 0){
+    setTimeout(function(){
+      el.classList.add('leaving');
+      setTimeout(function(){ el.remove(); }, c.fade_duration * 1000 + 60);
+    }, c.fade_after * 1000);
+  }
+}
+
+function trim(){
+  if(!CFG) return;
+  var max = CFG.chat.max_messages || 25;
+  while(list.children.length > max) list.removeChild(list.firstChild);
+}
+
+connect('/twitch/ws/chat', function(m){
+  if(m.type === 'config') applyConfig(m.config);
+  else if(m.type === 'chat') addMessage(m);
+  else if(m.type === 'clear') list.innerHTML = '';
+  else if(m.type === 'delete'){
+    var n = list.querySelector('[data-id="' + m.id + '"]');
+    if(n) n.remove();
+  }
+});
+</script></body></html>

@@ -36,6 +36,16 @@
                   padding: 6px 10px; font-size: 13px; border-radius: 6px; cursor: pointer; }
   .editmode-btn:hover { background: #2a1c1c; }
   a.editmode-btn { text-decoration: none; display: inline-block; }
+  a#opentwitch { border-color: #6441a5; }
+  a#opentwitch:hover { background: #241a33; }
+  #twitchdot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+               background: #555; margin-right: 6px; vertical-align: middle; }
+  #twitchdot.on { background: #3ddc84; }
+  a#openmusic { border-color: #ff0033; }
+  a#openmusic:hover { background: #2e1218; }
+  #musicdot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+              background: #555; margin-right: 6px; vertical-align: middle; }
+  #musicdot.on { background: #3ddc84; }
   body.edit-mode #editmode { background: #3a2a18; border-color: var(--amber); color: var(--amber-soft); }
   body.delete-mode #deletemode { background: #3a1818; border-color: var(--red); color: var(--red-soft); }
   #stopall { background: #3a1414; border-color: var(--red-deep); color: var(--red-soft); font-weight: 600; }
@@ -244,6 +254,8 @@
     </div>
     <div style="display:flex;gap:6px;">
       <a class="editmode-btn" id="openoverlay" href="/overlay" target="_blank" title="Open the OBS browser-source overlay in a new tab (this is the URL to paste into OBS)">↗ Overlay</a>
+      <a class="editmode-btn" id="opentwitch" href="/twitch" target="_blank" title="Twitch chat overlay, alerts and settings"><span id="twitchdot"></span>Twitch</a>
+      <a class="editmode-btn" id="openmusic" href="/ytm" target="_blank" title="Now playing overlay from YouTube Music Desktop"><span id="musicdot"></span>Music</a>
       <button class="editmode-btn" id="stopall" title="Clear all visuals and stop all audio">⏹ Stop All</button>
       <button class="editmode-btn" id="editmode">Edit Mode</button>
       <button class="editmode-btn" id="deletemode">Delete Mode</button>
@@ -1058,6 +1070,47 @@ const searchType = $("#searchtype");
 const searchBox = $("#searchbox");
 const results = $("#results");
 $("#searchbtn").onclick = doSearch;
+
+// ---- Integration status dots in the topbar --------------------------------
+function setDot(id, live, title) {
+  const dot = document.getElementById(id);
+  if (!dot) return;
+  dot.classList.toggle("on", live);
+  dot.parentNode.title = title;
+}
+
+(function pollIntegrations() {
+  fetch("/twitch/api/status")
+    .then(r => r.ok ? r.json() : null)
+    .then(s => {
+      const live = !!(s && s.connected);
+      setDot("twitchdot", live, live
+        ? (s.source === "eventsub" ? "Twitch connected \u2014 chat and events"
+                                   : "Twitch connected \u2014 chat only (not signed in)")
+        : "Twitch not connected \u2014 click to set up");
+    })
+    .catch(() => {});
+
+  fetch("/ytm/api/status")
+    .then(r => r.ok ? r.json() : null)
+    .then(s => {
+      const live = !!(s && s.connected);
+      let title;
+      if (live && s.now && s.now.title) {
+        title = (s.now.playing ? "\u25B6 " : "\u23F8 ") + s.now.title + " \u2014 " + s.now.author;
+      } else if (live) {
+        title = "YouTube Music connected \u2014 nothing playing";
+      } else if (s && s.paired) {
+        title = "YouTube Music Desktop is not running";
+      } else {
+        title = "YouTube Music not paired \u2014 click to set up";
+      }
+      setDot("musicdot", live, title);
+    })
+    .catch(() => {});
+
+  setTimeout(pollIntegrations, 10000);
+})();
 searchBox.addEventListener("keydown", (e) => { if (e.key === "Enter") doSearch(); });
 
 async function doSearch() {
