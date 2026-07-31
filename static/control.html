@@ -3,26 +3,28 @@
 <meta charset="utf-8">
 <title>Hexcast</title>
 <link rel="icon" href="__ICON__">
+<link rel="stylesheet" href="/static/hexbar.css">
 <style>
   :root {
-    --bg: #0e0808;
-    --panel: #1a1212;
-    --card: #1f1414;
-    --border: #3a2020;
-    --border-hover: #5a2828;
-    --text: #f0e0e0;
-    --muted: #b89494;
-    --dim: #806060;
-    --red: #c92020;
-    --red-soft: #e85050;
-    --red-deep: #7a1010;
-    --amber: #a06820;
-    --amber-soft: #d4a040;
+    --bg: #0a0a0e;
+    --panel: #131319;
+    --card: #17171f;
+    --border: #232330;
+    --border-hover: #35354a;
+    --text: #e8e8ef;
+    --muted: #a0a0b0;
+    --dim: #8a8a9c;
+    --red: #ff3b30;
+    --red-soft: #ff6b62;
+    --red-deep: #8c1f1a;
+    --amber: #ffb020;
+    --amber-soft: #ffc95c;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
                font-family: system-ui, -apple-system, sans-serif; font-size: 14px; }
-  body { padding: 14px; }
+  body { padding: 0 14px 14px; }
+  #hexbar { margin-left: -14px; margin-right: -14px; }
 
   .topbar { display: flex; align-items: center; justify-content: space-between;
             margin-bottom: 14px; padding: 4px 0; }
@@ -237,18 +239,14 @@
   .toast.err { background: #3a1414; border-color: var(--red); color: #ffaaaa; }
 </style></head>
 <body data-canvas-w="__CANVAS_W__" data-canvas-h="__CANVAS_H__">
-  <div class="topbar">
-    <div class="brand">
-      <img class="logo" src="__ICON__" alt="Hexcast">
-      <h1>Hexcast</h1>
-    </div>
-    <div style="display:flex;gap:6px;">
+  <div id="hexbar" data-section="Soundboard"></div>
+  <div id="hexbar-actions">
       <a class="editmode-btn" id="openoverlay" href="/overlay" target="_blank" title="Open the OBS browser-source overlay in a new tab (this is the URL to paste into OBS)">↗ Overlay</a>
       <button class="editmode-btn" id="stopall" title="Clear all visuals and stop all audio">⏹ Stop All</button>
       <button class="editmode-btn" id="editmode">Edit Mode</button>
       <button class="editmode-btn" id="deletemode">Delete Mode</button>
-    </div>
   </div>
+  <script src="/static/hexbar.js"></script>
 
   <div class="addmedia">
     <div class="dropzone" id="dropzone">
@@ -1058,6 +1056,47 @@ const searchType = $("#searchtype");
 const searchBox = $("#searchbox");
 const results = $("#results");
 $("#searchbtn").onclick = doSearch;
+
+// ---- Integration status dots in the topbar --------------------------------
+function setDot(id, live, title) {
+  const dot = document.getElementById(id);
+  if (!dot) return;
+  dot.classList.toggle("on", live);
+  dot.parentNode.title = title;
+}
+
+(function pollIntegrations() {
+  fetch("/twitch/api/status")
+    .then(r => r.ok ? r.json() : null)
+    .then(s => {
+      const live = !!(s && s.connected);
+      setDot("twitchdot", live, live
+        ? (s.source === "eventsub" ? "Twitch connected \u2014 chat and events"
+                                   : "Twitch connected \u2014 chat only (not signed in)")
+        : "Twitch not connected \u2014 click to set up");
+    })
+    .catch(() => {});
+
+  fetch("/ytm/api/status")
+    .then(r => r.ok ? r.json() : null)
+    .then(s => {
+      const live = !!(s && s.connected);
+      let title;
+      if (live && s.now && s.now.title) {
+        title = (s.now.playing ? "\u25B6 " : "\u23F8 ") + s.now.title + " \u2014 " + s.now.author;
+      } else if (live) {
+        title = "YouTube Music connected \u2014 nothing playing";
+      } else if (s && s.paired) {
+        title = "YouTube Music Desktop is not running";
+      } else {
+        title = "YouTube Music not paired \u2014 click to set up";
+      }
+      setDot("musicdot", live, title);
+    })
+    .catch(() => {});
+
+  setTimeout(pollIntegrations, 10000);
+})();
 searchBox.addEventListener("keydown", (e) => { if (e.key === "Enter") doSearch(); });
 
 async function doSearch() {

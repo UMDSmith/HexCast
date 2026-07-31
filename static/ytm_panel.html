@@ -1,0 +1,517 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="/static/hexcast.png">
+<link rel="stylesheet" href="/static/hexbar.css">
+<title>HexCast - Music</title>
+<style>
+  :root{
+    /* Palette lives in hexbar.css so every page matches. */
+    --bg:var(--hb-bg); --panel:var(--hb-panel); --line:var(--hb-line); --ink:var(--hb-ink);
+    --dim:var(--hb-dim); --accent:var(--hb-accent); --good:var(--hb-good); --warn:var(--hb-warn);
+    --mono:var(--hb-mono);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 'Segoe UI',system-ui,sans-serif;}
+  .pill{font:600 12px/1 var(--mono);padding:6px 10px;border-radius:99px;border:1px solid var(--line);color:var(--dim)}
+  .pill.on{color:var(--good);border-color:#1d4d33;background:#0e2118}
+  .pill.off{color:var(--warn);border-color:#4d3a10;background:#211a0b}
+
+  nav{display:flex;gap:4px;padding:4px 22px 0;flex-wrap:wrap}
+  nav button{background:none;border:0;border-bottom:2px solid transparent;color:var(--dim);
+             font:600 13px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;padding:10px 14px;cursor:pointer}
+  nav button.sel{color:var(--ink);border-bottom-color:var(--accent)}
+
+  main{padding:18px 22px 60px;max-width:1080px}
+  section{display:none} section.sel{display:block}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
+  .card h2{margin:0 0 4px;font-size:14px;letter-spacing:.14em;text-transform:uppercase}
+  .card p.hint{margin:0 0 14px;color:var(--dim);font-size:13px}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px}
+  label.f{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--dim);
+          letter-spacing:.06em;text-transform:uppercase;font-weight:600}
+  input,select{background:#08080c;border:1px solid var(--line);color:var(--ink);
+        border-radius:8px;padding:9px 10px;font:14px/1.3 inherit;width:100%}
+  input:focus,select:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:var(--accent)}
+  input[type=color]{padding:3px;height:38px;cursor:pointer}
+  label.sw{flex-direction:row;align-items:center;gap:9px;text-transform:none;font-size:14px;color:var(--ink)}
+  label.sw input{width:auto}
+
+  button.act{background:var(--accent);color:#fff;border:0;border-radius:9px;padding:10px 16px;font:700 14px inherit;cursor:pointer}
+  button.act:hover{filter:brightness(1.12)}
+  button.act[disabled]{opacity:.5;cursor:default;filter:none}
+  button.sec{background:#1c1c25;color:var(--ink);border:1px solid var(--line);border-radius:9px;
+             padding:9px 14px;font:600 13px inherit;cursor:pointer}
+  button.sec:hover{border-color:var(--accent)}
+  .row{display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin-top:14px}
+
+  .url{display:flex;gap:8px;align-items:center;margin:8px 0}
+  .url code{flex:1;background:#08080c;border:1px solid var(--line);border-radius:8px;
+            padding:9px 11px;font:13px var(--mono);color:var(--good);overflow:auto;white-space:nowrap}
+
+  ol.steps{margin:0 0 14px;padding-left:20px;color:var(--dim);font-size:13.5px}
+  ol.steps li{margin-bottom:6px}
+  ol.steps code{color:var(--good);font:12.5px var(--mono)}
+
+  #codebox{display:none;margin-top:14px;padding:16px;border:1px dashed var(--accent);border-radius:10px;text-align:center}
+  #codebox.show{display:block}
+  #codebox .lbl{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+  #codebox .code{font:800 40px/1.2 var(--mono);letter-spacing:.16em;color:var(--accent);margin:8px 0}
+
+  #np{display:flex;gap:16px;align-items:center}
+  #np img{width:88px;height:88px;border-radius:10px;object-fit:cover;background:#08080c;flex:0 0 auto}
+  #np .t{font-size:18px;font-weight:700}
+  #np .a{color:var(--dim);font-size:14px}
+  #np .s{color:var(--dim);font-size:12px;font-family:var(--mono);margin-top:6px}
+
+  #log{font:12px/1.7 var(--mono);color:var(--dim);background:#08080c;border:1px solid var(--line);
+       border-radius:8px;padding:12px;max-height:240px;overflow:auto;white-space:pre-wrap}
+
+  #toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,80px);background:var(--accent);
+         color:#fff;padding:11px 20px;border-radius:99px;font-weight:700;font-size:14px;
+         transition:transform .25s ease;z-index:20;max-width:80vw;text-align:center}
+  #toast.up{transform:translate(-50%,0)}
+  .warn{border-left:3px solid var(--warn);padding-left:12px;color:var(--dim);font-size:13px;margin-top:10px}
+</style></head>
+<body>
+
+<div id="hexbar" data-section="Music"></div>
+<div id="hexbar-actions"><span class="pill" id="st-conn">connecting</span><span class="pill" id="st-track">-</span></div>
+
+
+<nav>
+  <button data-tab="conn" class="sel">Connection</button>
+  <button data-tab="look">Overlay</button>
+  <button data-tab="viz">Visualiser</button>
+  <button data-tab="now">Now playing</button>
+</nav>
+
+<main>
+
+<section id="tab-conn" class="sel">
+  <div class="card">
+    <h2>Connect to YouTube Music Desktop</h2>
+    <p class="hint">HexCast reads what's playing from the desktop app's companion server. Nothing leaves your machine.</p>
+    <ol class="steps">
+      <li>Open YouTube Music Desktop &rarr; <code>Settings</code> &rarr; <code>Integrations</code>.</li>
+      <li>Turn on <code>Companion Server</code>.</li>
+      <li>Turn on <code>Enable companion authorization</code> — it only stays on long enough to pair.</li>
+      <li>Click Pair below, then approve the code in the app within 30 seconds.</li>
+    </ol>
+    <div class="grid">
+      <label class="f">Host<input id="host" placeholder="127.0.0.1"></label>
+      <label class="f">Port<input id="port" type="number" placeholder="9863"></label>
+    </div>
+    <div class="row">
+      <button class="act" id="pair">Pair with the app</button>
+      <button class="sec" id="unpair">Forget this pairing</button>
+      <button class="sec" id="reconnect">Reconnect</button>
+      <button class="sec" id="save-conn">Save host and port</button>
+    </div>
+    <div id="codebox">
+      <div class="lbl">Approve this code in YouTube Music Desktop</div>
+      <div class="code" id="codeval">----</div>
+      <div class="lbl">Waiting… times out after 30 seconds</div>
+    </div>
+    <p class="warn">Use <code>127.0.0.1</code> rather than <code>localhost</code>. On Windows, localhost can resolve to IPv6 and the companion server only listens on IPv4.</p>
+  </div>
+
+  <div class="card">
+    <h2>Browser source</h2>
+    <p class="hint">Add as a Browser source in OBS. Size it to the card you want, uncheck "Shutdown source when not visible".</p>
+    <div class="url"><code id="u-overlay"></code><button class="sec" data-copy="u-overlay">Copy</button></div>
+    <p class="hint" style="margin-top:14px">For a chat bot <code>!song</code> command, point it at this — it returns one plain line of text.</p>
+    <div class="url"><code id="u-song"></code><button class="sec" data-copy="u-song">Copy</button></div>
+  </div>
+
+  <div class="card">
+    <h2>Extras</h2>
+    <p class="hint">Every track change gets POSTed to the forward URL as JSON. The clip name fires a HexCast clip when the song changes — leave blank for silence.</p>
+    <div class="grid">
+      <label class="f">Forward URL<input id="forward_url" placeholder="http://127.0.0.1:8200/hex/music"></label>
+      <label class="f">Clip on track change<input id="track_change_clip" placeholder="blip"></label>
+      <label class="f">HexCast base URL<input id="hexcast_url"></label>
+    </div>
+    <div class="row"><button class="act" id="save-extras">Save</button></div>
+  </div>
+</section>
+
+<section id="tab-look">
+  <div class="card">
+    <h2>Layout</h2>
+    <div class="grid" id="g-layout"></div>
+  </div>
+  <div class="card">
+    <h2>Type and colour</h2>
+    <div class="grid" id="g-type"></div>
+  </div>
+  <div class="card">
+    <h2>Artwork</h2>
+    <p class="hint">YouTube Music plays either a real music video or an "art track" — an auto-generated audio upload with a still image. Art tracks cannot be embedded. But YouTube Music pairs most songs with a video counterpart, so the default setting shows that video even while the app plays the audio version. Flipping the app's own Song/Video toggle works too. Videos whose owner blocks embedding fall back to album art on their own.</p>
+    <div class="grid" id="g-art"></div>
+  </div>
+  <div class="card">
+    <h2>What to show</h2>
+    <div class="grid" id="g-show"></div>
+    <div class="row"><button class="act" id="save-look">Save overlay settings</button></div>
+  </div>
+</section>
+
+<section id="tab-viz">
+  <div class="card">
+    <h2>Visualiser</h2>
+    <p class="hint" id="viz-hint">A browser source cannot reach desktop audio, so real reactivity is measured on the server from whatever your speakers are playing and streamed to the overlay.</p>
+    <div class="grid" id="g-viz"></div>
+    <div class="row">
+      <button class="act" id="save-viz">Save visualiser</button>
+    </div>
+    <p class="warn" id="audio-status"></p>
+  </div>
+  <div class="card">
+    <h2>Audio device</h2>
+    <p class="hint">Only used by "React to real audio". Blank means your default playback device.</p>
+    <div class="grid">
+      <label class="f">Loopback device<select id="audio_device"><option value="">Default speakers</option></select></label>
+    </div>
+    <div class="row"><button class="act" id="save-device">Save device</button></div>
+    <p class="hint" style="margin-top:14px">Input level — should move when audio is playing. If it stays at zero, the tap is wrong.</p>
+    <div style="height:12px;background:#08080c;border:1px solid var(--line);border-radius:99px;overflow:hidden">
+      <div id="meter" style="height:100%;width:0%;background:var(--good);transition:width .1s linear"></div>
+    </div>
+    <p class="hint" style="margin-top:12px"><b>Using Voicemeeter?</b> Don't loop back a virtual playback device — pick one of the <code>Voicemeeter Out B1/B2/B3</code> <i>input</i> entries instead, and make sure the strip carrying your music has that bus button lit. Match the sample rate to Voicemeeter's own (Menu → System Settings → Preferred Main SR).</p>
+  </div>
+</section>
+
+<section id="tab-now">
+  <div class="card">
+    <h2>Playing now</h2>
+    <div id="np">
+      <img id="np-art" alt="">
+      <div>
+        <div class="t" id="np-title">Nothing playing</div>
+        <div class="a" id="np-artist"></div>
+        <div class="s" id="np-state"></div>
+      </div>
+    </div>
+    <div class="row">
+      <button class="sec" data-cmd="previous">&#9198; Previous</button>
+      <button class="sec" data-cmd="playPause">&#9199; Play / pause</button>
+      <button class="sec" data-cmd="next">&#9197; Next</button>
+      <button class="sec" data-cmd="toggleLike">&#9829; Like</button>
+      <button class="sec" data-cmd="shuffle">&#128256; Shuffle</button>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Log</h2>
+    <div id="log"></div>
+  </div>
+</section>
+
+</main>
+<div id="toast"></div>
+
+<script>
+var CFG=null;
+var $=function(id){ return document.getElementById(id); };
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function toast(m){
+  var t=$('toast'); t.textContent=m; t.classList.add('up');
+  clearTimeout(t._t); t._t=setTimeout(function(){ t.classList.remove('up'); }, 2600);
+}
+
+var FONTS=['Inter','Roboto','Montserrat','Oswald','Rubik','Poppins','Bebas Neue','Space Grotesk',
+           'Archivo Black','Figtree','Outfit','Sora','JetBrains Mono','Righteous'];
+
+var LAYOUT=[
+  ['layout','Style',{t:'sel',opts:[['card','Card'],['bar','Slim bar'],['minimal','Text only']]}],
+  ['align','Horizontal position',{t:'sel',opts:[['left','Left'],['center','Centre'],['right','Right']]}],
+  ['valign','Vertical position',{t:'sel',opts:[['top','Top'],['middle','Middle'],['bottom','Bottom']]}],
+  ['width','Card width',{t:'num',min:200,max:1600}],
+  ['padding','Padding',{t:'num',min:0,max:60}],
+  ['gap','Gap between art and text',{t:'num',min:0,max:60}],
+  ['bubble_radius','Corner radius',{t:'num',min:0,max:60}],
+  ['animation','Hide animation',{t:'sel',opts:[['slide','Slide down'],['scale','Scale'],['fade','Fade only']]}]
+];
+var TYPE=[
+  ['font_family','Font',{t:'font'}],
+  ['title_size','Title size',{t:'num',min:10,max:120}],
+  ['title_weight','Title weight',{t:'sel',opts:[[600,'Semibold'],[700,'Bold'],[800,'Extra bold'],[900,'Black']]}],
+  ['artist_size','Artist size',{t:'num',min:8,max:80}],
+  ['artist_weight','Artist weight',{t:'sel',opts:[[400,'Regular'],[500,'Medium'],[600,'Semibold'],[700,'Bold']]}],
+  ['text_color','Text colour',{t:'color'}],
+  ['muted_color','Secondary text',{t:'color'}],
+  ['accent_mode','Accent colour',{t:'sel',opts:[['artwork','Pull from album art'],['custom','Always the same']]}],
+  ['accent_color','Accent (fallback)',{t:'color'}],
+  ['bubble_color','Background colour',{t:'color'}],
+  ['bubble_opacity','Background opacity',{t:'num',min:0,max:1,step:0.05}],
+  ['outline','Outline text',{t:'bool'}],
+  ['outline_color','Outline colour',{t:'color'}]
+];
+var ART=[
+  ['show_art','Show the art slot',{t:'bool'}],
+  ['art_source','What to show there',{t:'sel',opts:[['artwork','Album art'],['video','The music video']]}],
+  ['video_when','When to try video',{t:'sel',opts:[['auto','Video, or the song\'s video counterpart'],['video_tracks','Only when playing the video version'],['always','Every track (expect failures)']]}],
+  ['video_fit','Video shape',{t:'sel',opts:[['cover','Crop to square'],['wide','16:9 box']]}],
+  ['video_quality','Video quality',{t:'sel',opts:[['small','240p'],['medium','360p'],['large','480p'],['hd720','720p']]}],
+  ['art_size','Art size',{t:'num',min:32,max:400}],
+  ['art_radius','Art corner radius',{t:'num',min:0,max:200}],
+  ['art_spin','Spin the art like a record',{t:'bool'}],
+  ['backdrop','Blurred art behind the card',{t:'bool'}],
+  ['backdrop_blur','Backdrop blur',{t:'num',min:0,max:120}],
+  ['backdrop_opacity','Backdrop strength',{t:'num',min:0,max:1,step:0.05}],
+  ['glow','Accent glow around card',{t:'bool'}]
+];
+var SHOW=[
+  ['show_progress','Progress bar',{t:'bool'}],
+  ['show_time','Elapsed and total time',{t:'bool'}],
+  ['show_album','Album name',{t:'bool'}],
+  ['show_next','Up next',{t:'bool'}],
+  ['show_like','Like indicator',{t:'bool'}],
+  ['show_source_label','Label above the title',{t:'bool'}],
+  ['source_label','Label text',{t:'text',ph:'Now playing'}],
+  ['marquee','Scroll long titles',{t:'bool'}],
+  ['hide_when_idle','Hide when nothing is playing',{t:'bool'}],
+  ['hide_when_paused','Hide when paused',{t:'bool'}],
+  ['hide_during_ads','Hide during ads',{t:'bool'}],
+  ['hide_delay','Wait before hiding',{t:'num',min:0,max:120}]
+];
+
+var VIZ=[
+  ['mode','Visualiser',{t:'sel',opts:[['off','Off'],['simulated','Simulated'],['audio','React to real audio']]}],
+  ['style','Bar style',{t:'sel',opts:[['bars','Bars'],['mirror','Mirrored']]}],
+  ['position','Position',{t:'sel',opts:[['behind','Behind the text'],['bottom','Along the bottom'],['top','Along the top']]}],
+  ['bars','Number of bars',{t:'num',min:4,max:96}],
+  ['height','Height',{t:'num',min:8,max:400}],
+  ['width_pct','Width of card',{t:'num',min:10,max:100}],
+  ['color_mode','Bar colour',{t:'sel',opts:[['accent','Match the accent'],['custom','Fixed colour']]}],
+  ['color','Fixed colour',{t:'color'}],
+  ['opacity','Opacity',{t:'num',min:0,max:1,step:0.05}],
+  ['fps','Bar updates per second',{t:'num',min:4,max:60}],
+  ['smoothing','Smoothing',{t:'num',min:0,max:0.95,step:0.02}],
+  ['sensitivity','Sensitivity',{t:'num',min:0.2,max:3,step:0.1}],
+  ['cap','Peak caps',{t:'bool'}],
+  ['peak_hold','Peak hold (seconds)',{t:'num',min:0,max:5,step:0.05}],
+  ['peak_fall','Peak fall (per second)',{t:'num',min:0.05,max:4,step:0.05}],
+  ['floor_db','Quiet cutoff (dBFS)',{t:'num',min:-100,max:-20,step:1}],
+  ['samplerate','Sample rate',{t:'sel',opts:[[44100,'44100 Hz'],[48000,'48000 Hz'],[96000,'96000 Hz']]}],
+  ['blocksize','Block size',{t:'sel',opts:[[512,'512 (snappy)'],[1024,'1024'],[2048,'2048 (default)'],[4096,'4096 (smooth)']]}]
+];
+
+function field(key,label,spec,scope){
+  scope = scope || 'overlay';
+  var val = CFG[scope][key];
+  var el=document.createElement('label');
+  el.className = spec.t==='bool' ? 'f sw' : 'f';
+  var input;
+  if(spec.t==='bool'){
+    input=document.createElement('input'); input.type='checkbox'; input.checked=!!val;
+    el.appendChild(input); el.appendChild(document.createTextNode(label));
+  } else {
+    el.appendChild(document.createTextNode(label));
+    if(spec.t==='sel'){
+      input=document.createElement('select');
+      spec.opts.forEach(function(o){
+        var op=document.createElement('option');
+        op.value=o[0]; op.textContent=o[1];
+        if(String(o[0])===String(val)) op.selected=true;
+        input.appendChild(op);
+      });
+    } else if(spec.t==='font'){
+      input=document.createElement('input');
+      input.setAttribute('list','fontlist'); input.value=val;
+      if(!$('fontlist')){
+        var dl=document.createElement('datalist'); dl.id='fontlist';
+        FONTS.forEach(function(f){ var o=document.createElement('option'); o.value=f; dl.appendChild(o); });
+        document.body.appendChild(dl);
+      }
+    } else {
+      input=document.createElement('input');
+      input.type = spec.t==='num' ? 'number' : (spec.t==='color' ? 'color' : 'text');
+      if(spec.min!==undefined) input.min=spec.min;
+      if(spec.max!==undefined) input.max=spec.max;
+      if(spec.step!==undefined) input.step=spec.step;
+      if(spec.ph) input.placeholder=spec.ph;
+      input.value=val;
+    }
+    el.appendChild(input);
+  }
+  input.id='f-'+scope+'-'+key;
+  return el;
+}
+function renderGroup(id, defs, scope){
+  scope = scope || 'overlay';
+  var c=$(id); if(!c) return;
+  c.innerHTML='';
+  if(!CFG[scope]){
+    // Almost always means ytmusic.py is older than this page - the settings
+    // exist here but the server has never heard of them.
+    c.innerHTML = '<div style="grid-column:1/-1;color:var(--warn);font-size:13.5px;'
+      + 'border-left:3px solid var(--warn);padding-left:12px">'
+      + 'The server has no <code>' + scope + '</code> settings. Restart hexcast so it '
+      + 'picks up the current ytmusic.py, then reload this page with Ctrl+Shift+R.</div>';
+    return;
+  }
+  defs.forEach(function(d){
+    try { c.appendChild(field(d[0],d[1],d[2],scope)); }
+    catch(err){ console.error('field failed:', d[0], err); }
+  });
+}
+function collect(defs, scope){
+  scope = scope || 'overlay';
+  var out={};
+  defs.forEach(function(d){
+    var el=$('f-'+scope+'-'+d[0]); if(!el) return;
+    if(d[2].t==='bool') out[d[0]]=el.checked;
+    else if(d[2].t==='num') out[d[0]]=parseFloat(el.value);
+    else out[d[0]]=el.value;
+  });
+  return out;
+}
+
+async function saveConfig(patch,msg){
+  var r=await fetch('/ytm/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(patch)});
+  var d=await r.json(); CFG=d.config; toast(msg||'Saved');
+}
+
+async function loadAll(){
+  var res = await fetch('/ytm/api/config');
+  if(!res.ok){ toast('Could not read settings from the server'); return; }
+  CFG = await res.json();
+  $('host').value = CFG.host;
+  $('port').value = CFG.port;
+  $('forward_url').value = CFG.forward_url || '';
+  $('track_change_clip').value = CFG.track_change_clip || '';
+  $('hexcast_url').value = CFG.hexcast_url || '';
+  $('u-overlay').textContent = location.origin + '/ytm/overlay';
+  $('u-song').textContent = location.origin + '/ytm/api/nowplaying';
+  renderGroup('g-layout', LAYOUT);
+  renderGroup('g-type', TYPE);
+  renderGroup('g-art', ART);
+  renderGroup('g-show', SHOW);
+  renderGroup('g-viz', VIZ, 'visualizer');
+  loadDevices();
+}
+
+async function loadDevices(){
+  try{
+    var d = await (await fetch('/ytm/api/audio-devices')).json();
+    var sel = $('audio_device');
+    sel.innerHTML = '<option value="">Default speakers (loopback)</option>';
+    (d.devices||[]).forEach(function(dev){
+      var o=document.createElement('option');
+      o.value = dev.id || dev; o.textContent = dev.label || dev;
+      if(o.value === CFG.visualizer.device) o.selected = true;
+      sel.appendChild(o);
+    });
+    if(!d.available){
+      $('viz-hint').innerHTML += ' <b style="color:var(--warn)">Real audio needs numpy and soundcard: pip install -r requirements-ytm-audio.txt</b>';
+    }
+  }catch(e){}
+}
+
+function paintStatus(s){
+  var c=$('st-conn');
+  c.textContent = s.connected
+      ? (s.source === 'poll' ? 'connected (polling)' : 'connected')
+      : (s.paired ? 'app not running' : 'not paired');
+  c.className = 'pill ' + (s.connected ? 'on' : 'off');
+  c.title = s.last_error || '';
+  $('st-track').textContent = s.now && s.now.title
+      ? (s.now.playing ? '\u25B6 ' : '\u23F8 ') + s.now.title
+      : 'nothing playing';
+  $('log').textContent = (s.log||[]).join('\n');
+  $('codebox').classList.toggle('show', !!s.pairing);
+  if(s.pairing_code) $('codeval').textContent = s.pairing_code;
+  if(s.now) paintNow(s.now);
+  var a=$('audio-status');
+  if(a){
+    if(s.audio_error) a.textContent = 'Audio capture: ' + s.audio_error;
+    else if(s.audio_running) a.textContent = 'Audio capture running on ' + (s.audio_device||'default device');
+    var mt=$('meter');
+    if(mt) mt.style.width = Math.min(100,(s.audio_peak||0)*140).toFixed(1)+'%';
+    else if(s.audio_available) a.textContent = 'Audio capture idle. It starts when the overlay is open and the mode is set to real audio.';
+    else a.textContent = '';
+  }
+}
+
+function paintNow(n){
+  $('np-art').src = n.art || '';
+  $('np-title').textContent = n.title || 'Nothing playing';
+  $('np-artist').textContent = [n.author, n.album].filter(Boolean).join('  \u00B7  ');
+  var bits = [];
+  if(n.title) bits.push(n.state);
+  if(n.ad) bits.push('ad playing');
+  if(n.is_live) bits.push('live');
+  if(n.duration) bits.push(Math.floor(n.progress)+'s / '+Math.floor(n.duration)+'s');
+  $('np-state').textContent = bits.join('  \u00B7  ');
+}
+
+function connectPanel(){
+  var proto = location.protocol==='https:' ? 'wss' : 'ws';
+  var ws = new WebSocket(proto+'://'+location.host+'/ytm/ws/panel');
+  ws.onmessage=function(e){
+    var m=JSON.parse(e.data);
+    if(m.type==='status') paintStatus(m.status);
+    else if(m.type==='now') paintNow(m.now);
+  };
+  ws.onclose=function(){ setTimeout(connectPanel,1500); };
+}
+
+document.querySelectorAll('nav button').forEach(function(b){
+  b.onclick=function(){
+    document.querySelectorAll('nav button').forEach(function(x){x.classList.remove('sel')});
+    document.querySelectorAll('section').forEach(function(x){x.classList.remove('sel')});
+    b.classList.add('sel'); $('tab-'+b.dataset.tab).classList.add('sel');
+  };
+});
+
+document.addEventListener('click', async function(e){
+  var t=e.target;
+  if(t.dataset && t.dataset.copy){
+    navigator.clipboard.writeText($(t.dataset.copy).textContent); toast('Copied');
+  }
+  if(t.dataset && t.dataset.cmd){
+    var r=await fetch('/ytm/api/command',{method:'POST',headers:{'Content-Type':'application/json'},
+                                          body:JSON.stringify({command:t.dataset.cmd})});
+    if(!r.ok){ var d=await r.json().catch(function(){return{}}); toast(d.error||'That command did not go through'); }
+  }
+});
+
+$('pair').onclick = async function(){
+  var btn=this; btn.disabled=true; btn.textContent='Waiting for approval…';
+  try{
+    var r=await fetch('/ytm/api/pair',{method:'POST'});
+    var d=await r.json().catch(function(){return{}});
+    toast(r.ok ? 'Paired' : (d.error || 'Pairing failed'));
+  }catch(err){ toast('Pairing failed'); }
+  btn.disabled=false; btn.textContent='Pair with the app';
+  $('codebox').classList.remove('show');
+};
+$('unpair').onclick = async function(){ await fetch('/ytm/api/unpair',{method:'POST'}); toast('Pairing forgotten'); };
+$('reconnect').onclick = async function(){ await fetch('/ytm/api/reconnect',{method:'POST'}); toast('Reconnecting'); };
+$('save-conn').onclick = function(){
+  saveConfig({host:$('host').value.trim(), port:parseInt($('port').value,10)||9863}, 'Connection saved');
+};
+$('save-extras').onclick = function(){
+  saveConfig({forward_url:$('forward_url').value.trim(),
+              track_change_clip:$('track_change_clip').value.trim(),
+              hexcast_url:$('hexcast_url').value.trim()});
+};
+$('save-viz').onclick = function(){
+  saveConfig({visualizer: collect(VIZ,'visualizer')}, 'Visualiser updated');
+};
+$('save-device').onclick = function(){
+  saveConfig({visualizer: {device: $('audio_device').value}}, 'Device saved');
+};
+$('save-look').onclick = function(){
+  saveConfig({overlay: Object.assign({}, collect(LAYOUT), collect(TYPE), collect(ART), collect(SHOW))},
+             'Overlay updated');
+};
+
+loadAll().then(connectPanel);
+setInterval(function(){
+  fetch('/ytm/api/status').then(function(r){return r.json()}).then(paintStatus);
+}, 5000);
+</script>
+<script src="/static/hexbar.js"></script>
+</body></html>

@@ -1,0 +1,77 @@
+/* Hexcast — shared theme and top bar.
+   Loaded by the soundboard, Twitch and Music pages so all three look and
+   navigate the same. Page-specific CSS goes in the page. */
+
+:root{
+  --hb-bg:      #0a0a0e;
+  --hb-panel:   #131319;
+  --hb-card:    #17171f;
+  --hb-line:    #232330;
+  --hb-line-hi: #35354a;
+  --hb-ink:     #e8e8ef;
+  --hb-muted:   #a0a0b0;
+  --hb-dim:     #8a8a9c;
+  --hb-accent:  #ff3b30;
+  --hb-accent-soft:#ff6b62;
+  --hb-good:    #3ddc84;
+  --hb-warn:    #ffb020;
+  --hb-twitch:  #a970ff;
+  --hb-music:   #ff0033;
+  --hb-mono:    'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+}
+
+#hexbar{
+  display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+  padding:12px 18px; margin:0 0 16px;
+  background:var(--hb-bg);
+  border-bottom:1px solid var(--hb-line);
+  font-family:'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+
+/* --- brand ------------------------------------------------------------- */
+.hb-brand{ display:flex; align-items:center; gap:10px; text-decoration:none; }
+.hb-brand img{ width:30px; height:30px; display:block; }
+.hb-word{
+  font-size:17px; font-weight:800; letter-spacing:.2em; text-transform:uppercase;
+  color:var(--hb-ink); white-space:nowrap;
+}
+.hb-word b{ color:var(--hb-accent); font-weight:800; }
+.hb-sep{ color:var(--hb-line-hi); font-size:16px; }
+.hb-section{
+  font:800 13px/1 var(--hb-mono); letter-spacing:.18em; text-transform:uppercase;
+  color:var(--hb-dim); white-space:nowrap;
+}
+
+/* --- section navigation ------------------------------------------------ */
+.hb-nav{ display:flex; gap:6px; margin-left:6px; flex-wrap:wrap; }
+.hb-nav a{
+  display:inline-flex; align-items:center; gap:7px;
+  padding:6px 12px; border-radius:8px;
+  border:1px solid var(--hb-line); background:var(--hb-card);
+  color:var(--hb-muted); text-decoration:none;
+  font-size:13px; font-weight:600; white-space:nowrap;
+  transition:border-color .15s ease, color .15s ease, background .15s ease;
+}
+.hb-nav a:hover{ color:var(--hb-ink); border-color:var(--hb-line-hi); }
+.hb-nav a.sel{ color:var(--hb-ink); background:var(--hb-panel); }
+.hb-nav a[data-key="soundboard"].sel{ border-color:var(--hb-accent); }
+.hb-nav a[data-key="twitch"].sel{ border-color:var(--hb-twitch); }
+.hb-nav a[data-key="music"].sel{ border-color:var(--hb-music); }
+
+.hb-dot{
+  width:8px; height:8px; border-radius:50%;
+  background:#4a4a58; flex:0 0 auto;
+  transition:background .2s ease, box-shadow .2s ease;
+}
+.hb-dot.on{ background:var(--hb-good); box-shadow:0 0 7px -1px var(--hb-good); }
+.hb-dot.warn{ background:var(--hb-warn); }
+
+.hb-spacer{ flex:1 1 auto; }
+
+/* --- slot for whatever the page already had in its top bar -------------- */
+.hb-actions{ display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+
+@media (max-width: 720px){
+  #hexbar{ gap:10px; padding:10px 12px; }
+  .hb-sep, .hb-section{ display:none; }
+}
