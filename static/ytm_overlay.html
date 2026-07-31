@@ -1,0 +1,511 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>HexCast now playing</title>
+<style>
+  html,body{margin:0;padding:0;background:transparent;overflow:hidden;height:100%;}
+
+  #stage{ position:absolute; inset:0; display:flex; padding:16px; box-sizing:border-box; }
+  #stage.left{justify-content:flex-start} #stage.center{justify-content:center} #stage.right{justify-content:flex-end}
+  #stage.top{align-items:flex-start} #stage.middle{align-items:center} #stage.bottom{align-items:flex-end}
+
+  #card{
+    position:relative; display:flex; align-items:center;
+    width:var(--width,560px); max-width:100%;
+    padding:var(--pad,16px); border-radius:var(--radius,18px);
+    background:var(--bubble,rgba(11,11,16,.82));
+    font-family:var(--font),'Segoe UI',system-ui,sans-serif;
+    color:var(--fg,#fff); overflow:hidden;
+    box-shadow:0 10px 40px rgba(0,0,0,.45);
+    transition:opacity .45s ease, transform .45s cubic-bezier(.2,.8,.3,1);
+  }
+  #card.glow{ box-shadow:0 10px 40px rgba(0,0,0,.45), 0 0 0 1px var(--accent-dim), 0 0 34px -6px var(--accent-dim); }
+
+  #backdrop{
+    position:absolute; inset:-40%; background-size:cover; background-position:center;
+    filter:blur(var(--bd-blur,42px)) saturate(1.7);
+    opacity:0; transition:opacity .8s ease; z-index:0; pointer-events:none;
+  }
+  #card.has-backdrop #backdrop{ opacity:var(--bd-opacity,.45); }
+
+  #viz{ position:absolute; left:0; right:0; z-index:1; pointer-events:none; opacity:var(--viz-op,.55); }
+  #viz.behind{ top:50%; transform:translateY(-50%); }
+  #viz.bottom{ bottom:0; }
+  #viz.top{ top:0; }
+  #viz.hidden{ display:none; }
+
+  #inner{ position:relative; z-index:2; display:flex; align-items:center; gap:var(--gap,16px); width:100%; min-width:0; }
+
+  /* ---- artwork / video slot ---- */
+  #slot{
+    flex:0 0 auto; position:relative; overflow:hidden;
+    width:var(--art,96px); height:var(--art,96px);
+    border-radius:var(--art-radius,12px); background:#14141c;
+    box-shadow:0 6px 20px rgba(0,0,0,.5);
+  }
+  #slot.wide{ width:calc(var(--art,96px) * 1.7778); }
+  #slot.hidden{ display:none; }
+  #art{ width:100%; height:100%; object-fit:cover; display:block; }
+
+  /* The spin lives on the image, not an ancestor, so layout classes can never
+     clobber it. Overflow on #slot would clip a rotating square, so the slot
+     goes round too. */
+  #slot.spin:not(.video){ border-radius:50%; overflow:visible; }
+  #slot.video{ overflow:hidden; }
+  #slot.spin #art{ border-radius:50%; animation:spin var(--spin-dur,9s) linear infinite; }
+  #slot.spin.still #art{ animation-play-state:paused; }
+  @keyframes spin{ from{transform:rotate(0)} to{transform:rotate(360deg)} }
+
+  #ytwrap{ position:absolute; inset:0; display:none; }
+  #slot.video #ytwrap{ display:block; }
+  #slot.video #art{ visibility:hidden; }
+  #ytwrap iframe{
+    position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+    width:calc(var(--art,96px) * 1.7778); height:var(--art,96px);
+    border:0; pointer-events:none;
+  }
+  #slot.wide #ytwrap iframe{ width:100%; height:100%; transform:none; top:0; left:0; }
+
+  #meta{ min-width:0; flex:1 1 auto; }
+  .eyebrow{ font-size:11px; font-weight:800; letter-spacing:.18em; text-transform:uppercase;
+            color:var(--accent,#ff3b30); margin-bottom:5px; }
+  .line{ position:relative; overflow:hidden; white-space:nowrap; }
+  #title{ font-size:var(--title,30px); font-weight:var(--title-w,800); line-height:1.18; letter-spacing:-.01em;
+          -webkit-text-stroke:var(--stroke,0) var(--stroke-color,#000); paint-order:stroke fill; }
+  #artist{ font-size:var(--artist,20px); font-weight:var(--artist-w,500); color:var(--muted,#b9b9c6); margin-top:2px; }
+  #album{ font-size:calc(var(--artist,20px)*.82); color:var(--muted,#b9b9c6); opacity:.75; margin-top:1px; }
+  .scroller{ display:inline-block; }
+  .scroll .scroller{ animation:marquee var(--marquee-dur,12s) linear infinite; }
+  @keyframes marquee{ from{transform:translateX(0)} to{transform:translateX(-50%)} }
+
+  #bar{ margin-top:10px; height:5px; border-radius:99px; background:rgba(255,255,255,.16); overflow:hidden; }
+  #fill{ height:100%; width:0%; border-radius:99px; background:var(--accent,#ff3b30); transition:width .25s linear; }
+  #times{ display:flex; justify-content:space-between; margin-top:5px; font-size:12px;
+          color:var(--muted,#b9b9c6); font-variant-numeric:tabular-nums; }
+  #next{ margin-top:9px; font-size:12.5px; color:var(--muted,#b9b9c6);
+         white-space:nowrap; overflow:hidden; text-overflow:ellipsis; opacity:.8; }
+  #next b{ color:var(--fg,#fff); font-weight:600; }
+  #like{ position:absolute; top:var(--pad,16px); right:var(--pad,16px); z-index:3; font-size:15px; }
+
+  #card.bar #title{ font-size:calc(var(--title,30px)*.72); }
+  #card.bar #artist{ font-size:calc(var(--artist,20px)*.85); }
+  #card.minimal{ background:transparent!important; box-shadow:none!important; padding:6px; }
+  #card.minimal #backdrop{ display:none; }
+
+  #card.hidden{ opacity:0; pointer-events:none; }
+  #stage.slide #card.hidden{ transform:translateY(28px); }
+  #stage.scale #card.hidden{ transform:scale(.94); }
+  @media (prefers-reduced-motion: reduce){
+    #card,#art,.scroller{ animation:none!important; transition:opacity .2s linear!important; }
+  }
+</style></head>
+<body>
+
+<div id="stage">
+  <div id="card" class="hidden">
+    <div id="backdrop"></div>
+    <canvas id="viz" class="hidden"></canvas>
+    <div id="like"></div>
+    <div id="inner">
+      <div id="slot">
+        <img id="art" alt="">
+        <div id="ytwrap"><div id="ytplayer"></div></div>
+      </div>
+      <div id="meta">
+        <div class="eyebrow" id="eyebrow">Now playing</div>
+        <div class="line" id="title-line"><span class="scroller" id="title"></span></div>
+        <div class="line" id="artist-line"><span class="scroller" id="artist"></span></div>
+        <div id="album"></div>
+        <div id="bar"><div id="fill"></div></div>
+        <div id="times"><span id="t-now">0:00</span><span id="t-end">0:00</span></div>
+        <div id="next"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function hexToRgba(hex,a){
+  var h=String(hex||'#000').replace('#','');
+  if(h.length===3) h=h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+  var n=parseInt(h,16);
+  if(isNaN(n)) return 'rgba(0,0,0,'+a+')';
+  return 'rgba('+((n>>16)&255)+','+((n>>8)&255)+','+(n&255)+','+a+')';
+}
+function loadFont(name){
+  if(!name) return;
+  var id='font-'+name.replace(/[^a-z0-9]/gi,'');
+  if(document.getElementById(id)) return;
+  var l=document.createElement('link'); l.id=id; l.rel='stylesheet';
+  l.href='https://fonts.googleapis.com/css2?family='+encodeURIComponent(name).replace(/%20/g,'+')+
+         ':wght@400;500;600;700;800;900&display=swap';
+  document.head.appendChild(l);
+}
+function mmss(s){
+  s=Math.max(0,Math.floor(s||0));
+  var m=Math.floor(s/60), r=s%60;
+  if(m>=60){ var h=Math.floor(m/60); m=m%60; return h+':'+String(m).padStart(2,'0')+':'+String(r).padStart(2,'0'); }
+  return m+':'+String(r).padStart(2,'0');
+}
+var $=function(id){ return document.getElementById(id); };
+var stage=$('stage'), card=$('card'), backdrop=$('backdrop'), slot=$('slot'), art=$('art');
+var titleEl=$('title'), artistEl=$('artist'), albumEl=$('album');
+var titleLine=$('title-line'), artistLine=$('artist-line');
+var fill=$('fill'), tNow=$('t-now'), tEnd=$('t-end'), nextEl=$('next'), likeEl=$('like');
+var barEl=$('bar'), timesEl=$('times'), eyebrow=$('eyebrow'), viz=$('viz');
+
+var CFG=null, NOW=null, hideTimer=null;
+var localProgress=0, lastSync=0, playing=false;
+
+/* ================= accent from artwork =================
+   Art is proxied through HexCast, so it is same-origin and the canvas never
+   taints. A direct load from Google fails outright under crossOrigin. */
+function accentFromArt(url, done){
+  var img=new Image();
+  img.onload=function(){
+    try{
+      var c=document.createElement('canvas'); c.width=16; c.height=16;
+      var g=c.getContext('2d'); g.drawImage(img,0,0,16,16);
+      var d=g.getImageData(0,0,16,16).data, r=0,gr=0,b=0,n=0;
+      for(var i=0;i<d.length;i+=4){
+        if(d[i+3]<128) continue;
+        r+=d[i]; gr+=d[i+1]; b+=d[i+2]; n++;
+      }
+      done(n ? punch(r/n,gr/n,b/n) : null);
+    }catch(e){ done(null); }
+  };
+  img.onerror=function(){ done(null); };
+  img.src=url;
+}
+function punch(r,g,b){
+  r/=255; g/=255; b/=255;
+  var mx=Math.max(r,g,b), mn=Math.min(r,g,b), l=(mx+mn)/2, h=0, s=0;
+  if(mx!==mn){
+    var dd=mx-mn;
+    s = l>0.5 ? dd/(2-mx-mn) : dd/(mx+mn);
+    if(mx===r) h=((g-b)/dd+(g<b?6:0)); else if(mx===g) h=((b-r)/dd+2); else h=((r-g)/dd+4);
+    h/=6;
+  }
+  s=Math.min(1,Math.max(.55,s*1.55));
+  l=Math.min(.68,Math.max(.52,l*1.25));
+  return hsl(h,s,l);
+}
+function hsl(h,s,l){
+  function f(p,q,t){ if(t<0)t+=1; if(t>1)t-=1;
+    if(t<1/6)return p+(q-p)*6*t; if(t<1/2)return q; if(t<2/3)return p+(q-p)*(2/3-t)*6; return p; }
+  var q=l<.5?l*(1+s):l+s-l*s, p=2*l-q;
+  return '#'+[f(p,q,h+1/3),f(p,q,h),f(p,q,h-1/3)].map(function(v){
+    return Math.round(v*255).toString(16).padStart(2,'0'); }).join('');
+}
+function setAccent(hex){
+  document.documentElement.style.setProperty('--accent',hex);
+  document.documentElement.style.setProperty('--accent-dim',hexToRgba(hex,.55));
+  ACCENT=hex;
+}
+var ACCENT='#ff3b30';
+
+/* ================= embedded YouTube player ================= */
+var YT_READY=false, player=null, wantVideo=null, blocked={}, watchdog=null;
+
+function giveUpOnVideo(id, why){
+  if(id) blocked[id]=true;
+  slot.classList.remove('video');
+  clearTimeout(watchdog);
+  console.log('[ytm overlay] falling back to artwork:', why || 'unknown');
+}
+
+window.onYouTubeIframeAPIReady=function(){
+  YT_READY=true;
+  player=new YT.Player('ytplayer',{
+    height:'100%', width:'100%',
+    playerVars:{ autoplay:1, controls:0, disablekb:1, fs:0, modestbranding:1,
+                 rel:0, iv_load_policy:3, playsinline:1, mute:1, loop:0,
+                 // Without origin, YouTube rejects a fair number of embeds
+                 // outright - especially inside OBS's browser source.
+                 origin: location.origin },
+    events:{
+      onReady:function(e){ e.target.mute(); if(wantVideo) loadVideo(wantVideo); },
+      onStateChange:function(e){
+        // 1 playing, 3 buffering - either means the embed is genuinely working.
+        if(e.data===1||e.data===3) clearTimeout(watchdog);
+      },
+      onError:function(e){
+        giveUpOnVideo(wantVideo, 'player error ' + e.data);
+      }
+    }
+  });
+};
+(function loadYT(){
+  var t=document.createElement('script');
+  t.src='https://www.youtube.com/iframe_api';
+  document.head.appendChild(t);
+})();
+
+function loadVideo(id){
+  if(!player || !player.loadVideoById) return;
+  try{
+    player.loadVideoById({videoId:id, startSeconds:Math.max(0,localProgress)});
+    player.mute();
+    if(CFG && CFG.overlay.video_quality) player.setPlaybackQuality(CFG.overlay.video_quality);
+    // Some failures render an error card inside the iframe without ever firing
+    // onError, so fall back if nothing starts playing.
+    clearTimeout(watchdog);
+    watchdog = setTimeout(function(){ giveUpOnVideo(id, 'never started playing'); }, 6000);
+  }catch(e){ giveUpOnVideo(id, e.message); }
+}
+function syncVideo(){
+  if(!player || !player.getCurrentTime || !slot.classList.contains('video')) return;
+  try{
+    var t=player.getCurrentTime();
+    if(Math.abs(t-localProgress)>1.5) player.seekTo(localProgress,true);
+    var st=player.getPlayerState();
+    if(playing && st!==1) player.playVideo();
+    if(!playing && st===1) player.pauseVideo();
+  }catch(e){}
+}
+setInterval(syncVideo,3000);
+
+/* ================= visualiser ================= */
+var levels=[], smoothed=[], peaks=[], holds=[], vctx=viz.getContext('2d');
+var lastBarUpdate=0;
+function resizeViz(){
+  var o=CFG&&CFG.visualizer; if(!o) return;
+  var dpr=window.devicePixelRatio||1;
+  var w=card.clientWidth * (o.width_pct/100), h=o.height;
+  viz.style.width=w+'px'; viz.style.height=h+'px';
+  viz.style.left=((card.clientWidth-w)/2)+'px'; viz.style.right='auto';
+  viz.width=Math.max(1,Math.round(w*dpr)); viz.height=Math.max(1,Math.round(h*dpr));
+  vctx.setTransform(dpr,0,0,dpr,0,0);
+}
+function simulate(n,t){
+  // Not real audio, but shaped like it: bass-weighted, a couple of phases per
+  // band so neighbours do not move in lockstep, and still when paused.
+  var out=[];
+  for(var i=0;i<n;i++){
+    var f=i/n;
+    var base=Math.pow(1-f,1.35);
+    var v=base*(0.45
+        + 0.30*Math.sin(t*(1.7+f*4.0)+i*0.8)
+        + 0.25*Math.sin(t*(3.1+f*7.0)+i*2.3));
+    out.push(Math.max(0.02,Math.min(1,v)));
+  }
+  return out;
+}
+function drawViz(t){
+  var o=CFG&&CFG.visualizer; if(!o||o.mode==='off') return;
+  var n=o.bars;
+
+  if(smoothed.length!==n){
+    smoothed=new Array(n).fill(0); peaks=new Array(n).fill(0); holds=new Array(n).fill(0);
+  }
+
+  // Bars advance on their own clock, not once per animation frame. Otherwise
+  // everything moves at whatever the monitor happens to run at, and peak decay
+  // is three times faster on a 180Hz panel than a 60Hz one.
+  var interval = 1000 / Math.max(4, o.fps || 18);
+  if(t - lastBarUpdate >= interval){
+    var dt = Math.min(0.25, (t - lastBarUpdate) / 1000);
+    lastBarUpdate = t;
+
+    var src;
+    if(o.mode==='audio') src = levels.length ? levels : new Array(n).fill(0);
+    else src = playing ? simulate(n, t/1000) : new Array(n).fill(0.03);
+
+    var sm = o.smoothing;
+    var fall = (o.peak_fall === undefined ? 0.5 : o.peak_fall);
+    var hold = (o.peak_hold === undefined ? 0.45 : o.peak_hold);
+    for(var i=0;i<n;i++){
+      var v = src[i] || 0;
+      smoothed[i] = smoothed[i]*sm + v*(1-sm);
+      if(smoothed[i] >= peaks[i]){
+        peaks[i] = smoothed[i];
+        holds[i] = hold;                       // sit at the new peak briefly
+      } else if(holds[i] > 0){
+        holds[i] -= dt;
+      } else {
+        peaks[i] = Math.max(smoothed[i], peaks[i] - fall*dt);   // units per second
+      }
+    }
+  }
+
+  var w=viz.clientWidth, h=viz.clientHeight;
+  vctx.clearRect(0,0,w,h);
+  var color = o.color_mode==='accent' ? ACCENT : o.color;
+  vctx.fillStyle=color;
+
+  var gap=Math.max(1,w/n*0.22), bw=(w-gap*(n-1))/n;
+  for(var i=0;i<n;i++){
+    var v=smoothed[i], x=i*(bw+gap);
+    if(o.style==='mirror'){
+      var bh=v*h/2;
+      vctx.fillRect(x,h/2-bh,bw,bh*2);
+    } else {
+      var bh=Math.max(1,v*h);
+      vctx.fillRect(x,h-bh,bw,bh);
+      if(o.cap){
+        var py=h-Math.max(1,peaks[i]*h);
+        vctx.globalAlpha=0.75; vctx.fillRect(x,py-2,bw,2); vctx.globalAlpha=1;
+      }
+    }
+  }
+}
+
+/* ================= config ================= */
+function applyConfig(cfg){
+  CFG=cfg;
+  var o=cfg.overlay, v=cfg.visualizer, r=document.documentElement.style;
+  loadFont(o.font_family);
+  r.setProperty('--font','"'+o.font_family+'"');
+  r.setProperty('--title',o.title_size+'px');
+  r.setProperty('--artist',o.artist_size+'px');
+  r.setProperty('--title-w',o.title_weight);
+  r.setProperty('--artist-w',o.artist_weight);
+  r.setProperty('--fg',o.text_color);
+  r.setProperty('--muted',o.muted_color);
+  r.setProperty('--bubble',hexToRgba(o.bubble_color,o.bubble_opacity));
+  r.setProperty('--radius',o.bubble_radius+'px');
+  r.setProperty('--pad',o.padding+'px');
+  r.setProperty('--gap',o.gap+'px');
+  r.setProperty('--width',o.width+'px');
+  r.setProperty('--art',o.art_size+'px');
+  r.setProperty('--art-radius',o.art_radius+'px');
+  r.setProperty('--bd-blur',o.backdrop_blur+'px');
+  r.setProperty('--bd-opacity',o.backdrop_opacity);
+  r.setProperty('--stroke',o.outline?'2px':'0');
+  r.setProperty('--stroke-color',o.outline_color);
+  r.setProperty('--viz-op',v.opacity);
+
+  if(o.accent_mode==='custom') setAccent(o.accent_color);
+
+  stage.className=o.align+' '+o.valign+' '+o.animation;
+  card.classList.toggle('glow',!!o.glow);
+  card.classList.remove('card','bar','minimal');
+  card.classList.add(o.layout);
+
+  slot.classList.toggle('hidden',!o.show_art);
+  slot.classList.toggle('spin',!!o.art_spin);
+  slot.classList.toggle('wide', o.art_source==='video' && o.video_fit==='wide');
+
+  barEl.style.display=o.show_progress?'':'none';
+  timesEl.style.display=(o.show_progress&&o.show_time)?'':'none';
+  albumEl.style.display=o.show_album?'':'none';
+  nextEl.style.display=o.show_next?'':'none';
+  likeEl.style.display=o.show_like?'':'none';
+  eyebrow.style.display=o.show_source_label?'':'none';
+  eyebrow.textContent=o.source_label||'Now playing';
+
+  viz.className=(v.mode==='off'?'hidden ':'')+v.position;
+  resizeViz();
+
+  if(NOW) render(NOW);
+}
+
+/* ================= marquee ================= */
+function fitLine(lineEl,spanEl,text){
+  spanEl.textContent=text;
+  lineEl.classList.remove('scroll');
+  if(!CFG||!CFG.overlay.marquee) return;
+  requestAnimationFrame(function(){
+    if(spanEl.scrollWidth>lineEl.clientWidth+4){
+      spanEl.textContent=text+'\u00A0\u00A0\u00A0\u00A0'+text;
+      lineEl.style.setProperty('--marquee-dur',Math.max(8,spanEl.scrollWidth/40)+'s');
+      lineEl.classList.add('scroll');
+    }
+  });
+}
+
+/* ================= render ================= */
+var lastArt='', lastId='', lastEmbed='';
+function render(s){
+  NOW=s;
+  var o=CFG.overlay;
+  var idle=!s.title;
+  playing=!!s.playing;
+
+  slot.classList.toggle('still',!playing);
+
+  var hide=(idle&&o.hide_when_idle)||(s.ad&&o.hide_during_ads)||(!playing&&o.hide_when_paused);
+  clearTimeout(hideTimer);
+  if(hide) hideTimer=setTimeout(function(){ card.classList.add('hidden'); },(o.hide_delay||0)*1000);
+  else card.classList.remove('hidden');
+  if(idle) return;
+
+  fitLine(titleLine,titleEl,s.title||'');
+  fitLine(artistLine,artistEl,s.author||'');
+  albumEl.textContent=s.album||'';
+
+  if(s.art&&s.art!==lastArt){
+    lastArt=s.art;
+    art.src=s.art;
+    if(o.backdrop){ backdrop.style.backgroundImage='url("'+s.art+'")'; card.classList.add('has-backdrop'); }
+    else card.classList.remove('has-backdrop');
+    if(o.accent_mode==='artwork') accentFromArt(s.art,function(hex){ setAccent(hex||o.accent_color); });
+  }
+  if(!s.art) card.classList.remove('has-backdrop');
+
+  // Which id, if any, is worth embedding.
+  //   videoType 1/2 -> the app is on the Video toggle, s.id is the real thing
+  //   videoType 0   -> an art track, no video behind it, but YTM pairs songs
+  //                    with their video "counterpart", so use that instead
+  var embedId = '';
+  if(o.art_source === 'video'){
+    var isRealVideo = (s.video_type===1 || s.video_type===2);
+    if(o.video_when === 'always')          embedId = s.id;
+    else if(o.video_when === 'video_tracks') embedId = isRealVideo ? s.id : '';
+    else /* auto */                        embedId = isRealVideo ? s.id : (s.counterpart_id || '');
+    if(embedId && blocked[embedId]) embedId = '';
+  }
+
+  if(embedId){
+    slot.classList.add('video');
+    if(embedId!==lastEmbed){ wantVideo=embedId; if(YT_READY&&player) loadVideo(embedId); }
+  } else {
+    slot.classList.remove('video');
+    clearTimeout(watchdog);
+  }
+  lastEmbed = embedId;
+  lastId=s.id;
+
+  likeEl.textContent = s.like===2?'\u2665':(s.like===0?'\u2716':'');
+  likeEl.style.color = s.like===2?'var(--accent)':'var(--muted)';
+
+  nextEl.innerHTML = (o.show_next&&s.next&&s.next.title)
+    ? 'Up next &nbsp;<b>'+esc(s.next.title)+'</b> \u00B7 '+esc(s.next.author) : '';
+
+  localProgress=s.progress||0; lastSync=performance.now();
+  tEnd.textContent = s.is_live?'LIVE':mmss(s.duration);
+  paint();
+}
+function paint(){
+  if(!NOW||!NOW.duration){ fill.style.width='0%'; return; }
+  var p=Math.min(localProgress,NOW.duration);
+  fill.style.width=(p/NOW.duration*100).toFixed(2)+'%';
+  tNow.textContent=mmss(p);
+}
+function tick(t){
+  if(playing&&NOW&&NOW.duration){
+    var now=performance.now();
+    localProgress+=(now-lastSync)/1000; lastSync=now;
+    paint();
+  }
+  if(CFG) drawViz(t);
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+window.addEventListener('resize',resizeViz);
+
+/* ================= socket ================= */
+function connect(){
+  var proto=location.protocol==='https:'?'wss':'ws';
+  var ws=new WebSocket(proto+'://'+location.host+'/ytm/ws/overlay');
+  ws.onmessage=function(e){
+    var m; try{ m=JSON.parse(e.data); }catch(err){ return; }
+    if(m.type==='config') applyConfig(m.config);
+    else if(m.type==='state'&&CFG) render(m);
+    else if(m.type==='levels') levels=m.v;
+  };
+  ws.onclose=function(){ setTimeout(connect,1500); };
+  ws.onerror=function(){ try{ ws.close(); }catch(err){} };
+}
+connect();
+</script>
+</body></html>

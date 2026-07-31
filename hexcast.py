@@ -25,6 +25,7 @@ import json
 import os
 import re
 import subprocess
+
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -468,6 +469,13 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 app.mount("/media", StaticFiles(directory=str(MEDIA_DIR)), name="media")
+app.mount("/static", StaticFiles(directory=str(ROOT / "static")), name="static")
+
+from twitch import attach_twitch
+attach_twitch(app, PORT)
+
+from ytmusic import attach_ytm
+attach_ytm(app, PORT)
 
 
 # ---- HTML (inlined) --------------------------------------------------------

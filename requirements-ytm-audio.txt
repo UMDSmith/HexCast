@@ -1,0 +1,15 @@
+# HexCast - optional, only for the "React to real audio" visualiser mode.
+#
+#   pip install -r requirements-ytm-audio.txt
+#
+# Captures whatever your speakers are playing via WASAPI loopback and runs an
+# FFT over it. Without these the visualiser still works, it just animates from
+# playback position instead of real levels.
+#
+# Windows: works out of the box against the default playback device.
+# Linux:   needs PulseAudio or PipeWire; the monitor source is used.
+# macOS:   there is no system loopback, so a virtual device such as
+#          BlackHole is required.
+
+numpy>=1.26
+soundcard>=0.4.3

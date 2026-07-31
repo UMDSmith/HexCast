@@ -1,0 +1,97 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>HexCast alerts</title>
+<style>
+  html,body{margin:0;padding:0;background:transparent;overflow:hidden;height:100%;}
+  #stage{
+    position:absolute; inset:0; display:flex; padding:24px; box-sizing:border-box;
+  }
+  #stage.left{ justify-content:flex-start; } #stage.center{ justify-content:center; } #stage.right{ justify-content:flex-end; }
+  #stage.top{ align-items:flex-start; } #stage.middle{ align-items:center; } #stage.bottom{ align-items:flex-end; }
+
+  .alert{
+    font-family:var(--font), 'Segoe UI', system-ui, sans-serif;
+    color:var(--fg,#fff);
+    background:var(--bubble, transparent);
+    border-radius:var(--radius,18px);
+    padding:22px 34px;
+    text-align:center;
+    max-width:90vw;
+    -webkit-text-stroke:var(--stroke,0) var(--stroke-color,#000);
+    paint-order:stroke fill;
+    text-shadow:0 3px 10px rgba(0,0,0,.6);
+    border-top:3px solid var(--accent,#ff3b30);
+  }
+  .title{
+    font-size:var(--sub,26px); font-weight:800; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--accent,#ff3b30); margin-bottom:6px;
+  }
+  .body{ font-size:var(--size,40px); font-weight:800; line-height:1.15; }
+  .note{ font-size:var(--sub,26px); font-weight:500; opacity:.82; margin-top:10px; font-style:italic; }
+
+  @keyframes popIn{ 0%{opacity:0; transform:scale(.8) translateY(14px);} 60%{transform:scale(1.04);} 100%{opacity:1; transform:none;} }
+  @keyframes slideIn{ from{opacity:0; transform:translateY(-30px);} to{opacity:1; transform:none;} }
+  @keyframes fadeIn{ from{opacity:0;} to{opacity:1;} }
+  .anim-pop{ animation:popIn .42s cubic-bezier(.2,.9,.3,1.25) both; }
+  .anim-slide{ animation:slideIn .38s cubic-bezier(.2,.8,.3,1) both; }
+  .anim-fade{ animation:fadeIn .4s ease both; }
+  .out{ opacity:0; transform:scale(.96); transition:opacity .35s ease, transform .35s ease; }
+  @media (prefers-reduced-motion: reduce){ .alert{ animation:none !important; } }
+</style></head>
+<body>
+<div id="stage"></div>
+<script src="/twitch/boot.js"></script>
+<script>
+
+
+
+var CFG = null;
+var stage = document.getElementById('stage');
+var WS = null;
+
+function applyConfig(cfg){
+  CFG = cfg;
+  var e = cfg.events, r = document.documentElement.style;
+  loadFont(e.font_family);
+  r.setProperty('--font', '"' + e.font_family + '"');
+  r.setProperty('--size', e.font_size + 'px');
+  r.setProperty('--sub', e.sub_font_size + 'px');
+  r.setProperty('--fg', e.text_color);
+  r.setProperty('--accent', e.accent_color);
+  r.setProperty('--radius', e.bubble_radius + 'px');
+  r.setProperty('--bubble', hexToRgba(e.bubble_color, e.bubble_opacity));
+  r.setProperty('--stroke', e.outline ? '2px' : '0');
+  r.setProperty('--stroke-color', e.outline_color);
+  stage.className = e.align + ' ' + e.valign;
+}
+
+function show(ev){
+  var e = CFG.events;
+  var el = document.createElement('div');
+  el.className = 'alert anim-' + e.animation;
+  var html = '<div class="title">' + esc(ev.title) + '</div>';
+  html += '<div class="body">' + esc(ev.body) + '</div>';
+  if(ev.message) html += '<div class="note">' + esc(ev.message) + '</div>';
+  el.innerHTML = html;
+  stage.appendChild(el);
+
+  setTimeout(function(){
+    el.classList.add('out');
+    setTimeout(function(){
+      el.remove();
+      setTimeout(function(){
+        if(WS && WS.readyState === WebSocket.OPEN) {
+          WS.send(JSON.stringify({type: "alert_complete", id: ev.id}));
+        }
+      }, (CFG.events.gap_between || 0) * 1000);
+    }, 380);
+  }, (ev.duration || e.default_duration) * 1000);
+}
+
+WS = connect('/twitch/ws/events', function(m){
+  if(m.type === 'config'){ applyConfig(m.config); return; }
+  if(m.type === 'event' && CFG){
+    show(m);
+  }
+});
+
+</script></body></html>
