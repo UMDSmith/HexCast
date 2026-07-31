@@ -21,7 +21,7 @@ There is no rate limiting and no input gating beyond file-extension checks. Do *
 
 Safe ways to run it:
 - On the same machine as OBS, accessed only via `localhost` (set `host="127.0.0.1"` near the bottom of `hexcast.py`).
-- On a LAN, with a firewall rule restricting the port to your local subnet (see [Network access & firewall](#network-access--firewall)).
+- On a LAN, with a firewall rule restricting the port to your local subnet.
 - If you genuinely need remote access, put it behind a reverse proxy (nginx/Caddy) that enforces authentication and TLS, on a private network or VPN — that's on you to set up correctly.
 
 ## Features
@@ -292,7 +292,7 @@ set HEXCAST_MEDIA_DIR=D:\hexcast-media
 start.bat
 ```
 
-To make it permanent on Windows, set it via System Properties → Environment Variables. On Linux, add the `export` line to your `~/.bashrc`, or use `Environment=` in the systemd unit (see [Running on startup](#running-on-startup)).
+To make it permanent on Windows, set it via System Properties → Environment Variables. On Linux, add the `export` line to your `~/.bashrc`.
 
 ### Other settings
 
@@ -404,60 +404,6 @@ status dot showing whether that integration is currently connected.
 some** — the Twitch module stores an OAuth token and a client secret, and the
 YouTube Music module stores a pairing token, all under `config/`. Keep that
 folder out of git and keep the port on your LAN.
-
-## Network access & firewall
-
-The server binds to `0.0.0.0`, so the control panel is reachable from any device on your network. Limit access with your firewall.
-
-### Linux (UFW)
-
-```bash
-sudo ufw allow from 192.168.1.0/24 to any port 4747 proto tcp
-```
-
-Replace `192.168.1.0/24` with your actual LAN range. Find it with `ip route`.
-
-### Windows Defender Firewall
-
-1. Open **Windows Defender Firewall with Advanced Security**
-2. **Inbound Rules** → **New Rule** → Port → TCP, specific port 4747 → Allow the connection
-3. In the **Scope** tab, restrict **Remote IP addresses** to your LAN range
-
-## Running on startup
-
-### Linux (systemd user service)
-
-Create `~/.config/systemd/user/hexcast.service`:
-
-```ini
-[Unit]
-Description=Hexcast
-After=network.target
-
-[Service]
-WorkingDirectory=%h/hexcast
-ExecStart=%h/hexcast/.venv/bin/python %h/hexcast/hexcast.py
-Restart=on-failure
-
-[Install]
-WantedBy=default.target
-```
-
-Enable:
-```bash
-systemctl --user daemon-reload
-systemctl --user enable --now hexcast
-journalctl --user -u hexcast -f   # watch logs
-```
-
-### Windows (Task Scheduler)
-
-1. Open **Task Scheduler** → **Create Task**
-2. **General**: name it "Hexcast", select "Run only when user is logged on"
-3. **Triggers**: New → "At log on"
-4. **Actions**: New → Program/script: full path to `start.bat`, Start in: the project folder
-5. **Conditions**: uncheck "Start only if on AC power" if on a laptop
-6. **Settings**: check "Allow task to be run on demand"
 
 ## Supported media formats
 
