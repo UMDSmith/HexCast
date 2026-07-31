@@ -38,7 +38,7 @@ Safe ways to run it:
 - **Edit Mode** for tuning, **Delete Mode** for cleanup — no manual filesystem digging
 - **Bot API**: trigger anything by name via a simple HTTP GET, no auth needed (designed for trusted LAN)
 - **⏹ Stop All** panic button to clear every visual and stop every playing sound at once
-- **Optional integrations**: Twitch chat and alert overlays, and a YouTube Music now-playing overlay — see [Integrations](#integrations)
+- **Optional integrations**: Twitch chat and alert overlays, and a now-playing overlay for the [YouTube Music Desktop App](https://ytmdesktop.github.io/) — see [Integrations](#integrations)
 
 ## Prerequisites
 
@@ -373,7 +373,7 @@ either, both, or neither.
 | | What it adds | Docs |
 | --- | --- | --- |
 | **Twitch** | Chat overlay, alert overlay for follows/subs/bits/raids/redeems with a FIFO alert queue, settings panel | [docs/twitch.md](docs/twitch.md) |
-| **YouTube Music** | Now-playing overlay with album art, live progress, audio visualiser, optional embedded music video | [docs/music.md](docs/music.md) |
+| **YouTube Music Desktop** | Now-playing overlay with album art, live progress, audio visualiser, optional embedded music video. Requires the [YouTube Music Desktop App](https://ytmdesktop.github.io/) — it pairs with that app's companion API, not with YouTube Music directly | [docs/music.md](docs/music.md) |
 
 Both hook into the existing `GET /api/play/{name}` endpoint, so a raid or a
 track change can fire a clip from your library. Both can also POST every event
