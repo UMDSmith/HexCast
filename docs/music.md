@@ -1,11 +1,14 @@
-# YouTube Music — now playing overlay
+# YouTube Music Desktop — now playing overlay
 
-A now-playing overlay fed by the YouTube Music Desktop App's companion server.
+A now-playing overlay fed by the
+[YouTube Music Desktop App](https://ytmdesktop.github.io/)'s companion server.
 Album art, live progress, an accent colour pulled from the artwork itself, an
 audio visualiser, and optionally the music video embedded in the card.
 
-Requires **YouTube Music Desktop App 2.0.0 or newer**. Everything lives under
-`/ytm/*`.
+This integration talks **specifically to that app** — it does not connect to
+YouTube Music in a browser or to the service directly. Requires
+**[YouTube Music Desktop App](https://ytmdesktop.github.io/) 2.0.0 or newer**.
+Everything lives under `/ytm/*`.
 
 ---
 
