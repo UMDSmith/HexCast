@@ -323,7 +323,9 @@ await fetch(`http://localhost:4747/api/play/${name}`);
 
 ### Triggering from a chat bot / Twitch redemptions
 
-There's no dedicated Twitch script — Hexcast stays generic. If you already have a bot monitoring Twitch chat, channel-point redemptions, or events, just have it call `GET /api/play/{name}` when the relevant trigger fires. Map a redemption title or chat command to a media name and hit the endpoint. The overlay applies the saved position/scale/volume automatically, so the bot only needs to know the clip name.
+Hexcast ships a dedicated Twitch integration (see [Integrations](#integrations)) that handles this natively: the alerts panel can fire any clip from your library on follows, subs, gift subs, bits, raids, channel-point redeems, and hype trains — just put the clip name in the Clip column of the Alerts table. No bot required.
+
+If you'd rather drive it from your own bot instead, the generic API still works: have it call `GET /api/play/{name}` when the relevant trigger fires. Map a redemption title or chat command to a media name and hit the endpoint. The overlay applies the saved position/scale/volume automatically, so the bot only needs to know the clip name.
 
 ## Integrations
 
@@ -334,7 +336,7 @@ either, both, or neither.
 
 | | What it adds | Docs |
 | --- | --- | --- |
-| **Twitch** | Chat overlay, alert overlay for follows/subs/bits/raids/redeems, settings panel | [docs/twitch.md](docs/twitch.md) |
+| **Twitch** | Chat overlay, alert overlay for follows/subs/bits/raids/redeems with a FIFO alert queue, settings panel | [docs/twitch.md](docs/twitch.md) |
 | **YouTube Music** | Now-playing overlay with album art, live progress, audio visualiser, optional embedded music video | [docs/music.md](docs/music.md) |
 
 Both hook into the existing `GET /api/play/{name}` endpoint, so a raid or a
