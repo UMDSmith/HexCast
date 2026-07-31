@@ -170,6 +170,42 @@ For OBS browser source, use: `http://<your-machine-ip>:4747/overlay`
 - Media uploaded or discovered will be saved to `./hexcast-media/audio/` and `./hexcast-media/video/`
 - Remember: **⚠️ This is for local networks only** — do not expose port 4747 to the internet
 
+## Updating
+
+Updating in place is safe: your library (`media/`) and all settings and secrets (`config/`) are ignored by git, so a pull never touches them.
+
+**Linux / macOS:**
+```bash
+cd hexcast
+git pull
+.venv/bin/pip install -r requirements.txt
+./start.sh
+```
+
+**Windows:**
+```cmd
+cd hexcast
+git pull
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+start.bat
+```
+
+The start scripts install dependencies only on the very first run, so the explicit `pip install` line matters here — new versions can add or change dependencies.
+
+If you use the integrations, refresh their dependencies the same way:
+```
+pip install -r requirements-twitch.txt
+pip install -r requirements-ytm.txt
+```
+
+**Docker:** pull, rebuild the image, and recreate the container (your media persists in the host mount):
+```bash
+git pull
+docker build -t hexcast:latest .
+docker stop hexcast && docker rm hexcast
+docker run -d --name hexcast -p 4747:4747 -v ./hexcast-media:/app/media hexcast:latest
+```
+
 ## Usage
 
 ### 1. Start the server
