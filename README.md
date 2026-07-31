@@ -29,7 +29,6 @@ Safe ways to run it:
 - **Folder-watch**: drop media into `media/audio/` or `media/video/` and it appears in the control panel instantly
 - **Drag-and-drop uploads** from the control panel — audio extensions route to `audio/`, everything visual to `video/`
 - **Auto-conversion**: dropped `.gif`/`.webp`/`.apng` files get transcoded to `.mp4` on the spot, so every clip is frame-precise seekable
-- **Web search** for video clips (Tenor) and audio (Freesound) with one-click import — optional, requires free API keys
 - **Per-clip editor** for video: drag-to-position canvas, scale, volume (when the clip has audio), and a dual-thumb start/end trim slider with **▶ Preview** that plays the trimmed range live in the canvas
 - **Per-clip editor** for audio: volume, start/end trim, and live preview through your speakers
 - **Rename in editor**: change a clip's filename without touching the filesystem; the sidecar and poster follow automatically
@@ -183,8 +182,6 @@ OBS browser source:  http://localhost:4747/overlay
 Media root:          /path/to/hexcast/media
 Canvas:              1920x1080
 Posters (ffmpeg):    enabled
-Tenor search:        disabled (set TENOR_API_KEY)
-Freesound search:    disabled (set FREESOUND_API_KEY)
 ```
 
 ### 2. Add the browser source to OBS
@@ -201,9 +198,8 @@ After clicking OK, select the source in the canvas and press **Ctrl+F** to fit t
 
 ### 3. Add media
 
-Three ways:
+Two ways:
 - **Drag-and-drop** onto the dropzone in the control panel
-- **Search** Tenor/Freesound (requires API keys, see below)
 - **Drop directly** into `media/audio/` or `media/video/`
 
 The folder watcher picks up new files instantly. Animated `.gif`/`.webp`/`.apng` files auto-convert to `.mp4` on first sight so the editor can seek into them frame-precisely.
@@ -283,35 +279,6 @@ uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="warning")
 ```
 
 The overlay itself is canvas-agnostic — it uses percentages, so the same setup works whether your OBS canvas is 1080p, 1440p, 4K, or vertical.
-
-## Web search (optional)
-
-Both providers are free with a quick sign-up.
-
-### Tenor (GIFs)
-
-1. https://developers.google.com/tenor/guides/quickstart → create a project, enable Tenor API, generate a key
-2. Set the environment variable `TENOR_API_KEY` before launching:
-
-   **Linux/macOS:**
-   ```bash
-   export TENOR_API_KEY="AIza..."
-   ./start.sh
-   ```
-
-   **Windows:**
-   ```cmd
-   set TENOR_API_KEY=AIza...
-   start.bat
-   ```
-
-   Or set it permanently via System Properties → Environment Variables.
-
-### Freesound (Sound effects)
-
-1. Sign up at https://freesound.org/
-2. Apply at https://freesound.org/apiv2/apply (instant approval)
-3. Set `FREESOUND_API_KEY` the same way
 
 ## Bot API
 
@@ -433,9 +400,6 @@ After=network.target
 WorkingDirectory=%h/hexcast
 ExecStart=%h/hexcast/.venv/bin/python %h/hexcast/hexcast.py
 Restart=on-failure
-# Optional API keys:
-# Environment=TENOR_API_KEY=AIza...
-# Environment=FREESOUND_API_KEY=...
 
 [Install]
 WantedBy=default.target

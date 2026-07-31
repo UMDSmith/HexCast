@@ -95,26 +95,6 @@
               transition: background 100ms, border-color 100ms; margin-bottom: 8px; }
   .dropzone:hover, .dropzone.over { border-color: var(--red-soft); background: #1f1414; color: var(--text); }
   .dropzone a { color: var(--red-soft); text-decoration: underline; }
-  .searchrow { display: flex; gap: 6px; }
-  .searchrow select, .searchrow input { background: var(--bg); color: var(--text);
-                                        border: 1px solid var(--border); border-radius: 4px;
-                                        padding: 6px 8px; font-family: inherit; font-size: 13px; }
-  .searchrow select { min-width: 110px; }
-  .searchrow input { flex: 1; }
-  .results { margin-top: 8px; display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-             gap: 6px; max-height: 280px; overflow-y: auto; padding: 4px; }
-  .results .r { background: var(--card); border: 1px solid var(--border); border-radius: 4px;
-                cursor: pointer; aspect-ratio: 4/3; background-size: cover; background-position: center;
-                position: relative; overflow: hidden; }
-  .results .r:hover { border-color: var(--red-soft); }
-  .results .r .lbl { position: absolute; bottom: 0; left: 0; right: 0; padding: 3px 5px;
-                     background: linear-gradient(transparent, rgba(0,0,0,0.85)); font-size: 11px;
-                     text-shadow: 0 1px 2px #000; }
-  .results .r.sound { aspect-ratio: 2/1; background: var(--card); }
-  .results .r.sound .lbl { background: none; position: static; padding: 8px 6px; text-shadow: none; }
-  .results .r.imported { opacity: 0.4; pointer-events: none; }
-  .results .r.imported::after { content: "✓"; position: absolute; top: 4px; right: 6px;
-                                color: var(--red-soft); font-size: 16px; font-weight: bold; }
 
   /* modal */
   .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7);
@@ -253,15 +233,6 @@
       <input type="file" id="fileinput" multiple accept="audio/*,video/*,image/*" style="display:none">
       <span>Drop files here or <a id="browse">click to browse</a></span>
     </div>
-    <div class="searchrow">
-      <select id="searchtype">
-        <option value="video">Videos / GIFs</option>
-        <option value="audio">Audio</option>
-      </select>
-      <input id="searchbox" placeholder="search Tenor / Freesound…" type="search">
-      <button id="searchbtn">Search</button>
-    </div>
-    <div id="results" class="results" hidden></div>
   </div>
 
   <h2>Audio</h2>
@@ -1051,12 +1022,6 @@ async function uploadFiles(files) {
   }
 }
 
-// ---- search (Tenor / Freesound) ----
-const searchType = $("#searchtype");
-const searchBox = $("#searchbox");
-const results = $("#results");
-$("#searchbtn").onclick = doSearch;
-
 // ---- Integration status dots in the topbar --------------------------------
 function setDot(id, live, title) {
   const dot = document.getElementById(id);
@@ -1097,48 +1062,6 @@ function setDot(id, live, title) {
 
   setTimeout(pollIntegrations, 10000);
 })();
-searchBox.addEventListener("keydown", (e) => { if (e.key === "Enter") doSearch(); });
-
-async function doSearch() {
-  const q = searchBox.value.trim();
-  if (!q) { results.hidden = true; results.innerHTML = ""; return; }
-  const type = searchType.value;
-  try {
-    const r = await fetch(`/search?q=${encodeURIComponent(q)}&type=${type}`);
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok) { toast(`search failed: ${j.detail || r.statusText}`, true); return; }
-    renderResults(j.results || [], type);
-  } catch (e) { toast(`search failed: ${e.message}`, true); }
-}
-
-function renderResults(items, type) {
-  results.innerHTML = "";
-  results.hidden = items.length === 0;
-  for (const it of items) {
-    const r = document.createElement("div");
-    r.className = "r" + (type === "audio" ? " sound" : "");
-    if (type === "video") r.style.backgroundImage = `url("${it.preview}")`;
-    const lbl = document.createElement("div");
-    lbl.className = "lbl";
-    lbl.textContent = it.name;
-    r.appendChild(lbl);
-    r.title = it.name;
-    r.onclick = async () => {
-      r.classList.add("imported");
-      try {
-        const resp = await fetch("/import", {
-          method: "POST", headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({url: it.url, kind: it.kind, name: it.name, ext: it.ext})
-        });
-        const j = await resp.json().catch(() => ({}));
-        if (resp.ok) toast(`imported ${j.kind}: ${j.name}`);
-        else        { toast(`import failed: ${j.detail || resp.statusText}`, true);
-                      r.classList.remove("imported"); }
-      } catch (e) { toast(`import failed: ${e.message}`, true); r.classList.remove("imported"); }
-    };
-    results.appendChild(r);
-  }
-}
 
 // ---- websocket / live index ----
 const statusEl = $("#status");

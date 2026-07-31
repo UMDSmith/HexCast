@@ -11,10 +11,6 @@ OBS browser source:  http://localhost:4747/overlay
 Dependencies:
     pip install fastapi "uvicorn[standard]" watchdog httpx python-multipart
 
-Optional environment variables for web search:
-    TENOR_API_KEY=...        # https://developers.google.com/tenor/guides/quickstart
-    FREESOUND_API_KEY=...    # https://freesound.org/apiv2/apply
-
 Per-gif positioning: each gif can have a sidecar .json with {"x":50,"y":50,"scale":3.0}.
 Use the Edit Mode toggle in the control panel to drag-position visually.
 """
@@ -29,7 +25,6 @@ import subprocess
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-import httpx
 import uvicorn
 from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -65,9 +60,6 @@ ANIMATED_IMAGE_EXTS = {".gif", ".webp", ".apng"}
 VIDEO_NATIVE_EXTS = {".mp4", ".webm", ".mov", ".mkv"}
 # Everything accepted in media/video/. Animated images get converted before they land in the index.
 VIDEO_EXTS = IMAGE_EXTS | ANIMATED_IMAGE_EXTS | VIDEO_NATIVE_EXTS
-
-TENOR_KEY = os.getenv("TENOR_API_KEY", "")
-FREESOUND_KEY = os.getenv("FREESOUND_API_KEY", "")
 
 # ---- state -----------------------------------------------------------------
 index = {"audio": [], "video": []}
@@ -144,7 +136,7 @@ for _d in (MEDIA_DIR, AUDIO_DIR, VIDEO_DIR):
 
 
 def kind_for_ext(ext: str) -> str | None:
-    """Return 'audio' or 'video' for routing uploads/imports. None if unsupported."""
+    """Return 'audio' or 'video' for routing uploads. None if unsupported."""
     ext = ext.lower()
     if ext in AUDIO_EXTS:
         return "audio"
@@ -458,8 +450,6 @@ async def lifespan(app: FastAPI):
     print(f"  Video root:          {VIDEO_DIR}")
     print(f"  Canvas:              {CANVAS_W}x{CANVAS_H}")
     print(f"  ffmpeg:              {'enabled' if HAS_FFMPEG else 'DISABLED — gif/webp conversion + posters off (install ffmpeg)'}")
-    print(f"  Tenor search:        {'enabled' if TENOR_KEY else 'disabled (set TENOR_API_KEY)'}")
-    print(f"  Freesound search:    {'enabled' if FREESOUND_KEY else 'disabled (set FREESOUND_API_KEY)'}")
     print(f"\n  ! No authentication — keep this on a trusted LAN behind a firewall.")
     print(f"    Do NOT expose this to the internet.\n")
     yield
@@ -853,100 +843,6 @@ async def upload(file: UploadFile = File(...)):
         if converted:
             path = converted
 
-    return {"ok": True, "name": path.name, "kind": kind}
-
-
-@app.get("/search")
-async def search(q: str, type: str = "video", limit: int = 24):
-    """type: 'video' searches Tenor (GIFs as mp4), 'audio' searches Freesound."""
-    if not q.strip():
-        return {"results": []}
-
-    if type == "video":
-        if not TENOR_KEY:
-            raise HTTPException(
-                400,
-                "TENOR_API_KEY not set — get a free key at https://developers.google.com/tenor/guides/quickstart"
-            )
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get("https://tenor.googleapis.com/v2/search", params={
-                "q": q, "key": TENOR_KEY, "limit": limit,
-                "media_filter": "mp4,tinygif", "contentfilter": "off",
-                "client_key": "hexcast",
-            })
-            r.raise_for_status()
-            data = r.json()
-        out = []
-        for item in data.get("results", []):
-            mf = item.get("media_formats", {})
-            if "mp4" not in mf or "tinygif" not in mf:
-                continue
-            label = item.get("content_description") or item.get("title") or item.get("id")
-            out.append({
-                "name": str(label)[:60],
-                "preview": mf["tinygif"]["url"],
-                "url": mf["mp4"]["url"],
-                "ext": ".mp4",
-                "kind": "video",
-            })
-        return {"results": out}
-
-    if type == "audio":
-        if not FREESOUND_KEY:
-            raise HTTPException(
-                400,
-                "FREESOUND_API_KEY not set — get a free key at https://freesound.org/apiv2/apply"
-            )
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get("https://freesound.org/apiv2/search/text/", params={
-                "query": q, "token": FREESOUND_KEY,
-                "fields": "id,name,previews,duration",
-                "page_size": limit,
-            })
-            r.raise_for_status()
-            data = r.json()
-        out = []
-        for item in data.get("results", []):
-            preview = (item.get("previews") or {}).get("preview-hq-mp3")
-            if not preview:
-                continue
-            out.append({
-                "name": (item.get("name") or str(item.get("id")))[:60],
-                "preview": preview,
-                "url": preview,
-                "ext": ".mp3",
-                "duration": item.get("duration"),
-                "kind": "audio",
-            })
-        return {"results": out}
-
-    raise HTTPException(400, "type must be 'video' or 'audio'")
-
-
-@app.post("/import")
-async def import_url(payload: dict):
-    url = payload.get("url")
-    kind = payload.get("kind")
-    name = payload.get("name", "")
-    ext = payload.get("ext", "")
-    if not url or kind not in ("audio", "video"):
-        raise HTTPException(400, "url and kind ('audio' or 'video') required")
-    target_dir = dir_for_kind(kind)
-    if not name:
-        name = Path(url.split("?")[0]).name
-    name = safe_filename(name)
-    if not Path(name).suffix:
-        name = f"{name}{ext or '.bin'}"
-    path = unique_path(target_dir, name)
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as c:
-        r = await c.get(url)
-        r.raise_for_status()
-        path.write_bytes(r.content)
-    # If the imported file is an animated image, convert in place.
-    if path.suffix.lower() in ANIMATED_IMAGE_EXTS:
-        converted = convert_animated_to_mp4(path)
-        if converted:
-            path = converted
     return {"ok": True, "name": path.name, "kind": kind}
 
 
