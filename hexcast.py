@@ -467,6 +467,16 @@ attach_twitch(app, PORT)
 from ytmusic import attach_ytm
 attach_ytm(app, PORT)
 
+# Discord Reactive is optional: skip quietly if the module file is gone, but
+# say why if it's present and only its dependencies are missing.
+try:
+    from discord_reactive import attach_discord
+    attach_discord(app, PORT)
+except ImportError as exc:
+    if getattr(exc, "name", "") != "discord_reactive":
+        print(f"  Discord module found but not loaded ({exc}) — "
+              f"pip install -r requirements-discord.txt", flush=True)
+
 
 # ---- HTML (inlined) --------------------------------------------------------
 

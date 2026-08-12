@@ -1,0 +1,203 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<title>HexCast - Discord Reactive</title>
+<style>
+  /* Transparent, OBS-friendly. Everything visual is driven by the config
+     message plus optional query-param overrides. */
+  :root{
+    --size:128px; --gap:18px; --dim:0.4; --sat:0.4;
+    --name-size:14px; --name-color:#ffffff; --radius:50%;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:transparent;overflow:hidden}
+  body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif}
+
+  #stage{display:flex;flex-wrap:wrap;gap:var(--gap);padding:8px;
+         align-items:flex-start;justify-content:center}
+  #stage.row{flex-direction:row}
+  #stage.column{flex-direction:column;align-items:center}
+  #stage.grid{display:grid;grid-template-columns:repeat(var(--cols,3),max-content);
+              justify-content:center}
+  #stage.align-start{justify-content:flex-start}
+  #stage.align-center{justify-content:center}
+  #stage.align-end{justify-content:flex-end}
+  #stage.column.align-start{align-items:flex-start;justify-content:flex-start}
+  #stage.column.align-center{align-items:center;justify-content:flex-start}
+  #stage.column.align-end{align-items:flex-end;justify-content:flex-start}
+
+  .u{display:flex;flex-direction:column;align-items:center;gap:6px;
+     animation:enter .28s cubic-bezier(.2,1.4,.4,1) both;
+     transform:translate(var(--ox,0px),var(--oy,0px))}
+  .u.out{animation:exit .22s ease both}
+
+  .pic-wrap{position:relative;width:var(--u-size,var(--size));height:var(--u-size,var(--size))}
+  .pic{width:100%;height:100%;object-fit:cover;border-radius:var(--radius);
+       filter:brightness(var(--dim)) saturate(var(--sat));
+       transition:filter .15s ease,transform .15s ease;
+       transform-origin:50% 100%}
+  .u.speaking .pic{filter:brightness(1) saturate(1)}
+  .u.speaking.bounce .pic{animation:talk .35s ease}
+  /* Muted or deafened: dim harder and never light up. */
+  .u.muted .pic{filter:brightness(calc(var(--dim) * .7)) saturate(0)}
+  .u.muted.speaking .pic{filter:brightness(calc(var(--dim) * .7)) saturate(0)}
+
+  .badge{position:absolute;right:2%;bottom:2%;width:26%;height:26%;
+         min-width:18px;min-height:18px;max-width:34px;max-height:34px;
+         background:#16161d;border-radius:50%;display:none;
+         align-items:center;justify-content:center;
+         box-shadow:0 1px 4px rgba(0,0,0,.6)}
+  .badge svg{width:62%;height:62%;fill:#f04747}
+  .u.muted .badge.mute{display:flex}
+  .u.deaf .badge.mute{display:none}
+  .u.deaf .badge.deaf{display:flex}
+
+  .nm{font-size:var(--name-size);color:var(--name-color);font-weight:600;
+      max-width:calc(var(--u-size,var(--size)) * 1.4);overflow:hidden;
+      text-overflow:ellipsis;white-space:nowrap;text-align:center;
+      text-shadow:0 1px 3px rgba(0,0,0,.8)}
+  body.no-names .nm{display:none}
+
+  @keyframes talk{
+    0%{transform:scale(1)} 35%{transform:scale(1.07) translateY(-3%)}
+    70%{transform:scale(.99)} 100%{transform:scale(1.03) translateY(-1.5%)}
+  }
+  .u.speaking .pic{transform:scale(1.03) translateY(-1.5%)}
+  @keyframes enter{from{opacity:0;transform:translate(var(--ox,0px),calc(var(--oy,0px) + 14px)) scale(.7)}
+                   to{opacity:1;transform:translate(var(--ox,0px),var(--oy,0px)) scale(1)}}
+  @keyframes exit{from{opacity:1;transform:translate(var(--ox,0px),var(--oy,0px)) scale(1)}
+                  to{opacity:0;transform:translate(var(--ox,0px),var(--oy,0px)) scale(.7)}}
+</style></head>
+<body>
+<div id="stage" class="row align-center"></div>
+
+<script>
+var CFG = null;                 // full module config (overlay + users)
+var USERS = {};                 // id -> user payload from the server
+var Q = new URLSearchParams(location.search);
+
+function ocfg(){
+  // Saved settings with query-param overrides, so one overlay URL can be
+  // reused across scenes with different layouts.
+  var o = Object.assign({}, (CFG && CFG.overlay) || {});
+  ['layout','align','name_color'].forEach(function(k){
+    if(Q.has(k)) o[k] = Q.get(k);
+  });
+  ['size','spacing','grid_columns','name_size','dim'].forEach(function(k){
+    if(Q.has(k)) o[k] = parseFloat(Q.get(k));
+  });
+  ['show_names','round_avatars','desaturate','bounce','hide_muted','mute_badge'].forEach(function(k){
+    if(Q.has(k)) o[k] = Q.get(k) !== '0' && Q.get(k) !== 'false';
+  });
+  return o;
+}
+
+function ucfg(id){
+  return ((CFG && CFG.users) || {})[id] || {};
+}
+
+function applyTheme(){
+  var o = ocfg();
+  var r = document.documentElement.style;
+  r.setProperty('--size', (o.size || 128) + 'px');
+  r.setProperty('--gap', (o.spacing != null ? o.spacing : 18) + 'px');
+  r.setProperty('--dim', o.dim != null ? o.dim : 0.4);
+  r.setProperty('--sat', o.desaturate === false ? 1 : 0.4);
+  r.setProperty('--name-size', (o.name_size || 14) + 'px');
+  r.setProperty('--name-color', o.name_color || '#ffffff');
+  r.setProperty('--radius', o.round_avatars === false ? '12px' : '50%');
+  r.setProperty('--cols', o.grid_columns || 3);
+  var stage = document.getElementById('stage');
+  stage.className = (o.layout || 'row') + ' align-' + (o.align || 'center');
+  document.body.classList.toggle('no-names', o.show_names === false);
+}
+
+function imagesFor(u){
+  // Per-user mode: 'avatar' forces the Discord avatar; 'custom' and 'auto'
+  // use uploads when they exist. Missing talking image -> the idle image just
+  // brightens (the CSS filter does that on its own). Missing both -> avatar.
+  var mode = ucfg(u.id).mode || 'auto';
+  var imgs = u.images || {};
+  if(mode !== 'avatar' && imgs.idle){
+    return {idle: imgs.idle, talking: imgs.talking || ''};
+  }
+  return {idle: u.avatar_url, talking: ''};
+}
+
+var MUTE_SVG = '<svg viewBox="0 0 24 24"><path d="M19 11a1 1 0 0 1 2 0 9 9 0 0 1-8 8.94V22h-2v-2.06A9 9 0 0 1 3 11a1 1 0 0 1 2 0 7 7 0 0 0 14 0Zm-7 6a5 5 0 0 0 5-5V6a5 5 0 0 0-10 0v6a5 5 0 0 0 5 5Z"/><path d="M3.3 2.3 21.7 20.7l-1.4 1.4L1.9 3.7z"/></svg>';
+var DEAF_SVG = '<svg viewBox="0 0 24 24"><path d="M12 3a8 8 0 0 0-8 8v6a3 3 0 0 0 3 3h1a1 1 0 0 0 1-1v-5a1 1 0 0 0-1-1H6v-2a6 6 0 1 1 12 0v2h-2a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1h1a3 3 0 0 0 3-3v-6a8 8 0 0 0-8-8Z"/><path d="M3.3 2.3 21.7 20.7l-1.4 1.4L1.9 3.7z"/></svg>';
+
+function render(u){
+  var o = ocfg();
+  var el = document.getElementById('u-' + u.id);
+  var hide = o.hide_muted && (u.mute || u.deaf);
+  if(hide){ if(el) removeEl(u.id); return; }
+
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'u-' + u.id;
+    el.innerHTML =
+      '<div class="pic-wrap">' +
+        '<img class="pic" alt="">' +
+        '<span class="badge mute">' + MUTE_SVG + '</span>' +
+        '<span class="badge deaf">' + DEAF_SVG + '</span>' +
+      '</div><div class="nm"></div>';
+    document.getElementById('stage').appendChild(el);
+  }
+  el.className = 'u' + (u.speaking ? ' speaking' : '') +
+                 (o.bounce !== false ? ' bounce' : '') +
+                 (u.mute ? ' muted' : '') + (u.deaf ? ' deaf muted' : '');
+  if(o.mute_badge === false){
+    el.querySelectorAll('.badge').forEach(function(b){ b.style.display = 'none'; });
+  }
+
+  var uc = ucfg(u.id);
+  el.style.setProperty('--u-size', (uc.size > 0 ? uc.size : (o.size || 128)) + 'px');
+  el.style.setProperty('--ox', (uc.offset_x || 0) + 'px');
+  el.style.setProperty('--oy', (uc.offset_y || 0) + 'px');
+
+  var imgs = imagesFor(u);
+  var pic = el.querySelector('.pic');
+  var want = (u.speaking && imgs.talking) ? imgs.talking : imgs.idle;
+  if(pic.getAttribute('src') !== want) pic.setAttribute('src', want);
+  el.querySelector('.nm').textContent = u.name || u.username || '';
+}
+
+function removeEl(id){
+  var el = document.getElementById('u-' + id);
+  if(!el) return;
+  el.classList.add('out');
+  setTimeout(function(){ if(el.parentNode) el.parentNode.removeChild(el); }, 240);
+}
+
+function renderAll(){
+  applyTheme();
+  var seen = {};
+  Object.keys(USERS).forEach(function(id){ render(USERS[id]); seen['u-' + id] = 1; });
+  Array.prototype.slice.call(document.querySelectorAll('.u')).forEach(function(el){
+    if(!seen[el.id]) removeEl(el.id.slice(2));
+  });
+}
+
+function connect(){
+  var proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  var ws = new WebSocket(proto + '://' + location.host + '/discord/ws/overlay');
+  ws.onmessage = function(e){
+    var m = JSON.parse(e.data);
+    if(m.type === 'config'){ CFG = m.config; renderAll(); }
+    else if(m.type === 'roster'){
+      USERS = {};
+      (m.users || []).forEach(function(u){ USERS[u.id] = u; });
+      renderAll();
+    }
+    else if(m.type === 'user'){ USERS[m.user.id] = m.user; render(m.user); }
+    else if(m.type === 'leave'){ delete USERS[m.id]; removeEl(m.id); }
+    else if(m.type === 'speaking'){
+      var u = USERS[m.id];
+      if(u){ u.speaking = m.speaking; render(u); }
+    }
+  };
+  ws.onclose = function(){ setTimeout(connect, 1500); };
+}
+connect();
+</script>
+</body></html>

@@ -37,3 +37,4 @@ desktop.ini
 *.log
 .env
 .dual-graph/
+/.serena

@@ -13,7 +13,8 @@
   var SECTIONS = [
     { key: 'soundboard', label: 'Soundboard', href: '/' },
     { key: 'twitch',     label: 'Twitch',     href: '/twitch', status: '/twitch/api/status' },
-    { key: 'music',      label: 'Music',      href: '/ytm',    status: '/ytm/api/status' }
+    { key: 'music',      label: 'Music',      href: '/ytm',    status: '/ytm/api/status' },
+    { key: 'discord',    label: 'Discord',    href: '/discord', status: '/discord/api/status' }
   ];
 
   var host = document.getElementById('hexbar');
@@ -94,6 +95,24 @@
         setDot('music', live, !!(s && s.paired && !live), title);
       })
       .catch(function () { setDot('music', false, false, 'Music module not installed'); });
+
+    fetch('/discord/api/status')
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (s) {
+        var live = !!(s && s.connected);
+        var title;
+        if (live && s.channel) {
+          title = 'Discord connected — ' + s.channel.name;
+        } else if (live) {
+          title = 'Discord connected — not in a voice channel';
+        } else if (s && s.authed) {
+          title = 'Discord desktop client is not running';
+        } else {
+          title = 'Discord not authorized';
+        }
+        setDot('discord', live, !!(s && s.authed && !live), title);
+      })
+      .catch(function () { setDot('discord', false, false, 'Discord module not installed'); });
   }
 
   poll();
