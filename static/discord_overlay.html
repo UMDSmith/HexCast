@@ -35,8 +35,14 @@
        filter:brightness(var(--dim)) saturate(var(--sat));
        transition:filter .15s ease,transform .15s ease;
        transform-origin:50% 100%}
+  /* Custom uploads render as authored: no crop, no rounding, native aspect
+     ratio letterboxed inside the slot - transparency does the shaping. */
+  .u.freeform .pic{border-radius:0;object-fit:contain}
   .u.speaking .pic{filter:brightness(1) saturate(1)}
   .u.speaking.bounce .pic{animation:talk .35s ease}
+  /* Full idle+talking pairs show speech by swapping images, so (unless
+     dim_pairs is on) they stay at full brightness while silent. */
+  .u.nodim .pic{filter:brightness(1) saturate(1)}
   /* Muted or deafened: dim harder and never light up. */
   .u.muted .pic{filter:brightness(calc(var(--dim) * .7)) saturate(0)}
   .u.muted.speaking .pic{filter:brightness(calc(var(--dim) * .7)) saturate(0)}
@@ -79,13 +85,13 @@ function ocfg(){
   // Saved settings with query-param overrides, so one overlay URL can be
   // reused across scenes with different layouts.
   var o = Object.assign({}, (CFG && CFG.overlay) || {});
-  ['layout','align','name_color'].forEach(function(k){
+  ['layout','align','name_color','shape'].forEach(function(k){
     if(Q.has(k)) o[k] = Q.get(k);
   });
   ['size','spacing','grid_columns','name_size','dim'].forEach(function(k){
     if(Q.has(k)) o[k] = parseFloat(Q.get(k));
   });
-  ['show_names','round_avatars','desaturate','bounce','hide_muted','mute_badge'].forEach(function(k){
+  ['show_names','round_avatars','desaturate','bounce','hide_muted','mute_badge','dim_pairs'].forEach(function(k){
     if(Q.has(k)) o[k] = Q.get(k) !== '0' && Q.get(k) !== 'false';
   });
   return o;
@@ -104,7 +110,9 @@ function applyTheme(){
   r.setProperty('--sat', o.desaturate === false ? 1 : 0.4);
   r.setProperty('--name-size', (o.name_size || 14) + 'px');
   r.setProperty('--name-color', o.name_color || '#ffffff');
-  r.setProperty('--radius', o.round_avatars === false ? '12px' : '50%');
+  // shape supersedes the old round_avatars boolean; old saved configs still work.
+  var shape = o.shape || (o.round_avatars === false ? 'rounded' : 'circle');
+  r.setProperty('--radius', shape === 'circle' ? '50%' : (shape === 'rounded' ? '12px' : '0'));
   r.setProperty('--cols', o.grid_columns || 3);
   var stage = document.getElementById('stage');
   stage.className = (o.layout || 'row') + ' align-' + (o.align || 'center');
@@ -118,9 +126,9 @@ function imagesFor(u){
   var mode = ucfg(u.id).mode || 'auto';
   var imgs = u.images || {};
   if(mode !== 'avatar' && imgs.idle){
-    return {idle: imgs.idle, talking: imgs.talking || ''};
+    return {idle: imgs.idle, talking: imgs.talking || '', custom: true};
   }
-  return {idle: u.avatar_url, talking: ''};
+  return {idle: u.avatar_url, talking: '', custom: false};
 }
 
 var MUTE_SVG = '<svg viewBox="0 0 24 24"><path d="M19 11a1 1 0 0 1 2 0 9 9 0 0 1-8 8.94V22h-2v-2.06A9 9 0 0 1 3 11a1 1 0 0 1 2 0 7 7 0 0 0 14 0Zm-7 6a5 5 0 0 0 5-5V6a5 5 0 0 0-10 0v6a5 5 0 0 0 5 5Z"/><path d="M3.3 2.3 21.7 20.7l-1.4 1.4L1.9 3.7z"/></svg>';
@@ -143,8 +151,12 @@ function render(u){
       '</div><div class="nm"></div>';
     document.getElementById('stage').appendChild(el);
   }
+  var imgs = imagesFor(u);
+  var noDim = !!imgs.talking && !o.dim_pairs;
   el.className = 'u' + (u.speaking ? ' speaking' : '') +
                  (o.bounce !== false ? ' bounce' : '') +
+                 (noDim ? ' nodim' : '') +
+                 (imgs.custom ? ' freeform' : '') +
                  (u.mute ? ' muted' : '') + (u.deaf ? ' deaf muted' : '');
   if(o.mute_badge === false){
     el.querySelectorAll('.badge').forEach(function(b){ b.style.display = 'none'; });
@@ -154,8 +166,6 @@ function render(u){
   el.style.setProperty('--u-size', (uc.size > 0 ? uc.size : (o.size || 128)) + 'px');
   el.style.setProperty('--ox', (uc.offset_x || 0) + 'px');
   el.style.setProperty('--oy', (uc.offset_y || 0) + 'px');
-
-  var imgs = imagesFor(u);
   var pic = el.querySelector('.pic');
   var want = (u.speaking && imgs.talking) ? imgs.talking : imgs.idle;
   if(pic.getAttribute('src') !== want) pic.setAttribute('src', want);

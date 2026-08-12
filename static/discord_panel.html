@@ -47,8 +47,10 @@
   .row{display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin-top:14px}
 
   .url{display:flex;gap:8px;align-items:center;margin:8px 0}
-  .url code{flex:1;background:#08080c;border:1px solid var(--line);border-radius:8px;
-            padding:9px 11px;font:13px var(--mono);color:var(--good);overflow:auto;white-space:nowrap}
+  .url code,.url a{flex:1;background:#08080c;border:1px solid var(--line);border-radius:8px;
+            padding:9px 11px;font:13px var(--mono);color:var(--good);overflow:auto;white-space:nowrap;
+            text-decoration:none}
+  .url a:hover{border-color:var(--discord);text-decoration:underline}
 
   ol.steps{margin:0 0 14px;padding-left:20px;color:var(--dim);font-size:13.5px}
   ol.steps li{margin-bottom:6px}
@@ -130,7 +132,7 @@
   <div class="card">
     <h2>Browser source</h2>
     <p class="hint">Add as a Browser source in OBS, sized to taste. Background is transparent. Uncheck "Shutdown source when not visible". Layout options can also be overridden per scene with query params, e.g. <code>?layout=column&size=96</code>.</p>
-    <div class="url"><code id="u-overlay"></code><button class="sec" data-copy="u-overlay">Copy</button></div>
+    <div class="url"><a id="u-overlay" href="/discord/overlay" target="_blank" rel="noopener"></a><button class="sec" data-copy="u-overlay">Copy</button></div>
     <div class="row">
       <button class="sec" id="test-user">Toggle a test user</button>
       <button class="sec" id="test-clear">Remove test users</button>
@@ -157,7 +159,7 @@
 <section id="tab-users">
   <div class="card">
     <h2>Participants</h2>
-    <p class="hint">Everyone in your current voice channel. Mode <b>Auto</b> uses uploaded images when they exist and falls back to the Discord avatar. Upload an <b>idle</b> and a <b>talking</b> image (png/gif/webp) for PNGTuber-style reactions - with only an idle image, it simply brightens while speaking. Size 0 means the overlay default; offsets nudge one person around in pixels.</p>
+    <p class="hint">Everyone in your current voice channel. Mode <b>Auto</b> uses uploaded images when they exist and falls back to the Discord avatar. Upload an <b>idle</b> and a <b>talking</b> image (png/gif/webp) for PNGTuber-style reactions - with a full pair the images swap and stay at full brightness (see "Darken idle+talking pairs too" on the Overlay tab); with only an idle image, it brightens while speaking. Uploads are never cropped or rounded - transparent backgrounds and custom frames show as-is. Size 0 means the overlay default; offsets nudge one person around in pixels.</p>
     <div id="ulist"><p class="hint">Nobody here - join a voice channel.</p></div>
   </div>
 </section>
@@ -171,7 +173,8 @@
     <h2>Style</h2>
     <div class="grid" id="g-style"></div>
     <div class="row"><button class="act" id="save-look">Save overlay settings</button></div>
-    <p class="hint" style="margin-top:12px">Settings apply live to open overlays. Any of them can be overridden per browser source with query params: <code>?layout=grid&grid_columns=2&size=160&show_names=0</code></p>
+    <p class="hint" style="margin-top:12px">Avatar shape only applies to Discord avatars — custom uploaded images always render unclipped at their native aspect ratio, so transparent PNGs, frames, and full-body art show exactly as authored. Default image size applies to anyone without a per-user size on the Participants tab (a per-user size overrides it).</p>
+    <p class="hint">Settings apply live to open overlays. Any of them can be overridden per browser source with query params: <code>?layout=grid&grid_columns=2&size=160&show_names=0</code></p>
   </div>
 </section>
 
@@ -187,11 +190,30 @@ function toast(m){
   var t=$('toast'); t.textContent=m; t.classList.add('up');
   clearTimeout(t._t); t._t=setTimeout(function(){ t.classList.remove('up'); }, 2600);
 }
+function copyText(s){
+  // navigator.clipboard only exists on https or localhost; over a LAN IP the
+  // hidden-textarea trick is the only thing that works.
+  if(navigator.clipboard && window.isSecureContext){
+    navigator.clipboard.writeText(s).then(function(){ toast('Copied'); },
+                                          function(){ copyFallback(s); });
+  } else {
+    copyFallback(s);
+  }
+}
+function copyFallback(s){
+  var ta=document.createElement('textarea');
+  ta.value=s; ta.style.position='fixed'; ta.style.opacity='0';
+  document.body.appendChild(ta); ta.focus(); ta.select();
+  var ok=false;
+  try{ ok=document.execCommand('copy'); }catch(e){}
+  document.body.removeChild(ta);
+  toast(ok ? 'Copied' : 'Copy failed - use the link');
+}
 
 var LAYOUT=[
   ['layout','Arrangement',{t:'sel',opts:[['row','Horizontal row'],['column','Vertical column'],['grid','Grid']]}],
   ['grid_columns','Grid columns',{t:'num',min:1,max:12}],
-  ['size','Image size (px)',{t:'num',min:32,max:512}],
+  ['size','Default image size (px)',{t:'num',min:32,max:512}],
   ['spacing','Spacing (px)',{t:'num',min:0,max:120}],
   ['align','Alignment',{t:'sel',opts:[['start','Start'],['center','Centre'],['end','End']]}]
 ];
@@ -199,8 +221,9 @@ var STYLE=[
   ['show_names','Show names',{t:'bool'}],
   ['name_size','Name size',{t:'num',min:8,max:48}],
   ['name_color','Name colour',{t:'color'}],
-  ['round_avatars','Circular avatars',{t:'bool'}],
+  ['shape','Avatar shape',{t:'sel',opts:[['circle','Circle'],['rounded','Rounded square'],['square','Square']]}],
   ['dim','Silent brightness',{t:'num',min:0,max:1,step:0.05}],
+  ['dim_pairs','Darken idle+talking pairs too',{t:'bool'}],
   ['desaturate','Desaturate when silent',{t:'bool'}],
   ['bounce','Bounce when speaking',{t:'bool'}],
   ['hide_muted','Hide muted people',{t:'bool'}],
@@ -314,7 +337,7 @@ function paintUsers(users){
 document.addEventListener('click', async function(e){
   var t=e.target;
   if(t.dataset && t.dataset.copy){
-    navigator.clipboard.writeText($(t.dataset.copy).textContent); toast('Copied');
+    copyText($(t.dataset.copy).textContent);
     return;
   }
   var th = t.closest ? t.closest('.th') : null;

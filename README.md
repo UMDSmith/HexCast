@@ -38,7 +38,7 @@ Safe ways to run it:
 - **Edit Mode** for tuning, **Delete Mode** for cleanup — no manual filesystem digging
 - **Bot API**: trigger anything by name via a simple HTTP GET, no auth needed (designed for trusted LAN)
 - **⏹ Stop All** panic button to clear every visual and stop every playing sound at once
-- **Optional integrations**: Twitch chat and alert overlays, and a now-playing overlay for the [YouTube Music Desktop App](https://ytmdesktop.github.io/) — see [Integrations](#integrations)
+- **Optional integrations**: Twitch chat and alert overlays, a now-playing overlay for the [YouTube Music Desktop App](https://ytmdesktop.github.io/), and a Discord voice-reactive overlay — see [Integrations](#integrations)
 
 ## Prerequisites
 
@@ -196,6 +196,7 @@ If you use the integrations, refresh their dependencies the same way:
 ```
 pip install -r requirements-twitch.txt
 pip install -r requirements-ytm.txt
+pip install -r requirements-discord.txt
 ```
 
 **Docker:** pull, rebuild the image, and recreate the container (your media persists in the host mount):
@@ -365,22 +366,25 @@ If you'd rather drive it from your own bot instead, the generic API still works:
 
 ## Integrations
 
-Two optional modules ship alongside the soundboard. Both are self-contained:
+Three optional modules ship alongside the soundboard. All are self-contained:
 each is a single Python file plus its own pages in `static/`, each namespaces
-all of its routes, and neither changes how the soundboard behaves. Install
-either, both, or neither.
+all of its routes, and none changes how the soundboard behaves. Install
+any combination, or none.
 
 | | What it adds | Docs |
 | --- | --- | --- |
 | **Twitch** | Chat overlay, alert overlay for follows/subs/bits/raids/redeems with a FIFO alert queue, settings panel | [docs/twitch.md](docs/twitch.md) |
 | **YouTube Music Desktop** | Now-playing overlay with album art, live progress, audio visualiser, optional embedded music video. Requires the [YouTube Music Desktop App](https://ytmdesktop.github.io/) — it pairs with that app's companion API, not with YouTube Music directly | [docs/music.md](docs/music.md) |
+| **Discord** | Voice-reactive overlay: everyone in your current voice channel appears in OBS, lighting up as they speak — Discord avatars or custom PNGTuber-style idle/talking image pairs. Talks to the Discord desktop app's local RPC; no bot needed | [docs/discord.md](docs/discord.md) |
 
-Both hook into the existing `GET /api/play/{name}` endpoint, so a raid or a
-track change can fire a clip from your library. Both can also POST every event
-to a URL of your choice, if you want a bot or a local model reacting to chat
-and to what you're listening to.
+Twitch and Music both hook into the existing `GET /api/play/{name}` endpoint,
+so a raid or a track change can fire a clip from your library. Both can also
+POST every event to a URL of your choice, if you want a bot or a local model
+reacting to chat and to what you're listening to.
 
-Installing either is two lines in `hexcast.py`, after the `/media` mount:
+Installing any of them is two lines in `hexcast.py`, after the `/media` mount
+(the Discord lines already ship in `hexcast.py` and degrade gracefully if the
+module or its dependencies are missing):
 
 ```python
 from twitch import attach_twitch
@@ -388,6 +392,9 @@ attach_twitch(app, PORT)
 
 from ytmusic import attach_ytm
 attach_ytm(app, PORT)
+
+from discord_reactive import attach_discord
+attach_discord(app, PORT)
 ```
 
 Plus their dependencies:
@@ -395,15 +402,17 @@ Plus their dependencies:
 ```
 pip install -r requirements-twitch.txt
 pip install -r requirements-ytm.txt
+pip install -r requirements-discord.txt
 ```
 
-A Twitch and a Music button appear in the control panel's top bar, each with a
-status dot showing whether that integration is currently connected.
+A Twitch, a Music, and a Discord button appear in the control panel's top bar,
+each with a status dot showing whether that integration is currently connected.
 
 **These carry the same security caveat as everything else here, and then
-some** — the Twitch module stores an OAuth token and a client secret, and the
-YouTube Music module stores a pairing token, all under `config/`. Keep that
-folder out of git and keep the port on your LAN.
+some** — the Twitch module stores an OAuth token and a client secret, the
+YouTube Music module stores a pairing token, and the Discord module stores an
+RPC access token, all under `config/`. Keep that folder out of git and keep
+the port on your LAN.
 
 ## Supported media formats
 
@@ -425,6 +434,7 @@ hexcast/
 ├── hexcast.py            # the server
 ├── twitch.py                # optional Twitch integration
 ├── ytmusic.py               # optional YouTube Music integration
+├── discord_reactive.py      # optional Discord voice-reactive integration
 ├── static/
 │   ├── control.html         # control panel UI (HTML + CSS + JS)
 │   ├── overlay.html         # OBS browser-source overlay
@@ -433,15 +443,19 @@ hexcast/
 │   ├── twitch_events.html   # Twitch alert overlay
 │   ├── twitch_boot.js       # shared overlay helpers
 │   ├── ytm_panel.html       # YouTube Music settings panel
-│   └── ytm_overlay.html     # YouTube Music now-playing overlay
+│   ├── ytm_overlay.html     # YouTube Music now-playing overlay
+│   ├── discord_panel.html   # Discord settings panel
+│   └── discord_overlay.html # Discord voice-reactive overlay
 ├── docs/
 │   ├── twitch.md
-│   └── music.md
+│   ├── music.md
+│   └── discord.md
 ├── config/                  # tokens and integration settings (gitignored)
 ├── requirements.txt
 ├── requirements-twitch.txt
 ├── requirements-ytm.txt
 ├── requirements-ytm-audio.txt
+├── requirements-discord.txt
 ├── start.sh / start.bat     # launcher scripts
 ├── README.md
 ├── LICENSE

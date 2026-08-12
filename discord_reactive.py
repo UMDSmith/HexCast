@@ -111,8 +111,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "show_names": True,
         "name_size": 14,
         "name_color": "#ffffff",
-        "round_avatars": True,
+        # Applies to Discord avatars only; custom uploads always render
+        # unclipped at their native aspect ratio.
+        "shape": "circle",        # circle | rounded | square
         "dim": 0.4,               # brightness while silent
+        # Users with a full idle+talking pair swap images to show speech, so
+        # by default they skip the dim. Turn on to darken them like the rest.
+        "dim_pairs": False,
         "desaturate": True,
         "bounce": True,
         "hide_muted": False,
