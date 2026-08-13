@@ -103,7 +103,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "client_id": "",
     "token_url": "",
     "overlay": {
-        "layout": "row",          # row | column | grid
+        "layout": "row",          # row | column | grid | free
         "grid_columns": 3,
         "size": 128,
         "spacing": 18,
@@ -123,7 +123,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "hide_muted": False,
         "mute_badge": True,
     },
-    # user_id -> {"mode": "auto"|"avatar"|"custom", "size": 0, "offset_x": 0, "offset_y": 0}
+    # user_id -> {"mode": "auto"|"avatar"|"custom", "size": 0,
+    #             "offset_x": 0, "offset_y": 0,
+    #             "x": None, "y": None}   # % of canvas, used by the free layout
     "users": {},
 }
 

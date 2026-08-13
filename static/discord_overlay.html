@@ -24,11 +24,19 @@
   #stage.column.align-start{align-items:flex-start;justify-content:flex-start}
   #stage.column.align-center{align-items:center;justify-content:flex-start}
   #stage.column.align-end{align-items:flex-end;justify-content:flex-start}
+  /* Free placement: every user sits at their own saved x/y (percent of the
+     browser source), set per-user from the panel's placement editor. */
+  #stage.free{position:absolute;inset:0;display:block;padding:0}
 
-  .u{display:flex;flex-direction:column;align-items:center;gap:6px;
-     animation:enter .28s cubic-bezier(.2,1.4,.4,1) both;
-     transform:translate(var(--ox,0px),var(--oy,0px))}
-  .u.out{animation:exit .22s ease both}
+  /* .u carries position (flow item or absolute), .uin carries the enter/exit
+     animation - keeping them apart stops the keyframe transforms fighting
+     the -50% centering translate in free mode. */
+  .u{transform:translate(var(--ox,0px),var(--oy,0px))}
+  #stage.free .u{position:absolute;left:var(--x,50%);top:var(--y,85%);
+     transform:translate(calc(-50% + var(--ox,0px)),calc(-50% + var(--oy,0px)))}
+  .uin{display:flex;flex-direction:column;align-items:center;gap:6px;
+       animation:enter .28s cubic-bezier(.2,1.4,.4,1) both}
+  .u.out .uin{animation:exit .22s ease both}
 
   .pic-wrap{position:relative;width:var(--u-size,var(--size));height:var(--u-size,var(--size))}
   .pic{width:100%;height:100%;object-fit:cover;border-radius:var(--radius);
@@ -68,10 +76,10 @@
     70%{transform:scale(.99)} 100%{transform:scale(1.03) translateY(-1.5%)}
   }
   .u.speaking .pic{transform:scale(1.03) translateY(-1.5%)}
-  @keyframes enter{from{opacity:0;transform:translate(var(--ox,0px),calc(var(--oy,0px) + 14px)) scale(.7)}
-                   to{opacity:1;transform:translate(var(--ox,0px),var(--oy,0px)) scale(1)}}
-  @keyframes exit{from{opacity:1;transform:translate(var(--ox,0px),var(--oy,0px)) scale(1)}
-                  to{opacity:0;transform:translate(var(--ox,0px),var(--oy,0px)) scale(.7)}}
+  @keyframes enter{from{opacity:0;transform:translateY(14px) scale(.7)}
+                   to{opacity:1;transform:none}}
+  @keyframes exit{from{opacity:1;transform:none}
+                  to{opacity:0;transform:scale(.7)}}
 </style></head>
 <body>
 <div id="stage" class="row align-center"></div>
@@ -99,6 +107,19 @@ function ocfg(){
 
 function ucfg(id){
   return ((CFG && CFG.users) || {})[id] || {};
+}
+
+function defaultPos(id){
+  // Stable per-id stagger near bottom centre, so unplaced people don't all
+  // land on the same pixel and don't shift when someone else joins.
+  var n = parseInt(String(id).slice(-6), 10) || 0;
+  return {x: 50 + ((n % 5) - 2) * 10, y: 85 - (Math.floor(n / 8) % 3) * 8};
+}
+
+function posFor(id){
+  var uc = ucfg(id);
+  if(uc.x != null && uc.y != null) return {x: uc.x, y: uc.y};
+  return defaultPos(id);
 }
 
 function applyTheme(){
@@ -144,11 +165,13 @@ function render(u){
     el = document.createElement('div');
     el.id = 'u-' + u.id;
     el.innerHTML =
-      '<div class="pic-wrap">' +
-        '<img class="pic" alt="">' +
-        '<span class="badge mute">' + MUTE_SVG + '</span>' +
-        '<span class="badge deaf">' + DEAF_SVG + '</span>' +
-      '</div><div class="nm"></div>';
+      '<div class="uin">' +
+        '<div class="pic-wrap">' +
+          '<img class="pic" alt="">' +
+          '<span class="badge mute">' + MUTE_SVG + '</span>' +
+          '<span class="badge deaf">' + DEAF_SVG + '</span>' +
+        '</div><div class="nm"></div>' +
+      '</div>';
     document.getElementById('stage').appendChild(el);
   }
   var imgs = imagesFor(u);
@@ -166,6 +189,11 @@ function render(u){
   el.style.setProperty('--u-size', (uc.size > 0 ? uc.size : (o.size || 128)) + 'px');
   el.style.setProperty('--ox', (uc.offset_x || 0) + 'px');
   el.style.setProperty('--oy', (uc.offset_y || 0) + 'px');
+  if((o.layout || 'row') === 'free'){
+    var p = posFor(u.id);
+    el.style.setProperty('--x', p.x + '%');
+    el.style.setProperty('--y', p.y + '%');
+  }
   var pic = el.querySelector('.pic');
   var want = (u.speaking && imgs.talking) ? imgs.talking : imgs.idle;
   if(pic.getAttribute('src') !== want) pic.setAttribute('src', want);

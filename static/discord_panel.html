@@ -91,6 +91,21 @@
   #authbox.show{display:block}
   #authbox .big{font:800 18px/1.4 inherit;color:var(--discord)}
 
+  /* placement editor */
+  #place-canvas{position:relative;width:100%;aspect-ratio:16/9;background:#08080c;
+    border:1px solid var(--line);border-radius:10px;overflow:hidden;touch-action:none;
+    background-image:
+      linear-gradient(var(--line) 1px,transparent 1px),
+      linear-gradient(90deg,var(--line) 1px,transparent 1px);
+    background-size:33.34% 33.34%;background-position:-1px -1px}
+  .pl-u{position:absolute;transform:translate(-50%,-50%);cursor:grab}
+  .pl-u:active{cursor:grabbing}
+  .pl-u img{width:100%;height:100%;object-fit:contain;pointer-events:none;display:block}
+  .pl-u.sel{outline:2px solid var(--discord);outline-offset:3px;border-radius:4px}
+  .pl-u .t{position:absolute;left:50%;top:100%;transform:translateX(-50%);
+           font-size:11px;color:var(--dim);white-space:nowrap;padding-top:2px;
+           text-shadow:0 1px 2px #000}
+
   /* image framing tool */
   #cropmodal{position:fixed;inset:0;background:rgba(0,0,0,.72);display:none;
              align-items:center;justify-content:center;z-index:30}
@@ -115,6 +130,7 @@
   <button data-tab="conn" class="sel">Connection</button>
   <button data-tab="users">Participants</button>
   <button data-tab="look">Overlay</button>
+  <button data-tab="place">Placement</button>
 </nav>
 
 <main>
@@ -193,6 +209,23 @@
   </div>
 </section>
 
+<section id="tab-place">
+  <div class="card">
+    <h2>Placement</h2>
+    <p class="hint">Drag people around this preview of your OBS canvas, exactly like positioning a clip in the soundboard editor. Click someone to select them, then use the size slider or scroll over them. Positions are saved per person and used when the overlay arrangement is <b>Free placement</b>; people you haven't placed start at a spot near the bottom centre. Sizes are pixels on a 1920&times;1080 browser source.</p>
+    <div id="place-canvas"></div>
+    <div class="row">
+      <label class="f" style="flex:0 0 240px">Size (px)<input type="range" id="pl-size" min="32" max="512" step="2" value="128"></label>
+      <span class="hint" id="pl-info" style="margin:0">nobody selected</span>
+      <span style="flex:1 1 auto"></span>
+      <button class="sec" id="pl-reset">Reset selected</button>
+      <button class="act" id="pl-save">Save placement</button>
+    </div>
+    <p class="warn" id="pl-mode-hint" style="display:none">The overlay is not using free placement, so these positions won't show yet.
+      <button class="sec" id="pl-free" style="margin-left:8px">Switch overlay to free placement</button></p>
+  </div>
+</section>
+
 </main>
 <div id="toast"></div>
 <input type="file" id="filepick" accept=".png,.gif,.webp" style="display:none">
@@ -249,7 +282,7 @@ function copyFallback(s){
 }
 
 var LAYOUT=[
-  ['layout','Arrangement',{t:'sel',opts:[['row','Horizontal row'],['column','Vertical column'],['grid','Grid']]}],
+  ['layout','Arrangement',{t:'sel',opts:[['row','Horizontal row'],['column','Vertical column'],['grid','Grid'],['free','Free placement']]}],
   ['grid_columns','Grid columns',{t:'num',min:1,max:12}],
   ['size','Default image size (px)',{t:'num',min:32,max:512}],
   ['spacing','Spacing (px)',{t:'num',min:0,max:120}],
@@ -596,6 +629,150 @@ $('cropmodal').onclick=function(e){ if(e.target===this) closeCropper(); };
   $('crop-shape').onchange=function(){ CROP.shape=this.value; drawCrop(); };
 })();
 
+/* ---- placement editor ---------------------------------------------------
+   A 16:9 stand-in for the OBS canvas. Drag to move, scroll or slide to
+   resize. Edits collect in PL.dirty and only hit the config on Save.
+   Coordinates are % of the canvas (like soundboard clips), sizes are px on
+   a 1920-wide browser source. */
+
+var PL={sel:null, dirty:{}};
+
+function defaultPos(id){
+  // Must match the overlay: stable per-id stagger near bottom centre.
+  var n=parseInt(String(id).slice(-6),10)||0;
+  return {x:50+((n%5)-2)*10, y:85-(Math.floor(n/8)%3)*8};
+}
+function plPos(id){
+  var d=PL.dirty[id]||{}, uc=(CFG&&CFG.users||{})[id]||{}, df=defaultPos(id);
+  return {
+    x: d.x!=null?d.x:(uc.x!=null?uc.x:df.x),
+    y: d.y!=null?d.y:(uc.y!=null?uc.y:df.y),
+    size: d.size!=null?d.size:(uc.size>0?uc.size:((CFG&&CFG.overlay.size)||128)),
+    placed: d.x!=null || uc.x!=null
+  };
+}
+function plImage(u){
+  var uc=(CFG&&CFG.users||{})[u.id]||{};
+  var imgs=u.images||{};
+  return ((uc.mode||'auto')!=='avatar' && imgs.idle) ? imgs.idle : u.avatar_url;
+}
+function plStyle(el,id){
+  var c=$('place-canvas'), p=plPos(id);
+  var k=c.clientWidth/1920;                 // preview px per canvas px
+  el.style.left=p.x+'%';
+  el.style.top=p.y+'%';
+  el.style.width=(p.size*k)+'px';
+  el.style.height=(p.size*k)+'px';
+}
+function plInfo(){
+  var s=$('pl-info');
+  if(!PL.sel){ s.textContent='nobody selected'; return; }
+  var u=((STATUS&&STATUS.users)||[]).filter(function(x){return x.id===PL.sel})[0];
+  var p=plPos(PL.sel);
+  s.textContent=(u?(u.name||u.username):PL.sel)+'  ·  x '+p.x.toFixed(1)+'%  y '+p.y.toFixed(1)+'%  ·  '+Math.round(p.size)+'px'
+    +(p.placed?'':'  ·  (default spot)');
+  $('pl-size').value=p.size;
+}
+function renderPlace(){
+  if(!CFG||!STATUS) return;
+  var c=$('place-canvas');
+  var users=STATUS.users||[];
+  var seen={};
+  users.forEach(function(u){
+    seen['pl-'+u.id]=1;
+    var el=document.getElementById('pl-'+u.id);
+    if(!el){
+      el=document.createElement('div');
+      el.id='pl-'+u.id; el.className='pl-u'; el.dataset.id=u.id;
+      el.innerHTML='<img alt=""><span class="t"></span>';
+      c.appendChild(el);
+    }
+    var img=el.querySelector('img');
+    var want=plImage(u);
+    if(img.getAttribute('src')!==want) img.setAttribute('src',want);
+    el.querySelector('.t').textContent=u.name||u.username;
+    el.classList.toggle('sel', PL.sel===u.id);
+    plStyle(el,u.id);
+  });
+  Array.prototype.slice.call(c.querySelectorAll('.pl-u')).forEach(function(el){
+    if(!seen[el.id]) el.parentNode.removeChild(el);
+  });
+  var freeon=CFG.overlay.layout==='free';
+  $('pl-mode-hint').style.display=freeon?'none':'';
+  plInfo();
+}
+(function(){
+  var drag=null;
+  var c=$('place-canvas');
+  c.addEventListener('pointerdown', function(e){
+    var el=e.target.closest ? e.target.closest('.pl-u') : null;
+    if(!el){ PL.sel=null; renderPlace(); return; }
+    PL.sel=el.dataset.id;
+    var r=c.getBoundingClientRect(), p=plPos(PL.sel);
+    drag={id:PL.sel, dx:e.clientX-(r.left+p.x/100*r.width), dy:e.clientY-(r.top+p.y/100*r.height)};
+    c.setPointerCapture(e.pointerId);
+    renderPlace();
+  });
+  c.addEventListener('pointermove', function(e){
+    if(!drag) return;
+    var r=c.getBoundingClientRect();
+    var x=Math.min(100,Math.max(0,(e.clientX-drag.dx-r.left)/r.width*100));
+    var y=Math.min(100,Math.max(0,(e.clientY-drag.dy-r.top)/r.height*100));
+    var d=PL.dirty[drag.id]=PL.dirty[drag.id]||{};
+    d.x=Math.round(x*10)/10; d.y=Math.round(y*10)/10;
+    plStyle(document.getElementById('pl-'+drag.id),drag.id);
+    plInfo();
+  });
+  c.addEventListener('pointerup', function(){ drag=null; });
+  c.addEventListener('pointercancel', function(){ drag=null; });
+  c.addEventListener('wheel', function(e){
+    var el=e.target.closest ? e.target.closest('.pl-u') : null;
+    var id=el?el.dataset.id:PL.sel;
+    if(!id) return;
+    e.preventDefault();
+    var p=plPos(id);
+    var d=PL.dirty[id]=PL.dirty[id]||{};
+    d.size=Math.min(512,Math.max(32,Math.round(p.size*(e.deltaY<0?1.06:0.94))));
+    plStyle(document.getElementById('pl-'+id),id);
+    plInfo();
+  }, {passive:false});
+  $('pl-size').oninput=function(){
+    if(!PL.sel) return;
+    var d=PL.dirty[PL.sel]=PL.dirty[PL.sel]||{};
+    d.size=parseInt(this.value,10)||128;
+    plStyle(document.getElementById('pl-'+PL.sel),PL.sel);
+    plInfo();
+  };
+  $('pl-reset').onclick=async function(){
+    if(!PL.sel) return;
+    delete PL.dirty[PL.sel];
+    var users={}; users[PL.sel]={x:null,y:null};
+    await saveConfig({users:users},'Position reset');
+    renderPlace();
+  };
+  $('pl-save').onclick=async function(){
+    var ids=Object.keys(PL.dirty);
+    if(!ids.length){ toast('Nothing to save'); return; }
+    var users={};
+    ids.forEach(function(id){
+      var d=PL.dirty[id], p=plPos(id), out={};
+      if(d.x!=null||d.y!=null){ out.x=p.x; out.y=p.y; }
+      if(d.size!=null){ out.size=d.size; }
+      users[id]=out;
+    });
+    await saveConfig({users:users},'Placement saved');
+    PL.dirty={};
+    renderPlace();
+  };
+  $('pl-free').onclick=async function(){
+    await saveConfig({overlay:{layout:'free'}},'Overlay set to free placement');
+    renderPlace();
+  };
+  window.addEventListener('resize', function(){
+    if($('tab-place').classList.contains('sel')) renderPlace();
+  });
+})();
+
 /* ---- status ------------------------------------------------------------ */
 
 function paintStatus(s){
@@ -614,7 +791,10 @@ function paintStatus(s){
       : (s.connected ? 'not in a voice channel' : 'not connected');
   $('authbox').classList.toggle('show', !!s.authorizing);
   $('log').textContent = (s.log||[]).join('\n');
-  if(CFG) paintUsers(s.users||[]);
+  if(CFG){
+    paintUsers(s.users||[]);
+    if($('tab-place').classList.contains('sel')) renderPlace();
+  }
 }
 
 function connectPanel(){
@@ -647,6 +827,7 @@ document.querySelectorAll('nav button').forEach(function(b){
     document.querySelectorAll('nav button').forEach(function(x){x.classList.remove('sel')});
     document.querySelectorAll('section').forEach(function(x){x.classList.remove('sel')});
     b.classList.add('sel'); $('tab-'+b.dataset.tab).classList.add('sel');
+    if(b.dataset.tab==='place') renderPlace();
   };
 });
 

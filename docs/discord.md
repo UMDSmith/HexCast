@@ -116,7 +116,7 @@ http://localhost:4747/discord/overlay?layout=column&size=96&show_names=0
 http://localhost:4747/discord/overlay?layout=grid&grid_columns=2&spacing=30
 ```
 
-Booleans take `0/1`. Keys match the panel: `layout` (row/column/grid),
+Booleans take `0/1`. Keys match the panel: `layout` (row/column/grid/free),
 `grid_columns`, `size`, `spacing`, `align`, `show_names`, `name_size`,
 `name_color`, `shape` (circle/rounded/square), `dim`, `dim_pairs`,
 `desaturate`, `bounce`, `hide_muted`, `mute_badge`.
@@ -177,6 +177,27 @@ speaking.
 
 Avatars are proxied and cached by the server (`/discord/avatar/{id}`), so the
 overlay never hits Discord's CDN from OBS and there are no CORS surprises.
+
+---
+
+## Free placement
+
+The row/column/grid arrangements flow people automatically. For full control,
+set the arrangement to **Free placement** (or open the panel's **Placement**
+tab and click the switch button): every person then sits at their own saved
+spot, positioned and sized exactly like a soundboard clip.
+
+The Placement tab shows a 16:9 preview of your OBS canvas with everyone on
+it. Drag someone to move them, click to select, scroll over them or use the
+slider to resize, then **Save placement**. Positions are percentages of the
+canvas and sizes are pixels on a 1920×1080 browser source, saved per person
+in `config/discord.json` (`users.<id>`), so they survive restarts and apply
+whenever that person joins.
+
+People you haven't placed yet get a stable default spot near the bottom
+centre (staggered per person so nobody stacks); **Reset selected** sends
+someone back to that default. The **Toggle a test user** button works here
+too, so you can lay out the scene without anyone in the call.
 
 ---
 
