@@ -175,8 +175,15 @@ PulseAudio or PipeWire. macOS has no system loopback, so it needs a virtual
 device such as BlackHole.
 
 Configurable: number of bars, height, width, position (behind the text, along
-the bottom, along the top), bars or mirrored, colour (fixed or matched to the
-artwork accent), opacity, sensitivity, smoothing, and peak caps.
+the bottom, along the top), style, colour (fixed or matched to the artwork
+accent), opacity, sensitivity, smoothing, and peak caps.
+
+Seven styles: **Bars**, **Mirrored**, **Line** (oscilloscope trace through the
+band values), **Wave** (the same trace, filled), **Dots**, **LED segments**
+(stacked blocks with unlit segments faintly visible), and **VU needle** — an
+analogue gauge with a tick arc and a needle swung by the overall level, for a
+retro/steampunk look. Peak caps apply to bars, dots, LED (top segment) and the
+needle (a ghost needle at the recent peak).
 
 Three settings control timing, and they matter:
 

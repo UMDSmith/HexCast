@@ -138,8 +138,21 @@ Each participant row on the Participants tab has two upload slots:
 - **idle** — shown while silent
 - **talking** — shown while speaking
 
-Click a slot to upload a `.png`, `.gif`, or `.webp`. Files are stored under
-`media/discord/{user_id}/` and survive restarts. The fallback chain is:
+Click a slot to upload a `.png`, `.gif`, or `.webp`. Any **static** image
+opens a **framing tool** first: drag to position, scroll or slide to zoom
+(how much of the image sits inside the outline), and choose the outline —
+circle, rounded square, or none. The outline is baked into the saved image,
+with everything outside it transparent; **Upload untouched** skips the tool
+entirely. Your framing is remembered within the session, so an idle/talking
+pair can be framed identically.
+
+Genuinely **animated** files (multi-frame gif, animated webp, APNG) are
+detected by inspecting the file itself, skip the tool, and upload untouched —
+a canvas crop would flatten the animation to its first frame. A single-frame
+`.gif` or `.webp` still gets the tool.
+
+Files are stored under `media/discord/{user_id}/` and survive restarts. The
+fallback chain is:
 
 1. idle + talking uploaded → images swap with speech, PNGTuber style, and the
    silent dim is skipped (the closed mouth *is* the silent state) — flip

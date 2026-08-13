@@ -46,8 +46,10 @@
   .row{display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin-top:14px}
 
   .url{display:flex;gap:8px;align-items:center;margin:8px 0}
-  .url code{flex:1;background:#08080c;border:1px solid var(--line);border-radius:8px;
-            padding:9px 11px;font:13px var(--mono);color:var(--good);overflow:auto;white-space:nowrap}
+  .url code,.url a{flex:1;background:#08080c;border:1px solid var(--line);border-radius:8px;
+            padding:9px 11px;font:13px var(--mono);color:var(--good);overflow:auto;white-space:nowrap;
+            text-decoration:none}
+  .url a:hover{border-color:var(--accent);text-decoration:underline}
 
   ol.steps{margin:0 0 14px;padding-left:20px;color:var(--dim);font-size:13.5px}
   ol.steps li{margin-bottom:6px}
@@ -119,9 +121,9 @@
   <div class="card">
     <h2>Browser source</h2>
     <p class="hint">Add as a Browser source in OBS. Size it to the card you want, uncheck "Shutdown source when not visible".</p>
-    <div class="url"><code id="u-overlay"></code><button class="sec" data-copy="u-overlay">Copy</button></div>
+    <div class="url"><a id="u-overlay" href="/ytm/overlay" target="_blank" rel="noopener"></a><button class="sec" data-copy="u-overlay">Copy</button></div>
     <p class="hint" style="margin-top:14px">For a chat bot <code>!song</code> command, point it at this — it returns one plain line of text.</p>
-    <div class="url"><code id="u-song"></code><button class="sec" data-copy="u-song">Copy</button></div>
+    <div class="url"><a id="u-song" href="/ytm/api/nowplaying" target="_blank" rel="noopener"></a><button class="sec" data-copy="u-song">Copy</button></div>
   </div>
 
   <div class="card">
@@ -218,6 +220,25 @@ function toast(m){
   var t=$('toast'); t.textContent=m; t.classList.add('up');
   clearTimeout(t._t); t._t=setTimeout(function(){ t.classList.remove('up'); }, 2600);
 }
+function copyText(s){
+  // navigator.clipboard only exists on https or localhost; over a LAN IP the
+  // hidden-textarea trick is the only thing that works.
+  if(navigator.clipboard && window.isSecureContext){
+    navigator.clipboard.writeText(s).then(function(){ toast('Copied'); },
+                                          function(){ copyFallback(s); });
+  } else {
+    copyFallback(s);
+  }
+}
+function copyFallback(s){
+  var ta=document.createElement('textarea');
+  ta.value=s; ta.style.position='fixed'; ta.style.opacity='0';
+  document.body.appendChild(ta); ta.focus(); ta.select();
+  var ok=false;
+  try{ ok=document.execCommand('copy'); }catch(e){}
+  document.body.removeChild(ta);
+  toast(ok ? 'Copied' : 'Copy failed - use the link');
+}
 
 var FONTS=['Inter','Roboto','Montserrat','Oswald','Rubik','Poppins','Bebas Neue','Space Grotesk',
            'Archivo Black','Figtree','Outfit','Sora','JetBrains Mono','Righteous'];
@@ -278,7 +299,7 @@ var SHOW=[
 
 var VIZ=[
   ['mode','Visualiser',{t:'sel',opts:[['off','Off'],['simulated','Simulated'],['audio','React to real audio']]}],
-  ['style','Bar style',{t:'sel',opts:[['bars','Bars'],['mirror','Mirrored']]}],
+  ['style','Style',{t:'sel',opts:[['bars','Bars'],['mirror','Mirrored'],['line','Line'],['wave','Wave'],['dots','Dots'],['led','LED segments'],['meter','VU needle']]}],
   ['position','Position',{t:'sel',opts:[['behind','Behind the text'],['bottom','Along the bottom'],['top','Along the top']]}],
   ['bars','Number of bars',{t:'num',min:4,max:96}],
   ['height','Height',{t:'num',min:8,max:400}],
@@ -468,7 +489,7 @@ document.querySelectorAll('nav button').forEach(function(b){
 document.addEventListener('click', async function(e){
   var t=e.target;
   if(t.dataset && t.dataset.copy){
-    navigator.clipboard.writeText($(t.dataset.copy).textContent); toast('Copied');
+    copyText($(t.dataset.copy).textContent);
   }
   if(t.dataset && t.dataset.cmd){
     var r=await fetch('/ytm/api/command',{method:'POST',headers:{'Content-Type':'application/json'},
