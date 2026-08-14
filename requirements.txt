@@ -3,3 +3,7 @@ uvicorn[standard]>=0.27
 watchdog>=4.0
 httpx>=0.27
 python-multipart>=0.0.9
+# Clips module: resolves Twitch clip/VOD links to direct media URLs.
+# (Not YouTube-specific - yt-dlp is the standard Twitch resolver as well.)
+# A yt-dlp already on PATH is used if this one is not installed.
+yt-dlp>=2024.10.22

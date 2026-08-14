@@ -14,7 +14,8 @@
     { key: 'soundboard', label: 'Soundboard', href: '/' },
     { key: 'twitch',     label: 'Twitch',     href: '/twitch', status: '/twitch/api/status' },
     { key: 'music',      label: 'Music',      href: '/ytm',    status: '/ytm/api/status' },
-    { key: 'discord',    label: 'Discord',    href: '/discord', status: '/discord/api/status' }
+    { key: 'discord',    label: 'Discord',    href: '/discord', status: '/discord/api/status' },
+    { key: 'clips',      label: 'Clips',      href: '/clips',   status: '/clips/api/status' }
   ];
 
   var host = document.getElementById('hexbar');
@@ -113,6 +114,23 @@
         setDot('discord', live, !!(s && s.authed && !live), title);
       })
       .catch(function () { setDot('discord', false, false, 'Discord module not installed'); });
+
+    fetch('/clips/api/status')
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (s) {
+        if (!s) { setDot('clips', false, false, 'Clips module not installed'); return; }
+        var live = !!s.ytdlp;
+        var title;
+        if (s.player && s.player.state !== 'idle' && s.player.item) {
+          title = 'Clips — playing #' + s.player.item.num + ' ' + (s.player.item.title || '');
+        } else if (live) {
+          title = 'Clips — ' + s.queued + ' queued';
+        } else {
+          title = 'Clips — yt-dlp not installed';
+        }
+        setDot('clips', live, !live, title);
+      })
+      .catch(function () { setDot('clips', false, false, 'Clips module not installed'); });
   }
 
   poll();

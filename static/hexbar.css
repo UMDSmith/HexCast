@@ -18,6 +18,7 @@
   --hb-twitch:  #a970ff;
   --hb-music:   #ff0033;
   --hb-discord: #5865f2;
+  --hb-clips:   #1fc7a8;
   --hb-mono:    'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
 }
 
@@ -59,6 +60,7 @@
 .hb-nav a[data-key="twitch"].sel{ border-color:var(--hb-twitch); }
 .hb-nav a[data-key="music"].sel{ border-color:var(--hb-music); }
 .hb-nav a[data-key="discord"].sel{ border-color:var(--hb-discord); }
+.hb-nav a[data-key="clips"].sel{ border-color:var(--hb-clips); }
 
 .hb-dot{
   width:8px; height:8px; border-radius:50%;

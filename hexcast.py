@@ -477,6 +477,14 @@ except ImportError as exc:
         print(f"  Discord module found but not loaded ({exc}) — "
               f"pip install -r requirements-discord.txt", flush=True)
 
+# Clips is optional too: skip quietly if the module file is gone.
+try:
+    from clips import attach_clips
+    attach_clips(app, PORT)
+except ImportError as exc:
+    if getattr(exc, "name", "") != "clips":
+        print(f"  Clips module found but not loaded ({exc})", flush=True)
+
 
 # ---- HTML (inlined) --------------------------------------------------------
 

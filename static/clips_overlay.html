@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<title>HexCast Clips Overlay</title>
+<style>
+  html, body { margin:0; padding:0; background:transparent; overflow:hidden;
+               width:100vw; height:100vh; }
+  /* Nothing exists unless a clip is playing - idle is fully transparent. */
+  #stage { position:fixed; inset:0; }
+  #stage video, #stage iframe {
+    position:absolute; inset:0; width:100vw; height:100vh; border:0; display:block;
+    object-fit:contain; background:transparent;
+  }
+</style></head>
+<body>
+<div id="stage"></div>
+<script>
+var stage = document.getElementById('stage');
+var current = null;       // {id, el, mode, hls}
+var volume = 1.0;
+var hbTimer = null;
+var hlsLib = null;        // promise for the hls.js script load
+
+function send(msg){
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg));
+}
+
+function clearStage(){
+  if (hbTimer) { clearInterval(hbTimer); hbTimer = null; }
+  if (current && current.hls) { try { current.hls.destroy(); } catch(e){} }
+  if (current && current.el && current.el.tagName === 'VIDEO') {
+    try { current.el.pause(); } catch(e){}
+  }
+  current = null;
+  stage.innerHTML = '';
+}
+
+function loadHls(){
+  if (window.Hls) return Promise.resolve();
+  if (hlsLib) return hlsLib;
+  hlsLib = new Promise(function(res, rej){
+    var s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js';
+    s.onload = res;
+    s.onerror = function(){ hlsLib = null; rej(new Error('could not load hls.js')); };
+    document.head.appendChild(s);
+  });
+  return hlsLib;
+}
+
+function startHeartbeat(){
+  if (hbTimer) clearInterval(hbTimer);
+  hbTimer = setInterval(function(){
+    if (!current || !current.el || current.el.tagName !== 'VIDEO') return;
+    var v = current.el;
+    if (!v.paused && !isNaN(v.currentTime)) {
+      send({type:'progress', id: current.id,
+            position: v.currentTime, duration: isFinite(v.duration) ? v.duration : 0});
+    }
+  }, 500);
+}
+
+function fail(id, message){
+  // Report once; the server decides whether to retry via the Twitch embed.
+  if (!current || current.id !== id || current.failed) return;
+  current.failed = true;
+  send({type:'error', id:id, message:String(message || 'playback error')});
+}
+
+function fmtTime(s){
+  s = Math.max(0, Math.floor(s));
+  return Math.floor(s/3600) + 'h' + Math.floor((s%3600)/60) + 'm' + (s%60) + 's';
+}
+
+function play(msg){
+  clearStage();
+  var src = msg.src || {};
+  var id = msg.item && msg.item.id;
+  volume = (msg.volume === undefined) ? volume : msg.volume;
+
+  if (src.mode === 'iframe') {
+    var host = location.hostname || 'localhost';
+    var url;
+    if (src.kind === 'clip') {
+      url = 'https://clips.twitch.tv/embed?clip=' + encodeURIComponent(src.slug)
+          + '&parent=' + encodeURIComponent(host) + '&autoplay=true';
+    } else if (src.kind === 'youtube') {
+      url = 'https://www.youtube.com/embed/' + encodeURIComponent(src.slug)
+          + '?autoplay=1' + (src.start ? '&start=' + Math.floor(src.start) : '');
+    } else {
+      url = 'https://player.twitch.tv/?video=' + encodeURIComponent(src.slug)
+          + '&parent=' + encodeURIComponent(host) + '&autoplay=true'
+          + (src.start ? '&time=' + fmtTime(src.start) : '');
+    }
+    var f = document.createElement('iframe');
+    f.allow = 'autoplay; fullscreen';
+    f.src = url;
+    stage.appendChild(f);
+    current = {id:id, el:f, mode:'iframe'};
+    return;
+  }
+
+  var v = document.createElement('video');
+  v.autoplay = true; v.playsInline = true; v.loop = false;
+  v.volume = Math.max(0, Math.min(1, volume));
+  var start = src.start || 0;
+
+  v.addEventListener('ended', function(){
+    if (current && current.id === id) { clearStage(); send({type:'ended', id:id}); }
+  });
+  v.addEventListener('error', function(){
+    var err = v.error ? ('media error ' + v.error.code) : 'media error';
+    fail(id, err);
+  });
+
+  // Appended to the DOM so OBS's browser source captures the audio - same
+  // reason the soundboard overlay attaches its Audio elements.
+  stage.appendChild(v);
+  current = {id:id, el:v, mode:src.mode};
+
+  if (src.mode === 'hls') {
+    if (v.canPlayType('application/vnd.apple.mpegurl')) {
+      v.src = src.url;
+      if (start) v.addEventListener('loadedmetadata', function(){ v.currentTime = start; }, {once:true});
+    } else {
+      loadHls().then(function(){
+        if (!current || current.id !== id) return;
+        var h = new Hls({startPosition: start > 0 ? start : -1});
+        current.hls = h;
+        h.on(Hls.Events.ERROR, function(ev, data){
+          if (data && data.fatal) fail(id, 'hls ' + data.type + ': ' + data.details);
+        });
+        h.loadSource(src.url);
+        h.attachMedia(v);
+      }).catch(function(e){ fail(id, e.message); });
+    }
+  } else {
+    v.src = src.url;
+    if (start) {
+      var seek = function(){ try { v.currentTime = start; } catch(e){} };
+      if (v.readyState >= 1) seek();
+      else v.addEventListener('loadedmetadata', seek, {once:true});
+    }
+  }
+
+  var p = v.play();
+  if (p && p.catch) p.catch(function(err){
+    // OBS's CEF allows unmuted autoplay; a normal browser tab may not.
+    console.error('autoplay failed:', err);
+  });
+  if (msg.paused) {
+    var pauseIt = function(){ try { v.pause(); } catch(e){} };
+    if (v.readyState >= 2) pauseIt();
+    else v.addEventListener('loadeddata', pauseIt, {once:true});
+  }
+  startHeartbeat();
+}
+
+var ws;
+function connect(){
+  var proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(proto + '://' + location.host + '/clips/ws/overlay');
+  ws.onmessage = function(e){
+    var m = JSON.parse(e.data);
+    if (m.type === 'play') play(m);
+    else if (m.type === 'pause') { if (current && current.el.tagName === 'VIDEO') current.el.pause(); }
+    else if (m.type === 'resume') { if (current && current.el.tagName === 'VIDEO') current.el.play().catch(function(){}); }
+    else if (m.type === 'stop') clearStage();
+    else if (m.type === 'config') {
+      volume = (m.config && m.config.volume !== undefined) ? m.config.volume : volume;
+      if (current && current.el.tagName === 'VIDEO')
+        current.el.volume = Math.max(0, Math.min(1, volume));
+    }
+  };
+  ws.onclose = function(){ setTimeout(connect, 1000); };
+}
+connect();
+</script>
+</body></html>

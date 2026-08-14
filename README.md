@@ -38,7 +38,7 @@ Safe ways to run it:
 - **Edit Mode** for tuning, **Delete Mode** for cleanup — no manual filesystem digging
 - **Bot API**: trigger anything by name via a simple HTTP GET, no auth needed (designed for trusted LAN)
 - **⏹ Stop All** panic button to clear every visual and stop every playing sound at once
-- **Optional integrations**: Twitch chat and alert overlays, a now-playing overlay for the [YouTube Music Desktop App](https://ytmdesktop.github.io/), and a Discord voice-reactive overlay — see [Integrations](#integrations)
+- **Optional integrations**: Twitch chat and alert overlays, a now-playing overlay for the [YouTube Music Desktop App](https://ytmdesktop.github.io/), a Discord voice-reactive overlay, and a Twitch clip player with a bot-drivable queue — see [Integrations](#integrations)
 
 ## Prerequisites
 
@@ -366,7 +366,7 @@ If you'd rather drive it from your own bot instead, the generic API still works:
 
 ## Integrations
 
-Three optional modules ship alongside the soundboard. All are self-contained:
+Four optional modules ship alongside the soundboard. All are self-contained:
 each is a single Python file plus its own pages in `static/`, each namespaces
 all of its routes, and none changes how the soundboard behaves. Install
 any combination, or none.
@@ -376,6 +376,7 @@ any combination, or none.
 | **Twitch** | Chat overlay, alert overlay for follows/subs/bits/raids/redeems with a FIFO alert queue, settings panel | [docs/twitch.md](docs/twitch.md) |
 | **YouTube Music Desktop** | Now-playing overlay with album art, live progress, audio visualiser, optional embedded music video. Requires the [YouTube Music Desktop App](https://ytmdesktop.github.io/) — it pairs with that app's companion API, not with YouTube Music directly | [docs/music.md](docs/music.md) |
 | **Discord** | Voice-reactive overlay: everyone in your current voice channel appears in OBS, lighting up as they speak — Discord avatars or custom PNGTuber-style idle/talking image pairs. Talks to the Discord desktop app's local RPC; no bot needed | [docs/discord.md](docs/discord.md) |
+| **Clips** | Queue up Twitch clip/VOD links (paste one URL or a whole blob of chat), then fire them one at a time at a full-window overlay — no auto-advance. Direct MP4/HLS playback via yt-dlp with optional pre-download; bots trigger items by number over a simple GET API | [docs/clips.md](docs/clips.md) |
 
 Twitch and Music both hook into the existing `GET /api/play/{name}` endpoint,
 so a raid or a track change can fire a clip from your library. Both can also
@@ -383,8 +384,8 @@ POST every event to a URL of your choice, if you want a bot or a local model
 reacting to chat and to what you're listening to.
 
 Installing any of them is two lines in `hexcast.py`, after the `/media` mount
-(the Discord lines already ship in `hexcast.py` and degrade gracefully if the
-module or its dependencies are missing):
+(the Discord and Clips lines already ship in `hexcast.py` and degrade
+gracefully if the module or its dependencies are missing):
 
 ```python
 from twitch import attach_twitch
@@ -395,6 +396,9 @@ attach_ytm(app, PORT)
 
 from discord_reactive import attach_discord
 attach_discord(app, PORT)
+
+from clips import attach_clips
+attach_clips(app, PORT)
 ```
 
 Plus their dependencies:
@@ -405,8 +409,13 @@ pip install -r requirements-ytm.txt
 pip install -r requirements-discord.txt
 ```
 
-A Twitch, a Music, and a Discord button appear in the control panel's top bar,
-each with a status dot showing whether that integration is currently connected.
+(The Clips module has no requirements file of its own — it needs `yt-dlp`,
+which is in the main `requirements.txt`; a `yt-dlp` already on your PATH
+works too.)
+
+A Twitch, a Music, a Discord, and a Clips button appear in the control panel's
+top bar, each with a status dot showing whether that integration is currently
+connected.
 
 **These carry the same security caveat as everything else here, and then
 some** — the Twitch module stores an OAuth token and a client secret, the
@@ -435,6 +444,7 @@ hexcast/
 ├── twitch.py                # optional Twitch integration
 ├── ytmusic.py               # optional YouTube Music integration
 ├── discord_reactive.py      # optional Discord voice-reactive integration
+├── clips.py                 # optional Twitch clip player integration
 ├── static/
 │   ├── control.html         # control panel UI (HTML + CSS + JS)
 │   ├── overlay.html         # OBS browser-source overlay
@@ -445,11 +455,14 @@ hexcast/
 │   ├── ytm_panel.html       # YouTube Music settings panel
 │   ├── ytm_overlay.html     # YouTube Music now-playing overlay
 │   ├── discord_panel.html   # Discord settings panel
-│   └── discord_overlay.html # Discord voice-reactive overlay
+│   ├── discord_overlay.html # Discord voice-reactive overlay
+│   ├── clips_panel.html     # Clips queue + transport panel
+│   └── clips_overlay.html   # Clips player overlay
 ├── docs/
 │   ├── twitch.md
 │   ├── music.md
-│   └── discord.md
+│   ├── discord.md
+│   └── clips.md
 ├── config/                  # tokens and integration settings (gitignored)
 ├── requirements.txt
 ├── requirements-twitch.txt

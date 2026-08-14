@@ -1,0 +1,435 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="/static/hexcast.png">
+<link rel="stylesheet" href="/static/hexbar.css">
+<title>HexCast - Clips</title>
+<style>
+  :root{
+    /* Palette lives in hexbar.css so every page matches. */
+    --bg:var(--hb-bg); --panel:var(--hb-panel); --line:var(--hb-line); --ink:var(--hb-ink);
+    --dim:var(--hb-dim); --accent:var(--hb-accent); --good:var(--hb-good); --warn:var(--hb-warn);
+    --clips:var(--hb-clips, #1fc7a8); --mono:var(--hb-mono);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 'Segoe UI',system-ui,sans-serif;}
+  .pill{font:600 12px/1 var(--mono);padding:6px 10px;border-radius:99px;border:1px solid var(--line);color:var(--dim)}
+  .pill.on{color:var(--good);border-color:#1d4d33;background:#0e2118}
+  .pill.off{color:var(--warn);border-color:#4d3a10;background:#211a0b}
+
+  nav{display:flex;gap:4px;padding:4px 22px 0;flex-wrap:wrap}
+  nav button{background:none;border:0;border-bottom:2px solid transparent;color:var(--dim);
+             font:600 13px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;padding:10px 14px;cursor:pointer}
+  nav button.sel{color:var(--ink);border-bottom-color:var(--clips)}
+
+  main{padding:18px 22px 60px;max-width:1080px}
+  section{display:none} section.sel{display:block}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
+  .card h2{margin:0 0 4px;font-size:14px;letter-spacing:.14em;text-transform:uppercase}
+  .card p.hint{margin:0 0 14px;color:var(--dim);font-size:13px}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px}
+  label.f{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--dim);
+          letter-spacing:.06em;text-transform:uppercase;font-weight:600}
+  input,select,textarea{background:#08080c;border:1px solid var(--line);color:var(--ink);
+        border-radius:8px;padding:9px 10px;font:14px/1.3 inherit;width:100%}
+  input:focus,select:focus,textarea:focus{outline:2px solid var(--clips);outline-offset:1px;border-color:var(--clips)}
+  label.sw{flex-direction:row;align-items:center;gap:9px;text-transform:none;font-size:14px;color:var(--ink)}
+  label.sw input{width:auto}
+  textarea{font:13px/1.5 var(--mono);min-height:84px;resize:vertical}
+
+  button.act{background:var(--clips);color:#032620;border:0;border-radius:9px;padding:10px 16px;font:700 14px inherit;cursor:pointer}
+  button.act:hover{filter:brightness(1.12)}
+  button.act[disabled]{opacity:.5;cursor:default;filter:none}
+  button.sec{background:#1c1c25;color:var(--ink);border:1px solid var(--line);border-radius:9px;
+             padding:9px 14px;font:600 13px inherit;cursor:pointer}
+  button.sec:hover{border-color:var(--clips)}
+  button.sec.danger:hover{border-color:var(--accent);color:var(--accent)}
+  button.sec[disabled]{opacity:.5;cursor:default}
+  .row{display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin-top:14px}
+
+  .url{display:flex;gap:8px;align-items:center;margin:8px 0}
+  .url code,.url a{flex:1;background:#08080c;border:1px solid var(--line);border-radius:8px;
+            padding:9px 11px;font:13px var(--mono);color:var(--good);overflow:auto;white-space:nowrap;
+            text-decoration:none}
+  .url a:hover{border-color:var(--clips);text-decoration:underline}
+
+  /* now playing */
+  #np{display:flex;flex-direction:column;gap:10px}
+  #np .title{font:700 17px/1.3 inherit;min-height:22px}
+  #np .title .lbl{display:block;color:var(--dim);font:600 11px/1 var(--mono);
+                  letter-spacing:.14em;text-transform:uppercase;margin-bottom:5px}
+  #np .modechip{display:inline-block;margin-left:8px;font:600 10px/1 var(--mono);color:var(--dim);
+                border:1px solid var(--line);border-radius:99px;padding:3px 8px;vertical-align:2px;
+                letter-spacing:.08em;text-transform:uppercase}
+  #bar{height:8px;background:#08080c;border:1px solid var(--line);border-radius:99px;overflow:hidden}
+  #bar i{display:block;height:100%;width:0;background:var(--clips);border-radius:99px;transition:none}
+  #np .times{display:flex;justify-content:space-between;font:12px var(--mono);color:var(--dim)}
+
+  /* queue rows */
+  #qlist{display:flex;flex-direction:column;gap:8px}
+  .qrow{display:flex;gap:12px;align-items:center;padding:10px 12px;border:1px solid var(--line);
+        border-radius:10px;background:#101017;cursor:grab}
+  .qrow:active{cursor:grabbing}
+  .qrow.dragging{opacity:.4}
+  .qrow.playing{border-color:var(--clips)}
+  .qrow.played{opacity:.45}
+  .qrow .num{font:800 13px var(--mono);color:var(--clips);flex:0 0 44px;text-align:right}
+  .qrow .thumb{width:74px;height:42px;border-radius:6px;object-fit:cover;background:#08080c;flex:0 0 auto}
+  .qrow .meta{min-width:0;flex:1}
+  .qrow .meta .t{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .qrow .meta .t a{color:inherit;text-decoration:none}
+  .qrow .meta .t a:hover{color:var(--clips)}
+  .qrow .meta .s{color:var(--dim);font:12px var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .qrow .meta .s .err{color:var(--warn)}
+  .qrow .btns{display:flex;gap:6px;flex:0 0 auto}
+  .qrow .btns button{padding:7px 11px;font-size:12.5px}
+  .badge{display:inline-block;font:600 10px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;
+         border:1px solid var(--line);border-radius:99px;padding:2px 7px;margin-right:5px;color:var(--dim)}
+  .badge.kind{color:var(--clips);border-color:#164d43}
+  .badge.cached{color:var(--good);border-color:#1d4d33}
+  .badge.errb{color:var(--warn);border-color:#4d3a10}
+
+  code{color:var(--good);font:12.5px var(--mono)}
+  table.api{width:100%;border-collapse:collapse;font-size:13px}
+  table.api td{padding:6px 8px;border-top:1px solid var(--line);vertical-align:top}
+  table.api td:first-child{white-space:nowrap;font:12.5px var(--mono);color:var(--good)}
+
+  #log{font:12px/1.7 var(--mono);color:var(--dim);background:#08080c;border:1px solid var(--line);
+       border-radius:8px;padding:12px;max-height:240px;overflow:auto;white-space:pre-wrap}
+
+  #toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,80px);background:var(--clips);
+         color:#032620;padding:11px 20px;border-radius:99px;font-weight:700;font-size:14px;
+         transition:transform .25s ease;z-index:20;max-width:80vw;text-align:center}
+  #toast.up{transform:translate(-50%,0)}
+</style></head>
+<body>
+
+<div id="hexbar" data-section="Clips"></div>
+<div id="hexbar-actions"><span class="pill" id="st-play">idle</span><span class="pill" id="st-tool">yt-dlp</span></div>
+
+<nav>
+  <button data-tab="queue" class="sel">Queue</button>
+  <button data-tab="settings">Settings</button>
+</nav>
+
+<main>
+
+<section id="tab-queue" class="sel">
+  <div class="card">
+    <h2>Now playing</h2>
+    <div id="np">
+      <div class="title"><span class="lbl">Current clip</span><span id="np-title">nothing playing</span><span class="modechip" id="np-mode" style="display:none"></span></div>
+      <div id="bar"><i id="bar-fill"></i></div>
+      <div class="times"><span id="np-pos">0:00</span><span id="np-dur">0:00</span></div>
+      <div class="row" style="margin-top:2px">
+        <button class="act" id="np-play">Play</button>
+        <button class="sec" id="np-pause" disabled>Pause</button>
+        <button class="sec" id="np-stop">Stop</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Add clips</h2>
+    <p class="hint">Paste a Twitch clip/VOD URL, a YouTube link, or a whole blob of chat spam -
+      every Twitch and YouTube link in it is picked out (<code>?t=</code> start
+      timestamps are honoured), duplicates skipped. A single URL from <b>any other
+      site yt-dlp understands</b> (Kick, Streamable, X, a direct .mp4...) works too.</p>
+    <textarea id="addbox" placeholder="https://clips.twitch.tv/... or any text containing twitch/youtube links"></textarea>
+    <div class="row"><button class="act" id="add">Add to queue</button></div>
+  </div>
+
+  <div class="card">
+    <h2>Queue</h2>
+    <p class="hint">Drag rows to reorder. Nothing auto-advances - every clip is fired by hand
+      (or by a bot via its <b>#number</b>). Played clips stay in the list, dimmed, until you clear them.</p>
+    <div id="qlist"><p class="hint">Queue is empty.</p></div>
+    <div class="row"><button class="sec" id="clear-played">Clear played</button></div>
+  </div>
+</section>
+
+<section id="tab-settings">
+  <div class="card">
+    <h2>Browser source</h2>
+    <p class="hint">Add as a Browser source in OBS, sized and placed where clips should appear
+      (the video letterboxes to fit). It renders <b>nothing at all</b> while idle, so it can cover
+      the whole canvas. Uncheck "Shutdown source when not visible".</p>
+    <div class="url"><a id="u-overlay" href="/clips/overlay" target="_blank" rel="noopener"></a><button class="sec" data-copy="u-overlay">Copy</button></div>
+  </div>
+
+  <div class="card">
+    <h2>Playback</h2>
+    <div class="grid">
+      <label class="f sw"><input type="checkbox" id="f-predownload">Pre-download on add (off = stream)</label>
+      <label class="f sw"><input type="checkbox" id="f-iframe_fallback">Fall back to the site's embed</label>
+      <label class="f">Master volume <span id="volpct" style="text-transform:none"></span>
+        <input type="range" id="f-volume" min="0" max="1" step="0.05"></label>
+    </div>
+    <div class="row"><button class="act" id="save-cfg">Save</button></div>
+    <p class="hint" style="margin-top:12px">Everything <b>streams straight from the source</b> by default -
+      nothing is stored. Pre-download is optional: it fetches clips/videos to <code>media/clips/</code> on add
+      for instant starts that survive expiring media URLs (files are deleted with their queue item; VODs
+      always stream). The embed fallback covers Twitch and YouTube only; the Twitch embed needs the overlay
+      loaded via a hostname Twitch accepts as <code>parent</code> (localhost works) and can't report when it ends.</p>
+  </div>
+
+  <div class="card">
+    <h2>Bot API</h2>
+    <p class="hint">Simple GET endpoints, same philosophy as the soundboard's <code>/api/play/{name}</code>.
+      Reference items by their <b>#number</b>, id, exact clip slug, or <code>next</code>.</p>
+    <table class="api">
+      <tr><td>GET /clips/api/queue</td><td>full queue as JSON</td></tr>
+      <tr><td>GET /clips/api/add?url=...</td><td>add a URL (returns the entry incl. its number)</td></tr>
+      <tr><td>GET /clips/api/play/{ref}</td><td>play by number, id, clip slug, or <code>next</code></td></tr>
+      <tr><td>GET /clips/api/pause · resume · toggle · stop</td><td>transport</td></tr>
+      <tr><td>GET /clips/api/status</td><td>player state + current item</td></tr>
+      <tr><td>GET /clips/api/remove/{ref}</td><td>remove (also DELETE /clips/api/queue/{ref})</td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Log</h2>
+    <div id="log"></div>
+  </div>
+</section>
+
+</main>
+<div id="toast"></div>
+
+<script>
+var CFG=null, QUEUE=[], PLAYER={state:'idle'}, playerAt=0;
+var $=function(id){ return document.getElementById(id); };
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function toast(m){
+  var t=$('toast'); t.textContent=m; t.classList.add('up');
+  clearTimeout(t._t); t._t=setTimeout(function(){ t.classList.remove('up'); }, 2600);
+}
+function copyText(s){
+  // navigator.clipboard only exists on https or localhost; over a LAN IP the
+  // hidden-textarea trick is the only thing that works.
+  if(navigator.clipboard && window.isSecureContext){
+    navigator.clipboard.writeText(s).then(function(){ toast('Copied'); },
+                                          function(){ copyFallback(s); });
+  } else {
+    copyFallback(s);
+  }
+}
+function copyFallback(s){
+  var ta=document.createElement('textarea');
+  ta.value=s; ta.style.position='fixed'; ta.style.opacity='0';
+  document.body.appendChild(ta); ta.focus(); ta.select();
+  var ok=false;
+  try{ ok=document.execCommand('copy'); }catch(e){}
+  document.body.removeChild(ta);
+  toast(ok ? 'Copied' : 'Copy failed - use the link');
+}
+function fmtDur(s){
+  if(s==null || isNaN(s)) return '?:??';
+  s=Math.max(0,Math.round(s));
+  var m=Math.floor(s/60), sec=s%60, h=Math.floor(m/60);
+  if(h) return h+':'+String(m%60).padStart(2,'0')+':'+String(sec).padStart(2,'0');
+  return m+':'+String(sec).padStart(2,'0');
+}
+
+/* ---- tabs -------------------------------------------------------------- */
+document.querySelectorAll('nav button').forEach(function(b){
+  b.onclick=function(){
+    document.querySelectorAll('nav button').forEach(function(x){ x.classList.remove('sel'); });
+    document.querySelectorAll('main section').forEach(function(x){ x.classList.remove('sel'); });
+    b.classList.add('sel');
+    $('tab-'+b.dataset.tab).classList.add('sel');
+  };
+});
+
+/* ---- queue list -------------------------------------------------------- */
+function rowHtml(e){
+  var badges='<span class="badge kind">'+e.kind+'</span>';
+  if(e.cached) badges+='<span class="badge cached">cached</span>';
+  if(e.error) badges+='<span class="badge errb" title="'+esc(e.error)+'">error</span>';
+  var sub=badges+' '+(e.duration!=null?fmtDur(e.duration):'')+' &middot; '+esc(e.slug);
+  if(e.error) sub+=' <span class="err">'+esc(e.error)+'</span>';
+  var playing = PLAYER.item && PLAYER.item.id===e.id && PLAYER.state!=='idle';
+  return '<div class="qrow '+e.status+(playing?' playing':'')+'" draggable="true" data-id="'+e.id+'">'
+    + '<span class="num">#'+e.num+'</span>'
+    + (e.thumbnail?'<img class="thumb" src="'+esc(e.thumbnail)+'" alt="">':'<span class="thumb"></span>')
+    + '<div class="meta">'
+    +   '<div class="t"><a href="'+esc(e.url)+'" target="_blank" rel="noopener">'+esc(e.title||e.slug)+'</a></div>'
+    +   '<div class="s">'+sub+'</div>'
+    + '</div>'
+    + '<div class="btns">'
+    +   '<button class="act" data-play="'+e.id+'">Play</button>'
+    +   '<button class="sec" data-mark="'+e.id+'">'+(e.status==='played'?'Unplay':'Played')+'</button>'
+    +   '<button class="sec danger" data-rm="'+e.id+'">&#10005;</button>'
+    + '</div>'
+    + '</div>';
+}
+function renderQueue(){
+  var c=$('qlist');
+  if(!QUEUE.length){ c.innerHTML='<p class="hint">Queue is empty.</p>'; return; }
+  c.innerHTML=QUEUE.map(rowHtml).join('');
+}
+
+/* drag to reorder */
+var dragEl=null;
+$('qlist').addEventListener('dragstart', function(e){
+  var row=e.target.closest('.qrow'); if(!row) return;
+  dragEl=row; row.classList.add('dragging');
+  e.dataTransfer.effectAllowed='move';
+  try{ e.dataTransfer.setData('text/plain', row.dataset.id); }catch(_){}
+});
+$('qlist').addEventListener('dragover', function(e){
+  if(!dragEl) return;
+  e.preventDefault();
+  var over=e.target.closest('.qrow');
+  if(!over || over===dragEl) return;
+  var r=over.getBoundingClientRect();
+  var before=(e.clientY - r.top) < r.height/2;
+  over.parentNode.insertBefore(dragEl, before?over:over.nextSibling);
+});
+$('qlist').addEventListener('drop', function(e){ e.preventDefault(); });
+$('qlist').addEventListener('dragend', async function(){
+  if(!dragEl) return;
+  dragEl.classList.remove('dragging'); dragEl=null;
+  var order=[].map.call(document.querySelectorAll('#qlist .qrow'), function(r){ return r.dataset.id; });
+  var old=QUEUE.map(function(e){ return e.id; });
+  if(order.join()===old.join()) return;
+  await fetch('/clips/api/reorder',{method:'POST',headers:{'Content-Type':'application/json'},
+                                    body:JSON.stringify({order:order})});
+});
+
+/* row + page buttons */
+document.addEventListener('click', async function(ev){
+  var t=ev.target.closest('button'); if(!t) return;
+  if(t.dataset.copy){ copyText($(t.dataset.copy).href||$(t.dataset.copy).textContent); return; }
+  if(t.dataset.play){
+    t.disabled=true;
+    var r=await fetch('/clips/api/play/'+encodeURIComponent(t.dataset.play),{method:'POST'});
+    var d=await r.json(); t.disabled=false;
+    if(!d.ok) toast(d.error||'could not play');
+    return;
+  }
+  if(t.dataset.mark){
+    var e=QUEUE.find(function(x){ return x.id===t.dataset.mark; }); if(!e) return;
+    await fetch('/clips/api/mark',{method:'POST',headers:{'Content-Type':'application/json'},
+                                   body:JSON.stringify({ref:e.id, played:e.status!=='played'})});
+    return;
+  }
+  if(t.dataset.rm){
+    await fetch('/clips/api/queue/'+encodeURIComponent(t.dataset.rm),{method:'DELETE'});
+    return;
+  }
+});
+
+$('add').onclick=async function(){
+  var text=$('addbox').value.trim();
+  if(!text){ toast('Paste a twitch link first'); return; }
+  $('add').disabled=true;
+  var r=await fetch('/clips/api/add',{method:'POST',headers:{'Content-Type':'application/json'},
+                                      body:JSON.stringify({text:text, source:'manual'})});
+  var d=await r.json(); $('add').disabled=false;
+  if(!d.ok){ toast(d.error||'no links found'); return; }
+  $('addbox').value='';
+  toast('Added '+d.added.length+(d.skipped?' ('+d.skipped+' duplicate'+(d.skipped>1?'s':'')+' skipped)':''));
+};
+
+$('clear-played').onclick=async function(){
+  var r=await fetch('/clips/api/clear_played',{method:'POST'});
+  var d=await r.json();
+  toast(d.removed?('Removed '+d.removed+' played'):'Nothing to clear');
+};
+
+/* ---- transport --------------------------------------------------------- */
+$('np-play').onclick=async function(){
+  // Resume if paused; otherwise fire the next queued item.
+  var url = PLAYER.state==='paused' ? '/clips/api/resume' : '/clips/api/play/next';
+  var r=await fetch(url,{method:'POST'});
+  var d=await r.json();
+  if(!d.ok) toast(d.error||'nothing queued');
+};
+$('np-pause').onclick=async function(){
+  var r=await fetch('/clips/api/pause',{method:'POST'});
+  var d=await r.json();
+  if(!d.ok) toast(d.error||'nothing playing');
+};
+$('np-stop').onclick=function(){ fetch('/clips/api/stop',{method:'POST'}); };
+
+function paintPlayer(){
+  var p=PLAYER, item=p.item;
+  $('np-title').textContent = item ? ('#'+item.num+' '+(item.title||item.slug)) : 'nothing playing';
+  var chip=$('np-mode');
+  if(item && p.mode){
+    chip.style.display='';
+    chip.textContent={file:'cached',mp4:'direct',hls:'vod stream',iframe:'twitch embed'}[p.mode]||p.mode;
+  } else chip.style.display='none';
+  $('np-play').disabled = p.state==='playing'||p.state==='loading';
+  $('np-play').textContent = p.state==='paused' ? 'Resume' : (p.state==='loading'?'Loading...':'Play');
+  $('np-pause').disabled = p.state!=='playing' || p.mode==='iframe';
+  var st=$('st-play');
+  st.textContent=p.state + (item&&p.state!=='idle'?(' #'+item.num):'');
+  st.className='pill'+(p.state==='playing'?' on':'');
+  renderQueue();
+}
+
+/* smooth progress between server heartbeats */
+function tick(){
+  var p=PLAYER;
+  var pos=p.position||0;
+  if(p.state==='playing') pos += (performance.now()-playerAt)/1000;
+  var dur=p.duration || (p.item&&p.item.duration) || 0;
+  if(dur&&pos>dur) pos=dur;
+  $('bar-fill').style.width = dur ? Math.min(100,(pos/dur)*100)+'%' : '0';
+  $('np-pos').textContent = (p.state==='idle') ? '0:00' : fmtDur(pos);
+  $('np-dur').textContent = dur ? fmtDur(dur) : '?:??';
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+
+/* ---- settings ---------------------------------------------------------- */
+function paintConfig(){
+  if(!CFG) return;
+  $('f-predownload').checked=!!CFG.predownload;
+  $('f-iframe_fallback').checked=!!CFG.iframe_fallback;
+  $('f-volume').value=CFG.volume;
+  $('volpct').textContent=Math.round(CFG.volume*100)+'%';
+}
+$('f-volume').oninput=function(){ $('volpct').textContent=Math.round(this.value*100)+'%'; };
+$('save-cfg').onclick=async function(){
+  var r=await fetch('/clips/api/config',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({predownload:$('f-predownload').checked,
+                         iframe_fallback:$('f-iframe_fallback').checked,
+                         volume:parseFloat($('f-volume').value)})});
+  var d=await r.json(); CFG=d.config; paintConfig(); toast('Saved');
+};
+
+/* ---- status / websocket ------------------------------------------------ */
+$('u-overlay').textContent=location.origin+'/clips/overlay';
+
+function paintStatus(s){
+  var tool=$('st-tool');
+  if(s.ytdlp){ tool.textContent='yt-dlp '+(s.ytdlp_version||'ok'); tool.className='pill on'; }
+  else { tool.textContent='yt-dlp missing'; tool.className='pill off'; }
+  if(s.log) $('log').textContent=s.log.join('\n');
+}
+async function pollStatus(){
+  try{
+    var r=await fetch('/clips/api/status');
+    if(r.ok) paintStatus(await r.json());
+  }catch(e){}
+}
+pollStatus(); setInterval(pollStatus, 5000);
+
+function connect(){
+  var proto=location.protocol==='https:'?'wss':'ws';
+  var ws=new WebSocket(proto+'://'+location.host+'/clips/ws/panel');
+  ws.onmessage=function(e){
+    var m=JSON.parse(e.data);
+    if(m.type==='config'){ CFG=m.config; paintConfig(); }
+    else if(m.type==='queue'){ QUEUE=m.queue||[]; renderQueue(); }
+    else if(m.type==='player'){ PLAYER=m.player||{state:'idle'}; playerAt=performance.now(); paintPlayer(); }
+  };
+  ws.onclose=function(){ setTimeout(connect, 1500); };
+}
+connect();
+</script>
+<script src="/static/hexbar.js"></script>
+</body></html>
