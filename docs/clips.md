@@ -78,7 +78,10 @@ soundboard overlay uses.
    - `twitch.tv/videos/ID` — an optional `?t=1h2m3s` start offset is honoured
 
    Duplicates are skipped. Each new item gets a stable **#number** that never
-   changes and never gets reused — that's what bots reference.
+   changes and never gets reused — that's what bots reference. Because numbers
+   are never reused, the counter only ever climbs; the **Reset numbering**
+   button renumbers the current queue 1..N and restarts the counter (any old
+   numbers a bot still references stop working, so do it between streams).
 
 2. **Resolve** — metadata (title, duration, thumbnail) fills in a few seconds
    after adding, in the background. With **Pre-download clips** on (the
@@ -132,6 +135,7 @@ exact clip slug, or `next` (the first still-queued item).
 | `GET /clips/api/pause` · `resume` · `toggle` · `stop` | transport |
 | `GET /clips/api/status` | player state, current item, queue counts |
 | `GET /clips/api/remove/{ref}` | remove an item (`DELETE /clips/api/queue/{ref}` also works) |
+| `POST /clips/api/reset_numbers` | renumber the queue 1..N and restart the counter |
 
 Examples:
 

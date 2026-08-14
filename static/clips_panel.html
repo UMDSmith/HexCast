@@ -144,7 +144,10 @@
     <p class="hint">Drag rows to reorder. Nothing auto-advances - every clip is fired by hand
       (or by a bot via its <b>#number</b>). Played clips stay in the list, dimmed, until you clear them.</p>
     <div id="qlist"><p class="hint">Queue is empty.</p></div>
-    <div class="row"><button class="sec" id="clear-played">Clear played</button></div>
+    <div class="row">
+      <button class="sec" id="clear-played">Clear played</button>
+      <button class="sec" id="reset-nums" title="Renumber 1..N and restart the counter - old numbers a bot may still reference stop working">Reset numbering</button>
+    </div>
   </div>
 </section>
 
@@ -336,6 +339,11 @@ $('clear-played').onclick=async function(){
   var r=await fetch('/clips/api/clear_played',{method:'POST'});
   var d=await r.json();
   toast(d.removed?('Removed '+d.removed+' played'):'Nothing to clear');
+};
+$('reset-nums').onclick=async function(){
+  var r=await fetch('/clips/api/reset_numbers',{method:'POST'});
+  var d=await r.json();
+  toast(d.ok?'Renumbered - next item is #'+(d.seq+1):'Reset failed');
 };
 
 /* ---- transport --------------------------------------------------------- */

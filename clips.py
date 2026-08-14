@@ -913,6 +913,20 @@ async def api_mark(request: Request):
     return {"ok": True, "entry": public_entry(entry)}
 
 
+@router.post("/api/reset_numbers")
+async def api_reset_numbers():
+    """Renumber the queue 1..N in current order and restart the counter.
+    Numbers are deliberately never reused otherwise (bots reference them), so
+    this is a manual action for when the count has crept up."""
+    for i, e in enumerate(STORE["queue"], start=1):
+        e["num"] = i
+    STORE["seq"] = len(STORE["queue"])
+    save_store()
+    await HUB.broadcast_queue()
+    await HUB.broadcast_player()   # the current item's number may have changed
+    return {"ok": True, "seq": STORE["seq"]}
+
+
 @router.post("/api/clear_played")
 async def api_clear_played():
     gone = [e for e in STORE["queue"] if e.get("status") == "played"
