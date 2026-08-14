@@ -145,8 +145,20 @@ function play(msg){
 
   var p = v.play();
   if (p && p.catch) p.catch(function(err){
-    // OBS's CEF allows unmuted autoplay; a normal browser tab may not.
-    console.error('autoplay failed:', err);
+    // OBS's browser source allows unmuted autoplay; a normal browser tab
+    // blocks it until the page has been interacted with. Run the video muted
+    // so the picture never stalls, and unmute on the first click/keypress.
+    v.muted = true;
+    v.play().catch(function(e){ console.error('muted autoplay also failed:', e); });
+    var unlock = function(){
+      document.removeEventListener('click', unlock);
+      document.removeEventListener('keydown', unlock);
+      if (!current || current.el !== v) return;
+      v.muted = false;
+      if (v.paused) v.play().catch(function(){});
+    };
+    document.addEventListener('click', unlock);
+    document.addEventListener('keydown', unlock);
   });
   if (msg.paused) {
     var pauseIt = function(){ try { v.pause(); } catch(e){} };
