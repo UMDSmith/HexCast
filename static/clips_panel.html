@@ -177,20 +177,6 @@
   </div>
 
   <div class="card">
-    <h2>Bot API</h2>
-    <p class="hint">Simple GET endpoints, same philosophy as the soundboard's <code>/api/play/{name}</code>.
-      Reference items by their <b>#number</b>, id, exact clip slug, or <code>next</code>.</p>
-    <table class="api">
-      <tr><td>GET /clips/api/queue</td><td>full queue as JSON</td></tr>
-      <tr><td>GET /clips/api/add?url=...</td><td>add a URL (returns the entry incl. its number)</td></tr>
-      <tr><td>GET /clips/api/play/{ref}</td><td>play by number, id, clip slug, or <code>next</code></td></tr>
-      <tr><td>GET /clips/api/pause · resume · toggle · stop</td><td>transport</td></tr>
-      <tr><td>GET /clips/api/status</td><td>player state + current item</td></tr>
-      <tr><td>GET /clips/api/remove/{ref}</td><td>remove (also DELETE /clips/api/queue/{ref})</td></tr>
-    </table>
-  </div>
-
-  <div class="card">
     <h2>Log</h2>
     <div id="log"></div>
   </div>

@@ -136,6 +136,7 @@ exact clip slug, or `next` (the first still-queued item).
 | `GET /clips/api/status` | player state, current item, queue counts |
 | `GET /clips/api/remove/{ref}` | remove an item (`DELETE /clips/api/queue/{ref}` also works) |
 | `POST /clips/api/reset_numbers` | renumber the queue 1..N and restart the counter |
+| `GET /clips/api/shoutout/{channel}?count=2` | play random clips from that Twitch channel back to back, ephemerally (nothing queued or saved) — this is what the Twitch module's `!so` command uses |
 
 Examples:
 

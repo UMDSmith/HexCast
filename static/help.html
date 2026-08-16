@@ -1,0 +1,211 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="/static/hexcast.png">
+<link rel="stylesheet" href="/static/hexbar.css">
+<title>HexCast - Help</title>
+<style>
+  :root{
+    --bg:var(--hb-bg); --panel:var(--hb-panel); --line:var(--hb-line); --ink:var(--hb-ink);
+    --dim:var(--hb-dim); --accent:var(--hb-accent); --good:var(--hb-good); --warn:var(--hb-warn);
+    --mono:var(--hb-mono);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 'Segoe UI',system-ui,sans-serif;}
+  main{padding:18px 22px 60px;max-width:1080px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
+  .card h2{margin:0 0 4px;font-size:14px;letter-spacing:.14em;text-transform:uppercase}
+  .card h2 .tag{font:600 10px/1 var(--mono);letter-spacing:.08em;border:1px solid var(--line);
+                border-radius:99px;padding:3px 8px;margin-left:8px;vertical-align:2px;color:var(--dim)}
+  .card h3{margin:16px 0 4px;font-size:13px;color:var(--ink)}
+  .card p.hint{margin:0 0 10px;color:var(--dim);font-size:13px}
+  code{color:var(--good);font:12.5px var(--mono)}
+  pre{background:#08080c;border:1px solid var(--line);border-radius:8px;padding:12px;
+      font:12.5px/1.6 var(--mono);color:var(--good);overflow:auto;margin:8px 0}
+  table.api{width:100%;border-collapse:collapse;font-size:13px;margin:6px 0 4px}
+  table.api td{padding:6px 8px;border-top:1px solid var(--line);vertical-align:top;color:var(--dim)}
+  table.api td:first-child{white-space:nowrap;font:12.5px var(--mono);color:var(--good)}
+  .toc{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 16px}
+  .toc a{background:var(--hb-card,#17171f);border:1px solid var(--line);border-radius:99px;
+         color:var(--ink);text-decoration:none;font-size:13px;font-weight:600;padding:7px 14px}
+  .toc a:hover{border-color:var(--hb-line-hi,#35354a)}
+  section{scroll-margin-top:16px}
+</style></head>
+<body>
+
+<div id="hexbar" data-section="Help"></div>
+
+<main>
+
+<div class="toc">
+  <a href="#soundboard">Soundboard</a>
+  <a href="#clips">Clips</a>
+  <a href="#twitch">Twitch</a>
+  <a href="#shoutout">Shoutouts (!so)</a>
+  <a href="#music">Music</a>
+  <a href="#discord">Discord</a>
+  <a href="#notes">Browser notes</a>
+</div>
+
+<section id="soundboard">
+<div class="card">
+  <h2>Soundboard <span class="tag">core</span></h2>
+  <p class="hint">Trigger media from your library by name — everything a bot, hotkey deck, or
+    channel-point redeem needs is a single GET. Names are the filename without extension,
+    case-insensitive. The overlay applies each clip's saved position, scale, volume and trim
+    automatically; query params override them for one play.</p>
+  <table class="api">
+    <tr><td>GET /api/list</td><td>every triggerable name, grouped audio / video</td></tr>
+    <tr><td>GET /api/play/{name}</td><td>play by name across both kinds (audio checked first)</td></tr>
+    <tr><td>GET /api/play/{kind}/{name}</td><td>same, but explicit — kind is <code>audio</code> or <code>video</code></td></tr>
+    <tr><td>GET /api/stop</td><td>clear all overlay visuals and stop all audio</td></tr>
+    <tr><td>GET /api</td><td>this reference as JSON</td></tr>
+  </table>
+  <h3>Per-play overrides (query params)</h3>
+  <table class="api">
+    <tr><td>?x=50&amp;y=50&amp;scale=2</td><td>position/size, video only (percent of canvas, scale factor)</td></tr>
+    <tr><td>?volume=0.5</td><td>0.0–1.0, audio and video-with-audio</td></tr>
+    <tr><td>?start=2&amp;end=5</td><td>trim window in seconds (static images use it as display time)</td></tr>
+  </table>
+  <pre>curl http://localhost:4747/api/play/airhorn
+curl "http://localhost:4747/api/play/video/cheer?x=80&amp;y=20&amp;scale=2&amp;end=3"
+curl http://localhost:4747/api/stop</pre>
+</div>
+</section>
+
+<section id="clips">
+<div class="card">
+  <h2>Clips <span class="tag">/clips</span></h2>
+  <p class="hint">A hand-fired queue of Twitch clips/VODs, YouTube videos, or any single
+    yt-dlp-supported URL. Nothing auto-advances. Everything streams from the source unless
+    pre-download is enabled. <code>{ref}</code> is a <b>#number</b>, item id, exact clip slug,
+    or <code>next</code> (first still-queued item). All endpoints return
+    <code>{"ok": true/false, ...}</code>.</p>
+  <table class="api">
+    <tr><td>GET /clips/api/queue</td><td>full queue + player state as JSON</td></tr>
+    <tr><td>GET /clips/api/add?url=...</td><td>add a URL (returns the entry incl. its number); POST <code>{"text": "..."}</code> to extract every link from a blob</td></tr>
+    <tr><td>GET /clips/api/play/{ref}</td><td>play an item</td></tr>
+    <tr><td>GET /clips/api/pause · resume · toggle · stop</td><td>transport; Stop clears the overlay without marking the item played</td></tr>
+    <tr><td>GET /clips/api/status</td><td>player state, current item, queue counts</td></tr>
+    <tr><td>GET /clips/api/remove/{ref}</td><td>remove an item (also DELETE /clips/api/queue/{ref})</td></tr>
+    <tr><td>POST /clips/api/reset_numbers</td><td>renumber the queue 1..N and restart the counter</td></tr>
+    <tr><td>GET /clips/api/shoutout/{channel}?count=2</td><td>play random clips from a Twitch channel back to back, ephemerally (never queued or saved)</td></tr>
+  </table>
+  <p class="hint">Numbers are never reused, so a bot's <code>!playclip 7</code> can't fire the
+    wrong thing after removals — that's why the counter only climbs until you reset it.
+    Played items dim but stay listed until <b>Clear played</b> on the Queue tab.</p>
+  <pre>curl "http://localhost:4747/clips/api/add?url=https://clips.twitch.tv/SomeSlug"
+curl http://localhost:4747/clips/api/play/7
+curl http://localhost:4747/clips/api/play/next</pre>
+</div>
+</section>
+
+<section id="twitch">
+<div class="card">
+  <h2>Twitch <span class="tag">/twitch</span></h2>
+  <p class="hint">Chat overlay, alert overlay with a FIFO queue, and chat-command handling.
+    Alerts can fire any soundboard clip by name — set it in the Clip column of the Alerts
+    table on the Twitch panel.</p>
+  <table class="api">
+    <tr><td>GET /twitch/api/status</td><td>connection state, signed-in user, granted scopes, log</td></tr>
+    <tr><td>GET /twitch/api/queue</td><td>the alert queue (playing + waiting)</td></tr>
+    <tr><td>POST /twitch/api/queue/skip · clear</td><td>skip the current alert / drop the whole queue</td></tr>
+    <tr><td>POST /twitch/api/test/chat</td><td><code>{"text": "..."}</code> — fake a chat line (runs commands like <code>!so</code> as the broadcaster)</td></tr>
+    <tr><td>POST /twitch/api/test/event</td><td><code>{"kind": "follow"}</code> — fire a sample alert</td></tr>
+  </table>
+  <h3>Feeding a bot</h3>
+  <p class="hint">Set <b>Forward URL</b> on the Connection tab and every chat message and alert is
+    POSTed there as JSON — <code>{"type": "chat", "user": {...}, "flags": {"mod": true, ...},
+    "text": "..."}</code> for chat, <code>{"type": "event", "kind": "raid", ...}</code> for alerts.</p>
+</div>
+</section>
+
+<section id="shoutout">
+<div class="card">
+  <h2>Shoutouts <span class="tag">!so</span></h2>
+  <p class="hint">You or a mod types <code>!so channelname</code> (or <code>@channelname</code>) in
+    your own chat, and three things happen:</p>
+  <table class="api">
+    <tr><td>1 — official shoutout</td><td>the real Twitch <code>/shoutout</code> banner (Twitch only accepts these while you're live)</td></tr>
+    <tr><td>2 — chat line</td><td>posted from your account; template configurable with <code>{name}</code>, <code>{login}</code>, <code>{url}</code></td></tr>
+    <tr><td>3 — their clips</td><td>two random clips from their channel play back to back on the Clips overlay — ephemeral, nothing queued or saved. Stop, or manually playing anything, cancels the rest</td></tr>
+  </table>
+  <p class="hint">The chat-side parts need the <code>moderator:manage:shoutouts</code> and
+    <code>user:write:chat</code> scopes — if you signed in before those existed, reconnect once in
+    the Twitch panel. Without any sign-in the clips still play; only the chat messages are skipped
+    (the Twitch panel log says exactly which piece did what).</p>
+  <p class="hint">Settings: <code>config/twitch.json</code> → <code>"shoutout"</code> —
+    <code>on</code>, <code>command</code> (default <code>!so</code>), <code>who</code>
+    (<code>mods</code> or <code>broadcaster</code>), <code>native</code>, <code>message</code>,
+    <code>clip</code>, <code>clip_count</code> (1–5). Dry-run with <code>!so somechannel</code> in
+    the Twitch panel's test-chat box, or call
+    <code>GET /clips/api/shoutout/{channel}</code> directly.</p>
+</div>
+</section>
+
+<section id="music">
+<div class="card">
+  <h2>Music <span class="tag">/ytm</span></h2>
+  <p class="hint">Now-playing overlay fed by the YouTube Music Desktop App's companion server.</p>
+  <table class="api">
+    <tr><td>GET /ytm/api/nowplaying</td><td>one plain-text line: <code>Title - Artist (Album)</code> — made for a chat bot's <code>!song</code></td></tr>
+    <tr><td>GET /ytm/api/nowplaying.json</td><td>the full state as JSON</td></tr>
+    <tr><td>GET /ytm/api/status</td><td>connection + pairing state</td></tr>
+    <tr><td>POST /ytm/api/command</td><td><code>{"command": "next"}</code> — proxied to the app</td></tr>
+  </table>
+  <h3>Valid commands</h3>
+  <p class="hint"><code>playPause</code>, <code>play</code>, <code>pause</code>, <code>next</code>,
+    <code>previous</code>, <code>volumeUp</code>, <code>volumeDown</code>, <code>setVolume</code> (0–100),
+    <code>mute</code>, <code>unmute</code>, <code>seekTo</code>, <code>shuffle</code>,
+    <code>repeatMode</code>, <code>toggleLike</code>, <code>toggleDislike</code>,
+    <code>playQueueIndex</code>, <code>changeVideo</code> — so a channel-point redeem can skip a track.</p>
+  <p class="hint">A <b>Forward URL</b> on the panel POSTs the full state on every track change, and
+    <b>Clip on track change</b> fires a soundboard clip by name through <code>/api/play/{name}</code>.</p>
+</div>
+</section>
+
+<section id="discord">
+<div class="card">
+  <h2>Discord <span class="tag">/discord</span></h2>
+  <p class="hint">Voice-reactive overlay — everyone in your current voice channel, lighting up as
+    they speak, using Discord avatars or per-person uploaded idle/talking images. Configuration is
+    panel-driven; the useful HTTP surface is small:</p>
+  <table class="api">
+    <tr><td>GET /discord/api/status</td><td>connection state, current channel, participants</td></tr>
+    <tr><td>GET /discord/avatar/{user_id}</td><td>server-cached avatar proxy (what the overlay uses)</td></tr>
+    <tr><td>POST /discord/api/test/user</td><td>inject a fake participant / toggle their speaking — style the overlay without being in a call</td></tr>
+  </table>
+  <h3>Overlay query params</h3>
+  <p class="hint">Any saved layout setting can be overridden per browser source:
+    <code>layout</code> (row/column/grid/free), <code>grid_columns</code>, <code>size</code>,
+    <code>spacing</code>, <code>align</code>, <code>show_names</code>, <code>name_size</code>,
+    <code>name_color</code>, <code>shape</code>, <code>dim</code>, <code>dim_pairs</code>,
+    <code>desaturate</code>, <code>bounce</code>, <code>hide_muted</code>, <code>mute_badge</code> —
+    booleans take 0/1, e.g. <code>/discord/overlay?layout=column&amp;size=96&amp;show_names=0</code>.</p>
+</div>
+</section>
+
+<section id="notes">
+<div class="card">
+  <h2>Browser notes</h2>
+  <h3>Sound in a browser tab</h3>
+  <p class="hint">Browsers block <b>unmuted</b> autoplay in normal tabs until you've interacted with
+    the page. If a clip starts silent, the overlay shows a "muted by the browser" pill — one click
+    anywhere fixes the whole tab session. Permanent fix: <b>Firefox</b> — address-bar permissions
+    icon → Autoplay → <b>Allow Audio and Video</b>. <b>Chrome</b> — padlock → Site settings →
+    Sound → <b>Allow</b> (Chrome also learns from regular use). Permissions apply to the whole
+    host and port, every page under it. OBS browser sources allow unmuted autoplay natively and
+    are never affected.</p>
+  <h3>OBS browser sources</h3>
+  <p class="hint">For every overlay: uncheck <b>Shutdown source when not visible</b> and
+    <b>Refresh browser when scene becomes active</b>. Overlays reconnect on their own and restyle
+    live when you save settings in a panel. If a re-upload doesn't repaint, right-click the source
+    → Interact → Ctrl+Shift+R.</p>
+  <h3>No authentication</h3>
+  <p class="hint">Every endpoint above is open to anyone who can reach the port — that's what makes
+    bots one-line simple. Keep HexCast on a trusted LAN and never expose it to the internet.</p>
+</div>
+</section>
+
+</main>
+<script src="/static/hexbar.js"></script>
+</body></html>

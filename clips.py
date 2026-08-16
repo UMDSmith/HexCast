@@ -29,6 +29,7 @@ import asyncio
 import importlib.util
 import json
 import os
+import random
 import re
 import secrets
 import shutil
@@ -362,11 +363,18 @@ def extract_links(text: str) -> list[dict]:
 # queue helpers
 # --------------------------------------------------------------------------
 
+# Shoutout clips play through the overlay without ever touching the queue.
+EPHEMERAL: dict[str, dict] = {}
+# Remaining shoutout clips, chained automatically as each one ends. Cleared
+# by Stop and by any manual play.
+SHOUTOUT_PENDING: list[dict] = []
+
+
 def entry_by_id(eid: str) -> dict | None:
     for e in STORE["queue"]:
         if e["id"] == eid:
             return e
-    return None
+    return EPHEMERAL.get(eid)
 
 
 def entry_by_ref(ref: str) -> dict | None:
@@ -618,6 +626,8 @@ async def build_source(entry: dict) -> dict:
 
 async def play_entry(entry: dict) -> dict:
     _cancel_iframe_timer()
+    if PLAYER["item_id"] != entry["id"]:
+        EPHEMERAL.pop(PLAYER["item_id"], None)   # replaced mid-play
     start = entry.get("start") or 0.0
     PLAYER.update(state="loading", item_id=entry["id"], mode="",
                   position=start, duration=entry.get("duration") or 0.0)
@@ -666,18 +676,31 @@ def _schedule_iframe_finish(entry: dict, delay: float) -> None:
 async def finish_current(mark_played: bool) -> None:
     _cancel_iframe_timer()
     entry = entry_by_id(PLAYER["item_id"])
-    if entry and mark_played and entry.get("status") != "played":
+    if entry and mark_played and entry.get("status") != "played" \
+            and PLAYER["item_id"] not in EPHEMERAL:
         entry["status"] = "played"
         save_store()
+    EPHEMERAL.pop(PLAYER["item_id"], None)
     PLAYER.update(state="idle", item_id="", mode="", position=0.0, duration=0.0)
     await HUB.broadcast_queue()
     await HUB.broadcast_player()
+    if SHOUTOUT_PENDING:
+        nxt = SHOUTOUT_PENDING.pop(0)
+        asyncio.create_task(play_entry(nxt))
+
+
+def _drop_pending_shoutouts() -> None:
+    for e in SHOUTOUT_PENDING:
+        EPHEMERAL.pop(e["id"], None)
+    SHOUTOUT_PENDING.clear()
 
 
 async def stop_playback() -> dict:
     """Stop = clear the overlay, item stays queued and is NOT marked played."""
     playing = PLAYER["state"] in ("playing", "paused", "loading")
     _cancel_iframe_timer()
+    _drop_pending_shoutouts()
+    EPHEMERAL.pop(PLAYER["item_id"], None)
     PLAYER.update(state="idle", item_id="", mode="", position=0.0, duration=0.0)
     await HUB.to_overlay({"type": "stop"})
     await HUB.broadcast_player()
@@ -838,6 +861,7 @@ async def api_play(ref: str):
     if entry is None:
         return JSONResponse({"ok": False, "error": f"no queue item matches '{ref}'"},
                             status_code=404)
+    _drop_pending_shoutouts()   # a manual play outranks a shoutout chain
     return await play_entry(entry)
 
 
@@ -938,6 +962,94 @@ async def api_clear_played():
         _SRC_CACHE.pop(e["id"], None)
     await HUB.broadcast_queue()
     return {"ok": True, "removed": len(gone)}
+
+
+TWITCH_LOGIN = re.compile(r"^[A-Za-z0-9_]{2,25}$")
+
+
+async def _random_channel_clips(channel: str, count: int = 1) -> list[str]:
+    """Random distinct clip URLs from a channel's clips page: top clips of the
+    last 30 days first, all-time as the fallback for quieter channels."""
+    for rng in ("30d", "all"):
+        try:
+            out = await _ytdlp(
+                "--flat-playlist", "-I", "1:30", "-j",
+                f"https://www.twitch.tv/{channel}/clips?filter=clips&range={rng}",
+                timeout=60)
+        except Exception:
+            continue
+        urls, seen = [], set()
+        for line in out.decode("utf-8", errors="replace").splitlines():
+            try:
+                d = json.loads(line)
+            except Exception:
+                continue
+            u = d.get("url") or d.get("webpage_url") or ""
+            if u and u not in seen:
+                seen.add(u)
+                urls.append(u)
+        if urls:
+            return random.sample(urls, min(count, len(urls)))
+    return []
+
+
+async def play_shoutout(channel: str, count: int = 2) -> dict:
+    """Play random clips from someone's channel through the overlay without
+    queueing them - they chain back to back as each ends. The Twitch module's
+    !so command calls this directly; /clips/api/shoutout exposes it to bots."""
+    await ensure_started()
+    channel = channel.strip().lstrip("@").lower()
+    if not TWITCH_LOGIN.match(channel):
+        return {"ok": False, "error": "bad channel name"}
+    count = max(1, min(int(count or 1), 5))
+
+    urls = await _random_channel_clips(channel, count)
+    if not urls:
+        return {"ok": False, "error": f"no clips found for {channel}"}
+
+    _drop_pending_shoutouts()
+    entries = []
+    for url in urls:
+        links = extract_links(url)
+        link = links[0] if links else {"kind": "media", "slug": channel, "start": 0.0, "url": url}
+        entry = {
+            "id": f"so{secrets.token_hex(3)}",
+            "num": "SO",
+            "url": link["url"],
+            "kind": link["kind"],
+            "slug": link["slug"],
+            "start": link["start"],
+            "title": "",
+            "duration": None,
+            "thumbnail": "",
+            "status": "queued",
+            "error": "",
+            "added_ts": time.time(),
+            "source": "shoutout",
+        }
+        EPHEMERAL[entry["id"]] = entry
+        entries.append(entry)
+    STATE.note(f"shoutout: {len(entries)} clip(s) for {channel}")
+
+    result: dict = {"ok": False, "error": "no playable clips"}
+    for i, entry in enumerate(entries):
+        result = await play_entry(entry)
+        if result.get("ok"):
+            SHOUTOUT_PENDING.extend(entries[i + 1:])
+            break
+        EPHEMERAL.pop(entry["id"], None)
+    result["channel"] = channel
+    result["clips"] = [e["url"] for e in entries]
+    return result
+
+
+@router.api_route("/api/shoutout/{channel}", methods=["GET", "POST"])
+async def api_shoutout(channel: str, count: int = 2):
+    result = await play_shoutout(channel, count)
+    if not result.get("ok"):
+        code = 400 if result.get("error") == "bad channel name" else 404
+        return JSONResponse(result, status_code=code)
+    return result
 
 
 @router.get("/api/config")

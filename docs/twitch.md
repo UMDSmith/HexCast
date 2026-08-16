@@ -153,6 +153,40 @@ the current workaround.
 
 ---
 
+## Shoutouts (`!so`)
+
+Type `!so channelname` in your own chat (you or a mod; `@channelname` works
+too) and three things happen:
+
+1. The **official Twitch shoutout** banner is sent — the same thing as typing
+   `/shoutout`. Twitch only accepts these while you're live.
+2. A **chat line** is posted from your account — the template lives in
+   `config/twitch.json` under `shoutout.message`, with `{name}`, `{login}`
+   and `{url}` placeholders.
+3. **Two random clips from their channel** play back to back on the Clips
+   overlay (top clips of the last 30 days, falling back to all-time; the
+   count is `shoutout.clip_count`, 1–5). They're ephemeral: nothing is
+   queued, downloaded, or saved — they just stream through the player and
+   vanish. Stop, or manually playing anything, cancels the rest of the
+   chain. Requires the Clips module; see [clips.md](clips.md) for the
+   overlay setup.
+
+The chat-side parts (1 and 2) need two scopes that were added after this
+module first shipped — `moderator:manage:shoutouts` and `user:write:chat`. If
+you signed in before they existed, hit **Connect with Twitch** in the panel
+once more to grant them; the log says exactly which piece is missing. Without
+sign-in at all (anonymous chat mode), the clip still plays — only the chat
+messages are skipped.
+
+Config knobs (`config/twitch.json` → `"shoutout"`): `on`, `command` (default
+`!so`), `who` (`mods` or `broadcaster`), `native`, `message`, `clip`,
+`clip_count`.
+
+Bots can trigger the clip half directly:
+`GET /clips/api/shoutout/{channel}?count=2`.
+
+---
+
 ## Feeding a bot or a model
 
 Set **Forward URL** on the Connection tab. Every chat message and every alert

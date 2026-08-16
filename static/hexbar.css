@@ -61,6 +61,7 @@
 .hb-nav a[data-key="music"].sel{ border-color:var(--hb-music); }
 .hb-nav a[data-key="discord"].sel{ border-color:var(--hb-discord); }
 .hb-nav a[data-key="clips"].sel{ border-color:var(--hb-clips); }
+.hb-nav a[data-key="help"].sel{ border-color:var(--hb-line-hi); }
 
 .hb-dot{
   width:8px; height:8px; border-radius:50%;

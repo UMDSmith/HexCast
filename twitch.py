@@ -78,6 +78,10 @@ SCOPES = [
     "bits:read",
     "channel:read:redemptions",
     "channel:read:hype_train",
+    # The !so shoutout command. Added later than the rest - if these are
+    # missing from an existing login, reconnect in the panel to grant them.
+    "moderator:manage:shoutouts",   # the official /shoutout banner
+    "user:write:chat",              # posting the shoutout line in chat
 ]
 
 # --------------------------------------------------------------------------
@@ -141,6 +145,18 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "default_duration": 6,
         "gap_between": 0.6,
         "show_user_message": True,
+    },
+    # !so <channel>: official Twitch shoutout + a chat line + a random clip of
+    # theirs fired at the Clips overlay (via /clips/api/shoutout, ephemeral -
+    # nothing is queued or saved).
+    "shoutout": {
+        "on": True,
+        "command": "!so",
+        "who": "mods",              # broadcaster | mods (broadcaster always may)
+        "native": True,             # attempt the official /shoutout banner
+        "message": "Go show {name} some love at {url} - they're worth the follow!",
+        "clip": True,               # play random clips from their channel
+        "clip_count": 2,            # how many, chained back to back (1-5)
     },
     "alerts": {
         "follow": {"on": True, "duration": 5, "title": "New follower", "body": "{user}", "clip": ""},
@@ -825,6 +841,110 @@ async def forward_chat(msg: dict) -> None:
 
 
 # --------------------------------------------------------------------------
+# !so shoutout command
+# --------------------------------------------------------------------------
+
+SHOUTOUT_TARGET = re.compile(r"^[A-Za-z0-9_]{2,25}$")
+
+
+async def lookup_user(login: str) -> dict | None:
+    r = await helix("GET", "/users", params={"login": login})
+    if r.status_code != 200:
+        return None
+    data = r.json().get("data", [])
+    return data[0] if data else None
+
+
+async def handle_command(login: str, text: str, is_broadcaster: bool, is_mod: bool) -> None:
+    """Called for every raw chat line (both sources), even ones the overlay
+    hides as commands. Cheap parse; the real work runs as a task."""
+    so = CONFIG.get("shoutout") or {}
+    if not so.get("on"):
+        return
+    parts = (text or "").strip().split()
+    if len(parts) < 2 or parts[0].lower() != str(so.get("command") or "!so").lower():
+        return
+    if not (is_broadcaster or (so.get("who", "mods") == "mods" and is_mod)):
+        return
+    target = parts[1].strip().lstrip("@").rstrip(",").lower()
+    if not SHOUTOUT_TARGET.match(target):
+        return
+    STATE.note(f"shoutout: {login} -> {target}")
+    asyncio.create_task(_do_shoutout(target))
+
+
+async def _do_shoutout(target: str) -> None:
+    so = CONFIG.get("shoutout") or {}
+    scopes = SECRETS.data.get("scopes", [])
+    display, target_id = target, ""
+
+    if SECRETS.is_authed():
+        user = await lookup_user(target)
+        if user:
+            target_id = user.get("id", "")
+            display = user.get("display_name") or target
+
+    # 1) the official shoutout banner (needs the channel to be live)
+    if so.get("native", True) and SECRETS.is_authed():
+        if "moderator:manage:shoutouts" not in scopes:
+            STATE.note("shoutout: token lacks moderator:manage:shoutouts - reconnect Twitch in the panel to grant it")
+        elif target_id and STATE.channel_id:
+            r = await helix("POST", "/chat/shoutouts", params={
+                "from_broadcaster_id": STATE.channel_id,
+                "to_broadcaster_id": target_id,
+                "moderator_id": SECRETS.user_id,
+            })
+            if r.status_code == 204:
+                STATE.note(f"shoutout: official /shoutout sent for {display}")
+            else:
+                reason = ""
+                try:
+                    reason = r.json().get("message", "")
+                except Exception:
+                    pass
+                STATE.note(f"shoutout: official /shoutout failed ({r.status_code} {reason}) - usually means the stream is offline")
+
+    # 2) a plain chat line, so there's something visible even without the banner
+    template = (so.get("message") or "").strip()
+    if template and SECRETS.is_authed() and STATE.channel_id:
+        if "user:write:chat" not in scopes:
+            STATE.note("shoutout: token lacks user:write:chat - reconnect Twitch in the panel to grant it")
+        else:
+            try:
+                text = template.format(name=display, login=target,
+                                       url=f"https://twitch.tv/{target}")
+            except Exception:
+                text = template
+            r = await helix("POST", "/chat/messages", json_body={
+                "broadcaster_id": STATE.channel_id,
+                "sender_id": SECRETS.user_id,
+                "message": text,
+            })
+            if r.status_code not in (200, 204):
+                STATE.note(f"shoutout: chat message failed ({r.status_code})")
+    elif template and not SECRETS.is_authed():
+        STATE.note("shoutout: not signed in, skipping the chat message (clip still plays)")
+
+    # 3) a random clip of theirs on the Clips overlay - ephemeral, not queued.
+    # Called in-process (both modules live in the same app), so it works even
+    # when something else is squatting on localhost.
+    if so.get("clip", True):
+        try:
+            from clips import play_shoutout
+        except ImportError:
+            STATE.note("shoutout: Clips module not installed - no clip to play")
+            return
+        try:
+            d = await play_shoutout(target, int(so.get("clip_count") or 2))
+            if d.get("ok"):
+                STATE.note(f"shoutout: playing {len(d.get('clips') or [1])} random {display} clip(s)")
+            else:
+                STATE.note(f"shoutout: clip playback skipped ({d.get('error')})")
+        except Exception as exc:
+            STATE.note(f"shoutout: clip playback failed: {exc}")
+
+
+# --------------------------------------------------------------------------
 # EventSub client
 # --------------------------------------------------------------------------
 
@@ -891,6 +1011,12 @@ async def subscribe_all(session_id: str, channel_id: str) -> None:
 
 async def handle_notification(stype: str, ev: dict, msg_id: str | None = None) -> None:
     if stype == "channel.chat.message":
+        # Command detection runs on the raw event: normalisation returns None
+        # for "!" messages when the overlay hides commands.
+        sets = {b.get("set_id") for b in (ev.get("badges") or [])}
+        await handle_command(ev.get("chatter_user_login", ""),
+                             (ev.get("message") or {}).get("text", ""),
+                             "broadcaster" in sets, "moderator" in sets)
         msg = normalise_eventsub_chat(ev)
         if msg:
             await HUB.to_chat(msg)
@@ -1090,6 +1216,15 @@ async def irc_loop(channel: str, stop: asyncio.Event) -> None:
                             await ws.send("PONG :tmi.twitch.tv")
                             continue
                         if "PRIVMSG" in line:
+                            mm = IRC_LINE.match(line)
+                            if mm:
+                                irc_tags = parse_irc_tags(mm.group("tags") or "")
+                                irc_sets = {b.split("/", 1)[0]
+                                            for b in (irc_tags.get("badges") or "").split(",") if b}
+                                await handle_command(
+                                    mm.group("nick"), mm.group("text"),
+                                    "broadcaster" in irc_sets,
+                                    irc_tags.get("mod") == "1" or "moderator" in irc_sets)
                             msg = normalise_irc_chat(line)
                             if msg:
                                 await HUB.to_chat(msg)
@@ -1341,6 +1476,9 @@ async def api_reconnect():
 async def api_test_chat(request: Request):
     body = await request.json() if await request.body() else {}
     text = body.get("text") or "Testing the overlay Kappa"
+    # Test messages count as the broadcaster, so "!so somechannel" here
+    # exercises the shoutout end to end without needing live chat.
+    await handle_command("hexcast", text, True, False)
     msg = {
         "type": "chat",
         "id": secrets.token_hex(8),

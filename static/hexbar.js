@@ -15,7 +15,8 @@
     { key: 'twitch',     label: 'Twitch',     href: '/twitch', status: '/twitch/api/status' },
     { key: 'music',      label: 'Music',      href: '/ytm',    status: '/ytm/api/status' },
     { key: 'discord',    label: 'Discord',    href: '/discord', status: '/discord/api/status' },
-    { key: 'clips',      label: 'Clips',      href: '/clips',   status: '/clips/api/status' }
+    { key: 'clips',      label: 'Clips',      href: '/clips',   status: '/clips/api/status' },
+    { key: 'help',       label: 'Help',       href: '/help',    nodot: true }
   ];
 
   var host = document.getElementById('hexbar');
@@ -31,7 +32,7 @@
   var nav = SECTIONS.map(function (s) {
     return '<a href="' + s.href + '" data-key="' + s.key + '"' +
            (s.key === currentKey ? ' class="sel"' : '') + '>' +
-           '<i class="hb-dot" id="hb-dot-' + s.key + '"></i>' + s.label + '</a>';
+           (s.nodot ? '' : '<i class="hb-dot" id="hb-dot-' + s.key + '"></i>') + s.label + '</a>';
   }).join('');
 
   host.innerHTML =

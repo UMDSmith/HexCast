@@ -528,6 +528,12 @@ async def overlay_page():
     return overlay_html()
 
 
+@app.get("/help", response_class=HTMLResponse)
+async def help_page():
+    """One page documenting every module's API and chat commands."""
+    return _read_static("help.html")
+
+
 @app.get("/index")
 async def get_index():
     return JSONResponse(index)
