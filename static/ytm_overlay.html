@@ -492,11 +492,22 @@ function applyConfig(cfg){
   viz.className=(v.mode==='off'?'hidden ':'')+v.position;
   resizeViz();
 
+  // Settings like font size change how much text fits without changing the
+  // text itself - force the next fitLine to re-measure.
+  titleLine.dataset.fit='';
+  artistLine.dataset.fit='';
   if(NOW) render(NOW);
 }
 
 /* ================= marquee ================= */
 function fitLine(lineEl,spanEl,text){
+  // render() runs on every state tick (~1/s). Rebuilding the line each time
+  // restarts the scroll animation from zero, which reads as a twitch - so
+  // bail out unless the text, the available width, or the setting changed.
+  var key=text+'|'+lineEl.clientWidth+'|'+((CFG&&CFG.overlay.marquee)?1:0);
+  if(lineEl.dataset.fit===key) return;
+  lineEl.dataset.fit=key;
+
   spanEl.textContent=text;
   lineEl.classList.remove('scroll');
   if(!CFG||!CFG.overlay.marquee) return;
