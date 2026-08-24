@@ -198,6 +198,16 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "bg_slice_width": 24,
         "bg_slice_repeat": "stretch",
         "bg_pad": 20,
+        # Placement: same scaled-1920x1080 model as chat. box_* positions/sizes
+        # the alert box; bg_box_* positions/sizes the background (width snaps to
+        # the image when an image style is used). The alert - and its background -
+        # only appears when an event fires, then fades per fade_in / fade_out.
+        "box_enabled": False,
+        "box_x": 33, "box_y": 30, "box_w": 34, "box_h": 34,
+        "bg_full": False,
+        "bg_box_x": 30, "bg_box_y": 26, "bg_box_w": 40, "bg_box_h": 42,
+        "fade_in": 0.45,
+        "fade_out": 0.5,
         "outline": True,
         "outline_color": "#000000",
         "align": "center",

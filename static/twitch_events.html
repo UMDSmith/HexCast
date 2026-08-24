@@ -1,12 +1,44 @@
 <!doctype html>
 <html><head><meta charset="utf-8"><title>HexCast alerts</title>
 <style>
-  html,body{margin:0;padding:0;background:transparent;overflow:hidden;height:100%;}
+  html,body{margin:0;padding:0;background:transparent;overflow:hidden;height:100%;width:100%;}
+  /* Fixed 1920x1080 design stage scaled to fill the source (same as chat). */
+  #scaler{ position:absolute; top:0; left:0; width:1920px; height:1080px; transform-origin:top left; }
   #stage{
     position:absolute; inset:0; display:flex; padding:24px; box-sizing:border-box;
   }
   #stage.left{ justify-content:flex-start; } #stage.center{ justify-content:center; } #stage.right{ justify-content:flex-end; }
   #stage.top{ align-items:flex-start; } #stage.middle{ align-items:center; } #stage.bottom{ align-items:flex-end; }
+
+  /* Background box (placement mode): shown only while an alert is on screen, so
+     the frame/image fades in with the alert and out with it. */
+  #bgbox{
+    position:absolute; box-sizing:border-box; z-index:0; opacity:0; pointer-events:none;
+    background-size:cover; background-position:center; border-radius:var(--radius,18px);
+    transition:opacity var(--fade-out,.5s) ease;
+  }
+  #bgbox.show{ opacity:1; transition:opacity var(--fade-in,.45s) ease; }
+  #bgbox.bg-solid   { background:var(--bubble); }
+  #bgbox.bg-gradient{ background:linear-gradient(var(--bg-angle,135deg), var(--bubble), var(--bg2)); }
+  #bgbox.bg-animated{ background:linear-gradient(var(--bg-angle,135deg), var(--bubble), var(--bg2), var(--bubble));
+    background-size:250% 250%; animation:bgShift 9s ease-in-out infinite; }
+  #bgbox.bg-glass{ background:var(--bubble);
+    backdrop-filter:blur(var(--bg-blur,8px)) saturate(1.35); -webkit-backdrop-filter:blur(var(--bg-blur,8px)) saturate(1.35);
+    border:1px solid rgba(255,255,255,.16); }
+  #bgbox.bg-frame{ background:var(--bubble); border:var(--bg-border-w,2px) solid var(--bg-border,#ff3b30); }
+  #bgbox.bg-glow{ background:var(--bubble); border:1px solid var(--bg-glow,#ff3b30);
+    box-shadow:0 0 22px var(--bg-glow,#ff3b30), inset 0 0 14px rgba(0,0,0,.35); }
+  #bgbox.bg-image{ background:var(--bg-image,none) center/cover no-repeat, var(--bubble); }
+  #bgbox.bg-slice{ background:var(--bubble); border-style:solid; border-width:var(--bg-slice-w,24px);
+    border-image-source:var(--bg-image,none); border-image-slice:var(--bg-slice,32) fill;
+    border-image-width:var(--bg-slice-w,24px); border-image-repeat:var(--bg-slice-repeat,stretch); border-radius:0; }
+  /* In placement mode the alert is positioned/sized by its own box and centres
+     its text; the background lives on #bgbox instead of the alert. padding:0 so
+     the alert's % coordinates match the background box (both vs the full stage). */
+  #stage.boxed{ padding:0; }
+  #stage.boxed .alert{ position:absolute; display:flex; flex-direction:column; justify-content:center;
+    align-items:center; overflow:hidden; background:none; border:0; box-shadow:none;
+    max-width:none; box-sizing:border-box; padding:var(--bg-pad,20px); }
 
   .alert{
     font-family:var(--font), 'Segoe UI', system-ui, sans-serif;
@@ -69,19 +101,31 @@
   .anim-pop{ animation:popIn .42s cubic-bezier(.2,.9,.3,1.25) both; }
   .anim-slide{ animation:slideIn .38s cubic-bezier(.2,.8,.3,1) both; }
   .anim-fade{ animation:fadeIn .4s ease both; }
-  .out{ opacity:0; transform:scale(.96); transition:opacity .35s ease, transform .35s ease; }
+  .out{ opacity:0; transform:scale(.96); transition:opacity var(--fade-out,.35s) ease, transform var(--fade-out,.35s) ease; }
   @media (prefers-reduced-motion: reduce){ .alert{ animation:none !important; } }
 </style></head>
 <body>
-<div id="stage"></div>
+<div id="scaler">
+  <div id="bgbox"></div>
+  <div id="stage"></div>
+</div>
 <script src="/twitch/boot.js"></script>
 <script>
 
 
 
 var CFG = null;
+var scaler = document.getElementById('scaler');
 var stage = document.getElementById('stage');
+var bgbox = document.getElementById('bgbox');
 var WS = null;
+
+function fitStage(){
+  var s = Math.min(window.innerWidth/1920, window.innerHeight/1080);
+  scaler.style.transform = 'scale(' + s + ')';
+}
+window.addEventListener('resize', fitStage);
+fitStage();
 
 function applyConfig(cfg){
   CFG = cfg;
@@ -105,23 +149,51 @@ function applyConfig(cfg){
   r.setProperty('--bg-slice-w', (e.bg_slice_width == null ? 24 : e.bg_slice_width) + 'px');
   r.setProperty('--bg-slice-repeat', e.bg_slice_repeat || 'stretch');
   r.setProperty('--bg-pad', (e.bg_pad == null ? 20 : e.bg_pad) + 'px');
+  r.setProperty('--fade-in', (e.fade_in == null ? 0.45 : e.fade_in) + 's');
+  r.setProperty('--fade-out', (e.fade_out == null ? 0.5 : e.fade_out) + 's');
   r.setProperty('--stroke', e.outline ? '2px' : '0');
   r.setProperty('--stroke-color', e.outline_color);
-  stage.className = e.align + ' ' + e.valign + ' bg-' + (e.bg_style || 'solid');
+  // In placement mode the alert box positions the text and the background lives
+  // on #bgbox; otherwise the legacy align/valign centring + per-alert bg is used.
+  if(e.box_enabled){
+    stage.className = 'boxed';
+  } else {
+    stage.className = e.align + ' ' + e.valign + ' bg-' + (e.bg_style || 'solid');
+    bgbox.className = '';   // no separate bg box in legacy mode
+  }
 }
 
 function show(ev){
   var e = CFG.events;
   var el = document.createElement('div');
   el.className = 'alert anim-' + e.animation;
+  el.style.animationDuration = (e.fade_in == null ? 0.45 : e.fade_in) + 's';
   var html = '<div class="title">' + esc(ev.title) + '</div>';
   html += '<div class="body">' + esc(ev.body) + '</div>';
   if(ev.message) html += '<div class="note">' + esc(ev.message) + '</div>';
   el.innerHTML = html;
+
+  if(e.box_enabled){
+    // Position the alert text box, and the background box, then fade the
+    // background in with the alert.
+    el.style.left = e.box_x + '%'; el.style.top = e.box_y + '%';
+    el.style.width = e.box_w + '%'; el.style.height = e.box_h + '%';
+    if(e.bg_full){
+      bgbox.style.left = '0'; bgbox.style.top = '0'; bgbox.style.width = '100%'; bgbox.style.height = '100%';
+    } else {
+      bgbox.style.left = e.bg_box_x + '%'; bgbox.style.top = e.bg_box_y + '%';
+      bgbox.style.width = e.bg_box_w + '%'; bgbox.style.height = e.bg_box_h + '%';
+    }
+    bgbox.className = 'bg-' + (e.bg_style || 'solid');
+    void bgbox.offsetWidth;              // reflow so the fade-in transition runs
+    bgbox.classList.add('show');
+  }
   stage.appendChild(el);
 
+  var fadeOutMs = (e.fade_out == null ? 0.5 : e.fade_out) * 1000;
   setTimeout(function(){
     el.classList.add('out');
+    if(e.box_enabled) bgbox.classList.remove('show');   // fade the background out too
     setTimeout(function(){
       el.remove();
       setTimeout(function(){
@@ -129,7 +201,7 @@ function show(ev){
           WS.send(JSON.stringify({type: "alert_complete", id: ev.id}));
         }
       }, (CFG.events.gap_between || 0) * 1000);
-    }, 380);
+    }, fadeOutMs + 40);
   }, (ev.duration || e.default_duration) * 1000);
 }
 
