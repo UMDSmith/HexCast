@@ -1,12 +1,26 @@
 <!doctype html>
 <html><head><meta charset="utf-8"><title>HexCast chat</title>
 <style>
-  html,body{margin:0;padding:0;background:transparent;overflow:hidden;height:100%;}
+  html,body{margin:0;padding:0;background:transparent;overflow:hidden;height:100%;width:100%;}
+  /* Everything is laid out on a fixed 1920x1080 "design stage" and then scaled
+     to fill the browser source, so px sizes (font, padding, frame) and %
+     positions scale together no matter how big the source/window is. */
+  #stage{ position:absolute; top:0; left:0; width:1920px; height:1080px; transform-origin:top left; }
+  /* Background panel layer. Sits behind the messages; JS positions it (whole
+     screen or its own box) and gives it the bg-* class when placement is on. */
+  #bgbox{
+    position:absolute; inset:0; box-sizing:border-box; z-index:0; display:none;
+    pointer-events:none; background-size:cover; background-position:center;
+    border-radius:var(--radius,14px);  /* rounds non-image styles; 9-slice ignores it */
+  }
+  #bgbox.on{ display:block; }
   #wrap{
-    position:absolute; inset:0;
+    position:absolute; inset:0; z-index:1;
     display:flex; flex-direction:column;
     padding:8px; box-sizing:border-box;
   }
+  /* Placement mode: JS sets left/top/width/height inline; clip messages to it. */
+  #wrap.boxed{ overflow:hidden; }
   #wrap.bottom{ justify-content:flex-end; }
   #wrap.top{ justify-content:flex-start; }
   #list{ display:flex; flex-direction:column; gap:var(--gap,8px); width:var(--width,100%); }
@@ -30,7 +44,83 @@
     paint-order:stroke fill;
     text-shadow:var(--shadow,none);
     transform-origin:left center;
+    background-size:cover; background-position:center;
   }
+  /* ---- fancy message backgrounds (bg_style) ---- */
+  #wrap.bg-gradient .msg{ background:linear-gradient(var(--bg-angle,135deg), var(--bubble), var(--bg2)); }
+  #wrap.bg-animated .msg{
+    background:linear-gradient(var(--bg-angle,135deg), var(--bubble), var(--bg2), var(--bubble));
+    background-size:250% 250%; animation:bgShift 9s ease-in-out infinite;
+  }
+  #wrap.bg-glass .msg{
+    background:var(--bubble);
+    backdrop-filter:blur(var(--bg-blur,8px)) saturate(1.35);
+    -webkit-backdrop-filter:blur(var(--bg-blur,8px)) saturate(1.35);
+    border:1px solid rgba(255,255,255,.14);
+  }
+  #wrap.bg-frame .msg{ background:var(--bubble); border:var(--bg-border-w,2px) solid var(--bg-border,#ff3b30); }
+  #wrap.bg-glow .msg{
+    background:var(--bubble); border:1px solid var(--bg-glow,#ff3b30);
+    box-shadow:0 0 16px var(--bg-glow,#ff3b30), inset 0 0 12px rgba(0,0,0,.35);
+  }
+  #wrap.bg-image .msg{ background:var(--bg-image,none) center/cover no-repeat, var(--bubble); }
+  /* Image backgrounds get extra breathing room so the text doesn't sit on the
+     artwork edge (--bg-pad, on top of the normal padding). */
+  #wrap.bg-image .msg{ padding:calc(var(--pad,12px) + var(--bg-pad,20px)); }
+  /* 9-slice frame: corners stay crisp, edges + middle stretch to fit the text.
+     The center of the source paints over --bubble (via the `fill` keyword). */
+  #wrap.bg-slice .msg{
+    background:var(--bubble);
+    border-style:solid;
+    border-width:var(--bg-slice-w,24px);
+    border-image-source:var(--bg-image,none);
+    border-image-slice:var(--bg-slice,32) fill;
+    border-image-width:var(--bg-slice-w,24px);
+    border-image-repeat:var(--bg-slice-repeat,stretch);
+    border-radius:0;
+    padding:var(--bg-pad,20px);
+  }
+
+  /* ---- whole-window bounding box (bg_scope=window) ----
+     Paint one background behind the entire chat area; messages sit inside it
+     with no per-message background. #wrap already fills the OBS source. */
+  /* The chat box rounds to the corner-radius setting for the solid/gradient/
+     glass/frame/glow styles (image frames define their own edges via 9-slice,
+     which ignores border-radius). overflow:hidden from .boxed clips to it. */
+  #wrap.scope-window{ padding:calc(8px + var(--bg-pad,20px)); border-radius:var(--radius,14px); }
+  #wrap.scope-window .msg{
+    background:transparent !important; border:0 !important;
+    box-shadow:none !important; backdrop-filter:none !important;
+    -webkit-backdrop-filter:none !important; padding:var(--pad,12px) !important;
+  }
+  #wrap.scope-window.bg-solid,    #bgbox.bg-solid   { background:var(--panel-bg); }
+  #wrap.scope-window.bg-gradient, #bgbox.bg-gradient{ background:linear-gradient(var(--bg-angle,135deg), var(--panel-bg), var(--bg2)); }
+  #wrap.scope-window.bg-animated, #bgbox.bg-animated{
+    background:linear-gradient(var(--bg-angle,135deg), var(--panel-bg), var(--bg2), var(--panel-bg));
+    background-size:250% 250%; animation:bgShift 9s ease-in-out infinite;
+  }
+  #wrap.scope-window.bg-glass, #bgbox.bg-glass{
+    background:var(--panel-bg);
+    backdrop-filter:blur(var(--bg-blur,8px)) saturate(1.35);
+    -webkit-backdrop-filter:blur(var(--bg-blur,8px)) saturate(1.35);
+    border:1px solid rgba(255,255,255,.14);
+  }
+  #wrap.scope-window.bg-frame, #bgbox.bg-frame{ background:var(--panel-bg); border:var(--bg-border-w,2px) solid var(--bg-border,#ff3b30); }
+  #wrap.scope-window.bg-glow, #bgbox.bg-glow{
+    background:var(--panel-bg); border:1px solid var(--bg-glow,#ff3b30);
+    box-shadow:0 0 24px var(--bg-glow,#ff3b30), inset 0 0 18px rgba(0,0,0,.35);
+  }
+  #wrap.scope-window.bg-image, #bgbox.bg-image{ background:var(--bg-image,none) center/cover no-repeat, var(--panel-bg); }
+  #wrap.scope-window.bg-slice, #bgbox.bg-slice{
+    background:var(--panel-bg);
+    border-style:solid;
+    border-width:var(--bg-slice-w,24px);
+    border-image-source:var(--bg-image,none);
+    border-image-slice:var(--bg-slice,32) fill;
+    border-image-width:var(--bg-slice-w,24px);
+    border-image-repeat:var(--bg-slice-repeat,stretch);
+  }
+  @keyframes bgShift{ 0%{background-position:0% 50%} 50%{background-position:100% 50%} 100%{background-position:0% 50%} }
   .msg.first{ box-shadow: inset 4px 0 0 0 var(--highlight,#ff3b30); }
   .msg.stacked .name{ display:block; margin-bottom:2px; }
   .name{ font-weight:var(--nameweight,800); }
@@ -52,14 +142,28 @@
   @media (prefers-reduced-motion: reduce){ .msg{ animation:none !important; } }
 </style></head>
 <body>
-<div id="wrap"><div id="list"></div></div>
+<div id="stage">
+  <div id="bgbox"></div>
+  <div id="wrap"><div id="list"></div></div>
+</div>
 <script src="/twitch/boot.js"></script>
 <script>
 
 
 var CFG = null;
+var stage = document.getElementById('stage');
+var bgbox = document.getElementById('bgbox');
 var wrap = document.getElementById('wrap');
 var list = document.getElementById('list');
+
+// Scale the 1920x1080 design stage to fill the source, keeping aspect so the
+// frame never distorts. Everything (px sizes + % positions) scales together.
+function fitStage(){
+  var s = Math.min(window.innerWidth/1920, window.innerHeight/1080);
+  stage.style.transform = 'scale(' + s + ')';
+}
+window.addEventListener('resize', fitStage);
+fitStage();
 
 function applyConfig(cfg){
   CFG = cfg;
@@ -79,10 +183,55 @@ function applyConfig(cfg){
   r.setProperty('--width', c.width_percent + '%');
   r.setProperty('--fadedur', c.fade_duration + 's');
   r.setProperty('--bubble', c.bubble ? hexToRgba(c.bubble_color, c.bubble_opacity) : 'transparent');
+  // Panel background always carries the colour (independent of per-message
+  // bubbles) so the placement background box can be filled with bubbles off.
+  r.setProperty('--panel-bg', hexToRgba(c.bubble_color, c.bubble_opacity));
+  r.setProperty('--bg2', hexToRgba(c.bg_color2 || c.bubble_color, c.bubble_opacity));
+  r.setProperty('--bg-angle', (c.bg_gradient_angle == null ? 135 : c.bg_gradient_angle) + 'deg');
+  r.setProperty('--bg-image', c.bg_image_url ? 'url("' + String(c.bg_image_url).replace(/["\\]/g,'') + '")' : 'none');
+  r.setProperty('--bg-blur', (c.bg_blur || 0) + 'px');
+  r.setProperty('--bg-border', c.bg_border_color || '#ff3b30');
+  r.setProperty('--bg-glow', c.bg_border_color || '#ff3b30');
+  r.setProperty('--bg-border-w', (c.bg_border_width || 0) + 'px');
+  r.setProperty('--bg-slice', (c.bg_slice == null ? 32 : c.bg_slice));
+  r.setProperty('--bg-slice-w', (c.bg_slice_width == null ? 24 : c.bg_slice_width) + 'px');
+  r.setProperty('--bg-slice-repeat', c.bg_slice_repeat || 'stretch');
+  r.setProperty('--bg-pad', (c.bg_pad == null ? 20 : c.bg_pad) + 'px');
   r.setProperty('--stroke', c.outline ? c.outline_width + 'px' : '0px');
   r.setProperty('--stroke-color', c.outline_color);
   r.setProperty('--shadow', c.shadow ? '0 2px 6px rgba(0,0,0,.85)' : 'none');
-  wrap.className = (c.direction === 'top' ? 'top' : 'bottom') + ' ' + c.align;
+  var valign = (c.direction === 'top' ? 'top' : 'bottom');
+  var bgClass = 'bg-' + (c.bg_style || 'solid');
+
+  if(c.box_enabled){
+    // Two independent boxes: the CHAT box (where messages sit, clipped) and the
+    // BACKGROUND box (the red placement box) which carries the chosen style -
+    // gradient, glass, solid, image frame, etc. Both are fixed-size; nothing
+    // resizes with the chat. The background box's width auto-snaps to the image
+    // when an image style is used (handled in the panel); its height is set by
+    // dragging, which stretches a 9-slice frame.
+    wrap.style.left = c.box_x + '%'; wrap.style.top = c.box_y + '%';
+    wrap.style.width = c.box_w + '%'; wrap.style.height = c.box_h + '%';
+    wrap.style.right = 'auto'; wrap.style.bottom = 'auto'; wrap.style.maxHeight = '';
+    if(c.bg_full){
+      bgbox.style.left = '0'; bgbox.style.top = '0';
+      bgbox.style.width = '100%'; bgbox.style.height = '100%';
+    } else {
+      bgbox.style.left = c.bg_box_x + '%'; bgbox.style.top = c.bg_box_y + '%';
+      bgbox.style.width = c.bg_box_w + '%'; bgbox.style.height = c.bg_box_h + '%';
+    }
+    bgbox.className = 'on ' + bgClass;
+    // Messages sit over the background box - transparent, or an optional simple
+    // bubble for readability.
+    wrap.className = 'boxed ' + valign + ' ' + c.align + ' ' + (c.bubble ? 'bg-solid' : 'bg-none');
+  } else {
+    // Legacy: chat flows over the whole source; background is per-message.
+    wrap.style.left = ''; wrap.style.top = ''; wrap.style.width = '';
+    wrap.style.height = ''; wrap.style.maxHeight = ''; wrap.style.right = ''; wrap.style.bottom = '';
+    bgbox.className = '';
+    var bg = c.bubble ? bgClass : 'bg-none';
+    wrap.className = valign + ' ' + c.align + ' ' + bg;
+  }
   trim();
 }
 

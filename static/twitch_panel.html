@@ -48,8 +48,10 @@
   .row{display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin-top:14px}
 
   .url{display:flex;gap:8px;align-items:center;margin:8px 0}
-  .url code{flex:1;background:#08080c;border:1px solid var(--line);border-radius:8px;
-            padding:9px 11px;font:13px var(--mono);color:var(--good);overflow:auto;white-space:nowrap}
+  .url code,.url a{flex:1;background:#08080c;border:1px solid var(--line);border-radius:8px;
+            padding:9px 11px;font:13px var(--mono);color:var(--good);overflow:auto;white-space:nowrap;
+            text-decoration:none}
+  .url a:hover{border-color:var(--accent);text-decoration:underline}
 
   table.al{width:100%;border-collapse:collapse;font-size:13px}
   table.al th{text-align:left;font:600 11px var(--mono);letter-spacing:.1em;text-transform:uppercase;
@@ -70,6 +72,26 @@
          transition:transform .25s ease;z-index:20}
   #toast.up{transform:translate(-50%,0)}
   .warn{border-left:3px solid var(--warn);padding-left:12px;color:var(--dim);font-size:13px;margin-top:10px}
+
+  /* placement editor */
+  #pl-stage{position:relative;width:100%;aspect-ratio:16/9;background:
+      repeating-linear-gradient(0deg,#0c0c11 0 39px,#141420 39px 40px),
+      repeating-linear-gradient(90deg,#0c0c11 0 39px,#141420 39px 40px),#0a0a0e;
+    border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-top:12px;touch-action:none;user-select:none}
+  .pl-box{position:absolute;box-sizing:border-box;border:2px solid;border-radius:5px;cursor:move;
+    font:700 12px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase}
+  .pl-box .tag{position:absolute;top:5px;left:7px;pointer-events:none;opacity:.9}
+  .pl-box.chat{border-color:#4ea1ff;background:rgba(78,161,255,.14);color:#8dc4ff}
+  .pl-box.bg{border-color:#ff6b6b;background:rgba(255,107,107,.12);color:#ff9d9d}
+  .pl-box .h{position:absolute;width:14px;height:14px;background:#fff;border:1px solid #222;border-radius:3px;z-index:3}
+  .pl-box .h.nw{left:-7px;top:-7px;cursor:nwse-resize}
+  .pl-box .h.ne{right:-7px;top:-7px;cursor:nesw-resize}
+  .pl-box .h.sw{left:-7px;bottom:-7px;cursor:nesw-resize}
+  .pl-box .h.se{right:-7px;bottom:-7px;cursor:nwse-resize}
+  .pl-box.locked{opacity:.3;pointer-events:none}
+  .pl-box.locked .h{display:none}
+  /* width locked to the image: corners only resize vertically */
+  .pl-box.wlock .h{cursor:ns-resize}
   ol.steps{margin:0 0 14px;padding-left:20px;color:var(--dim);font-size:13.5px}
   ol.steps li{margin-bottom:6px}
   ol.steps code{color:var(--good);font:12.5px var(--mono)}
@@ -129,8 +151,8 @@
   <div class="card">
     <h2>Browser sources</h2>
     <p class="hint">Add each as a Browser source in OBS. Size the source however you want the box to be, then drag it into place. Turn off "Shutdown source when not visible".</p>
-    <div class="url"><code id="u-chat"></code><button class="sec" data-copy="u-chat">Copy</button></div>
-    <div class="url"><code id="u-events"></code><button class="sec" data-copy="u-events">Copy</button></div>
+    <div class="url"><a id="u-chat" target="_blank" rel="noopener"></a><button class="sec" data-copy="u-chat">Copy</button></div>
+    <div class="url"><a id="u-events" target="_blank" rel="noopener"></a><button class="sec" data-copy="u-events">Copy</button></div>
   </div>
 
   <div class="card">
@@ -153,6 +175,16 @@
   <div class="card">
     <h2>Colours and box</h2>
     <div class="grid" id="g-chat-look"></div>
+  </div>
+  <div class="card">
+    <h2>Placement</h2>
+    <p class="hint">The overlay is a fixed 1920×1080 design that scales to fill the browser source, so everything keeps its proportions at any size. Drag a box to move it, grab a corner to resize. The <b>blue</b> box is where chat text sits (clipped to it); the <b>red</b> box places the background — gradient, glass, solid or an image frame. When an <b>image</b> style is used, the red box's <b>width snaps to the image's width</b> and you set its <b>height</b> by dragging (that height stretches a 9-slice frame). Non-image styles resize freely.</p>
+    <label class="f sw"><input type="checkbox" id="pl-enable"> Position chat &amp; background with these boxes</label>
+    <label class="f sw"><input type="checkbox" id="pl-bgfull"> Background fills the whole screen</label>
+    <div id="pl-stage">
+      <div class="pl-box bg" id="pl-bg"><span class="tag">Background</span><i class="h nw"></i><i class="h ne"></i><i class="h sw"></i><i class="h se"></i></div>
+      <div class="pl-box chat" id="pl-chat"><span class="tag">Chat</span><i class="h nw"></i><i class="h ne"></i><i class="h sw"></i><i class="h se"></i></div>
+    </div>
   </div>
   <div class="card">
     <h2>Behaviour</h2>
@@ -247,9 +279,43 @@ function toast(msg){
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
 /* ---------- field definitions ---------- */
-var FONTS = ['Inter','Roboto','Montserrat','Oswald','Rubik','Nunito','Poppins','Bebas Neue',
-             'Fredoka','Baloo 2','Luckiest Guy','Titan One','Press Start 2P','Bangers',
-             'Archivo Black','Space Grotesk','JetBrains Mono','Comic Neue'];
+/* Grouped so the dropdown reads like a font menu. Every name here is a Google
+   font, so loadFont() can fetch it for both the preview and the overlay. */
+var FONT_GROUPS = [
+  ['Sans-serif',['Inter','Roboto','Open Sans','Lato','Montserrat','Poppins','Rubik','Nunito',
+                 'Work Sans','Manrope','Figtree','Outfit','Sora','Mulish','Comic Neue']],
+  ['Display / Bold',['Oswald','Anton','Bebas Neue','Archivo Black','Righteous','Titan One',
+                     'Fredoka','Baloo 2','Passion One','Russo One','Bungee','Bangers','Luckiest Guy']],
+  ['Handwritten',['Pacifico','Caveat','Permanent Marker','Satisfy','Shadows Into Light']],
+  ['Monospace / Pixel',['JetBrains Mono','Space Mono','Space Grotesk','Press Start 2P','VT323']]
+];
+function ensureFont(name){
+  if(!name) return;
+  var id = 'pf-' + name.replace(/[^a-z0-9]/gi,'');
+  if(document.getElementById(id)) return;
+  var l = document.createElement('link'); l.id = id; l.rel = 'stylesheet';
+  l.href = 'https://fonts.googleapis.com/css2?family=' +
+           encodeURIComponent(name).replace(/%20/g,'+') + ':wght@400;600;800&display=swap';
+  document.head.appendChild(l);
+}
+function buildFontOptions(sel, val){
+  var found = false;
+  FONT_GROUPS.forEach(function(g){
+    var og = document.createElement('optgroup'); og.label = g[0];
+    g[1].forEach(function(f){
+      ensureFont(f);
+      var o = document.createElement('option'); o.value = f; o.textContent = f;
+      o.style.fontFamily = '"' + f + '"';
+      if(f === val){ o.selected = true; found = true; }
+      og.appendChild(o);
+    });
+    sel.appendChild(og);
+  });
+  if(!found && val){
+    var o = document.createElement('option'); o.value = val; o.textContent = val + ' (custom)'; o.selected = true;
+    sel.insertBefore(o, sel.firstChild);
+  }
+}
 
 var CHAT_TYPE = [
   ['font_family','Font',{t:'font'}],
@@ -266,8 +332,19 @@ var CHAT_LOOK = [
   ['name_color','Name colour (fallback)',{t:'color'}],
   ['highlight_color','Accent',{t:'color'}],
   ['bubble','Message background',{t:'bool'}],
+  ['bg_style','Background style',{t:'sel',opts:[['solid','Solid'],['gradient','Gradient'],['animated','Animated gradient'],['glass','Glass / frosted'],['frame','Outlined frame'],['glow','Neon glow'],['image','Image / GIF (fill)'],['slice','Image frame (stretch middle)']]}],
   ['bubble_color','Background colour',{t:'color'}],
   ['bubble_opacity','Background opacity',{t:'num',min:0,max:1,step:0.05}],
+  ['bg_color2','Gradient 2nd colour',{t:'color'}],
+  ['bg_gradient_angle','Gradient angle',{t:'num',min:0,max:360}],
+  ['bg_image_url','Image / GIF library',{t:'bgimage'}],
+  ['bg_slice','Frame slice (source px)',{t:'num',min:0,max:300}],
+  ['bg_slice_width','Frame thickness (px)',{t:'num',min:0,max:200}],
+  ['bg_slice_repeat','Frame edges',{t:'sel',opts:[['stretch','Stretch'],['round','Round (tile)'],['repeat','Repeat']]}],
+  ['bg_pad','Image inner padding',{t:'num',min:0,max:120}],
+  ['bg_blur','Glass blur',{t:'num',min:0,max:40}],
+  ['bg_border_color','Frame / glow colour',{t:'color'}],
+  ['bg_border_width','Frame width',{t:'num',min:0,max:14,step:0.5}],
   ['bubble_radius','Corner radius',{t:'num',min:0,max:60}],
   ['padding','Padding',{t:'num',min:0,max:60}],
   ['gap','Space between messages',{t:'num',min:0,max:60}],
@@ -299,8 +376,19 @@ var EVENT_FIELDS = [
   ['sub_font_size','Label size',{t:'num',min:8,max:100}],
   ['text_color','Text colour',{t:'color'}],
   ['accent_color','Accent colour',{t:'color'}],
+  ['bg_style','Background style',{t:'sel',opts:[['solid','Solid'],['gradient','Gradient'],['animated','Animated gradient'],['glass','Glass / frosted'],['frame','Outlined frame'],['glow','Neon glow'],['image','Image / GIF (fill)'],['slice','Image frame (stretch middle)']]}],
   ['bubble_color','Background colour',{t:'color'}],
   ['bubble_opacity','Background opacity',{t:'num',min:0,max:1,step:0.05}],
+  ['bg_color2','Gradient 2nd colour',{t:'color'}],
+  ['bg_gradient_angle','Gradient angle',{t:'num',min:0,max:360}],
+  ['bg_image_url','Image / GIF library',{t:'bgimage'}],
+  ['bg_slice','Frame slice (source px)',{t:'num',min:0,max:300}],
+  ['bg_slice_width','Frame thickness (px)',{t:'num',min:0,max:200}],
+  ['bg_slice_repeat','Frame edges',{t:'sel',opts:[['stretch','Stretch'],['round','Round (tile)'],['repeat','Repeat']]}],
+  ['bg_pad','Image inner padding',{t:'num',min:0,max:120}],
+  ['bg_blur','Glass blur',{t:'num',min:0,max:40}],
+  ['bg_border_color','Frame / glow colour',{t:'color'}],
+  ['bg_border_width','Frame width',{t:'num',min:0,max:14,step:0.5}],
   ['bubble_radius','Corner radius',{t:'num',min:0,max:60}],
   ['align','Horizontal position',{t:'sel',opts:[['left','Left'],['center','Centre'],['right','Right']]}],
   ['valign','Vertical position',{t:'sel',opts:[['top','Top'],['middle','Middle'],['bottom','Bottom']]}],
@@ -311,6 +399,181 @@ var EVENT_FIELDS = [
   ['outline_color','Outline colour',{t:'color'}],
   ['show_user_message','Show viewer message',{t:'bool'}]
 ];
+
+/* ---------- background image library ---------- */
+var BG_LIST = [];
+async function loadBackgrounds(){
+  try{ var d = await (await fetch('/twitch/api/backgrounds')).json(); BG_LIST = d.backgrounds || []; }
+  catch(e){ BG_LIST = []; }
+}
+function fillBgOptions(sel, val){
+  sel.innerHTML = '';
+  var none = document.createElement('option'); none.value = ''; none.textContent = '— none —';
+  sel.appendChild(none);
+  var found = false;
+  BG_LIST.forEach(function(b){
+    var o = document.createElement('option'); o.value = b.url; o.textContent = b.name;
+    if(b.url === val){ o.selected = true; found = true; }
+    sel.appendChild(o);
+  });
+  // Keep a value that isn't in the library (e.g. an older pasted URL) usable.
+  if(!found && val){
+    var o = document.createElement('option'); o.value = val; o.textContent = val + ' (external)'; o.selected = true;
+    sel.appendChild(o);
+  }
+}
+function refreshBgSelects(opts){
+  opts = opts || {};
+  document.querySelectorAll('select[data-bgimage]').forEach(function(sel){
+    var cur = sel.value;
+    if(opts.removed && cur === opts.removed) cur = '';
+    fillBgOptions(sel, cur);
+  });
+}
+var _bgFileInput = null;
+function bgUpload(targetSel){
+  if(!_bgFileInput){
+    _bgFileInput = document.createElement('input');
+    _bgFileInput.type = 'file';
+    _bgFileInput.accept = '.png,.jpg,.jpeg,.gif,.webp,.apng,image/png,image/jpeg,image/gif,image/webp';
+    _bgFileInput.style.display = 'none';
+    document.body.appendChild(_bgFileInput);
+  }
+  _bgFileInput.onchange = async function(){
+    var f = _bgFileInput.files && _bgFileInput.files[0];
+    _bgFileInput.value = '';
+    if(!f) return;
+    var fd = new FormData(); fd.append('file', f);
+    toast('Uploading…');
+    try{
+      var r = await fetch('/twitch/api/backgrounds', {method:'POST', body: fd});
+      var d = await r.json();
+      if(!r.ok){ toast(d.error || 'Upload failed'); return; }
+      BG_LIST = d.backgrounds || [];
+      refreshBgSelects();
+      if(targetSel && d.url){ targetSel.value = d.url; targetSel.dispatchEvent(new Event('change')); }   // point this picker at the new file + snap width
+      toast('Uploaded ' + d.name);
+    }catch(e){ toast('Upload failed'); }
+  };
+  _bgFileInput.click();
+}
+async function bgDelete(url){
+  if(!url){ toast('Pick a background first'); return; }
+  var name = url.split('/').pop();
+  try{
+    var r = await fetch('/twitch/api/backgrounds/delete', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name: name})
+    });
+    var d = await r.json();
+    BG_LIST = d.backgrounds || [];
+    refreshBgSelects({removed: url});
+    toast('Deleted ' + name);
+  }catch(e){ toast('Delete failed'); }
+}
+
+/* ---------- placement editor ---------- */
+var PLACE = {};
+var bgLockW = null;   // when an image frame is used, the box width locks to the
+                      // image's own width (% of the 1920 design); null = free.
+function _num(v, d){ v = parseFloat(v); return isNaN(v) ? d : v; }
+function _clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
+function _setGeo(el, x, y, w, h){ el.style.left=x+'%'; el.style.top=y+'%'; el.style.width=w+'%'; el.style.height=h+'%'; }
+// Snap the BACKGROUND box width to the chosen image's native width; its height +
+// position stay draggable. Only applies when the style actually uses the image.
+function snapBoxToImage(url){
+  var img = new Image();
+  img.onload = function(){
+    if(!img.naturalWidth){ return; }
+    var wpct = _clamp(img.naturalWidth / 1920 * 100, 5, 100);
+    bgLockW = wpct;
+    PLACE.bg_box_w = wpct;
+    if(PLACE.bg_box_x + PLACE.bg_box_w > 100) PLACE.bg_box_x = Math.max(0, 100 - PLACE.bg_box_w);
+    _setGeo($('pl-bg'), PLACE.bg_box_x, PLACE.bg_box_y, PLACE.bg_box_w, PLACE.bg_box_h);
+    $('pl-bg').classList.add('wlock');
+  };
+  img.onerror = function(){ bgLockW = null; $('pl-bg').classList.remove('wlock'); };
+  img.src = url;
+}
+function updateWidthLock(){
+  var styleSel = $('f-chat-bg_style'), urlSel = $('f-chat-bg_image_url');
+  var style = styleSel ? styleSel.value : '', url = urlSel ? urlSel.value : '';
+  if((style === 'image' || style === 'slice') && url){
+    snapBoxToImage(url);
+  } else {
+    bgLockW = null;
+    var box = $('pl-bg'); if(box) box.classList.remove('wlock');
+  }
+}
+function reflectBgFull(){ $('pl-bg').classList.toggle('locked', $('pl-bgfull').checked); }
+function makeBox(el, cb){
+  var stage = $('pl-stage');
+  function geo(){ return { x:parseFloat(el.style.left), y:parseFloat(el.style.top),
+                           w:parseFloat(el.style.width), h:parseFloat(el.style.height) }; }
+  function pct(e){ var r=stage.getBoundingClientRect();
+    return { mx:(e.clientX-r.left)/r.width*100, my:(e.clientY-r.top)/r.height*100 }; }
+  var mode=null, corner='', start=null, g0=null, MIN=5;
+  function down(e, m, cn){
+    mode=m; corner=cn||''; start=pct(e); g0=geo();
+    try{ el.setPointerCapture(e.pointerId); }catch(_){}
+    e.preventDefault(); e.stopPropagation();
+  }
+  el.addEventListener('pointerdown', function(e){ if(!e.target.classList.contains('h')) down(e,'move'); });
+  el.querySelectorAll('.h').forEach(function(hd){
+    hd.addEventListener('pointerdown', function(e){ down(e,'resize', hd.className.split(' ')[1]); });
+  });
+  el.addEventListener('pointermove', function(e){
+    if(!mode) return;
+    var p=pct(e), dx=p.mx-start.mx, dy=p.my-start.my;
+    var x=g0.x, y=g0.y, w=g0.w, h=g0.h;
+    if(mode==='move'){
+      x=_clamp(g0.x+dx, 0, 100-g0.w); y=_clamp(g0.y+dy, 0, 100-g0.h);
+    } else {
+      // On the background box with an image frame the width is locked to the
+      // image; only height + position adjust, so skip the horizontal resize.
+      if(!(bgLockW != null && el.id === 'pl-bg')){
+        if(corner.indexOf('w')>=0){ var nx=_clamp(g0.x+dx, 0, g0.x+g0.w-MIN); w=g0.w+(g0.x-nx); x=nx; }
+        if(corner.indexOf('e')>=0){ w=_clamp(g0.w+dx, MIN, 100-g0.x); }
+      }
+      if(corner.indexOf('n')>=0){ var ny=_clamp(g0.y+dy, 0, g0.y+g0.h-MIN); h=g0.h+(g0.y-ny); y=ny; }
+      if(corner.indexOf('s')>=0){ h=_clamp(g0.h+dy, MIN, 100-g0.y); }
+    }
+    _setGeo(el, x, y, w, h); cb(x, y, w, h);
+  });
+  function up(e){ if(mode){ mode=null; try{ el.releasePointerCapture(e.pointerId); }catch(_){} } }
+  el.addEventListener('pointerup', up);
+  el.addEventListener('pointercancel', up);
+}
+var _placeWired = false;
+function initPlacement(){
+  var c = CFG.chat;
+  PLACE = {
+    box_x:_num(c.box_x,55), box_y:_num(c.box_y,8), box_w:_num(c.box_w,42), box_h:_num(c.box_h,84),
+    bg_box_x:_num(c.bg_box_x,55), bg_box_y:_num(c.bg_box_y,8), bg_box_w:_num(c.bg_box_w,42), bg_box_h:_num(c.bg_box_h,84)
+  };
+  _setGeo($('pl-chat'), PLACE.box_x, PLACE.box_y, PLACE.box_w, PLACE.box_h);
+  _setGeo($('pl-bg'),   PLACE.bg_box_x, PLACE.bg_box_y, PLACE.bg_box_w, PLACE.bg_box_h);
+  $('pl-enable').checked = !!c.box_enabled;
+  $('pl-bgfull').checked = !!c.bg_full;
+  reflectBgFull();
+  // Recompute the width lock whenever the style or the chosen image changes, and
+  // once now for the current config. Guard against double-wiring on re-render.
+  var styleSel = $('f-chat-bg_style'), urlSel = $('f-chat-bg_image_url');
+  if(styleSel && !styleSel._wlWired){ styleSel._wlWired = true; styleSel.addEventListener('change', updateWidthLock); }
+  if(urlSel && !urlSel._wlWired){ urlSel._wlWired = true; urlSel.addEventListener('change', updateWidthLock); }
+  updateWidthLock();
+  if(_placeWired) return;   // wire drag handlers once; loadAll may run again
+  _placeWired = true;
+  makeBox($('pl-chat'), function(x,y,w,h){ PLACE.box_x=x; PLACE.box_y=y; PLACE.box_w=w; PLACE.box_h=h; });
+  makeBox($('pl-bg'),   function(x,y,w,h){ PLACE.bg_box_x=x; PLACE.bg_box_y=y; PLACE.bg_box_w=w; PLACE.bg_box_h=h; });
+  $('pl-bgfull').addEventListener('change', reflectBgFull);
+}
+function collectPlacement(){
+  var out = { box_enabled: $('pl-enable').checked, bg_full: $('pl-bgfull').checked };
+  ['box_x','box_y','box_w','box_h','bg_box_x','bg_box_y','bg_box_w','bg_box_h'].forEach(function(k){
+    out[k] = Math.round(PLACE[k]);
+  });
+  return out;
+}
 
 /* ---------- field rendering ---------- */
 function field(scope, key, label, spec){
@@ -334,13 +597,26 @@ function field(scope, key, label, spec){
         input.appendChild(op);
       });
     } else if(spec.t === 'font'){
-      input = document.createElement('input');
-      input.setAttribute('list','fontlist'); input.value = val;
-      if(!$('fontlist')){
-        var dl = document.createElement('datalist'); dl.id = 'fontlist';
-        FONTS.forEach(function(f){ var o=document.createElement('option'); o.value=f; dl.appendChild(o); });
-        document.body.appendChild(dl);
-      }
+      input = document.createElement('select');
+      buildFontOptions(input, val);
+    } else if(spec.t === 'bgimage'){
+      // Library picker: a dropdown of uploaded images plus Upload / Delete.
+      input = document.createElement('select');
+      input.dataset.bgimage = '1';
+      fillBgOptions(input, val);
+      input.id = id; input.dataset.scope = scope; input.dataset.key = key; input.dataset.type = spec.t;
+      el.appendChild(input);
+      var tools = document.createElement('div');
+      tools.style.cssText = 'display:flex;gap:6px;margin-top:6px';
+      var up = document.createElement('button');
+      up.type = 'button'; up.className = 'sec'; up.textContent = 'Upload'; up.style.flex = '1';
+      up.onclick = function(){ bgUpload(input); };
+      var del = document.createElement('button');
+      del.type = 'button'; del.className = 'sec'; del.textContent = 'Delete'; del.style.flex = '1';
+      del.onclick = function(){ bgDelete(input.value); };
+      tools.appendChild(up); tools.appendChild(del);
+      el.appendChild(tools);
+      return el;
     } else {
       input = document.createElement('input');
       input.type = spec.t === 'num' ? 'number' : (spec.t === 'color' ? 'color' : 'text');
@@ -465,13 +741,16 @@ async function saveConfig(patch, msg){
 
 async function loadAll(){
   CFG = await (await fetch('/twitch/api/config')).json();
+  await loadBackgrounds();
   $('channel').value = CFG.channel || '';
   $('forward_url').value = CFG.forward_url || '';
   $('hexcast_url').value = CFG.hexcast_url || '';
-  $('u-chat').textContent = location.origin + '/twitch/chat';
-  $('u-events').textContent = location.origin + '/twitch/events';
+  var chatUrl = location.origin + '/twitch/chat', eventsUrl = location.origin + '/twitch/events';
+  $('u-chat').textContent = chatUrl;   $('u-chat').href = chatUrl;
+  $('u-events').textContent = eventsUrl; $('u-events').href = eventsUrl;
   renderGroup('g-chat-type','chat',CHAT_TYPE);
   renderGroup('g-chat-look','chat',CHAT_LOOK);
+  initPlacement();
   renderGroup('g-chat-behave','chat',CHAT_BEHAVE);
   renderGroup('g-chat-filter','chat',CHAT_FILTER);
   renderGroup('g-events','events',EVENT_FIELDS);
@@ -527,11 +806,32 @@ document.querySelectorAll('nav button').forEach(function(b){
   };
 });
 
+// navigator.clipboard only exists on HTTPS or localhost. The panel is usually
+// opened over plain http on a LAN IP, where it's undefined - so fall back to a
+// hidden-textarea + execCommand copy.
+function copyText(str){
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(str).then(function(){ toast('Copied'); }, function(){ _copyFallback(str); });
+  } else {
+    _copyFallback(str);
+  }
+}
+function _copyFallback(str){
+  try{
+    var ta = document.createElement('textarea');
+    ta.value = str;
+    ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    var ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    toast(ok ? 'Copied' : 'Copy failed - select the link and copy manually');
+  }catch(e){ toast('Copy failed - select the link and copy manually'); }
+}
+
 document.addEventListener('click', function(e){
   var t = e.target;
   if(t.dataset && t.dataset.copy){
-    navigator.clipboard.writeText($(t.dataset.copy).textContent);
-    toast('Copied');
+    copyText($(t.dataset.copy).textContent);
   }
   if(t.dataset && t.dataset.test){
     fetch('/twitch/api/test/event', {
@@ -541,9 +841,7 @@ document.addEventListener('click', function(e){
   }
 });
 
-$('copy-redir').onclick = function(){
-  navigator.clipboard.writeText($('redir').textContent); toast('Copied');
-};
+$('copy-redir').onclick = function(){ copyText($('redir').textContent); };
 $('save-creds').onclick = async function(){
   await fetch('/twitch/api/credentials', {
     method:'POST', headers:{'Content-Type':'application/json'},
@@ -562,7 +860,8 @@ $('save-conn').onclick = function(){
 };
 $('save-chat').onclick = function(){
   saveConfig({chat: Object.assign({}, collect('chat',CHAT_TYPE), collect('chat',CHAT_LOOK),
-                                  collect('chat',CHAT_BEHAVE), collect('chat',CHAT_FILTER))},
+                                  collect('chat',CHAT_BEHAVE), collect('chat',CHAT_FILTER),
+                                  collectPlacement())},
              'Chat overlay updated');
 };
 $('save-events').onclick = function(){

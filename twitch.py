@@ -39,7 +39,7 @@ from typing import Any
 
 import httpx
 import websockets
-from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, File, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 # --------------------------------------------------------------------------
@@ -65,6 +65,29 @@ def _read_static(name: str) -> str:
 
 CONFIG_PATH = CONFIG_DIR / "twitch.json"
 SECRETS_PATH = CONFIG_DIR / "twitch_secrets.json"
+
+# Uploaded chat/alert background images live here and are served by hexcast's
+# existing /media StaticFiles mount, so the overlays can reach them by URL.
+# SOUNDBOARD_MEDIA_DIR matches the env var hexcast.py uses for its media root.
+MEDIA_ROOT = Path(os.getenv("SOUNDBOARD_MEDIA_DIR", str(BASE_DIR / "media"))).expanduser().resolve()
+OVERLAY_BG_DIR = MEDIA_ROOT / "overlays"
+OVERLAY_BG_DIR.mkdir(parents=True, exist_ok=True)
+BG_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".apng"}
+_SAFE_BG_NAME = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def _safe_bg_name(name: str) -> str:
+    """Sanitise an uploaded filename to a safe, flat name inside OVERLAY_BG_DIR."""
+    stem = _SAFE_BG_NAME.sub("_", Path(name).stem).strip("._-") or "background"
+    return stem[:60] + Path(name).suffix.lower()
+
+
+def _list_backgrounds() -> list[dict]:
+    out = []
+    for p in sorted(OVERLAY_BG_DIR.glob("*")):
+        if p.is_file() and p.suffix.lower() in BG_IMAGE_EXTS:
+            out.append({"name": p.name, "url": f"/media/overlays/{p.name}"})
+    return out
 
 HELIX = "https://api.twitch.tv/helix"
 TWITCH_ID = "https://id.twitch.tv/oauth2"
@@ -106,6 +129,32 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "bubble_color": "#0b0b10",
         "bubble_opacity": 0.72,
         "bubble_radius": 14,
+        # Fancy message backgrounds. bg_style: solid | gradient | animated |
+        # glass | frame | glow | image | slice. The others feed whichever
+        # style is on. "slice" is a 9-slice frame image: corners stay crisp
+        # while the edges and middle stretch to fit the message.
+        "bg_style": "solid",
+        "bg_color2": "#1a1a2e",
+        "bg_gradient_angle": 135,
+        "bg_image_url": "",
+        "bg_blur": 8,
+        "bg_border_color": "#ff3b30",
+        "bg_border_width": 2,
+        "bg_slice": 32,
+        "bg_slice_width": 24,
+        "bg_slice_repeat": "stretch",
+        # Extra breathing room inside image/frame backgrounds so words don't
+        # sit right on the artwork edge.
+        "bg_pad": 20,
+        # Placement. The overlay is always the full OBS canvas; these lock the
+        # chat and its background to boxes *inside* it (percent of the source),
+        # so you size things in Hexcast at full fidelity instead of scaling the
+        # OBS source. box_* is the chat text box; bg_box_* is the background
+        # panel box (or the whole screen when bg_full is on).
+        "box_enabled": False,
+        "box_x": 55, "box_y": 8, "box_w": 42, "box_h": 84,
+        "bg_full": False,
+        "bg_box_x": 55, "bg_box_y": 8, "bg_box_w": 42, "bg_box_h": 84,
         "padding": 12,
         "gap": 8,
         "outline": True,
@@ -137,6 +186,18 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "bubble_color": "#0b0b10",
         "bubble_opacity": 0.85,
         "bubble_radius": 18,
+        # Fancy alert backgrounds - same vocabulary as chat above.
+        "bg_style": "solid",
+        "bg_color2": "#1a1a2e",
+        "bg_gradient_angle": 135,
+        "bg_image_url": "",
+        "bg_blur": 8,
+        "bg_border_color": "#ff3b30",
+        "bg_border_width": 2,
+        "bg_slice": 32,
+        "bg_slice_width": 24,
+        "bg_slice_repeat": "stretch",
+        "bg_pad": 20,
         "outline": True,
         "outline_color": "#000000",
         "align": "center",
@@ -1338,28 +1399,36 @@ def _redirect_uri(request: Request) -> str:
     return base + "/twitch/auth/callback"
 
 
+# The panel and overlays are read from disk on every request, so edits go live
+# on refresh - but only if the browser (and OBS's CEF) doesn't serve a cached
+# copy. Send no-store so a plain refresh always gets the current file.
+_NOCACHE = {"Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache"}
+
+
 @router.get("", response_class=HTMLResponse)
 @router.get("/", response_class=HTMLResponse)
 async def panel(request: Request):
     await RUNNER.ensure_started()
-    return HTMLResponse(_read_static("twitch_panel.html").replace("__REDIRECT_URI__", _redirect_uri(request)))
+    return HTMLResponse(_read_static("twitch_panel.html").replace("__REDIRECT_URI__", _redirect_uri(request)),
+                        headers=_NOCACHE)
 
 
 @router.get("/chat", response_class=HTMLResponse)
 async def chat_overlay():
     await RUNNER.ensure_started()
-    return HTMLResponse(_read_static("twitch_chat.html"))
+    return HTMLResponse(_read_static("twitch_chat.html"), headers=_NOCACHE)
 
 
 @router.get("/events", response_class=HTMLResponse)
 async def events_overlay():
     await RUNNER.ensure_started()
-    return HTMLResponse(_read_static("twitch_events.html"))
+    return HTMLResponse(_read_static("twitch_events.html"), headers=_NOCACHE)
 
 
 @router.get("/boot.js")
 async def boot_js():
-    return Response(_read_static("twitch_boot.js"), media_type="application/javascript")
+    return Response(_read_static("twitch_boot.js"), media_type="application/javascript",
+                    headers=_NOCACHE)
 
 
 
@@ -1407,6 +1476,40 @@ async def api_set_config(request: Request):
     if CONFIG.get("channel") != old_channel:
         await RUNNER.restart()
     return {"ok": True, "config": CONFIG}
+
+
+@router.get("/api/backgrounds")
+async def api_backgrounds_list():
+    """The library of uploaded chat/alert background images."""
+    return {"backgrounds": _list_backgrounds()}
+
+
+@router.post("/api/backgrounds")
+async def api_backgrounds_upload(file: UploadFile = File(...)):
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in BG_IMAGE_EXTS:
+        return JSONResponse(
+            {"error": f"use png, jpg, gif, webp or apng (got {ext or 'no extension'})"},
+            status_code=400,
+        )
+    content = await file.read()
+    if len(content) > 25 * 1024 * 1024:
+        return JSONResponse({"error": "file too big (max 25 MB)"}, status_code=400)
+    name = _safe_bg_name(file.filename or "background")
+    (OVERLAY_BG_DIR / name).write_bytes(content)
+    return {"ok": True, "name": name, "url": f"/media/overlays/{name}",
+            "backgrounds": _list_backgrounds()}
+
+
+@router.post("/api/backgrounds/delete")
+async def api_backgrounds_delete(request: Request):
+    body = await request.json()
+    # .name strips any path, so a crafted "name" can't escape the folder.
+    name = Path(str(body.get("name") or "")).name
+    if not name:
+        return JSONResponse({"error": "name required"}, status_code=400)
+    (OVERLAY_BG_DIR / name).unlink(missing_ok=True)
+    return {"ok": True, "backgrounds": _list_backgrounds()}
 
 
 @router.post("/api/credentials")

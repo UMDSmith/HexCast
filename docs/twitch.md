@@ -114,13 +114,91 @@ disk on every request, so you can edit the CSS and just refresh.
 
 ## Chat overlay
 
-Configurable from the panel: font family (any Google font by name, or anything
-installed locally), size, weight, line height, message and username colours,
-background colour and opacity, corner radius, padding, spacing, text outline
-and shadow, maximum messages on screen, auto-fade after N seconds, newest
-message at top or bottom, alignment, column width, entrance animation, badge
-and timestamp toggles, emote size, first-time-chatter highlighting, and a list
-of bot accounts to hide.
+Configurable from the panel: font family (pick from the grouped dropdown of
+curated Google fonts, previewed in their own face), size, weight, line height,
+message and username colours, background style (see below), corner radius,
+padding, spacing, text outline and shadow, maximum messages on screen,
+auto-fade after N seconds, newest message at top or bottom, alignment, column
+width, entrance animation, badge and timestamp toggles, emote size,
+first-time-chatter highlighting, and a list of bot accounts to hide.
+
+### Message backgrounds
+
+The **Background style** dropdown (Chat overlay → Colours and box) does more
+than a flat colour. The alert overlay has the same set under Alert appearance.
+
+- **Solid** — the classic single colour + opacity.
+- **Gradient** — blends the background colour into a second colour at a chosen
+  angle.
+- **Animated gradient** — the same blend, slowly shifting for a lively look.
+- **Glass / frosted** — translucent panel with a frosted blur and a hairline
+  edge (the blur amount is the *Glass blur* field).
+- **Outlined frame** — a solid box with a coloured border (*Frame width* /
+  *Frame / glow colour*).
+- **Neon glow** — a coloured outer glow around each message, arcade-style.
+- **Image / GIF (fill)** — pick an image or animated GIF from your library. It's
+  scaled to cover the whole message (cropping as needed), so it's best for
+  photos, patterns and animated GIFs.
+- **Image frame (stretch middle)** — a 9-slice frame image. The four corners
+  stay crisp at their original size while the edges and centre stretch to fit
+  however tall or wide the message grows — the same trick decorative
+  achievement/panel graphics use. Pick the frame from your library, then set:
+  - **Frame slice (source px)** — how far in from each edge of the *source*
+    image the fixed corner ends (i.e. the thickness of the decorative border in
+    the file itself).
+  - **Frame thickness (px)** — how thick that border renders on screen. Match it
+    to the slice for a 1:1 look, or make it smaller if your source art is
+    high-resolution.
+  - **Frame edges** — *Stretch* (default) smears the edge strips; *Round* /
+    *Repeat* tile them instead, which keeps proportions on ornate borders.
+  - The centre of the source paints over the background colour, so a transparent
+    middle lets your **Background colour / opacity** tint show through. Use a
+    static PNG here — animated GIFs don't reliably animate in 9-slice mode.
+
+For both image styles, **Image inner padding** adds space between the text and
+the artwork edge, on top of the normal padding — bump it up if a decorative
+border is crowding the words.
+
+### Placement — the chat box and its background
+
+Most chat overlays live in a fixed box on the layout. Rather than resizing the
+OBS browser source (which scales the source and softens the text), the chat
+overlay is **always the full OBS canvas** and you position things *inside* it
+from the panel, at full fidelity. Make the browser source your whole screen,
+uncheck **Shutdown source when not visible**, and forget about it — all sizing
+happens in Hexcast.
+
+The **Placement** card (Chat overlay tab) is a 16:9 preview of your screen with
+two draggable, resizable boxes:
+
+- **Chat** (blue) — where messages live. They're clipped to this box, so chat
+  stays put instead of spilling across the scene.
+- **Background** (red) — the panel the chosen **Background style** paints on. It
+  moves and sizes independently of the chat box, so you can, say, sit the text
+  in the lower half of a taller decorative frame.
+
+Two switches:
+
+- **Lock chat & background to these boxes** turns placement on. With it off, the
+  overlay behaves the classic way (chat flows over the whole source, background
+  is per-message).
+- **Background fills the whole screen** pins the background panel to the entire
+  canvas and greys out its box — for a full-screen backdrop behind a smaller
+  chat box.
+
+Drag a box to move it, grab a corner to resize, then **Save chat settings**. In
+placement mode the **Background style** (and its image/frame/colour settings)
+describes the *panel*; the per-message **Message background** toggle still works
+on top if you also want a bubble behind each line.
+
+### Background library
+
+Both image styles pull from a shared library rather than a pasted URL. The
+**Image / GIF library** control is a dropdown of everything you've uploaded,
+with **Upload** and **Delete** buttons beside it. Uploads (png, jpg, gif, webp,
+apng; up to 25 MB) are stored under `media/overlays/` and served from
+`/media/overlays/…`, so you can build up a set of chat and alert skins and swap
+between them per overlay. Chat and alerts draw from the same library.
 
 Third-party emotes (7TV, BetterTTV, FrankerFaceZ) are fetched per channel and
 globally. The channel-specific sets need the numeric Twitch ID, so they only
