@@ -74,7 +74,7 @@
   .warn{border-left:3px solid var(--warn);padding-left:12px;color:var(--dim);font-size:13px;margin-top:10px}
 
   /* placement editor */
-  #pl-stage{position:relative;width:100%;aspect-ratio:16/9;background:
+  #pl-stage,#pl-stage-ev{position:relative;width:100%;aspect-ratio:16/9;background:
       repeating-linear-gradient(0deg,#0c0c11 0 39px,#141420 39px 40px),
       repeating-linear-gradient(90deg,#0c0c11 0 39px,#141420 39px 40px),#0a0a0e;
     border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-top:12px;touch-action:none;user-select:none}
@@ -211,7 +211,7 @@
     <p class="hint">Same scaled 1920×1080 stage as chat. The <b>blue</b> box is where the alert text sits; the <b>red</b> box places its background — which only appears while an alert is on screen and fades in/out with it (set the times in Alert appearance). When an <b>image</b> style is used the red box's width snaps to the image; drag its height. Leave this off to keep the classic centred alerts.</p>
     <label class="f sw"><input type="checkbox" id="pl-ev-enable"> Position alerts &amp; background with these boxes</label>
     <label class="f sw"><input type="checkbox" id="pl-ev-bgfull"> Background fills the whole screen</label>
-    <div id="pl-stage">
+    <div id="pl-stage-ev" class="pl-stage">
       <div class="pl-box bg" id="pl-ev-bg"><span class="tag">Background</span><i class="h nw"></i><i class="h ne"></i><i class="h sw"></i><i class="h se"></i></div>
       <div class="pl-box chat" id="pl-ev-alert"><span class="tag">Alert</span><i class="h nw"></i><i class="h ne"></i><i class="h sw"></i><i class="h se"></i></div>
     </div>
@@ -521,7 +521,7 @@ function updateWidthLock(){
 }
 function reflectBgFull(){ $('pl-bg').classList.toggle('locked', $('pl-bgfull').checked); }
 function makeBox(el, cb){
-  var stage = $('pl-stage');
+  var stage = el.parentElement;   // the box's own placement stage (chat or alerts)
   function geo(){ return { x:parseFloat(el.style.left), y:parseFloat(el.style.top),
                            w:parseFloat(el.style.width), h:parseFloat(el.style.height) }; }
   function pct(e){ var r=stage.getBoundingClientRect();
