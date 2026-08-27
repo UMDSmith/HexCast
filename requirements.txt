@@ -3,6 +3,15 @@ uvicorn[standard]>=0.27
 watchdog>=4.0
 httpx>=0.27
 python-multipart>=0.0.9
+# Twitch chat/alerts talk over websockets. uvicorn[standard] normally pulls this
+# in, but list it so the Twitch module never depends on that happening.
+websockets>=12.0
+# YouTube Music module: hexcast.py loads it at startup, so its live-feed client
+# is required here, not optional. Without these the app dies on `import socketio`.
+# aiohttp is NOT pulled in by a plain python-socketio install, so it's explicit.
+python-socketio>=5.11
+python-engineio>=4.9
+aiohttp>=3.9
 # Clips module: resolves Twitch clip/VOD links to direct media URLs.
 # (Not YouTube-specific - yt-dlp is the standard Twitch resolver as well.)
 # A yt-dlp already on PATH is used if this one is not installed.

@@ -57,12 +57,17 @@
   #ytwrap{ position:absolute; inset:0; display:none; }
   #slot.video #ytwrap{ display:block; }
   #slot.video #art{ visibility:hidden; }
+  #ytwrap{ overflow:hidden; }
   #ytwrap iframe{
-    position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+    position:absolute; top:50%; left:50%;
+    /* Oversize + centre so YouTube's own chrome (the title bar up top, the
+       branding/gradient strip along the bottom, and the big play/pause overlay
+       band) is pushed outside the crop, leaving just clean video. */
+    transform:translate(-50%,-50%) scale(1.25);
     width:calc(var(--art,96px) * 1.7778); height:var(--art,96px);
     border:0; pointer-events:none;
   }
-  #slot.wide #ytwrap iframe{ width:100%; height:100%; transform:none; top:0; left:0; }
+  #slot.wide #ytwrap iframe{ width:100%; height:100%; top:50%; left:50%; transform:translate(-50%,-50%) scale(1.4); }
 
   /* text-stroke inherits, so setting it on #meta outlines every text line
      (title, artist, album, times, up next). paint-order does not inherit,
