@@ -1,0 +1,507 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="/static/hexcast.png">
+<link rel="stylesheet" href="/static/hexbar.css">
+<title>HexCast - Countdown</title>
+<style>
+  :root{
+    --bg:var(--hb-bg); --panel:var(--hb-panel); --line:var(--hb-line); --ink:var(--hb-ink);
+    --dim:var(--hb-dim); --accent:var(--hb-accent); --good:var(--hb-good); --warn:var(--hb-warn);
+    --mono:var(--hb-mono);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.5 'Segoe UI',system-ui,-apple-system,sans-serif;}
+  main{padding:18px 22px 60px;max-width:1080px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
+  .card h2{margin:0 0 4px;font-size:14px;letter-spacing:.14em;text-transform:uppercase}
+  .card p.hint{margin:0 0 14px;color:var(--dim);font-size:13px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px}
+  label.f{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--dim);
+          letter-spacing:.06em;text-transform:uppercase;font-weight:600}
+  input,select,textarea{background:#08080c;border:1px solid var(--line);color:var(--ink);
+        border-radius:8px;padding:9px 10px;font:14px/1.3 inherit;width:100%}
+  input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:var(--accent)}
+  input[type=color]{padding:3px;height:38px;cursor:pointer}
+  label.sw{flex-direction:row;align-items:center;gap:9px;text-transform:none;font-size:14px;color:var(--ink)}
+  label.sw input{width:auto}
+  button.act{background:var(--accent);color:#fff;border:0;border-radius:9px;padding:10px 16px;
+             font:700 14px inherit;cursor:pointer}
+  button.act:hover{filter:brightness(1.12)}
+  button.sec{background:#1c1c25;color:var(--ink);border:1px solid var(--line);border-radius:9px;
+             padding:9px 14px;font:600 13px inherit;cursor:pointer}
+  button.sec:hover{border-color:var(--accent)}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  .row{display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin-top:14px}
+  .url{display:flex;gap:8px;align-items:center;margin:8px 0}
+  .url a{flex:1;background:#08080c;border:1px solid var(--line);border-radius:8px;
+            padding:9px 11px;font:13px var(--mono);color:var(--good);overflow:auto;white-space:nowrap;
+            text-decoration:none}
+  .url a:hover{border-color:var(--accent);text-decoration:underline}
+  .hms{display:flex;gap:8px;align-items:flex-end}
+  .hms label.f{flex:1}
+  #readout{font:800 30px/1 var(--mono);color:var(--ink);font-variant-numeric:tabular-nums}
+  #tstate{font:600 12px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
+  #toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,80px);background:var(--accent);
+         color:#fff;padding:11px 20px;border-radius:99px;font-weight:700;font-size:14px;
+         transition:transform .25s ease;z-index:20}
+  #toast.up{transform:translate(-50%,0)}
+
+  /* placement editor */
+  #pl-stage{position:relative;width:100%;aspect-ratio:16/9;background:
+      repeating-linear-gradient(0deg,#0c0c11 0 39px,#141420 39px 40px),
+      repeating-linear-gradient(90deg,#0c0c11 0 39px,#141420 39px 40px),#0a0a0e;
+    border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-top:12px;touch-action:none;user-select:none}
+  .pl-box{position:absolute;box-sizing:border-box;border:2px solid;border-radius:5px;cursor:move;
+    font:700 12px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase}
+  .pl-box.timer{border-color:#4ea1ff;background:rgba(78,161,255,.14);color:#8dc4ff}
+  .pl-box.bg{border-color:#ff6b6b;background:rgba(255,107,107,.12);color:#ff9d9d}
+  .pl-box .tag{position:absolute;top:5px;left:7px;pointer-events:none;opacity:.9}
+  .pl-box .h{position:absolute;width:14px;height:14px;background:#fff;border:1px solid #222;border-radius:3px;z-index:3}
+  .pl-box .h.nw{left:-7px;top:-7px;cursor:nwse-resize}
+  .pl-box .h.ne{right:-7px;top:-7px;cursor:nesw-resize}
+  .pl-box .h.sw{left:-7px;bottom:-7px;cursor:nesw-resize}
+  .pl-box .h.se{right:-7px;bottom:-7px;cursor:nwse-resize}
+  .pl-box.locked{opacity:.3;pointer-events:none}
+  .pl-box.locked .h{display:none}
+  .pl-box.wlock .h{cursor:ns-resize}
+</style></head>
+<body>
+<div id="hexbar" data-section="Countdown" data-key="countdown"></div>
+
+<main>
+  <div class="card">
+    <h2>OBS browser source</h2>
+    <p class="hint">Add this as a Browser source in OBS (1920×1080). It scales to whatever size you give it.</p>
+    <div class="url"><a id="u-overlay" target="_blank" rel="noopener"></a><button class="sec" id="copy-overlay">Copy</button></div>
+  </div>
+
+  <div class="card">
+    <h2>Timer</h2>
+    <p class="hint">Start/stop from here (or turn on autostart to run the moment the overlay opens). Everything is second-resolution.</p>
+    <div class="grid">
+      <label class="f">Mode
+        <select id="f-mode">
+          <option value="duration">Duration (count down a fixed span)</option>
+          <option value="target">Target time (count down to a clock time)</option>
+        </select>
+      </label>
+      <div id="row-target" style="display:none">
+        <label class="f">Count down until (server local time)
+          <input type="time" id="f-target_time" step="1">
+        </label>
+      </div>
+    </div>
+    <div id="row-duration" class="hms" style="margin-top:14px">
+      <label class="f">Hours <input type="number" id="dur-h" min="0" max="99" step="1" value="0"></label>
+      <label class="f">Minutes <input type="number" id="dur-m" min="0" max="59" step="1" value="5"></label>
+      <label class="f">Seconds <input type="number" id="dur-s" min="0" max="59" step="1" value="0"></label>
+    </div>
+    <label class="f sw" style="margin-top:14px"><input type="checkbox" id="f-autostart"> Autostart when the overlay connects</label>
+    <div class="row" style="align-items:center">
+      <div id="readout">0:00</div><span id="tstate">idle</span>
+      <span style="flex:1"></span>
+      <button class="act" id="t-start">Start</button>
+      <button class="sec" id="t-pause">Pause</button>
+      <button class="sec" id="t-resume">Resume</button>
+      <button class="sec" id="t-reset">Reset</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Text &amp; format</h2>
+    <div class="grid" id="g-text"></div>
+  </div>
+
+  <div class="card">
+    <h2>Background</h2>
+    <p class="hint">Give the timer a backing panel — solid, gradient, glass, an image, or a 9-slice image frame — or leave it as <b>None</b> for bare digits. Rounded corners apply to every style except the 9-slice frame (which defines its own edges).</p>
+    <div class="grid" id="g-bg"></div>
+  </div>
+
+  <div class="card">
+    <h2>Placement</h2>
+    <p class="hint">Fixed 1920×1080 stage that scales to fill the browser source, so everything keeps its proportions at any size. The <b>blue</b> box is where the digits &amp; caption sit; the <b>red</b> box places the background — solid, gradient, glass or an image frame (it only shows when a background style is chosen). When an <b>image</b> style is used the red box's width snaps to the image; drag its height. Drag to move, grab a corner to resize.</p>
+    <label class="f sw"><input type="checkbox" id="pl-bgfull"> Background fills the whole screen</label>
+    <div id="pl-stage">
+      <div class="pl-box bg" id="pl-bg"><span class="tag">Background</span><i class="h nw"></i><i class="h ne"></i><i class="h sw"></i><i class="h se"></i></div>
+      <div class="pl-box timer" id="pl-box"><span class="tag">Timer</span><i class="h nw"></i><i class="h ne"></i><i class="h sw"></i><i class="h se"></i></div>
+    </div>
+    <div class="row">
+      <button class="act" id="save-all">Save settings</button>
+    </div>
+  </div>
+</main>
+
+<div id="toast">Saved</div>
+<script src="/static/hexbar.js"></script>
+<script>
+var $ = function(id){ return document.getElementById(id); };
+var CFG = null;
+var T = { running:false, remaining:0, anchor:0 };
+
+/* ---------- background image library ----------
+   The countdown shares the very same uploads as chat & alerts: the Twitch
+   module owns the library (stored in media/overlays/, served at /media/overlays/).
+   We just call its endpoints so a background uploaded on any of the three shows
+   up in all of them. */
+var BG_LIST = [];
+async function loadBackgrounds(){
+  try{ var d = await (await fetch('/twitch/api/backgrounds')).json(); BG_LIST = d.backgrounds || []; }
+  catch(e){ BG_LIST = []; }
+}
+function fillBgOptions(sel, val){
+  sel.innerHTML = '';
+  var none = document.createElement('option'); none.value = ''; none.textContent = '— none —';
+  sel.appendChild(none);
+  var found = false;
+  BG_LIST.forEach(function(b){
+    var o = document.createElement('option'); o.value = b.url; o.textContent = b.name;
+    if(b.url === val){ o.selected = true; found = true; }
+    sel.appendChild(o);
+  });
+  if(!found && val){   // keep an external / not-yet-loaded value usable
+    var o = document.createElement('option'); o.value = val; o.textContent = val + ' (external)'; o.selected = true;
+    sel.appendChild(o);
+  }
+}
+function refreshBgSelects(opts){
+  opts = opts || {};
+  document.querySelectorAll('select[data-bgimage]').forEach(function(sel){
+    var cur = sel.value;
+    if(opts.removed && cur === opts.removed) cur = '';
+    fillBgOptions(sel, cur);
+  });
+}
+var _bgFileInput = null;
+function bgUpload(targetSel){
+  if(!_bgFileInput){
+    _bgFileInput = document.createElement('input');
+    _bgFileInput.type = 'file';
+    _bgFileInput.accept = '.png,.jpg,.jpeg,.gif,.webp,.apng,image/png,image/jpeg,image/gif,image/webp';
+    _bgFileInput.style.display = 'none';
+    document.body.appendChild(_bgFileInput);
+  }
+  _bgFileInput.onchange = async function(){
+    var f = _bgFileInput.files && _bgFileInput.files[0];
+    _bgFileInput.value = '';
+    if(!f) return;
+    var fd = new FormData(); fd.append('file', f);
+    toast('Uploading…');
+    try{
+      var r = await fetch('/twitch/api/backgrounds', {method:'POST', body: fd});
+      var d = await r.json();
+      if(!r.ok){ toast(d.error || 'Upload failed'); return; }
+      BG_LIST = d.backgrounds || [];
+      refreshBgSelects();
+      if(targetSel && d.url){ targetSel.value = d.url; targetSel.dispatchEvent(new Event('change')); }
+      toast('Uploaded ' + d.name);
+    }catch(e){ toast('Upload failed'); }
+  };
+  _bgFileInput.click();
+}
+async function bgDelete(url){
+  if(!url){ toast('Pick a background first'); return; }
+  var name = url.split('/').pop();
+  try{
+    var r = await fetch('/twitch/api/backgrounds/delete', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name: name})
+    });
+    var d = await r.json();
+    BG_LIST = d.backgrounds || [];
+    refreshBgSelects({removed: url});
+    toast('Deleted ' + name);
+  }catch(e){ toast('Delete failed'); }
+}
+
+// ---- field descriptors -------------------------------------------------
+var TEXT_FIELDS = [
+  ['label','Caption text',{t:'text',ph:'e.g. Starting soon'}],
+  ['label_position','Caption position',{t:'sel',opts:[['above','Above digits'],['below','Below digits']]}],
+  ['finished_text','Text at zero',{t:'text',ph:'blank = keep 0:00'}],
+  ['hours_mode','Hours',{t:'sel',opts:[['auto','Auto (hide when 0)'],['always','Always show'],['never','Never show']]}],
+  ['font_family','Font family',{t:'text',ph:'Inter'}],
+  ['font_size','Digit size (px)',{t:'num',min:10,max:600,step:1}],
+  ['font_weight','Digit weight',{t:'sel',opts:[['400','400'],['500','500'],['600','600'],['700','700'],['800','800'],['900','900']]}],
+  ['letter_spacing','Letter spacing (px)',{t:'num',min:-10,max:40,step:0.5}],
+  ['text_color','Digit color',{t:'color'}],
+  ['label_size','Caption size (px)',{t:'num',min:8,max:200,step:1}],
+  ['label_color','Caption color',{t:'color'}],
+  ['outline','Outline',{t:'check'}],
+  ['outline_color','Outline color',{t:'color'}],
+  ['outline_width','Outline width (px)',{t:'num',min:0,max:20,step:0.5}],
+  ['shadow','Drop shadow',{t:'check'}]
+];
+var BG_FIELDS = [
+  ['bg_style','Style',{t:'sel',opts:[['none','None'],['solid','Solid'],['gradient','Gradient'],['glass','Glass blur'],['frame','Border frame'],['glow','Glow border'],['image','Image (cover)'],['slice','Image 9-slice frame']]}],
+  ['bubble_color','Panel color',{t:'color'}],
+  ['bubble_opacity','Panel opacity',{t:'num',min:0,max:1,step:0.01}],
+  ['bg_color2','Gradient 2nd color',{t:'color'}],
+  ['bg_gradient_angle','Gradient angle (deg)',{t:'num',min:0,max:360,step:1}],
+  ['bg_image_url','Image / GIF library',{t:'bgimage'}],
+  ['bg_blur','Glass blur (px)',{t:'num',min:0,max:40,step:1}],
+  ['bg_border_color','Frame / glow color',{t:'color'}],
+  ['bg_border_width','Frame width (px)',{t:'num',min:0,max:20,step:1}],
+  ['bg_slice','9-slice inset',{t:'num',min:1,max:200,step:1}],
+  ['bg_slice_width','9-slice border (px)',{t:'num',min:1,max:200,step:1}],
+  ['bg_slice_repeat','9-slice repeat',{t:'sel',opts:[['stretch','Stretch'],['round','Round'],['repeat','Repeat']]}],
+  ['bg_pad','Inner padding (px)',{t:'num',min:0,max:120,step:1}],
+  ['radius','Corner radius (px)',{t:'num',min:0,max:120,step:1}]
+];
+
+function fieldHTML(key, label, spec){
+  var id = 'f-' + key;
+  var inner;
+  if(spec.t === 'check'){
+    return '<label class="f sw"><input type="checkbox" id="' + id + '"> ' + label + '</label>';
+  } else if(spec.t === 'bgimage'){
+    // Library picker: dropdown of uploaded images + Upload / Delete, shared with
+    // the Twitch chat & alert overlays.
+    return '<label class="f">' + label +
+      '<select id="' + id + '" data-bgimage="1"></select>' +
+      '<div style="display:flex;gap:6px;margin-top:6px">' +
+        '<button type="button" class="sec" id="bg-upload" style="flex:1">Upload</button>' +
+        '<button type="button" class="sec" id="bg-delete" style="flex:1">Delete</button>' +
+      '</div></label>';
+  } else if(spec.t === 'sel'){
+    inner = '<select id="' + id + '">' + spec.opts.map(function(o){
+      return '<option value="' + o[0] + '">' + o[1] + '</option>'; }).join('') + '</select>';
+  } else if(spec.t === 'color'){
+    inner = '<input type="color" id="' + id + '">';
+  } else if(spec.t === 'num'){
+    inner = '<input type="number" id="' + id + '" min="' + spec.min + '" max="' + spec.max + '" step="' + spec.step + '">';
+  } else {
+    inner = '<input type="text" id="' + id + '"' + (spec.ph ? ' placeholder="' + spec.ph + '"' : '') + '>';
+  }
+  return '<label class="f">' + label + inner + '</label>';
+}
+function renderGrid(host, fields){
+  host.innerHTML = fields.map(function(f){ return fieldHTML(f[0], f[1], f[2]); }).join('');
+}
+function setField(key, spec, val){
+  var el = $('f-' + key); if(!el) return;
+  if(spec.t === 'check') el.checked = !!val;
+  else if(spec.t === 'bgimage') fillBgOptions(el, val == null ? '' : val);
+  else el.value = (val == null ? '' : val);
+}
+function getField(key, spec){
+  var el = $('f-' + key); if(!el) return undefined;
+  if(spec.t === 'check') return el.checked;
+  if(spec.t === 'num'){ var n = parseFloat(el.value); return isNaN(n) ? 0 : n; }
+  return el.value;
+}
+
+// ---- placement box -----------------------------------------------------
+function _clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
+function _num(v, d){ v = parseFloat(v); return isNaN(v) ? d : v; }
+function _setGeo(el, x, y, w, h){ el.style.left=x+'%'; el.style.top=y+'%'; el.style.width=w+'%'; el.style.height=h+'%'; }
+var PLACE = {};
+function makeBox(el, cb){
+  var stage = el.parentElement;
+  function geo(){ return { x:parseFloat(el.style.left), y:parseFloat(el.style.top),
+                           w:parseFloat(el.style.width), h:parseFloat(el.style.height) }; }
+  function pct(e){ var r=stage.getBoundingClientRect();
+    return { mx:(e.clientX-r.left)/r.width*100, my:(e.clientY-r.top)/r.height*100 }; }
+  var mode=null, corner='', start=null, g0=null, MIN=4;
+  function down(e, m, cn){ mode=m; corner=cn||''; start=pct(e); g0=geo();
+    try{ el.setPointerCapture(e.pointerId); }catch(_){} e.preventDefault(); e.stopPropagation(); }
+  el.addEventListener('pointerdown', function(e){ if(!e.target.classList.contains('h')) down(e,'move'); });
+  el.querySelectorAll('.h').forEach(function(hd){
+    hd.addEventListener('pointerdown', function(e){ down(e,'resize', hd.className.split(' ')[1]); });
+  });
+  el.addEventListener('pointermove', function(e){
+    if(!mode) return;
+    var p=pct(e), dx=p.mx-start.mx, dy=p.my-start.my;
+    var x=g0.x, y=g0.y, w=g0.w, h=g0.h;
+    if(mode==='move'){
+      x=_clamp(g0.x+dx, 0, 100-g0.w); y=_clamp(g0.y+dy, 0, 100-g0.h);
+    } else {
+      if(corner.indexOf('w')>=0){ var nx=_clamp(g0.x+dx, 0, g0.x+g0.w-MIN); w=g0.w+(g0.x-nx); x=nx; }
+      if(corner.indexOf('e')>=0){ w=_clamp(g0.w+dx, MIN, 100-g0.x); }
+      if(corner.indexOf('n')>=0){ var ny=_clamp(g0.y+dy, 0, g0.y+g0.h-MIN); h=g0.h+(g0.y-ny); y=ny; }
+      if(corner.indexOf('s')>=0){ h=_clamp(g0.h+dy, MIN, 100-g0.y); }
+    }
+    _setGeo(el, x, y, w, h); cb(x, y, w, h);
+  });
+  function up(e){ if(mode){ mode=null; try{ el.releasePointerCapture(e.pointerId); }catch(_){} } }
+  el.addEventListener('pointerup', up);
+  el.addEventListener('pointercancel', up);
+}
+// Snap the BACKGROUND box width to the chosen image's native width; its height +
+// position stay draggable. Only applies when the style actually uses the image.
+function snapBoxToImage(url){
+  var img = new Image();
+  img.onload = function(){
+    if(!img.naturalWidth) return;
+    var wpct = _clamp(img.naturalWidth / 1920 * 100, 5, 100);
+    PLACE.bg_box_w = wpct;
+    if(PLACE.bg_box_x + PLACE.bg_box_w > 100) PLACE.bg_box_x = Math.max(0, 100 - PLACE.bg_box_w);
+    _setGeo($('pl-bg'), PLACE.bg_box_x, PLACE.bg_box_y, PLACE.bg_box_w, PLACE.bg_box_h);
+    $('pl-bg').classList.add('wlock');
+  };
+  img.onerror = function(){ $('pl-bg').classList.remove('wlock'); };
+  img.src = url;
+}
+function updateWidthLock(){
+  var style = $('f-bg_style') ? $('f-bg_style').value : '';
+  var url = $('f-bg_image_url') ? $('f-bg_image_url').value : '';
+  if((style === 'image' || style === 'slice') && url){ snapBoxToImage(url); }
+  else { $('pl-bg').classList.remove('wlock'); }
+}
+function reflectBgFull(){ $('pl-bg').classList.toggle('locked', $('pl-bgfull').checked); }
+
+var _boxWired = false;
+function initPlacement(){
+  PLACE = {
+    box_x:_num(CFG.box_x,38), box_y:_num(CFG.box_y,40), box_w:_num(CFG.box_w,24), box_h:_num(CFG.box_h,20),
+    bg_box_x:_num(CFG.bg_box_x,35), bg_box_y:_num(CFG.bg_box_y,36), bg_box_w:_num(CFG.bg_box_w,30), bg_box_h:_num(CFG.bg_box_h,28)
+  };
+  _setGeo($('pl-box'), PLACE.box_x, PLACE.box_y, PLACE.box_w, PLACE.box_h);
+  _setGeo($('pl-bg'),  PLACE.bg_box_x, PLACE.bg_box_y, PLACE.bg_box_w, PLACE.bg_box_h);
+  $('pl-bgfull').checked = !!CFG.bg_full;
+  reflectBgFull();
+  var styleSel = $('f-bg_style'), urlSel = $('f-bg_image_url');
+  if(styleSel && !styleSel._wlWired){ styleSel._wlWired = true; styleSel.addEventListener('change', updateWidthLock); }
+  if(urlSel && !urlSel._wlWired){ urlSel._wlWired = true; urlSel.addEventListener('change', updateWidthLock); }
+  updateWidthLock();
+  if(_boxWired) return;
+  _boxWired = true;
+  makeBox($('pl-box'), function(x,y,w,h){ PLACE.box_x=x; PLACE.box_y=y; PLACE.box_w=w; PLACE.box_h=h; });
+  makeBox($('pl-bg'),  function(x,y,w,h){ PLACE.bg_box_x=x; PLACE.bg_box_y=y; PLACE.bg_box_w=w; PLACE.bg_box_h=h; });
+  $('pl-bgfull').addEventListener('change', reflectBgFull);
+}
+
+// ---- load / collect ----------------------------------------------------
+function reflectMode(){
+  var m = $('f-mode').value;
+  $('row-duration').style.display = (m === 'target') ? 'none' : 'flex';
+  $('row-target').style.display   = (m === 'target') ? 'block' : 'none';
+}
+function loadConfig(cfg){
+  CFG = cfg;
+  renderGrid($('g-text'), TEXT_FIELDS);
+  renderGrid($('g-bg'), BG_FIELDS);
+  TEXT_FIELDS.forEach(function(f){ setField(f[0], f[2], cfg[f[0]]); });
+  BG_FIELDS.forEach(function(f){ setField(f[0], f[2], cfg[f[0]]); });
+  $('f-mode').value = cfg.mode || 'duration';
+  $('f-autostart').checked = !!cfg.autostart;
+  var total = Math.max(0, parseInt(cfg.duration_seconds, 10) || 0);
+  $('dur-h').value = Math.floor(total/3600);
+  $('dur-m').value = Math.floor((total%3600)/60);
+  $('dur-s').value = total%60;
+  $('f-target_time').value = (cfg.target_time || '22:00:00').slice(0,8);
+  reflectMode();
+  initPlacement();
+  // Wire the shared background-library buttons, then pull the current library so
+  // the dropdown fills in (and the selected image's name resolves).
+  if($('bg-upload')) $('bg-upload').onclick = function(){ bgUpload($('f-bg_image_url')); };
+  if($('bg-delete')) $('bg-delete').onclick = function(){ bgDelete($('f-bg_image_url').value); };
+  loadBackgrounds().then(function(){ refreshBgSelects(); updateWidthLock(); });
+}
+function collectConfig(){
+  var out = {};
+  TEXT_FIELDS.forEach(function(f){ out[f[0]] = getField(f[0], f[2]); });
+  BG_FIELDS.forEach(function(f){ out[f[0]] = getField(f[0], f[2]); });
+  out.font_weight = parseInt(out.font_weight, 10) || 800;
+  out.mode = $('f-mode').value;
+  out.autostart = $('f-autostart').checked;
+  out.duration_seconds = (parseInt($('dur-h').value,10)||0)*3600 +
+                         (parseInt($('dur-m').value,10)||0)*60 +
+                         (parseInt($('dur-s').value,10)||0);
+  out.target_time = $('f-target_time').value || '22:00:00';
+  out.box_x = Math.round(PLACE.box_x); out.box_y = Math.round(PLACE.box_y);
+  out.box_w = Math.round(PLACE.box_w); out.box_h = Math.round(PLACE.box_h);
+  out.bg_full = $('pl-bgfull').checked;
+  out.bg_box_x = Math.round(PLACE.bg_box_x); out.bg_box_y = Math.round(PLACE.bg_box_y);
+  out.bg_box_w = Math.round(PLACE.bg_box_w); out.bg_box_h = Math.round(PLACE.bg_box_h);
+  return out;
+}
+
+// ---- toast + copy ------------------------------------------------------
+var _toastT = null;
+function toast(msg){
+  var t = $('toast'); t.textContent = msg; t.classList.add('up');
+  clearTimeout(_toastT); _toastT = setTimeout(function(){ t.classList.remove('up'); }, 1600);
+}
+function copyText(str){
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(str).then(function(){ toast('Copied'); }, function(){ _copyFallback(str); });
+  } else { _copyFallback(str); }
+}
+function _copyFallback(str){
+  var ta = document.createElement('textarea'); ta.value = str;
+  ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta);
+  ta.focus(); ta.select();
+  try{ document.execCommand('copy'); toast('Copied'); }catch(e){ toast('Copy failed'); }
+  document.body.removeChild(ta);
+}
+
+// ---- save + timer control ---------------------------------------------
+async function saveAll(){
+  try{
+    var r = await fetch('/countdown/api/config', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(collectConfig())});
+    if(!r.ok) throw new Error();
+    toast('Saved');
+  }catch(e){ toast('Save failed'); }
+}
+async function timerAction(action){
+  // Save current settings first so Start uses the latest duration/target.
+  if(action === 'start') await saveAll();
+  try{
+    await fetch('/countdown/api/timer', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({action: action})});
+  }catch(e){ toast('Timer error'); }
+}
+
+// ---- live readout ------------------------------------------------------
+function pad(n){ return String(n).padStart(2,'0'); }
+function fmt(total){
+  total = Math.max(0, Math.ceil(total));
+  var h=Math.floor(total/3600), m=Math.floor((total%3600)/60), s=total%60;
+  return h>0 ? (h+':'+pad(m)+':'+pad(s)) : (m+':'+pad(s));
+}
+function curRemaining(){
+  if(!T.running) return T.remaining;
+  return Math.max(0, T.remaining - (performance.now()-T.anchor)/1000);
+}
+function tick(){
+  $('readout').textContent = fmt(curRemaining());
+  var running = T.running, atZero = curRemaining() <= 0;
+  $('tstate').textContent = running ? (atZero ? 'finished' : 'running') : 'idle';
+  $('t-start').disabled  = running;
+  $('t-pause').disabled  = !running;
+  $('t-resume').disabled = running || T.remaining <= 0;
+  $('t-reset').disabled  = false;
+}
+setInterval(tick, 200);
+function onTimer(m){ T.running=!!m.running; T.remaining=+m.remaining||0; T.anchor=performance.now(); tick(); }
+
+function connect(){
+  var proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  var ws = new WebSocket(proto + '://' + location.host + '/countdown/ws/panel');
+  ws.onmessage = function(e){
+    var m; try{ m=JSON.parse(e.data); }catch(err){ return; }
+    if(m.type === 'config'){ if(!CFG) loadConfig(m.config); }   // load once; don't clobber edits
+    else if(m.type === 'timer') onTimer(m);
+  };
+  ws.onclose = function(){ setTimeout(connect, 1500); };
+  ws.onerror = function(){ try{ ws.close(); }catch(err){} };
+}
+
+// initial load via REST so the form is populated even before the socket opens
+fetch('/countdown/api/config').then(function(r){ return r.json(); }).then(function(cfg){
+  if(!CFG) loadConfig(cfg);   // the panel WS may have loaded it first
+  var overlayUrl = location.origin + '/countdown/overlay';
+  $('u-overlay').textContent = overlayUrl;
+  $('u-overlay').href = overlayUrl;
+});
+$('f-mode').addEventListener('change', reflectMode);
+$('copy-overlay').addEventListener('click', function(){ copyText(location.origin + '/countdown/overlay'); });
+$('save-all').addEventListener('click', saveAll);
+$('t-start').addEventListener('click', function(){ timerAction('start'); });
+$('t-pause').addEventListener('click', function(){ timerAction('pause'); });
+$('t-resume').addEventListener('click', function(){ timerAction('resume'); });
+$('t-reset').addEventListener('click', function(){ timerAction('reset'); });
+connect();
+</script></body></html>

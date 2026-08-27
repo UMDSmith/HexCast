@@ -467,6 +467,9 @@ attach_twitch(app, PORT)
 from ytmusic import attach_ytm
 attach_ytm(app, PORT)
 
+from countdown import attach_countdown
+attach_countdown(app, PORT)
+
 # Discord Reactive is optional: skip quietly if the module file is gone, but
 # say why if it's present and only its dependencies are missing.
 try:

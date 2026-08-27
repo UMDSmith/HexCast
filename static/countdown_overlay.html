@@ -1,0 +1,225 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>HexCast countdown</title>
+<style>
+  html,body{margin:0;padding:0;background:transparent;overflow:hidden;height:100%;width:100%;}
+  /* Fixed 1920x1080 design stage, scaled to fill the browser source so px sizes
+     (font, padding, frame) and % positions scale together at any size. */
+  #stage{ position:absolute; top:0; left:0; width:1920px; height:1080px; transform-origin:top left; }
+
+  /* Background panel layer: its own position/size (or full-screen), carrying the
+     chosen style. Sits behind the digits, exactly like the chat/alert bg box. */
+  #bgbox{
+    position:absolute; box-sizing:border-box; z-index:0; display:none;
+    background-size:cover; background-position:center;
+    border-radius:var(--radius,18px);  /* rounds non-image styles; 9-slice ignores it */
+  }
+  #bgbox.on{ display:block; }
+  /* The digits box: transparent, holds the caption + digits, positioned on its own. */
+  #box{
+    position:absolute; box-sizing:border-box; z-index:1;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:.12em; padding:var(--bg-pad,24px);
+  }
+  #digits{
+    font-family:var(--font), 'Segoe UI', system-ui, sans-serif;
+    font-size:var(--size,120px);
+    font-weight:var(--weight,800);
+    line-height:1.02;
+    letter-spacing:var(--tracking,0px);
+    color:var(--fg,#fff);
+    font-variant-numeric:tabular-nums;
+    -webkit-text-stroke:var(--stroke,0px) var(--stroke-color,#000);
+    paint-order:stroke fill;
+    text-shadow:var(--shadow,none);
+    white-space:nowrap;
+  }
+  #label{
+    font-family:var(--font), 'Segoe UI', system-ui, sans-serif;
+    font-size:var(--label-size,34px);
+    font-weight:600;
+    color:var(--label-color,#b9b9c6);
+    -webkit-text-stroke:var(--stroke,0px) var(--stroke-color,#000);
+    paint-order:stroke fill;
+    text-shadow:var(--shadow,none);
+    white-space:nowrap;
+  }
+  #box.label-below{ flex-direction:column-reverse; }
+
+  /* ---- background styles (mirror the chat/alert bg-* set) ---- */
+  #bgbox.bg-solid{ background:var(--panel-bg); }
+  #bgbox.bg-gradient{ background:linear-gradient(var(--bg-angle,135deg), var(--panel-bg), var(--bg2)); }
+  #bgbox.bg-glass{
+    background:var(--panel-bg);
+    backdrop-filter:blur(var(--bg-blur,8px)) saturate(1.35);
+    -webkit-backdrop-filter:blur(var(--bg-blur,8px)) saturate(1.35);
+    border:1px solid rgba(255,255,255,.14);
+  }
+  #bgbox.bg-frame{ background:var(--panel-bg); border:var(--bg-border-w,2px) solid var(--bg-border,#ff3b30); }
+  #bgbox.bg-glow{
+    background:var(--panel-bg); border:1px solid var(--bg-glow,#ff3b30);
+    box-shadow:0 0 24px var(--bg-glow,#ff3b30), inset 0 0 18px rgba(0,0,0,.35);
+  }
+  #bgbox.bg-image{ background:var(--bg-image,none) center/cover no-repeat, var(--panel-bg); }
+  /* 9-slice frame: corners stay crisp, edges + middle stretch to the box size. */
+  #bgbox.bg-slice{
+    background:var(--panel-bg);
+    border-style:solid;
+    border-width:var(--bg-slice-w,24px);
+    border-image-source:var(--bg-image,none);
+    border-image-slice:var(--bg-slice,32) fill;
+    border-image-width:var(--bg-slice-w,24px);
+    border-image-repeat:var(--bg-slice-repeat,stretch);
+    border-radius:0;
+  }
+</style></head>
+<body>
+<div id="stage">
+  <div id="bgbox"></div>
+  <div id="box">
+    <div id="label"></div>
+    <div id="digits">0:00</div>
+  </div>
+</div>
+<script>
+var stage = document.getElementById('stage');
+var bgbox = document.getElementById('bgbox');
+var box = document.getElementById('box');
+var digitsEl = document.getElementById('digits');
+var labelEl = document.getElementById('label');
+var CFG = null;
+// Anchored timer: we take the server's remaining + running flag and tick locally
+// from a performance.now() anchor, so client/server clock skew never matters.
+var T = { running:false, remaining:0, anchor:0 };
+
+function fitStage(){
+  var s = Math.min(window.innerWidth/1920, window.innerHeight/1080);
+  stage.style.transform = 'scale(' + s + ')';
+}
+window.addEventListener('resize', fitStage);
+fitStage();
+
+function loadFont(name){
+  if(!name) return;
+  var id = 'font-' + name.replace(/[^a-z0-9]/gi,'');
+  if(document.getElementById(id)) return;
+  var l = document.createElement('link');
+  l.id = id; l.rel = 'stylesheet';
+  l.href = 'https://fonts.googleapis.com/css2?family=' +
+           encodeURIComponent(name).replace(/%20/g,'+') +
+           ':wght@400;500;600;700;800;900&display=swap';
+  document.head.appendChild(l);
+}
+function hexToRgba(hex, alpha){
+  var h = String(hex || '#000000').replace('#','');
+  if(h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+  var n = parseInt(h, 16);
+  if(isNaN(n)) return 'rgba(0,0,0,' + alpha + ')';
+  return 'rgba(' + ((n>>16)&255) + ',' + ((n>>8)&255) + ',' + (n&255) + ',' + alpha + ')';
+}
+
+function applyConfig(cfg){
+  CFG = cfg;
+  var r = document.documentElement.style;
+  loadFont(cfg.font_family);
+  r.setProperty('--font', '"' + cfg.font_family + '"');
+  r.setProperty('--size', cfg.font_size + 'px');
+  r.setProperty('--weight', cfg.font_weight);
+  r.setProperty('--tracking', (cfg.letter_spacing || 0) + 'px');
+  r.setProperty('--fg', cfg.text_color);
+  r.setProperty('--label-size', (cfg.label_size || 34) + 'px');
+  r.setProperty('--label-color', cfg.label_color || '#b9b9c6');
+  r.setProperty('--stroke', cfg.outline ? (cfg.outline_width || 0) + 'px' : '0px');
+  r.setProperty('--stroke-color', cfg.outline_color || '#000');
+  r.setProperty('--shadow', cfg.shadow ? '0 2px 8px rgba(0,0,0,.85)' : 'none');
+  r.setProperty('--radius', (cfg.radius == null ? 18 : cfg.radius) + 'px');
+  r.setProperty('--bg-pad', (cfg.bg_pad == null ? 24 : cfg.bg_pad) + 'px');
+  r.setProperty('--panel-bg', hexToRgba(cfg.bubble_color, cfg.bubble_opacity));
+  r.setProperty('--bg2', hexToRgba(cfg.bg_color2 || cfg.bubble_color, cfg.bubble_opacity));
+  r.setProperty('--bg-angle', (cfg.bg_gradient_angle == null ? 135 : cfg.bg_gradient_angle) + 'deg');
+  r.setProperty('--bg-image', cfg.bg_image_url ? 'url("' + String(cfg.bg_image_url).replace(/["\\]/g,'') + '")' : 'none');
+  r.setProperty('--bg-blur', (cfg.bg_blur || 0) + 'px');
+  r.setProperty('--bg-border', cfg.bg_border_color || '#ff3b30');
+  r.setProperty('--bg-glow', cfg.bg_border_color || '#ff3b30');
+  r.setProperty('--bg-border-w', (cfg.bg_border_width || 0) + 'px');
+  r.setProperty('--bg-slice', (cfg.bg_slice == null ? 32 : cfg.bg_slice));
+  r.setProperty('--bg-slice-w', (cfg.bg_slice_width == null ? 24 : cfg.bg_slice_width) + 'px');
+  r.setProperty('--bg-slice-repeat', cfg.bg_slice_repeat || 'stretch');
+
+  // Digits box: its own position/size; always transparent.
+  box.style.left = cfg.box_x + '%'; box.style.top = cfg.box_y + '%';
+  box.style.width = cfg.box_w + '%'; box.style.height = cfg.box_h + '%';
+  box.className = (cfg.label_position === 'below' ? 'label-below' : '');
+
+  // Background box: separate position/size (or full-screen), shown only when a
+  // style other than "none" is chosen.
+  var style = cfg.bg_style || 'none';
+  if(style === 'none'){
+    bgbox.className = '';
+  } else {
+    if(cfg.bg_full){
+      bgbox.style.left = '0'; bgbox.style.top = '0';
+      bgbox.style.width = '100%'; bgbox.style.height = '100%';
+    } else {
+      bgbox.style.left = cfg.bg_box_x + '%'; bgbox.style.top = cfg.bg_box_y + '%';
+      bgbox.style.width = cfg.bg_box_w + '%'; bgbox.style.height = cfg.bg_box_h + '%';
+    }
+    bgbox.className = 'on bg-' + style;
+  }
+
+  labelEl.textContent = cfg.label || '';
+  labelEl.style.display = cfg.label ? '' : 'none';
+  render();
+}
+
+function currentRemaining(){
+  if(!T.running) return T.remaining;
+  return Math.max(0, T.remaining - (performance.now() - T.anchor) / 1000);
+}
+
+function pad(n){ return String(n).padStart(2, '0'); }
+
+function formatTime(total){
+  total = Math.max(0, Math.ceil(total));   // whole seconds, rounding up so 0.4s still reads 1
+  var h = Math.floor(total / 3600);
+  var m = Math.floor((total % 3600) / 60);
+  var s = total % 60;
+  var mode = (CFG && CFG.hours_mode) || 'auto';
+  var showHours = mode === 'always' || (mode !== 'never' && h > 0);
+  if(showHours) return h + ':' + pad(m) + ':' + pad(s);
+  // hours hidden: fold any hours into minutes so time never silently vanishes
+  return (h * 60 + m) + ':' + pad(s);
+}
+
+function render(){
+  if(!CFG){ return; }
+  var rem = currentRemaining();
+  if(rem <= 0 && CFG.finished_text){
+    digitsEl.textContent = CFG.finished_text;
+  } else {
+    digitsEl.textContent = formatTime(rem);
+  }
+}
+
+function onTimer(m){
+  T.running = !!m.running;
+  T.remaining = +m.remaining || 0;
+  T.anchor = performance.now();
+  render();
+}
+
+// Tick a few times a second: cheap, and keeps the seconds crisp.
+setInterval(render, 100);
+
+function connect(){
+  var proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  var ws = new WebSocket(proto + '://' + location.host + '/countdown/ws/overlay');
+  ws.onmessage = function(e){
+    var m; try { m = JSON.parse(e.data); } catch(err){ return; }
+    if(m.type === 'config') applyConfig(m.config);
+    else if(m.type === 'timer') onTimer(m);
+  };
+  ws.onclose = function(){ setTimeout(connect, 1500); };
+  ws.onerror = function(){ try { ws.close(); } catch(err){} };
+}
+connect();
+</script></body></html>

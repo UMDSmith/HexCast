@@ -16,6 +16,7 @@
     { key: 'music',      label: 'Music',      href: '/ytm',    status: '/ytm/api/status' },
     { key: 'discord',    label: 'Discord',    href: '/discord', status: '/discord/api/status' },
     { key: 'clips',      label: 'Clips',      href: '/clips',   status: '/clips/api/status' },
+    { key: 'countdown',  label: 'Countdown',  href: '/countdown', status: '/countdown/api/status' },
     { key: 'help',       label: 'Help',       href: '/help',    nodot: true }
   ];
 
