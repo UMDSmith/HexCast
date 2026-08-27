@@ -48,39 +48,52 @@ Safe ways to run it:
 
 ## Install
 
-### Linux / macOS
+Hexcast is meant to be **double-click-and-go**. You do **not** need to know anything about Python. The launcher (`start.bat` on Windows, `start.sh` on Mac/Linux) checks that everything is in place, sets itself up, downloads what it needs, and tells you in plain English if something's missing — you just run it.
 
-```bash
-git clone https://github.com/UMDSmith/hexcast.git
-cd hexcast
-chmod +x start.sh
-./start.sh
-```
+### Windows — the easy way
 
-`start.sh` creates a venv, installs dependencies, and launches the server. Subsequent runs just launch.
+1. **Install Python** (one time only). Open **https://www.python.org/downloads/**, click the big yellow **Download Python** button, and run the installer. On the first screen, **tick the box that says "Add python.exe to PATH"** — this is the one step that matters — then click **Install Now** and let it finish.
+2. **Get Hexcast.** On [the Hexcast GitHub page](https://github.com/UMDSmith/hexcast), click the green **`< > Code`** button → **Download ZIP**. Then right-click the downloaded file → **Extract All…** → choose a permanent spot like your Documents folder.
+   *(Know git already? `git clone https://github.com/UMDSmith/hexcast.git` also works and makes updating a one-liner.)*
+3. **Run it.** Open the extracted `hexcast` folder and **double-click `start.bat`**. The first launch takes a minute or two while it downloads its components; every launch after that starts in seconds. When the black window shows `Control panel: http://localhost:4747/`, open that address in your browser — that's your control panel.
 
-If you prefer manual setup:
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
+That's the whole thing. Leave the black window open while you stream; close it (or press a key) to stop Hexcast.
+
+> If **Windows SmartScreen** pops up about running a `.bat`, click **More info → Run anyway**. It's just a plain-text launcher — you can open it in Notepad and read it yourself.
+
+**ffmpeg is optional but recommended** — it lets animated GIFs convert and thumbnails generate. You can skip it for now and add it later; Hexcast runs fine without it. See [Installing ffmpeg](#installing-ffmpeg) when you're ready.
+
+### Mac / Linux — the easy way
+
+1. **Install Python 3.10+** if you don't already have it — macOS: `brew install python`; Ubuntu/Debian: `sudo apt install python3 python3-venv`.
+2. **Get Hexcast** (clone, or download + extract the ZIP as above):
+   ```bash
+   git clone https://github.com/UMDSmith/hexcast.git
+   cd hexcast
+   ```
+3. **Run it:**
+   ```bash
+   chmod +x start.sh   # first time only
+   ./start.sh
+   ```
+   It sets everything up on the first run and just starts on later runs. Open `http://localhost:4747/` when it prints the address.
+
+### Advanced / manual setup
+
+The launchers aren't required — if you'd rather manage the environment yourself:
+
+**Windows**
+```cmd
+python -m venv .venv
+.venv\Scripts\activate
 pip install -r requirements.txt
 python hexcast.py
 ```
 
-### Windows
-
-```cmd
-git clone https://github.com/UMDSmith/hexcast.git
-cd hexcast
-start.bat
-```
-
-Or double-click `start.bat` from Explorer.
-
-Manual setup:
-```cmd
-python -m venv .venv
-.venv\Scripts\activate
+**Mac / Linux**
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 python hexcast.py
 ```
@@ -172,31 +185,21 @@ For OBS browser source, use: `http://<your-machine-ip>:4747/overlay`
 
 ## Updating
 
-Updating in place is safe: your library (`media/`) and all settings and secrets (`config/`) are ignored by git, so a pull never touches them.
+Updating is safe: your library (`media/`) and all settings and secrets (`config/`) are ignored by git, so updating never touches them.
 
-**Linux / macOS:**
+**Just get the new files, then run the launcher — it handles the rest.** `start.bat` / `start.sh` now notice when the requirements have changed and re-install what's needed automatically, so there are no manual `pip` commands to remember.
+
+**If you cloned with git:**
 ```bash
-cd hexcast
 git pull
-.venv/bin/pip install -r requirements.txt
-./start.sh
 ```
+then double-click `start.bat` (Windows) or run `./start.sh` (Mac/Linux).
 
-**Windows:**
-```cmd
-cd hexcast
-git pull
-.venv\Scripts\python.exe -m pip install -r requirements.txt
-start.bat
+**If you downloaded the ZIP:** grab the latest ZIP from the green **`< > Code`** button again and extract it over your existing `hexcast` folder (keep your `media/` and `config/` folders), then run the launcher.
+
+All four integrations (Twitch, YouTube Music, Discord, Clips) work straight from the main install — their dependencies are already included. The only separate optional extra is the **"react to real audio" visualiser**, which needs `numpy` + `soundcard`:
 ```
-
-The start scripts install dependencies only on the very first run, so the explicit `pip install` line matters here — new versions can add or change dependencies.
-
-If you use the integrations, refresh their dependencies the same way:
-```
-pip install -r requirements-twitch.txt
-pip install -r requirements-ytm.txt
-pip install -r requirements-discord.txt
+pip install -r requirements-ytm-audio.txt
 ```
 
 **Docker:** pull, rebuild the image, and recreate the container (your media persists in the host mount):
@@ -383,35 +386,17 @@ so a raid or a track change can fire a clip from your library. Both can also
 POST every event to a URL of your choice, if you want a bot or a local model
 reacting to chat and to what you're listening to.
 
-Installing any of them is two lines in `hexcast.py`, after the `/media` mount
-(the Discord and Clips lines already ship in `hexcast.py` and degrade
-gracefully if the module or its dependencies are missing):
+**All four ship enabled out of the box.** They're already wired into
+`hexcast.py` and their dependencies are part of the main install, so there is
+nothing extra to download or edit — just run the launcher. You set each one up
+(sign in / pair) from its own panel in the control panel; see the per-module
+docs linked in the table above.
 
-```python
-from twitch import attach_twitch
-attach_twitch(app, PORT)
-
-from ytmusic import attach_ytm
-attach_ytm(app, PORT)
-
-from discord_reactive import attach_discord
-attach_discord(app, PORT)
-
-from clips import attach_clips
-attach_clips(app, PORT)
-```
-
-Plus their dependencies:
-
-```
-pip install -r requirements-twitch.txt
-pip install -r requirements-ytm.txt
-pip install -r requirements-discord.txt
-```
-
-(The Clips module has no requirements file of its own — it needs `yt-dlp`,
-which is in the main `requirements.txt`; a `yt-dlp` already on your PATH
-works too.)
+*Advanced:* each integration is just two lines in `hexcast.py` after the
+`/media` mount — `from twitch import attach_twitch` then `attach_twitch(app, PORT)`,
+and the same shape for `ytmusic`, `discord_reactive`, and `clips`. Delete a pair
+to disable that module. The only add-on with its own separate dependency is the
+optional "react to real audio" visualiser (`pip install -r requirements-ytm-audio.txt`).
 
 A Twitch, a Music, a Discord, and a Clips button appear in the control panel's
 top bar, each with a status dot showing whether that integration is currently
