@@ -35,6 +35,15 @@ from watchdog.observers import Observer
 # ---- config ----------------------------------------------------------------
 PORT = 4747
 ROOT = Path(__file__).parent
+# Single source of truth for the version, shipped in the repo (and the ZIP) so
+# both clone and download users report the same thing. Bump the VERSION file on
+# each release.
+try:
+    VERSION = (ROOT / "VERSION").read_text(encoding="utf-8").strip() or "dev"
+except OSError:
+    VERSION = "dev"
+# Where the update check looks for the latest published version.
+REMOTE_VERSION_URL = "https://raw.githubusercontent.com/UMDSmith/hexcast/main/VERSION"
 # SOUNDBOARD_MEDIA_DIR lets you point the library anywhere (another drive, shared folder,
 # network mount, etc.) without editing this file. Defaults to ./media next to the script.
 MEDIA_DIR = Path(os.getenv("SOUNDBOARD_MEDIA_DIR", str(ROOT / "media"))).expanduser().resolve()
@@ -443,7 +452,7 @@ async def lifespan(app: FastAPI):
     obs.schedule(WatchHandler(), str(MEDIA_DIR), recursive=True)
     obs.start()
 
-    print(f"\n  ==== Hexcast ====")
+    print(f"\n  ==== Hexcast {VERSION} ====")
     print(f"  Control panel:       http://localhost:{PORT}/")
     print(f"  OBS browser source:  http://localhost:{PORT}/overlay")
     print(f"  Audio root:          {AUDIO_DIR}")
@@ -460,6 +469,40 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 app.mount("/media", StaticFiles(directory=str(MEDIA_DIR)), name="media")
 app.mount("/static", StaticFiles(directory=str(ROOT / "static")), name="static")
+
+
+# ---- version / update check ------------------------------------------------
+# The latest published version is fetched from GitHub at most once an hour and
+# cached, so every panel can show "update available" without hammering anything.
+_version_cache: dict = {"latest": None, "checked_at": 0.0}
+
+
+def _parse_ver(s: str) -> tuple:
+    nums = re.findall(r"\d+", s or "")
+    return tuple(int(n) for n in nums) if nums else (0,)
+
+
+async def _latest_version() -> str | None:
+    now = time.time()
+    if _version_cache["latest"] is not None and now - _version_cache["checked_at"] < 3600:
+        return _version_cache["latest"]
+    _version_cache["checked_at"] = now
+    try:
+        import httpx  # optional at import time; always present via requirements
+        async with httpx.AsyncClient(timeout=4.0) as client:
+            r = await client.get(REMOTE_VERSION_URL)
+            if r.status_code == 200:
+                _version_cache["latest"] = r.text.strip()[:32]
+    except Exception:
+        pass  # offline / rate-limited / no httpx — just report no newer version
+    return _version_cache["latest"]
+
+
+@app.get("/api/version")
+async def api_version():
+    latest = await _latest_version()
+    update = bool(latest and VERSION != "dev" and _parse_ver(latest) > _parse_ver(VERSION))
+    return {"version": VERSION, "latest": latest, "update_available": update}
 
 from twitch import attach_twitch
 attach_twitch(app, PORT)

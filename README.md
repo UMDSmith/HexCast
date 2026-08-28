@@ -189,6 +189,8 @@ Updating is safe: your library (`media/`) and all settings and secrets (`config/
 
 **Just get the new files, then run the launcher — it handles the rest.** `start.bat` / `start.sh` now notice when the requirements have changed and re-install what's needed automatically, so there are no manual `pip` commands to remember.
 
+The top bar of every panel shows your version (e.g. `v1.1.0`); when a newer release is out it turns green and reads `• update` — that's your cue to update. Click it to open the repo.
+
 **If you cloned with git:**
 ```bash
 git pull

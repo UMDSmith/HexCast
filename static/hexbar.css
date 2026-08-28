@@ -73,6 +73,16 @@
 
 .hb-spacer{ flex:1 1 auto; }
 
+/* --- version / update chip --------------------------------------------- */
+.hb-ver{
+  font:600 11px/1 var(--hb-mono); letter-spacing:.04em;
+  color:var(--hb-dim); text-decoration:none; white-space:nowrap;
+  padding:6px 9px; border-radius:99px; border:1px solid transparent;
+  transition:color .15s ease, border-color .15s ease, background .15s ease;
+}
+.hb-ver:hover{ color:var(--hb-ink); }
+.hb-ver.has-update{ color:var(--hb-good); border-color:#1d4d33; background:#0e2118; }
+
 /* --- slot for whatever the page already had in its top bar -------------- */
 .hb-actions{ display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
 

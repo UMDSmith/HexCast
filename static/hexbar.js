@@ -46,6 +46,7 @@
       : '') +
     '<nav class="hb-nav">' + nav + '</nav>' +
     '<span class="hb-spacer"></span>' +
+    '<a class="hb-ver" id="hb-ver" href="https://github.com/UMDSmith/hexcast" target="_blank" rel="noopener"></a>' +
     '<div class="hb-actions" id="hb-actions"></div>';
 
   // Relocate the page's own buttons into the bar, keeping their handlers.
@@ -59,6 +60,26 @@
   // The soundboard is whatever is serving this page, so it is always up.
   var sbDot = document.getElementById('hb-dot-soundboard');
   if (sbDot) { sbDot.classList.add('on'); sbDot.parentNode.title = 'Soundboard'; }
+
+  // Version chip: show the running version, and flag when a newer one exists.
+  // The server does the (cached) GitHub check, so this is one cheap local call.
+  var verEl = document.getElementById('hb-ver');
+  if (verEl) {
+    fetch('/api/version')
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (v) {
+        if (!v) { verEl.style.display = 'none'; return; }
+        verEl.textContent = 'v' + v.version;
+        if (v.update_available) {
+          verEl.textContent = 'v' + v.version + ' • update';
+          verEl.classList.add('has-update');
+          verEl.title = 'Update available: v' + v.latest + ' — click to open the Hexcast repo';
+        } else {
+          verEl.title = 'Hexcast v' + v.version + (v.latest ? ' (up to date)' : '');
+        }
+      })
+      .catch(function () { verEl.style.display = 'none'; });
+  }
 
   function setDot(key, on, warn, title) {
     var dot = document.getElementById('hb-dot-' + key);
