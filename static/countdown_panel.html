@@ -109,6 +109,26 @@
   </div>
 
   <div class="card">
+    <h2>Media cue</h2>
+    <p class="hint">Auto-fire a soundboard clip so it <b>ends</b> at a chosen point in the countdown — e.g. intro music that finishes exactly at 0:00. The server reads the clip's (trimmed) length and works backwards to start it on time. Armed when you press <b>Start</b> (or on autostart).</p>
+    <label class="f sw"><input type="checkbox" id="f-media_enabled"> Fire a soundboard clip on this countdown</label>
+    <div class="grid" style="margin-top:14px">
+      <label class="f">Library
+        <select id="f-media_kind">
+          <option value="audio">Audio</option>
+          <option value="video">Video</option>
+        </select>
+      </label>
+      <label class="f">Clip
+        <select id="f-media_name"><option value="">— none —</option></select>
+      </label>
+      <label class="f">End with … seconds left
+        <input type="number" id="f-media_end_offset" min="0" max="86399" step="1" value="0">
+      </label>
+    </div>
+  </div>
+
+  <div class="card">
     <h2>Text &amp; format</h2>
     <div class="grid" id="g-text"></div>
   </div>
@@ -212,6 +232,35 @@ async function bgDelete(url){
     refreshBgSelects({removed: url});
     toast('Deleted ' + name);
   }catch(e){ toast('Delete failed'); }
+}
+
+/* ---------- soundboard media library ----------
+   The media cue plays a clip from the shared soundboard (hexcast.py). We pull
+   the available names from /api/list and let the server handle trim/volume/
+   cooldown + the backwards-timing when it fires. */
+var MEDIA = { audio: [], video: [] };
+async function loadMediaLibrary(){
+  try{ var d = await (await fetch('/api/list')).json();
+       MEDIA = { audio: d.audio || [], video: d.video || [] }; }
+  catch(e){ MEDIA = { audio: [], video: [] }; }
+}
+function fillClipOptions(val){
+  var sel = $('f-media_name'); if(!sel) return;
+  var kind = ($('f-media_kind') && $('f-media_kind').value) || 'audio';
+  var list = MEDIA[kind] || [];
+  sel.innerHTML = '';
+  var none = document.createElement('option'); none.value = ''; none.textContent = '— none —';
+  sel.appendChild(none);
+  var found = false;
+  list.forEach(function(name){
+    var o = document.createElement('option'); o.value = name; o.textContent = name;
+    if(name === val){ o.selected = true; found = true; }
+    sel.appendChild(o);
+  });
+  if(!found && val){   // keep a saved clip usable even if it's missing / other kind
+    var o = document.createElement('option'); o.value = val; o.textContent = val + ' (not in this library)'; o.selected = true;
+    sel.appendChild(o);
+  }
 }
 
 // ---- field descriptors -------------------------------------------------
@@ -390,6 +439,12 @@ function loadConfig(cfg){
   $('dur-m').value = Math.floor((total%3600)/60);
   $('dur-s').value = total%60;
   $('f-target_time').value = (cfg.target_time || '22:00:00').slice(0,8);
+  // media cue: set kind/offset/enable now, then fill the clip list from /api/list
+  $('f-media_enabled').checked = !!cfg.media_enabled;
+  $('f-media_kind').value = cfg.media_kind || 'audio';
+  $('f-media_end_offset').value = Math.max(0, parseInt(cfg.media_end_offset, 10) || 0);
+  fillClipOptions(cfg.media_name || '');   // provisional (pre-library) so a saved value shows
+  loadMediaLibrary().then(function(){ fillClipOptions(cfg.media_name || ''); });
   reflectMode();
   initPlacement();
   // Wire the shared background-library buttons, then pull the current library so
@@ -409,6 +464,10 @@ function collectConfig(){
                          (parseInt($('dur-m').value,10)||0)*60 +
                          (parseInt($('dur-s').value,10)||0);
   out.target_time = $('f-target_time').value || '22:00:00';
+  out.media_enabled = $('f-media_enabled').checked;
+  out.media_kind = $('f-media_kind').value || 'audio';
+  out.media_name = $('f-media_name').value || '';
+  out.media_end_offset = Math.max(0, parseInt($('f-media_end_offset').value, 10) || 0);
   out.box_x = Math.round(PLACE.box_x); out.box_y = Math.round(PLACE.box_y);
   out.box_w = Math.round(PLACE.box_w); out.box_h = Math.round(PLACE.box_h);
   out.bg_full = $('pl-bgfull').checked;
@@ -497,6 +556,7 @@ fetch('/countdown/api/config').then(function(r){ return r.json(); }).then(functi
   $('u-overlay').href = overlayUrl;
 });
 $('f-mode').addEventListener('change', reflectMode);
+$('f-media_kind').addEventListener('change', function(){ fillClipOptions($('f-media_name').value); });
 $('copy-overlay').addEventListener('click', function(){ copyText(location.origin + '/countdown/overlay'); });
 $('save-all').addEventListener('click', saveAll);
 $('t-start').addEventListener('click', function(){ timerAction('start'); });

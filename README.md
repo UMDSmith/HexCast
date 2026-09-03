@@ -38,7 +38,7 @@ Safe ways to run it:
 - **Edit Mode** for tuning, **Delete Mode** for cleanup — no manual filesystem digging
 - **Bot API**: trigger anything by name via a simple HTTP GET, no auth needed (designed for trusted LAN)
 - **⏹ Stop All** panic button to clear every visual and stop every playing sound at once
-- **Optional integrations**: Twitch chat and alert overlays, a now-playing overlay for the [YouTube Music Desktop App](https://ytmdesktop.github.io/), a Discord voice-reactive overlay, and a Twitch clip player with a bot-drivable queue — see [Integrations](#integrations)
+- **Optional integrations**: Twitch chat and alert overlays, a now-playing overlay for the [YouTube Music Desktop App](https://ytmdesktop.github.io/), a Discord voice-reactive overlay, a Twitch clip player with a bot-drivable queue, and a countdown timer overlay that can fire a soundboard clip to end exactly at zero — see [Integrations](#integrations)
 
 ## Prerequisites
 
@@ -199,7 +199,7 @@ then double-click `start.bat` (Windows) or run `./start.sh` (Mac/Linux).
 
 **If you downloaded the ZIP:** grab the latest ZIP from the green **`< > Code`** button again and extract it over your existing `hexcast` folder (keep your `media/` and `config/` folders), then run the launcher.
 
-All four integrations (Twitch, YouTube Music, Discord, Clips) work straight from the main install — their dependencies are already included. The only separate optional extra is the **"react to real audio" visualiser**, which needs `numpy` + `soundcard`:
+All five integrations (Twitch, YouTube Music, Discord, Clips, Countdown) work straight from the main install — their dependencies are already included. The only separate optional extra is the **"react to real audio" visualiser**, which needs `numpy` + `soundcard`:
 ```
 pip install -r requirements-ytm-audio.txt
 ```
@@ -371,7 +371,7 @@ If you'd rather drive it from your own bot instead, the generic API still works:
 
 ## Integrations
 
-Four optional modules ship alongside the soundboard. All are self-contained:
+Five optional modules ship alongside the soundboard. All are self-contained:
 each is a single Python file plus its own pages in `static/`, each namespaces
 all of its routes, and none changes how the soundboard behaves. Install
 any combination, or none.
@@ -382,13 +382,15 @@ any combination, or none.
 | **YouTube Music Desktop** | Now-playing overlay with album art, live progress, audio visualiser, optional embedded music video. Requires the [YouTube Music Desktop App](https://ytmdesktop.github.io/) — it pairs with that app's companion API, not with YouTube Music directly | [docs/music.md](docs/music.md) |
 | **Discord** | Voice-reactive overlay: everyone in your current voice channel appears in OBS, lighting up as they speak — Discord avatars or custom PNGTuber-style idle/talking image pairs. Talks to the Discord desktop app's local RPC; no bot needed | [docs/discord.md](docs/discord.md) |
 | **Clips** | Queue up Twitch clip/VOD links (paste one URL or a whole blob of chat), then fire them one at a time at a full-window overlay — no auto-advance. Direct MP4/HLS playback via yt-dlp with optional pre-download; bots trigger items by number over a simple GET API | [docs/clips.md](docs/clips.md) |
+| **Countdown** | Fully styleable countdown timer overlay — count down a duration or to a clock time, positioned on a 1920×1080 stage like the chat window. A **media cue** can fire any soundboard clip timed to end exactly at a chosen point in the countdown (e.g. intro music finishing at 0:00) | [docs/countdown.md](docs/countdown.md) |
 
-Twitch and Music both hook into the existing `GET /api/play/{name}` endpoint,
-so a raid or a track change can fire a clip from your library. Both can also
-POST every event to a URL of your choice, if you want a bot or a local model
-reacting to chat and to what you're listening to.
+Twitch, Music, and Countdown all hook into the existing soundboard play
+endpoint, so a raid, a track change, or a countdown cue can fire a clip from
+your library. Twitch and Music can also POST every event to a URL of your
+choice, if you want a bot or a local model reacting to chat and to what
+you're listening to.
 
-**All four ship enabled out of the box.** They're already wired into
+**All five ship enabled out of the box.** They're already wired into
 `hexcast.py` and their dependencies are part of the main install, so there is
 nothing extra to download or edit — just run the launcher. You set each one up
 (sign in / pair) from its own panel in the control panel; see the per-module
@@ -396,13 +398,13 @@ docs linked in the table above.
 
 *Advanced:* each integration is just two lines in `hexcast.py` after the
 `/media` mount — `from twitch import attach_twitch` then `attach_twitch(app, PORT)`,
-and the same shape for `ytmusic`, `discord_reactive`, and `clips`. Delete a pair
-to disable that module. The only add-on with its own separate dependency is the
+and the same shape for `ytmusic`, `discord_reactive`, `clips`, and `countdown`.
+Delete a pair to disable that module. The only add-on with its own separate dependency is the
 optional "react to real audio" visualiser (`pip install -r requirements-ytm-audio.txt`).
 
-A Twitch, a Music, a Discord, and a Clips button appear in the control panel's
-top bar, each with a status dot showing whether that integration is currently
-connected.
+A Twitch, a Music, a Discord, a Clips, and a Countdown button appear in the
+control panel's top bar, each with a status dot showing whether that
+integration is currently connected.
 
 **These carry the same security caveat as everything else here, and then
 some** — the Twitch module stores an OAuth token and a client secret, the
@@ -432,6 +434,7 @@ hexcast/
 ├── ytmusic.py               # optional YouTube Music integration
 ├── discord_reactive.py      # optional Discord voice-reactive integration
 ├── clips.py                 # optional Twitch clip player integration
+├── countdown.py             # optional countdown timer integration
 ├── static/
 │   ├── control.html         # control panel UI (HTML + CSS + JS)
 │   ├── overlay.html         # OBS browser-source overlay
@@ -444,12 +447,15 @@ hexcast/
 │   ├── discord_panel.html   # Discord settings panel
 │   ├── discord_overlay.html # Discord voice-reactive overlay
 │   ├── clips_panel.html     # Clips queue + transport panel
-│   └── clips_overlay.html   # Clips player overlay
+│   ├── clips_overlay.html   # Clips player overlay
+│   ├── countdown_panel.html # Countdown settings panel
+│   └── countdown_overlay.html # Countdown timer overlay
 ├── docs/
 │   ├── twitch.md
 │   ├── music.md
 │   ├── discord.md
-│   └── clips.md
+│   ├── clips.md
+│   └── countdown.md
 ├── config/                  # tokens and integration settings (gitignored)
 ├── requirements.txt
 ├── requirements-twitch.txt

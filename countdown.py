@@ -25,13 +25,16 @@ matters. Resolution is to the second; no finer.
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import json
 import os
 import time
+import urllib.parse
 from pathlib import Path
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 
@@ -66,6 +69,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "duration_seconds": 300,       # used in duration mode
     "target_time": "22:00:00",     # HH:MM[:SS], server-local, used in target mode
     "autostart": False,            # start ticking as soon as an overlay connects
+
+    # --- media cue ---
+    # Auto-fire a soundboard clip so it ENDS at a chosen point in the countdown.
+    # The server reads the clip's playable length and works backwards to trigger
+    # the start on time, so (e.g.) intro music can finish exactly at 0:00.
+    "media_enabled": False,        # arm the cue
+    "media_kind": "audio",         # "audio" | "video"  (which soundboard library)
+    "media_name": "",              # clip name ("" = none)
+    "media_end_offset": 0,         # seconds remaining on the countdown when the clip should END (0 = at 0:00)
 
     # --- text / format ---
     "label": "",                   # optional caption shown with the digits ("" = none)
@@ -144,6 +156,132 @@ CONFIG = load_config()
 # --------------------------------------------------------------------------
 
 TIMER: dict[str, Any] = {"running": False, "ends_at": None, "remaining": None}
+
+# --------------------------------------------------------------------------
+# media cue state (in-memory)
+# --------------------------------------------------------------------------
+# The cue talks to the soundboard's own /index and /api/play routes, so it stays
+# decoupled from hexcast's internals and honours the clip's saved trim/volume/
+# cooldown. It calls the FastAPI app DIRECTLY in-process (ASGITransport) rather
+# than over 127.0.0.1 - a loopback socket can be hijacked by port forwards
+# (e.g. VS Code Remote-SSH auto-forwarding 4747), which silently routes the
+# trigger to a different hexcast instance.
+_PORT: int = 4747
+_APP = None                               # FastAPI app, set by attach_countdown()
+MEDIA_TASK: asyncio.Task | None = None   # the pending "trigger at start_epoch" task
+MEDIA_FIRED: bool = False                 # guard so a single run fires the clip once
+
+
+def _client() -> httpx.AsyncClient:
+    if _APP is not None:
+        return httpx.AsyncClient(transport=httpx.ASGITransport(app=_APP),
+                                 base_url="http://hexcast.internal", timeout=5)
+    # Fallback if attach_countdown() never ran (shouldn't happen in practice).
+    return httpx.AsyncClient(base_url=f"http://127.0.0.1:{_PORT}", timeout=5)
+
+
+async def _clip_play_seconds(kind: str, name: str) -> float | None:
+    """Playable length (seconds) of a soundboard clip, honouring its saved trim.
+
+    Reads the soundboard's own /index so we never touch hexcast internals. The
+    playable span is (end or natural duration) - start. Returns None if the clip
+    can't be found or carries no duration (e.g. a static image)."""
+    try:
+        async with _client() as c:
+            r = await c.get("/index")
+            r.raise_for_status()
+            idx = r.json()
+    except Exception:
+        return None
+    nl = (name or "").strip().lower()
+    if not nl:
+        return None
+    for item in idx.get(kind, []) or []:
+        if str(item.get("name", "")).lower() == nl or str(item.get("file", "")).lower() == nl:
+            start = float(item.get("start") or 0.0)
+            end = item.get("end")
+            span_end = float(end) if end is not None else item.get("duration")
+            if span_end is None:
+                return None
+            return max(0.0, float(span_end) - start)
+    return None
+
+
+async def _fire_media_clip() -> None:
+    """Trigger the armed soundboard clip via its public /api/play endpoint."""
+    kind = str(CONFIG.get("media_kind", "audio"))
+    name = str(CONFIG.get("media_name", "")).strip()
+    if not name:
+        return
+    url = f"/api/play/{kind}/{urllib.parse.quote(name)}"
+    try:
+        async with _client() as c:
+            r = await c.get(url)
+            print(f"[countdown cue] /api/play -> {r.status_code} {r.text[:200]}", flush=True)
+    except Exception as exc:
+        print(f"[countdown cue] /api/play failed: {exc}", flush=True)
+
+
+async def _media_runner(delay: float) -> None:
+    """Sleep until the computed start moment, then fire the clip once."""
+    global MEDIA_FIRED
+    try:
+        if delay > 0:
+            await asyncio.sleep(delay)
+        # The world may have changed while we slept: only fire if the cue is still
+        # armed, the timer is still running, and we haven't already fired.
+        if MEDIA_FIRED or not TIMER["running"] or not CONFIG.get("media_enabled"):
+            print(f"[countdown cue] not firing: fired={MEDIA_FIRED} "
+                  f"running={TIMER['running']} enabled={CONFIG.get('media_enabled')}", flush=True)
+            return
+        MEDIA_FIRED = True
+        print(f"[countdown cue] FIRING {CONFIG.get('media_kind')}/{CONFIG.get('media_name')!r}", flush=True)
+        await _fire_media_clip()
+    except asyncio.CancelledError:
+        pass
+
+
+def _cancel_media_cue() -> None:
+    global MEDIA_TASK
+    if MEDIA_TASK is not None and not MEDIA_TASK.done():
+        MEDIA_TASK.cancel()
+    MEDIA_TASK = None
+
+
+async def _schedule_media_cue(reset_fired: bool = True) -> None:
+    """Arm (or re-arm) the media cue against the current running timer.
+
+    The clip should END at `media_end_offset` seconds remaining, so we start it
+    `clip_length` earlier: start_epoch = ends_at - end_offset - clip_length.
+    If that moment is already past (clip longer than the time left), the runner
+    fires immediately as a best effort. Cancels any previously pending cue."""
+    global MEDIA_TASK, MEDIA_FIRED
+    _cancel_media_cue()
+    if reset_fired:
+        MEDIA_FIRED = False
+    if MEDIA_FIRED:
+        print("[countdown cue] skip: already fired this run", flush=True)
+        return
+    if not CONFIG.get("media_enabled") or not str(CONFIG.get("media_name", "")).strip():
+        print(f"[countdown cue] skip: disabled or no clip "
+              f"(enabled={CONFIG.get('media_enabled')}, name={CONFIG.get('media_name')!r})", flush=True)
+        return
+    if not TIMER["running"] or TIMER["ends_at"] is None:
+        print("[countdown cue] skip: timer not running", flush=True)
+        return
+    kind = str(CONFIG.get("media_kind", "audio"))
+    name = str(CONFIG.get("media_name", ""))
+    clip_len = await _clip_play_seconds(kind, name)
+    if clip_len is None:
+        print(f"[countdown cue] skip: no playable length for {kind}/{name!r} "
+              f"(clip missing from /index or no duration)", flush=True)
+        return
+    end_offset = float(CONFIG.get("media_end_offset", 0) or 0)
+    start_epoch = float(TIMER["ends_at"]) - end_offset - clip_len
+    delay = start_epoch - time.time()
+    print(f"[countdown cue] armed: {kind}/{name!r} len={clip_len:.2f}s "
+          f"end_offset={end_offset:.0f}s -> fires in {delay:.2f}s", flush=True)
+    MEDIA_TASK = asyncio.create_task(_media_runner(delay))
 
 
 def _target_epoch(hhmmss: str) -> float:
@@ -290,6 +428,14 @@ async def api_timer(request: Request):
     if action not in ("start", "pause", "resume", "reset"):
         return JSONResponse({"error": "unknown action"}, status_code=400)
     _apply_action(action, body)
+    # Arm the media cue on a fresh start, re-arm (without re-firing) on resume,
+    # and tear it down on pause/reset.
+    if action == "start":
+        await _schedule_media_cue(reset_fired=True)
+    elif action == "resume":
+        await _schedule_media_cue(reset_fired=False)
+    else:  # pause | reset
+        _cancel_media_cue()
     await HUB.broadcast_timer()
     return {"ok": True, "timer": timer_snapshot()}
 
@@ -303,6 +449,7 @@ async def ws_overlay(ws: WebSocket):
         # Optionally kick off the countdown the moment the overlay appears.
         if CONFIG.get("autostart") and not TIMER["running"]:
             _apply_action("start", {})
+            await _schedule_media_cue(reset_fired=True)
         await ws.send_text(json.dumps({"type": "timer", **timer_snapshot()}))
         while True:
             await ws.receive_text()
@@ -333,6 +480,9 @@ async def ws_panel(ws: WebSocket):
 
 def attach_countdown(app, port: int = 4747) -> None:
     """Mount the Countdown routes onto an existing FastAPI app."""
+    global _PORT, _APP
+    _PORT = port
+    _APP = app
     app.include_router(router)
     print(f"  Countdown panel:     http://localhost:{port}/countdown", flush=True)
     print(f"  Countdown source:    http://localhost:{port}/countdown/overlay", flush=True)

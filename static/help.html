@@ -43,6 +43,7 @@
   <a href="#shoutout">Shoutouts (!so)</a>
   <a href="#music">Music</a>
   <a href="#discord">Discord</a>
+  <a href="#countdown">Countdown</a>
   <a href="#notes">Browser notes</a>
 </div>
 
@@ -181,6 +182,31 @@ curl http://localhost:4747/clips/api/play/next</pre>
     <code>name_color</code>, <code>shape</code>, <code>dim</code>, <code>dim_pairs</code>,
     <code>desaturate</code>, <code>bounce</code>, <code>hide_muted</code>, <code>mute_badge</code> —
     booleans take 0/1, e.g. <code>/discord/overlay?layout=column&amp;size=96&amp;show_names=0</code>.</p>
+</div>
+</section>
+
+<section id="countdown">
+<div class="card">
+  <h2>Countdown <span class="tag">/countdown</span></h2>
+  <p class="hint">Styleable countdown timer overlay — count down a fixed duration or to a clock
+    time. The server owns the remaining time and streams it to the overlay, so clock skew never
+    matters. A <b>media cue</b> can fire any soundboard clip timed to <b>end</b> at a chosen point
+    in the countdown (e.g. intro music finishing exactly at 0:00) — the clip plays on the
+    soundboard overlay, honouring its saved trim/volume/cooldown, so keep both browser sources in
+    the scene.</p>
+  <table class="api">
+    <tr><td>GET /countdown/api/status</td><td>connected overlay count + timer snapshot</td></tr>
+    <tr><td>GET /countdown/api/config</td><td>full config as JSON</td></tr>
+    <tr><td>POST /countdown/api/config</td><td>merge-and-save any subset of config keys</td></tr>
+    <tr><td>POST /countdown/api/timer</td><td><code>{"action": "start"}</code> — also <code>pause</code>, <code>resume</code>, <code>reset</code>; start accepts an optional <code>"seconds"</code> for an ad-hoc duration</td></tr>
+  </table>
+  <h3>Media cue config keys</h3>
+  <p class="hint"><code>media_enabled</code> (bool), <code>media_kind</code>
+    (<code>audio</code> | <code>video</code>), <code>media_name</code> (clip name),
+    <code>media_end_offset</code> (seconds remaining when the clip should end; <code>0</code> = at
+    zero). Read when the timer starts — pause cancels the pending cue, resume re-arms it.</p>
+  <pre>curl -X POST http://localhost:4747/countdown/api/timer -H "Content-Type: application/json" -d "{\"action\":\"start\",\"seconds\":90}"
+curl -X POST http://localhost:4747/countdown/api/config -H "Content-Type: application/json" -d "{\"media_enabled\":true,\"media_kind\":\"audio\",\"media_name\":\"intro\"}"</pre>
 </div>
 </section>
 
