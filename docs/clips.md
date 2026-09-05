@@ -121,6 +121,24 @@ retries through the official iframe embed (`clips.twitch.tv/embed` /
 
 ---
 
+## Channel credit
+
+The overlay can draw an attribution label over the playing clip showing where
+it came from — `twitch.tv/channelname` for Twitch clips and VODs (the
+broadcaster, not whoever made the clip), `youtube.com/@handle` for YouTube,
+the uploader or site name for generic media. The channel is pulled from
+yt-dlp's metadata when the item resolves; shoutout clips know their channel
+immediately.
+
+Configure it on the Settings tab: an on/off toggle, an optional clip-title
+line, font family (Google Fonts names load automatically), size, color and a
+drop shadow. Placement works like the soundboard's edit mode — drag the label
+around a 16:9 preview canvas (center-anchored `x`/`y` percentages) or use the
+3×3 quick-position pad. Everything lives under `settings.credit` in
+`config/clips.json` and applies to the live overlay the moment you save.
+
+---
+
 ## Bot / HTTP API
 
 All endpoints are GET-friendly and return `{"ok": true, ...}` or
@@ -136,6 +154,8 @@ exact clip slug, or `next` (the first still-queued item).
 | `GET /clips/api/status` | player state, current item, queue counts |
 | `GET /clips/api/remove/{ref}` | remove an item (`DELETE /clips/api/queue/{ref}` also works) |
 | `POST /clips/api/reset_numbers` | renumber the queue 1..N and restart the counter |
+| `POST /clips/api/update_ytdlp` | upgrade yt-dlp in place (pip for the bundled module, `-U` for a standalone binary) |
+| `POST /clips/api/cookies` | body `{"browser": "firefox"}` / `"chrome"` / `""` — use that browser's logged-in session for this server session only (never persisted) |
 | `GET /clips/api/shoutout/{channel}?count=2` | play random clips from that Twitch channel back to back, ephemerally (nothing queued or saved) — this is what the Twitch module's `!so` command uses |
 
 Examples:
@@ -155,8 +175,8 @@ So a channel-point redeem or a `!playclip 7` chat command is one HTTP call.
 
 Everything persists in `config/clips.json` — settings, the number counter,
 and the queue itself (each entry: id, num, url, kind `clip|vod`, title,
-duration, thumbnail, status `queued|played`, start offset, error, source
-`manual|api`). Cached clip MP4s live in `media/clips/` and are served through
+channel + credit (the attribution label), duration, thumbnail, status
+`queued|played`, start offset, error, source `manual|api`). Cached clip MP4s live in `media/clips/` and are served through
 the existing `/media` mount; they're deleted when their queue item is removed
 or cleared.
 
@@ -183,6 +203,17 @@ out-of-scope. Expect these to need the fallback, or to fail entirely.
 **Clip plays but there's no audio in the stream.** Check the browser source's
 audio routing in OBS (Advanced Audio Properties), and the master volume on
 the panel's Settings tab.
+
+**YouTube items suddenly error (but Twitch works).** YouTube changes
+constantly and old yt-dlp builds stop working — hit **Update yt-dlp** on the
+Settings tab first. If an up-to-date yt-dlp is still refused ("Sign in to
+confirm you're not a bot", age-restricted or members-only videos), enable
+**Browser session cookies** on the same tab: yt-dlp reads your logged-in
+session straight from the Firefox or Chrome profile on the machine running
+Hexcast, at play time. Nothing is copied or stored — the choice lives in
+memory only and resets to anonymous when Hexcast restarts. Note that recent
+Chrome versions encrypt their cookies while Chrome is running; if the Chrome
+option errors, close Chrome fully and retry, or use Firefox.
 
 **Old clips error with "no longer available".** Twitch deletes clips; the
 error badge shows exactly what yt-dlp reported. Remove the row.

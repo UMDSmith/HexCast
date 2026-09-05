@@ -11,6 +11,16 @@
     position:absolute; inset:0; width:100vw; height:100vh; border:0; display:block;
     object-fit:contain; background:transparent;
   }
+  /* Channel credit: where the clip came from, drawn over the video. Lives
+     outside #stage so clearStage()'s innerHTML wipe never removes it.
+     Center-anchored x/y like the soundboard's positioned visuals. */
+  #credit {
+    position:fixed; transform:translate(-50%,-50%); z-index:2; display:none;
+    text-align:center; white-space:nowrap; pointer-events:none;
+    font-family:'Segoe UI',system-ui,sans-serif; font-weight:600; color:#fff;
+  }
+  #credit .t { display:block; font-weight:700; opacity:.92; }
+  #credit .c { display:block; }
   /* Only ever shown in a normal browser tab when Chrome blocks unmuted
      autoplay - OBS's browser source never triggers it. */
   #mutehint {
@@ -22,12 +32,53 @@
 </style></head>
 <body>
 <div id="stage"></div>
+<div id="credit"><span class="t"></span><span class="c"></span></div>
 <script>
 var stage = document.getElementById('stage');
 var current = null;       // {id, el, mode, hls}
 var volume = 1.0;
 var hbTimer = null;
 var hlsLib = null;        // promise for the hls.js script load
+var creditEl = document.getElementById('credit');
+var creditCfg = null;     // settings().credit from config broadcasts
+var creditItem = null;    // the playing item (carries .credit / .title)
+
+function loadFont(name){
+  if (!name) return;
+  var id = 'font-' + name.replace(/[^a-z0-9]/gi,'');
+  if (document.getElementById(id)) return;
+  var l = document.createElement('link');
+  l.id = id; l.rel = 'stylesheet';
+  l.href = 'https://fonts.googleapis.com/css2?family=' +
+           encodeURIComponent(name).replace(/%20/g,'+') +
+           ':wght@400;500;600;700;800;900&display=swap';
+  document.head.appendChild(l);
+}
+
+function applyCredit(){
+  var c = creditCfg;
+  var chan  = (creditItem && creditItem.credit) || '';
+  var title = (c && c.show_title && creditItem && creditItem.title) || '';
+  if (!c || !c.enabled || (!chan && !title)){ creditEl.style.display = 'none'; return; }
+  if (c.font_family){
+    loadFont(c.font_family);
+    creditEl.style.fontFamily = '"' + c.font_family + '", "Segoe UI", system-ui, sans-serif';
+  } else creditEl.style.fontFamily = '';
+  // px sizes are designed against a 1920-wide canvas, scaled to the actual
+  // browser-source width so the label keeps its proportions at any size.
+  var scale = (window.innerWidth / 1920) || 1;
+  creditEl.style.fontSize = ((c.font_size || 30) * scale) + 'px';
+  creditEl.style.color = c.color || '#fff';
+  creditEl.style.textShadow = (c.shadow === false)
+      ? 'none' : '0 2px 8px rgba(0,0,0,.85), 0 0 2px rgba(0,0,0,.9)';
+  creditEl.style.left = (c.x == null ? 50 : c.x) + '%';
+  creditEl.style.top  = (c.y == null ? 92 : c.y) + '%';
+  var t = creditEl.querySelector('.t'), ch = creditEl.querySelector('.c');
+  t.textContent = title;  t.style.display  = title ? '' : 'none';
+  ch.textContent = chan;  ch.style.display = chan ? '' : 'none';
+  creditEl.style.display = 'block';
+}
+window.addEventListener('resize', applyCredit);
 
 function send(msg){
   if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg));
@@ -41,6 +92,8 @@ function clearStage(){
   }
   current = null;
   stage.innerHTML = '';
+  creditItem = null;
+  applyCredit();
   var hint = document.getElementById('mutehint');
   if (hint) hint.parentNode.removeChild(hint);
 }
@@ -87,6 +140,8 @@ function play(msg){
   var src = msg.src || {};
   var id = msg.item && msg.item.id;
   volume = (msg.volume === undefined) ? volume : msg.volume;
+  creditItem = msg.item || null;
+  applyCredit();
 
   if (src.mode === 'iframe') {
     var host = location.hostname || 'localhost';
@@ -199,6 +254,8 @@ function connect(){
       volume = (m.config && m.config.volume !== undefined) ? m.config.volume : volume;
       if (current && current.el.tagName === 'VIDEO')
         current.el.volume = Math.max(0, Math.min(1, volume));
+      creditCfg = (m.config && m.config.credit) || creditCfg;
+      applyCredit();
     }
   };
   ws.onclose = function(){ setTimeout(connect, 1000); };

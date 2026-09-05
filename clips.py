@@ -106,6 +106,20 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "iframe_fallback": True,
     # Master volume applied by the overlay (0.0 - 1.0).
     "volume": 1.0,
+    # Attribution label drawn over the playing clip: where it came from
+    # ("twitch.tv/channelname", "youtube.com/@handle"), pulled from yt-dlp
+    # metadata at resolve time. Positioned like the soundboard's edit mode:
+    # center-anchored x/y in % of a 1920x1080 canvas.
+    "credit": {
+        "enabled": False,
+        "show_title": False,
+        "font_family": "",      # blank = the overlay default (Segoe UI)
+        "font_size": 30,
+        "color": "#ffffff",
+        "shadow": True,
+        "x": 50.0,
+        "y": 92.0,
+    },
 }
 
 
@@ -153,6 +167,11 @@ class State:
     def __init__(self) -> None:
         self.started = False
         self.ytdlp_version = ""
+        # "" | "firefox" | "chrome". Session-only by design: yt-dlp reads the
+        # user's logged-in cookies straight out of the browser profile at call
+        # time (--cookies-from-browser); nothing is copied or persisted, and a
+        # restart always comes back up anonymous.
+        self.cookies_browser = ""
         self.log: list[str] = []
 
     def note(self, msg: str) -> None:
@@ -226,6 +245,7 @@ def status_snapshot() -> dict:
         "queued": sum(1 for e in q if e.get("status") == "queued"),
         "played": sum(1 for e in q if e.get("status") == "played"),
         "total": len(q),
+        "cookies_browser": STATE.cookies_browser,
         "log": STATE.log[-25:],
     }
 
@@ -419,6 +439,8 @@ def add_links(links: list[dict], source: str) -> tuple[list[dict], int]:
             "slug": link["slug"],
             "start": link["start"],
             "title": "",
+            "channel": "",
+            "credit": "",
             "duration": None,
             "thumbnail": "",
             "status": "queued",
@@ -437,13 +459,16 @@ def add_links(links: list[dict], source: str) -> tuple[list[dict], int]:
 # yt-dlp - one consistent mechanism: subprocess `python -m yt_dlp`, JSON via -j
 # --------------------------------------------------------------------------
 
-async def _ytdlp(*args: str, timeout: float = 120) -> bytes:
+async def _ytdlp(*args: str, timeout: float = 120, cookies: bool = True) -> bytes:
     cmd = _ytdlp_cmd()
     if cmd is None:
         raise RuntimeError("yt-dlp not found - install it in this environment "
                            "(pip install yt-dlp) or put it on PATH")
+    extra: list[str] = []
+    if cookies and STATE.cookies_browser:
+        extra = ["--cookies-from-browser", STATE.cookies_browser]
     proc = await asyncio.create_subprocess_exec(
-        *cmd, "--no-warnings", "--no-playlist", *args,
+        *cmd, "--no-warnings", "--no-playlist", *extra, *args,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     try:
         out, err = await asyncio.wait_for(proc.communicate(), timeout)
@@ -460,6 +485,50 @@ async def _ytdlp(*args: str, timeout: float = 120) -> bytes:
 
 async def resolve_info(url: str) -> dict:
     return json.loads(await _ytdlp("-j", url, timeout=60))
+
+
+_UPDATE_LOCK = asyncio.Lock()
+
+
+async def update_ytdlp() -> dict:
+    """Upgrade yt-dlp in place: pip when it's the module in this environment,
+    its own -U self-updater when it's a standalone binary on PATH. YouTube
+    breaks old yt-dlp builds all the time, so this is the first fix to try
+    when YouTube items start erroring."""
+    if _UPDATE_LOCK.locked():
+        return {"ok": False, "error": "an update is already running"}
+    async with _UPDATE_LOCK:
+        if not has_ytdlp():
+            return {"ok": False, "error": "yt-dlp is not installed"}
+        old = STATE.ytdlp_version
+        if importlib.util.find_spec("yt_dlp") is not None:
+            cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"]
+        else:
+            cmd = [shutil.which("yt-dlp") or "yt-dlp", "-U"]
+        STATE.note("updating yt-dlp...")
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+        try:
+            out, _ = await asyncio.wait_for(proc.communicate(), 300)
+        except asyncio.TimeoutError:
+            proc.kill()
+            STATE.note("yt-dlp update timed out")
+            return {"ok": False, "error": "update timed out"}
+        if proc.returncode != 0:
+            lines = (out or b"").decode("utf-8", errors="replace").strip().splitlines()
+            detail = lines[-1] if lines else f"updater exited {proc.returncode}"
+            STATE.note(f"yt-dlp update failed: {detail}")
+            return {"ok": False, "error": detail}
+        try:
+            ver = await _ytdlp("--version", timeout=30, cookies=False)
+            STATE.ytdlp_version = ver.decode("utf-8", errors="replace").strip()
+        except Exception as exc:
+            STATE.note(f"yt-dlp version check failed after update: {exc}")
+            return {"ok": False, "error": f"updated, but the version check failed: {exc}"}
+        changed = STATE.ytdlp_version != old
+        STATE.note(f"yt-dlp {STATE.ytdlp_version}"
+                   + (f" (was {old})" if changed and old else " - already current"))
+        return {"ok": True, "version": STATE.ytdlp_version, "old": old, "changed": changed}
 
 
 def _pick_mp4(info: dict) -> str:
@@ -506,8 +575,37 @@ _SRC_TTL = 240.0
 _RESOLVING: set[str] = set()
 
 
+def _credit_for(entry: dict, info: dict) -> str:
+    """Attribution line for the overlay: the channel the media came from.
+    Field choice is per-extractor: for Twitch clips "channel" is the
+    broadcaster ("uploader" is whoever made the clip); VODs only carry
+    uploader/uploader_id; YouTube's uploader_id is the @handle."""
+    kind = entry["kind"]
+    if kind == "clip":
+        name = info.get("channel") or info.get("creator") or ""
+        if not name:
+            m = re.search(r"twitch\.tv/([A-Za-z0-9_]+)/clip/",
+                          info.get("webpage_url") or "")
+            name = m.group(1) if m else ""
+        return f"twitch.tv/{name}" if name else ""
+    if kind == "vod":
+        name = info.get("uploader_id") or info.get("uploader") or ""
+        return f"twitch.tv/{name}" if name else ""
+    if kind == "youtube":
+        handle = str(info.get("uploader_id") or "")
+        if handle.startswith("@"):
+            return f"youtube.com/{handle}"
+        return info.get("channel") or info.get("uploader") or ""
+    # generic media: the uploader name if the site reports one, else the host
+    return (info.get("uploader") or info.get("channel")
+            or urlparse(entry.get("url") or "").netloc.replace("www.", ""))
+
+
 def _apply_info(entry: dict, info: dict) -> None:
     entry["title"] = info.get("title") or entry["title"] or entry["slug"]
+    entry["channel"] = (info.get("channel") or info.get("uploader")
+                        or entry.get("channel") or "")
+    entry["credit"] = _credit_for(entry, info) or entry.get("credit") or ""
     if info.get("duration"):
         entry["duration"] = round(float(info["duration"]), 2)
     entry["thumbnail"] = info.get("thumbnail") or entry["thumbnail"]
@@ -780,15 +878,18 @@ async def _startup() -> None:
                    "(pip install -r requirements.txt)")
         return
     try:
-        out = await _ytdlp("--version", timeout=30)
+        out = await _ytdlp("--version", timeout=30, cookies=False)
         STATE.ytdlp_version = out.decode("utf-8", errors="replace").strip()
         STATE.note(f"yt-dlp {STATE.ytdlp_version} ready")
     except Exception as exc:
         STATE.note(f"yt-dlp check failed: {exc}")
         return
-    # Pick up anything added while we were down or that never resolved.
+    # Pick up anything added while we were down or that never resolved. An
+    # entry with a title but no credit predates the channel grab - re-resolve
+    # once to backfill it (matters for pre-downloaded clips, which otherwise
+    # never resolve again).
     for e in STORE["queue"]:
-        needs_meta = not e.get("title") and not e.get("error")
+        needs_meta = (not e.get("title") or not e.get("credit")) and not e.get("error")
         needs_dl = (e["kind"] != "vod" and settings().get("predownload")
                     and e.get("status") == "queued" and not e.get("error")
                     and not cache_path(e).exists())
@@ -1020,6 +1121,8 @@ async def play_shoutout(channel: str, count: int = 2) -> dict:
             "slug": link["slug"],
             "start": link["start"],
             "title": "",
+            "channel": channel,
+            "credit": f"twitch.tv/{channel}",
             "duration": None,
             "thumbnail": "",
             "status": "queued",
@@ -1050,6 +1153,37 @@ async def api_shoutout(channel: str, count: int = 2):
         code = 400 if result.get("error") == "bad channel name" else 404
         return JSONResponse(result, status_code=code)
     return result
+
+
+@router.post("/api/update_ytdlp")
+async def api_update_ytdlp():
+    await ensure_started()
+    result = await update_ytdlp()
+    if not result.get("ok"):
+        return JSONResponse(result, status_code=409 if "already running" in result.get("error", "") else 500)
+    return result
+
+
+VALID_COOKIE_BROWSERS = ("", "firefox", "chrome")
+
+
+@router.post("/api/cookies")
+async def api_cookies(request: Request):
+    """Turn --cookies-from-browser on or off for this server session. The
+    choice is deliberately never written to clips.json: the streamer grants
+    their logged-in browser session per session, and a restart revokes it."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    browser = str(body.get("browser") or "").strip().lower()
+    if browser not in VALID_COOKIE_BROWSERS:
+        return JSONResponse({"ok": False, "error": "browser must be firefox, chrome, "
+                             "or empty to go back to anonymous"}, status_code=400)
+    STATE.cookies_browser = browser
+    STATE.note(f"using {browser} session cookies for this session" if browser
+               else "browser cookies off - back to anonymous")
+    return {"ok": True, "cookies_browser": browser}
 
 
 @router.get("/api/config")

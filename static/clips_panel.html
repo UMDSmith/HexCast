@@ -97,6 +97,22 @@
   #log{font:12px/1.7 var(--mono);color:var(--dim);background:#08080c;border:1px solid var(--line);
        border-radius:8px;padding:12px;max-height:240px;overflow:auto;white-space:pre-wrap}
 
+  /* channel-credit placement: the soundboard edit-mode pattern - a 16:9
+     canvas with a grid, the label dragged center-anchored in % coordinates,
+     plus the same 3x3 quick-position pad. */
+  #cr-stage{background:#050303;border:1px solid var(--line);border-radius:8px;aspect-ratio:16/9;
+            position:relative;overflow:hidden;cursor:grab;margin-top:14px;touch-action:none}
+  #cr-stage.dragging{cursor:grabbing}
+  #cr-stage .grid-ov{position:absolute;inset:0;pointer-events:none;background-image:
+      linear-gradient(to right, rgba(31,199,168,.14) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(31,199,168,.14) 1px, transparent 1px);
+    background-size:12.5% 12.5%}
+  #cr-label{position:absolute;transform:translate(-50%,-50%);white-space:nowrap;text-align:center;
+            user-select:none;cursor:grab;font-weight:600;will-change:left,top}
+  .quickpos{display:grid;grid-template-columns:repeat(3,26px);gap:2px}
+  .quickpos button{background:#1c1c25;color:var(--ink);border:1px solid var(--line);border-radius:5px;
+                   padding:2px;font-size:12px;line-height:1;min-width:0;cursor:pointer}
+  .quickpos button:hover{border-color:var(--clips)}
   #toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,80px);background:var(--clips);
          color:#032620;padding:11px 20px;border-radius:99px;font-weight:700;font-size:14px;
          transition:transform .25s ease;z-index:20;max-width:80vw;text-align:center}
@@ -177,6 +193,61 @@
   </div>
 
   <div class="card">
+    <h2>Channel credit</h2>
+    <p class="hint">Show where the playing clip came from, drawn over the video -
+      <code>twitch.tv/channelname</code> for Twitch, <code>youtube.com/@handle</code> for YouTube
+      (pulled from the clip's metadata when it resolves). Drag the label in the preview to place it,
+      or use the position pad - same as the soundboard's edit mode.</p>
+    <div class="grid">
+      <label class="f sw"><input type="checkbox" id="cr-enabled">Show channel credit</label>
+      <label class="f sw"><input type="checkbox" id="cr-show_title">Include the clip title</label>
+      <label class="f">Font family<input type="text" id="cr-font_family" placeholder="blank = Segoe UI (Google Fonts names work)"></label>
+      <label class="f">Size (px)<input type="number" id="cr-font_size" min="8" max="200" step="1"></label>
+      <label class="f">Color<input type="color" id="cr-color" style="padding:3px;height:38px;cursor:pointer"></label>
+      <label class="f sw"><input type="checkbox" id="cr-shadow">Drop shadow (keeps it readable over video)</label>
+    </div>
+    <div id="cr-stage"><div class="grid-ov"></div><div id="cr-label"></div></div>
+    <div class="row">
+      <div class="quickpos">
+        <button data-pos="15,15" title="Top Left">&#8598;</button>
+        <button data-pos="50,15" title="Top">&#8593;</button>
+        <button data-pos="85,15" title="Top Right">&#8599;</button>
+        <button data-pos="15,50" title="Left">&#8592;</button>
+        <button data-pos="50,50" title="Center">&#9679;</button>
+        <button data-pos="85,50" title="Right">&#8594;</button>
+        <button data-pos="15,85" title="Bottom Left">&#8601;</button>
+        <button data-pos="50,85" title="Bottom">&#8595;</button>
+        <button data-pos="85,85" title="Bottom Right">&#8600;</button>
+      </div>
+      <span class="hint" style="margin:0;font-family:var(--mono)" id="cr-xy"></span>
+      <span style="flex:1"></span>
+      <button class="act" id="cr-save">Save</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>yt-dlp</h2>
+    <p class="hint">YouTube changes constantly and old yt-dlp builds stop working - if YouTube
+      items suddenly start erroring, <b>update first</b>. If an updated yt-dlp still gets refused
+      ("Sign in to confirm you're not a bot", age-restricted or members-only videos), you can let
+      it borrow your logged-in browser session <b>for this session only</b>: cookies are read
+      straight from the browser profile on the machine running Hexcast at play time, never copied
+      or saved anywhere, and the setting resets to anonymous when Hexcast restarts.</p>
+    <div class="grid">
+      <label class="f">Browser session cookies
+        <select id="f-cookies">
+          <option value="">Off (anonymous)</option>
+          <option value="firefox">Use Firefox session</option>
+          <option value="chrome">Use Chrome session</option>
+        </select></label>
+    </div>
+    <div class="row"><button class="sec" id="upd-ytdlp">Update yt-dlp</button></div>
+    <p class="hint" style="margin:12px 0 0">Recent Chrome versions encrypt their cookies while
+      Chrome is running - if the Chrome option errors, close Chrome fully and retry, or use
+      Firefox (which works while open).</p>
+  </div>
+
+  <div class="card">
     <h2>Log</h2>
     <div id="log"></div>
   </div>
@@ -235,7 +306,8 @@ function rowHtml(e){
   var badges='<span class="badge kind">'+e.kind+'</span>';
   if(e.cached) badges+='<span class="badge cached">cached</span>';
   if(e.error) badges+='<span class="badge errb" title="'+esc(e.error)+'">error</span>';
-  var sub=badges+' '+(e.duration!=null?fmtDur(e.duration):'')+' &middot; '+esc(e.slug);
+  var sub=badges+' '+(e.duration!=null?fmtDur(e.duration):'')
+         +(e.credit?' &middot; '+esc(e.credit):'')+' &middot; '+esc(e.slug);
   if(e.error) sub+=' <span class="err">'+esc(e.error)+'</span>';
   var playing = PLAYER.item && PLAYER.item.id===e.id && PLAYER.state!=='idle';
   return '<div class="qrow '+e.status+(playing?' playing':'')+'" draggable="true" data-id="'+e.id+'">'
@@ -385,6 +457,7 @@ function paintConfig(){
   $('f-iframe_fallback').checked=!!CFG.iframe_fallback;
   $('f-volume').value=CFG.volume;
   $('volpct').textContent=Math.round(CFG.volume*100)+'%';
+  paintCredit();
 }
 $('f-volume').oninput=function(){ $('volpct').textContent=Math.round(this.value*100)+'%'; };
 $('save-cfg').onclick=async function(){
@@ -395,6 +468,111 @@ $('save-cfg').onclick=async function(){
   var d=await r.json(); CFG=d.config; paintConfig(); toast('Saved');
 };
 
+/* ---- channel credit ---------------------------------------------------- */
+var CR={x:50,y:92};
+function loadFont(name){
+  if(!name) return;
+  var id='font-'+name.replace(/[^a-z0-9]/gi,'');
+  if(document.getElementById(id)) return;
+  var l=document.createElement('link');
+  l.id=id; l.rel='stylesheet';
+  l.href='https://fonts.googleapis.com/css2?family='+encodeURIComponent(name).replace(/%20/g,'+')
+        +':wght@400;500;600;700;800;900&display=swap';
+  document.head.appendChild(l);
+}
+function paintCredit(){
+  var c=(CFG&&CFG.credit)||{};
+  $('cr-enabled').checked=!!c.enabled;
+  $('cr-show_title').checked=!!c.show_title;
+  $('cr-font_family').value=c.font_family||'';
+  $('cr-font_size').value=(c.font_size==null?30:c.font_size);
+  $('cr-color').value=c.color||'#ffffff';
+  $('cr-shadow').checked=(c.shadow!==false);
+  CR.x=(c.x==null?50:c.x); CR.y=(c.y==null?92:c.y);
+  crPreview();
+}
+function crPreview(){
+  var l=$('cr-label'), st=$('cr-stage');
+  var fam=$('cr-font_family').value.trim();
+  if(fam) loadFont(fam);
+  l.style.fontFamily=fam?('"'+fam+'", "Segoe UI", system-ui, sans-serif'):"'Segoe UI',system-ui,sans-serif";
+  // The preview canvas stands in for a 1920-wide source; scale px the same
+  // way the overlay does so what you see is what OBS gets.
+  var scale=(st.getBoundingClientRect().width/1920)||1;
+  l.style.fontSize=((parseFloat($('cr-font_size').value)||30)*scale)+'px';
+  l.style.color=$('cr-color').value;
+  l.style.textShadow=$('cr-shadow').checked?'0 2px 8px rgba(0,0,0,.85), 0 0 2px rgba(0,0,0,.9)':'none';
+  l.innerHTML=($('cr-show_title').checked?'<span style="font-weight:700;opacity:.92">The clip title</span><br>':'')
+             +'twitch.tv/channelname';
+  l.style.left=CR.x+'%'; l.style.top=CR.y+'%';
+  l.style.opacity=$('cr-enabled').checked?'1':'.35';
+  $('cr-xy').textContent='x:'+Math.round(CR.x)+'% y:'+Math.round(CR.y)+'%';
+}
+['cr-enabled','cr-show_title','cr-font_family','cr-font_size','cr-color','cr-shadow'].forEach(function(id){
+  $(id).addEventListener('input', crPreview);
+});
+window.addEventListener('resize', crPreview);
+(function(){
+  var st=$('cr-stage'), l=$('cr-label'), drag=null;
+  l.addEventListener('pointerdown', function(e){
+    drag={x0:CR.x, y0:CR.y, mx:e.clientX, my:e.clientY};
+    st.classList.add('dragging');
+    try{ l.setPointerCapture(e.pointerId); }catch(_){}
+    e.preventDefault();
+  });
+  l.addEventListener('pointermove', function(e){
+    if(!drag) return;
+    var r=st.getBoundingClientRect();
+    CR.x=Math.max(0,Math.min(100, drag.x0+(e.clientX-drag.mx)/r.width*100));
+    CR.y=Math.max(0,Math.min(100, drag.y0+(e.clientY-drag.my)/r.height*100));
+    crPreview();
+  });
+  function up(e){ if(drag){ drag=null; st.classList.remove('dragging');
+    try{ l.releasePointerCapture(e.pointerId); }catch(_){} } }
+  l.addEventListener('pointerup', up);
+  l.addEventListener('pointercancel', up);
+})();
+document.querySelectorAll('.quickpos button').forEach(function(b){
+  b.onclick=function(){ var p=b.dataset.pos.split(','); CR.x=+p[0]; CR.y=+p[1]; crPreview(); };
+});
+$('cr-save').onclick=async function(){
+  var body={credit:{
+    enabled:$('cr-enabled').checked,
+    show_title:$('cr-show_title').checked,
+    font_family:$('cr-font_family').value.trim(),
+    font_size:parseFloat($('cr-font_size').value)||30,
+    color:$('cr-color').value,
+    shadow:$('cr-shadow').checked,
+    x:Math.round(CR.x*10)/10,
+    y:Math.round(CR.y*10)/10}};
+  var r=await fetch('/clips/api/config',{method:'POST',headers:{'Content-Type':'application/json'},
+                                         body:JSON.stringify(body)});
+  var d=await r.json(); CFG=d.config; toast('Saved');
+};
+
+/* ---- yt-dlp maintenance ------------------------------------------------ */
+$('upd-ytdlp').onclick=async function(){
+  var b=$('upd-ytdlp'); b.disabled=true; b.textContent='Updating…';
+  try{
+    var r=await fetch('/clips/api/update_ytdlp',{method:'POST'});
+    var d=await r.json();
+    if(d.ok) toast(d.changed?('yt-dlp updated: '+(d.old||'?')+' → '+d.version)
+                            :('yt-dlp '+d.version+' is already current'));
+    else toast(d.error||'update failed');
+  }catch(e){ toast('update failed'); }
+  b.disabled=false; b.textContent='Update yt-dlp';
+  pollStatus();
+};
+$('f-cookies').onchange=async function(){
+  var v=this.value;
+  var r=await fetch('/clips/api/cookies',{method:'POST',headers:{'Content-Type':'application/json'},
+                                          body:JSON.stringify({browser:v})});
+  var d=await r.json();
+  if(d.ok) toast(v?('Using your '+v[0].toUpperCase()+v.slice(1)+' session for this session only')
+                  :'Back to anonymous');
+  else toast(d.error||'could not change cookie source');
+};
+
 /* ---- status / websocket ------------------------------------------------ */
 $('u-overlay').textContent=location.origin+'/clips/overlay';
 
@@ -402,6 +580,8 @@ function paintStatus(s){
   var tool=$('st-tool');
   if(s.ytdlp){ tool.textContent='yt-dlp '+(s.ytdlp_version||'ok'); tool.className='pill on'; }
   else { tool.textContent='yt-dlp missing'; tool.className='pill off'; }
+  if(s.cookies_browser!==undefined && document.activeElement!==$('f-cookies'))
+    $('f-cookies').value=s.cookies_browser||'';
   if(s.log) $('log').textContent=s.log.join('\n');
 }
 async function pollStatus(){
@@ -412,13 +592,24 @@ async function pollStatus(){
 }
 pollStatus(); setInterval(pollStatus, 5000);
 
+/* Once per page load: if YouTube is demanding a login and cookies are off,
+   point at the fix instead of leaving a cryptic error badge. */
+var cookieHintShown=false;
+function cookieHint(){
+  if(cookieHintShown || $('f-cookies').value) return;
+  if(QUEUE.some(function(e){ return /sign in|not a bot|cookies/i.test(e.error||''); })){
+    cookieHintShown=true;
+    toast('YouTube wants a login - try updating yt-dlp or enabling browser session cookies (Settings)');
+  }
+}
+
 function connect(){
   var proto=location.protocol==='https:'?'wss':'ws';
   var ws=new WebSocket(proto+'://'+location.host+'/clips/ws/panel');
   ws.onmessage=function(e){
     var m=JSON.parse(e.data);
     if(m.type==='config'){ CFG=m.config; paintConfig(); }
-    else if(m.type==='queue'){ QUEUE=m.queue||[]; renderQueue(); }
+    else if(m.type==='queue'){ QUEUE=m.queue||[]; renderQueue(); cookieHint(); }
     else if(m.type==='player'){ PLAYER=m.player||{state:'idle'}; playerAt=performance.now(); paintPlayer(); }
   };
   ws.onclose=function(){ setTimeout(connect, 1500); };
