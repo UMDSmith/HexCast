@@ -20,7 +20,11 @@ import time
 import json
 import os
 import re
+import logging
 import subprocess
+import threading
+
+from logging.handlers import RotatingFileHandler
 
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -69,6 +73,22 @@ ANIMATED_IMAGE_EXTS = {".gif", ".webp", ".apng"}
 VIDEO_NATIVE_EXTS = {".mp4", ".webm", ".mov", ".mkv"}
 # Everything accepted in media/video/. Animated images get converted before they land in the index.
 VIDEO_EXTS = IMAGE_EXTS | ANIMATED_IMAGE_EXTS | VIDEO_NATIVE_EXTS
+
+# ---- logging ---------------------------------------------------------------
+# Warnings and errors land in hexcast.log next to the script (rotated, 3×1 MB)
+# and on the console. Overlay-side playback failures are reported back over the
+# overlay websocket and logged here too — without that, a clip that fails to
+# decode dies silently inside the OBS browser source.
+LOG_FILE = ROOT / "hexcast.log"
+log = logging.getLogger("hexcast")
+log.setLevel(logging.INFO)
+_fh = RotatingFileHandler(LOG_FILE, maxBytes=1_000_000, backupCount=3, encoding="utf-8")
+_fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+log.addHandler(_fh)
+_ch = logging.StreamHandler()
+_ch.setLevel(logging.WARNING)
+_ch.setFormatter(logging.Formatter("%(levelname)s %(message)s"))
+log.addHandler(_ch)
 
 # ---- state -----------------------------------------------------------------
 index = {"audio": [], "video": []}
@@ -162,15 +182,31 @@ def url_prefix_for_kind(kind: str) -> str | None:
     return {"audio": "/media/audio/", "video": "/media/video/"}.get(kind)
 
 
+def parse_chroma(raw) -> dict | None:
+    """Validate a chroma-key settings dict → {"color": "#rrggbb", "tolerance": 0..1}
+    or None when absent/invalid."""
+    if not isinstance(raw, dict):
+        return None
+    color = raw.get("color")
+    if not (isinstance(color, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", color)):
+        return None
+    try:
+        tol = float(raw.get("tolerance", 0.3))
+    except (TypeError, ValueError):
+        tol = 0.3
+    return {"color": color.lower(), "tolerance": max(0.0, min(1.0, tol))}
+
+
 def read_sidecar(media_path: Path) -> dict:
     """Read the sidecar JSON next to a media file. Returns all keys with defaults.
-    x/y/scale → video. volume → audio/video. start/end + cooldown_ms → both kinds."""
+    x/y/scale + chroma → video. volume → audio/video. start/end + cooldown_ms → both kinds."""
     out = {
         "x": DEFAULT_X, "y": DEFAULT_Y, "scale": DEFAULT_SCALE,
         "volume": 1.0,
         "start": 0.0,
         "end": None,           # None = play to natural end
         "cooldown_ms": 0,      # 0 = no cooldown enforcement (current spam behavior)
+        "chroma": None,        # None = no keying; {"color", "tolerance"} when enabled
     }
     sidecar = media_path.with_suffix(".json")
     if sidecar.exists():
@@ -186,8 +222,9 @@ def read_sidecar(media_path: Path) -> dict:
                     out["cooldown_ms"] = int(data["cooldown_ms"])
                 except (TypeError, ValueError):
                     pass
-        except Exception:
-            pass
+            out["chroma"] = parse_chroma(data.get("chroma"))
+        except Exception as e:
+            log.warning("unreadable sidecar %s (using defaults): %s", sidecar.name, e)
     return out
 
 
@@ -279,8 +316,10 @@ def ensure_poster(media_path: Path) -> Path | None:
         )
         if r.returncode == 0 and poster.exists():
             return poster
-    except (subprocess.SubprocessError, OSError):
-        pass
+        log.warning("poster generation failed for %s: %s", media_path.name,
+                    r.stderr.decode(errors="replace").strip()[:300] or f"exit {r.returncode}")
+    except (subprocess.SubprocessError, OSError) as e:
+        log.warning("poster generation failed for %s: %s", media_path.name, e)
     return None
 
 
@@ -298,6 +337,14 @@ def cleanup_orphan_posters(dir_: Path, exts: set[str]):
                 pass
 
 
+# The /upload handler and watcher-triggered scans both convert animated images and
+# can race on the same file. Two concurrent ffmpeg runs may resolve the same target
+# path and interleave writes into one mp4 (Windows fopen shares handles freely),
+# yielding a corrupt-but-playable-looking stream. The lock plus an existence
+# re-check inside it guarantee one conversion per file.
+_convert_lock = threading.Lock()
+
+
 def convert_animated_to_mp4(media_path: Path) -> Path | None:
     """Convert .gif/.webp/.apng in place to .mp4. Returns the new path or None on failure.
     Sidecar JSON and orphaned poster travel with the renamed file. Original is deleted on success.
@@ -307,53 +354,59 @@ def convert_animated_to_mp4(media_path: Path) -> Path | None:
     ext = media_path.suffix.lower()
     if ext not in ANIMATED_IMAGE_EXTS:
         return None
-    # Skip single-frame variants (static .webp etc.) — no real animation to preserve.
-    dur = get_duration(media_path)
-    if dur is None or dur <= 0.05:
-        return None
-
-    target = unique_path(media_path.parent, media_path.stem + ".mp4")
-    try:
-        r = subprocess.run(
-            ["ffmpeg", "-y", "-loglevel", "error",
-             "-i", str(media_path),
-             "-movflags", "+faststart",
-             "-pix_fmt", "yuv420p",
-             # yuv420p needs even dimensions
-             "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
-             "-an",  # animated images don't have audio
-             "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-             str(target)],
-            timeout=120, capture_output=True,
-        )
-        if r.returncode != 0 or not target.exists():
+    with _convert_lock:
+        if not media_path.exists():
+            return None  # another thread already converted (and removed) it
+        # Skip single-frame variants (static .webp etc.) — no real animation to preserve.
+        dur = get_duration(media_path)
+        if dur is None or dur <= 0.05:
             return None
-    except (subprocess.SubprocessError, OSError):
-        return None
 
-    # Move sidecar JSON to the new stem (if any, and no name clash on target side)
-    old_sidecar = media_path.with_suffix(".json")
-    if old_sidecar.exists():
-        new_sidecar = target.with_suffix(".json")
-        if not new_sidecar.exists():
+        target = unique_path(media_path.parent, media_path.stem + ".mp4")
+        try:
+            r = subprocess.run(
+                ["ffmpeg", "-y", "-loglevel", "error",
+                 "-i", str(media_path),
+                 "-movflags", "+faststart",
+                 "-pix_fmt", "yuv420p",
+                 # yuv420p needs even dimensions
+                 "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+                 "-an",  # animated images don't have audio
+                 "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                 str(target)],
+                timeout=120, capture_output=True,
+            )
+            if r.returncode != 0 or not target.exists():
+                log.error("conversion to mp4 failed for %s: %s", media_path.name,
+                          r.stderr.decode(errors="replace").strip()[:500] or f"exit {r.returncode}")
+                return None
+        except (subprocess.SubprocessError, OSError) as e:
+            log.error("conversion to mp4 failed for %s: %s", media_path.name, e)
+            return None
+
+        # Move sidecar JSON to the new stem (if any, and no name clash on target side)
+        old_sidecar = media_path.with_suffix(".json")
+        if old_sidecar.exists():
+            new_sidecar = target.with_suffix(".json")
+            if not new_sidecar.exists():
+                try:
+                    old_sidecar.rename(new_sidecar)
+                except OSError:
+                    pass
+
+        # Drop the orphan poster (a new one will be generated for the .mp4 on next scan)
+        old_poster = media_path.parent / f"{media_path.stem}.poster.jpg"
+        if old_poster.exists():
             try:
-                old_sidecar.rename(new_sidecar)
+                old_poster.unlink()
             except OSError:
                 pass
 
-    # Drop the orphan poster (a new one will be generated for the .mp4 on next scan)
-    old_poster = media_path.parent / f"{media_path.stem}.poster.jpg"
-    if old_poster.exists():
         try:
-            old_poster.unlink()
+            media_path.unlink()
         except OSError:
             pass
-
-    try:
-        media_path.unlink()
-    except OSError:
-        pass
-    return target
+        return target
 
 
 def scan() -> dict:
@@ -389,6 +442,7 @@ def scan() -> dict:
                 poster = ensure_poster(p)
                 entry["poster"] = f"{url_prefix}/{poster.name}" if poster else entry["url"]
                 entry["has_audio"] = has_audio_stream(p)
+                entry["chroma"] = sc["chroma"]
                 # Volume is meaningful only when the file actually carries audio.
                 if entry["has_audio"]:
                     entry["volume"] = sc["volume"]
@@ -457,6 +511,7 @@ async def lifespan(app: FastAPI):
     print(f"  OBS browser source:  http://localhost:{PORT}/overlay")
     print(f"  Audio root:          {AUDIO_DIR}")
     print(f"  Video root:          {VIDEO_DIR}")
+    print(f"  Error log:           {LOG_FILE}")
     print(f"  Canvas:              {CANVAS_W}x{CANVAS_H}")
     print(f"  ffmpeg:              {'enabled' if HAS_FFMPEG else 'DISABLED — gif/webp conversion + posters off (install ffmpeg)'}")
     print(f"\n  ! No authentication — keep this on a trusted LAN behind a firewall.")
@@ -634,6 +689,8 @@ async def _broadcast_trigger(payload: dict) -> dict:
                         payload.setdefault("y", sc["y"])
                         payload.setdefault("scale", sc["scale"])
                     payload.setdefault("has_audio", has_audio_stream(path))
+                    if sc["chroma"] is not None:
+                        payload.setdefault("chroma", sc["chroma"])
                     if payload.get("has_audio"):
                         payload.setdefault("volume", sc["volume"])
                 elif t == "audio":
@@ -773,7 +830,8 @@ async def delete_media(payload: dict):
 async def set_position(payload: dict):
     """Save sidecar settings.
     audio → {volume, start?, end?}
-    video → {x, y, scale, volume?, start?, end?}  (volume only when the file has audio)"""
+    video → {x, y, scale, volume?, start?, end?, chroma?}  (volume only when the file
+    has audio; chroma = {enabled, color, tolerance} and is stored only when enabled)"""
     file = payload.get("file")
     kind = payload.get("kind")
     if kind not in ("audio", "video") or not file:
@@ -800,6 +858,12 @@ async def set_position(payload: dict):
             # Volume is meaningful only for videos with an audio track.
             if has_audio_stream(path):
                 data["volume"] = float(payload.get("volume", 1.0))
+            # Per-clip chroma key — only written when enabled so default JSON stays clean.
+            raw_chroma = payload.get("chroma")
+            if isinstance(raw_chroma, dict) and raw_chroma.get("enabled"):
+                chroma = parse_chroma(raw_chroma)
+                if chroma is not None:
+                    data["chroma"] = chroma
         # Trim window — applies to all kinds. Only write if non-default to keep JSON clean.
         start = float(payload.get("start", 0.0) or 0.0)
         if start > 0:
@@ -913,6 +977,7 @@ async def upload(file: UploadFile = File(...)):
         if converted:
             path = converted
 
+    log.info("uploaded %s (%d bytes, %s)", path.name, len(content), kind)
     return {"ok": True, "name": path.name, "kind": kind}
 
 
@@ -922,7 +987,16 @@ async def ws_overlay(ws: WebSocket):
     overlay_clients.add(ws)
     try:
         while True:
-            await ws.receive_text()
+            raw = await ws.receive_text()
+            # Overlays report client-side playback failures here — the only place
+            # a clip that won't decode inside the OBS browser source surfaces.
+            try:
+                msg = json.loads(raw)
+            except ValueError:
+                continue
+            if msg.get("type") == "error":
+                log.error("overlay playback error: %s (%s)",
+                          msg.get("message", "?"), msg.get("url", "?"))
     except WebSocketDisconnect:
         pass
     finally:

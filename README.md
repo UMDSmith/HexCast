@@ -29,7 +29,7 @@ Safe ways to run it:
 - **Folder-watch**: drop media into `media/audio/` or `media/video/` and it appears in the control panel instantly
 - **Drag-and-drop uploads** from the control panel — audio extensions route to `audio/`, everything visual to `video/`
 - **Auto-conversion**: dropped `.gif`/`.webp`/`.apng` files get transcoded to `.mp4` on the spot, so every clip is frame-precise seekable
-- **Per-clip editor** for video: drag-to-position canvas, scale, volume (when the clip has audio), and a dual-thumb start/end trim slider with **▶ Preview** that plays the trimmed range live in the canvas
+- **Per-clip editor** for video: drag-to-position canvas, scale, volume (when the clip has audio), a dual-thumb start/end trim slider with **▶ Preview** that plays the trimmed range live in the canvas, and per-clip **chroma key** (color + tolerance + eyedropper) keyed in the overlay itself so overlapping green-screen clips don't box each other out
 - **Per-clip editor** for audio: volume, start/end trim, and live preview through your speakers
 - **Rename in editor**: change a clip's filename without touching the filesystem; the sidecar and poster follow automatically
 - **Per-clip cooldown**: set ms-level cooldown on any clip so spam clicks don't queue up — `0` = current spam-friendly behavior
@@ -260,6 +260,7 @@ Toggle **Edit Mode** in the top-right (clip buttons get an amber border + ✎). 
 - **Volume** slider — only shown for video files that actually have an audio track (the ones with a 🔊 badge on the button)
 - **Playback range** — a dual-thumb slider on a single bar. Drag the start (◀) and end (▶) thumbs to trim. As you drag, the preview canvas scrubs to that frame so you can see exactly where you are.
 - **▶ Preview** — plays the trimmed range inside the editor canvas with current position, scale, and volume so you can fine-tune everything before committing. ⏸ to stop.
+- **Chroma key** — per-clip green-screen removal done *inside Hexcast*, so overlapping clips composite cleanly (an OBS chroma filter keys the flattened browser source, so one clip's green box punches a hole in clips underneath — remove that filter once you key here). Tick the checkbox, pick the key color (or hit 💧 and click the color right on the preview), and set **tolerance**: brightness is ignored, so lighter/darker shades of the key color are always removed; the slider widens toward *different* hues. Built-in spill suppression neutralizes the green fringe on soft edges. The preview shows the keyed result live. Works on videos and static images.
 - **Rename** — change the clip's filename. Sidecar and poster follow automatically.
 - **Cooldown (ms)** — if > 0, after this clip fires, further triggers of *this clip* are dropped until the clip finishes playing plus the cooldown elapses. `0` means no cooldown (current spam-friendly behavior). Per-clip only; other clips still overlap freely.
 
@@ -489,7 +490,11 @@ You can hand-edit these if you prefer — the watcher ignores `.json` writes so 
 
 ## Troubleshooting
 
+**Check `hexcast.log` first** (next to `hexcast.py`, rotated at 1 MB × 3). It captures conversion and poster failures with ffmpeg's actual error output, unreadable sidecars, uploads — and **playback errors from inside the OBS browser source**: overlays report decode/load failures back over their websocket, so a clip that dies silently in OBS shows up here as `overlay playback error: video decode failed (/media/video/name.mp4)`.
+
 **Posters not generating, gifs animate in picker:** ffmpeg not in PATH. Run `ffmpeg -version` to verify.
+
+**A clip triggers but nothing appears, log says "decode failed":** the media file itself is corrupt — re-upload it. (Versions up to 1.1.0 had a race where uploading an animated gif could produce a corrupt mp4; fixed since.)
 
 **Audio doesn't play in OBS:** enable **Control audio via OBS** on the browser source. The soundboard appears in your Audio Mixer. Set monitoring to "Monitor and Output" if you want to hear it locally too.
 

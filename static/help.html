@@ -52,8 +52,11 @@
   <h2>Soundboard <span class="tag">core</span></h2>
   <p class="hint">Trigger media from your library by name — everything a bot, hotkey deck, or
     channel-point redeem needs is a single GET. Names are the filename without extension,
-    case-insensitive. The overlay applies each clip's saved position, scale, volume and trim
-    automatically; query params override them for one play.</p>
+    case-insensitive. The overlay applies each clip's saved position, scale, volume, trim
+    and chroma key automatically; query params override them for one play. Chroma keying
+    (Edit Mode → clip → Chroma key: color, 💧 eyedropper, tolerance) removes the green
+    screen per clip inside the overlay, so overlapping clips composite cleanly — drop any
+    chroma filter on the OBS source itself.</p>
   <table class="api">
     <tr><td>GET /api/list</td><td>every triggerable name, grouped audio / video</td></tr>
     <tr><td>GET /api/play/{name}</td><td>play by name across both kinds (audio checked first)</td></tr>
