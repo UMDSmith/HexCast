@@ -74,6 +74,51 @@
          transition:transform .25s ease;z-index:20;max-width:80vw;text-align:center}
   #toast.up{transform:translate(-50%,0)}
   .warn{border-left:3px solid var(--warn);padding-left:12px;color:var(--dim);font-size:13px;margin-top:10px}
+
+  /* ---- source selector ---- */
+  #source-card .row{margin-top:0}
+  #source-card label.sw{border:1px solid var(--line);border-radius:9px;padding:9px 14px;cursor:pointer}
+  #source-card label.sw.on{border-color:var(--accent);background:#141018;color:var(--ink)}
+
+  /* ---- local library ---- */
+  .lm-cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:860px){.lm-cols{grid-template-columns:1fr}}
+  .lm-list{border:1px solid var(--line);border-radius:8px;background:#08080c;max-height:380px;overflow:auto;margin-top:8px}
+  .lm-item{display:flex;align-items:center;gap:9px;padding:7px 10px;border-bottom:1px solid #14141c;cursor:pointer;font-size:13.5px}
+  .lm-item:last-child{border-bottom:0}
+  .lm-item:hover{background:#101018}
+  .lm-item .grow{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .lm-item.dir .grow{color:var(--accent)}
+  .lm-item input[type=checkbox]{width:auto;flex:0 0 auto}
+  .lm-item .sub{color:var(--dim);font-size:11.5px}
+  .lm-crumbs{font:12px var(--mono);color:var(--dim);margin-top:10px;word-break:break-all}
+  .lm-crumbs a{color:var(--good);cursor:pointer;text-decoration:none}
+  .lm-crumbs a:hover{text-decoration:underline}
+  .lm-status{font:12px var(--mono);color:var(--dim)}
+  .q-item{display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid #14141c;font-size:13.5px}
+  .q-item:last-child{border-bottom:0}
+  .q-item.cur{background:#12211a}
+  .q-item.cur .grow{color:var(--good)}
+  .q-item.drop-before{border-top:2px solid var(--accent)}
+  .q-item .idx{color:var(--dim);font:12px var(--mono);width:24px;flex:0 0 auto;text-align:right}
+  .q-item .grow{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:grab}
+  .q-item .sub{color:var(--dim);font-size:11.5px}
+  .q-item .x{background:none;border:0;color:var(--dim);cursor:pointer;font-size:15px;padding:0 4px;width:auto}
+  .q-item .x:hover{color:var(--warn)}
+  .q-empty{padding:16px;color:var(--dim);font-size:13px;text-align:center}
+  .lm-item .pv,.q-item .pv{background:none;border:0;color:var(--accent);cursor:pointer;font-size:14px;padding:0 4px;width:auto;flex:0 0 auto}
+  .lm-item .pv:hover,.q-item .pv:hover{filter:brightness(1.3)}
+  #q-rows .q-item{box-sizing:border-box;background:var(--panel)}
+  #q-rows .q-item.cur{background:#12211a}
+  .pl-actions{display:flex;gap:4px;flex:0 0 auto}
+  .pl-actions button{background:none;border:0;color:var(--dim);cursor:pointer;font-size:12px;width:auto;padding:2px 6px;border:1px solid var(--line);border-radius:6px}
+  .pl-actions button:hover{border-color:var(--accent);color:var(--ink)}
+
+  /* folder-picker modal */
+  .modal-back{position:fixed;inset:0;background:rgba(0,0,0,.62);display:none;z-index:50;align-items:center;justify-content:center}
+  .modal-back.show{display:flex}
+  .modal{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;width:min(560px,92vw)}
+  .modal h2{margin:0 0 4px;font-size:14px;letter-spacing:.14em;text-transform:uppercase}
 </style></head>
 <body>
 
@@ -83,12 +128,22 @@
 
 <nav>
   <button data-tab="conn" class="sel">Connection</button>
+  <button data-tab="local">Local library</button>
   <button data-tab="look">Overlay</button>
   <button data-tab="viz">Visualiser</button>
   <button data-tab="now">Now playing</button>
 </nav>
 
 <main>
+
+<div class="card" id="source-card">
+  <h2>Music source</h2>
+  <p class="hint">What drives the overlay: the YouTube Music Desktop app, or local files played through the overlay itself (OBS captures the audio from the browser source).</p>
+  <div class="row">
+    <label class="sw" id="src-ytm"><input type="radio" name="source" value="ytm"> YouTube Music</label>
+    <label class="sw" id="src-local"><input type="radio" name="source" value="local"> Local files</label>
+  </div>
+</div>
 
 <section id="tab-conn" class="sel">
   <div class="card">
@@ -137,6 +192,78 @@
     <div class="row"><button class="act" id="save-extras">Save</button></div>
   </div>
 </section>
+
+<section id="tab-local">
+  <div class="card">
+    <h2>Music folder</h2>
+    <p class="hint">Point HexCast at a folder of audio files. It's indexed in the background, so browsing and search stay fast even for tens of thousands of tracks. Nothing is copied or modified; tags &amp; cover art are read on demand with ffmpeg.</p>
+    <div class="row" style="margin-top:0">
+      <input id="music_dir" placeholder="D:\Music or /home/you/Music" style="flex:1;min-width:180px">
+      <button class="sec" id="pick-folder">Browse…</button>
+      <button class="act" id="save-dir">Save &amp; index</button>
+      <button class="sec" id="rescan">Re-scan</button>
+    </div>
+    <p class="lm-status" id="lm-status" style="margin-top:10px">—</p>
+  </div>
+
+  <div class="card">
+    <h2>Library</h2>
+    <div class="row" style="margin-top:0">
+      <input id="lm-search" placeholder="Search all tracks…" style="flex:1;min-width:160px">
+      <button class="sec" id="lm-search-clear">Clear</button>
+    </div>
+    <div class="lm-crumbs" id="lm-crumbs"></div>
+    <div class="lm-list" id="lm-browse"><div class="q-empty">Set a music folder above.</div></div>
+    <div class="row">
+      <button class="act" id="lm-add-sel">Add selected</button>
+      <button class="sec" id="lm-add-folder">Add this folder (+ subfolders)</button>
+      <button class="sec" id="lm-sel-all">Select shown</button>
+      <button class="sec" id="lm-sel-none">Clear selection</button>
+    </div>
+  </div>
+
+  <div class="lm-cols">
+    <div class="card">
+      <div class="row" style="margin-top:0;justify-content:space-between">
+        <h2 style="margin:0">Queue &middot; <span id="q-count">0</span></h2>
+        <span>
+          <button class="sec" id="q-save-pl">Save as playlist</button>
+          <button class="sec" id="q-clear">Clear</button>
+        </span>
+      </div>
+      <div class="lm-list" id="q-scroll" style="max-height:440px;position:relative">
+        <div id="q-spacer"></div>
+        <div id="q-rows"></div>
+      </div>
+      <p class="hint" style="margin-top:8px">Drag to reorder · double-click to play · <span class="pv">▸</span> preview · ✕ remove. Transport is on <b>Now playing</b>.</p>
+    </div>
+    <div class="card">
+      <h2>Playlists</h2>
+      <div class="lm-list" id="pl-list"><div class="q-empty">No playlists yet.</div></div>
+      <p class="hint" style="margin-top:8px">Build a queue, then <b>Save as playlist</b>. <b>Load</b> replaces the queue; <b>+</b> appends.</p>
+    </div>
+  </div>
+
+  <div class="card" id="preview-card">
+    <div class="row" style="margin-top:0;align-items:center">
+      <button class="sec" id="pv-toggle" style="font-size:16px;min-width:44px">▸</button>
+      <div class="grow" id="pv-title" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dim)">Preview player — click ▸ on any track. Plays here only, not on stream.</div>
+    </div>
+    <audio id="pv-audio" style="display:none"></audio>
+  </div>
+</section>
+
+<div id="fs-modal" class="modal-back">
+  <div class="modal">
+    <h2>Choose music folder</h2>
+    <div class="lm-crumbs" id="fs-path" style="margin-top:6px"></div>
+    <div class="lm-list" id="fs-list" style="max-height:340px;margin-top:8px"></div>
+    <div class="row">
+      <button class="act" id="fs-choose">Use this folder</button>
+      <button class="sec" id="fs-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
 
 <section id="tab-look">
   <div class="card">
@@ -403,6 +530,8 @@ async function loadAll(){
   $('forward_url').value = CFG.forward_url || '';
   $('track_change_clip').value = CFG.track_change_clip || '';
   $('hexcast_url').value = CFG.hexcast_url || '';
+  $('music_dir').value = (CFG.local && CFG.local.music_dir) || '';
+  reflectSource(CFG.source);
   $('u-overlay').textContent = location.origin + '/ytm/overlay';
   $('u-song').textContent = location.origin + '/ytm/api/nowplaying';
   renderGroup('g-layout', LAYOUT);
@@ -474,6 +603,9 @@ function connectPanel(){
     var m=JSON.parse(e.data);
     if(m.type==='status') paintStatus(m.status);
     else if(m.type==='now') paintNow(m.now);
+    else if(m.type==='queue_changed') qReload();
+    else if(m.type==='queue_index'){ Q.index=m.index; Q.count=m.count; qRender(); }
+    else if(m.type==='playlists') renderPlaylists(m.playlists||[]);
   };
   ws.onclose=function(){ setTimeout(connectPanel,1500); };
 }
@@ -483,6 +615,7 @@ document.querySelectorAll('nav button').forEach(function(b){
     document.querySelectorAll('nav button').forEach(function(x){x.classList.remove('sel')});
     document.querySelectorAll('section').forEach(function(x){x.classList.remove('sel')});
     b.classList.add('sel'); $('tab-'+b.dataset.tab).classList.add('sel');
+    if(b.dataset.tab==='local'){ lmRefreshStatus(); qReload(); loadPlaylists(); if(LM.mode!=='search') lmBrowse(LM.rel); }
   };
 });
 
@@ -529,9 +662,269 @@ $('save-look').onclick = function(){
              'Overlay updated');
 };
 
+/* ===== source selector ===== */
+function reflectSource(src){
+  src = src || 'ytm';
+  document.querySelectorAll('input[name=source]').forEach(function(r){ r.checked=(r.value===src); });
+  $('src-ytm').classList.toggle('on', src==='ytm');
+  $('src-local').classList.toggle('on', src==='local');
+}
+document.querySelectorAll('input[name=source]').forEach(function(r){
+  r.onchange=function(){ if(r.checked){ reflectSource(r.value);
+    saveConfig({source:r.value}, r.value==='local'?'Playing local files':'Using YouTube Music'); } };
+});
+
+/* ===== local library ===== */
+var LM = { rel:'', sel:{}, mode:'browse', drag:null };
+
+function lmRefreshStatus(){
+  fetch('/ytm/library/status').then(function(r){return r.json()}).then(function(s){
+    var el=$('lm-status'); if(!el) return;
+    if(!s.root) el.textContent='No folder set.';
+    else if(s.indexing) el.textContent='Indexing… '+s.count+' found so far';
+    else if(s.error) el.textContent='Error: '+s.error;
+    else if(s.ready) el.textContent=s.count+' tracks indexed'+(s.ffmpeg?'':' · ffmpeg not found: filenames only, no art');
+    else el.textContent='—';
+  }).catch(function(){});
+}
+function lmSelCount(){ var n=0; for(var k in LM.sel) if(LM.sel[k]) n++; return n; }
+function lmUpdateAddBtn(){ var n=lmSelCount(); $('lm-add-sel').textContent = n?('Add selected ('+n+')'):'Add selected'; }
+function trackRow(id,name,sub){
+  var d=document.createElement('div'); d.className='lm-item'; d.dataset.id=id;
+  var cb=document.createElement('input'); cb.type='checkbox'; cb.checked=!!LM.sel[id];
+  var g=document.createElement('div'); g.className='grow'; g.textContent=name;
+  if(sub){ var s=document.createElement('span'); s.className='sub'; s.textContent='  '+sub; g.appendChild(s); }
+  var pv=document.createElement('button'); pv.className='pv'; pv.innerHTML='&#9656;'; pv.title='Preview';
+  pv.onclick=function(e){ e.stopPropagation(); pvPlay(id,name); };
+  d.appendChild(cb); d.appendChild(g); d.appendChild(pv);
+  function setSel(v){ LM.sel[id]=v; cb.checked=v; lmUpdateAddBtn(); }
+  cb.onclick=function(e){ e.stopPropagation(); setSel(cb.checked); };
+  d.onclick=function(){ setSel(!LM.sel[id]); };
+  return d;
+}
+function lmBrowse(rel){
+  LM.mode='browse'; LM.rel=rel||'';
+  fetch('/ytm/library/browse?path='+encodeURIComponent(LM.rel)).then(function(r){return r.json()}).then(function(d){
+    var list=$('lm-browse'), cr=$('lm-crumbs'); list.innerHTML=''; cr.innerHTML='';
+    if(d.error){ list.innerHTML='<div class="q-empty">'+esc(d.error)+'</div>'; return; }
+    var rootA=document.createElement('a'); rootA.textContent='Root'; rootA.onclick=function(){ lmBrowse(''); }; cr.appendChild(rootA);
+    if(d.rel){ var acc='';
+      d.rel.split(/[\\\/]/).forEach(function(p){ acc = acc?acc+'/'+p:p;
+        cr.appendChild(document.createTextNode(' / '));
+        var a=document.createElement('a'); a.textContent=p;
+        (function(pth){ a.onclick=function(){ lmBrowse(pth); }; })(acc); cr.appendChild(a); });
+    }
+    if(d.parent!==null && d.parent!==undefined){
+      var up=document.createElement('div'); up.className='lm-item dir';
+      up.innerHTML='<div class="grow">⬑ ..</div>'; up.onclick=function(){ lmBrowse(d.parent); }; list.appendChild(up);
+    }
+    (d.dirs||[]).forEach(function(dir){
+      var el=document.createElement('div'); el.className='lm-item dir';
+      el.innerHTML='<div class="grow">📁 '+esc(dir.name)+'</div>';
+      el.onclick=(function(rel){ return function(){ lmBrowse(rel); }; })(dir.rel); list.appendChild(el);
+    });
+    (d.tracks||[]).forEach(function(tr){ list.appendChild(trackRow(tr.id, tr.name)); });
+    if(!(d.dirs||[]).length && !(d.tracks||[]).length) list.innerHTML='<div class="q-empty">Empty folder.</div>';
+    lmUpdateAddBtn();
+  }).catch(function(){});
+}
+function lmSearch(q){
+  LM.mode='search';
+  fetch('/ytm/library/search?q='+encodeURIComponent(q)).then(function(r){return r.json()}).then(function(d){
+    var list=$('lm-browse'); list.innerHTML=''; $('lm-crumbs').innerHTML='';
+    (d.results||[]).forEach(function(tr){ list.appendChild(trackRow(tr.id, tr.name, tr.folder||'')); });
+    if(!(d.results||[]).length) list.innerHTML='<div class="q-empty">'+(d.indexing?'Still indexing…':'No matches.')+'</div>';
+    else if(d.truncated){ var m=document.createElement('div'); m.className='q-empty';
+      m.textContent='Showing the first '+(d.results.length)+' — narrow your search.'; list.appendChild(m); }
+    lmUpdateAddBtn();
+  }).catch(function(){});
+}
+var _lmSearchT=null;
+$('lm-search').oninput=function(){ var q=this.value.trim(); clearTimeout(_lmSearchT);
+  if(!q){ lmBrowse(LM.rel); return; }
+  _lmSearchT=setTimeout(function(){ lmSearch(q); }, 220); };
+$('lm-search-clear').onclick=function(){ $('lm-search').value=''; lmBrowse(LM.rel); };
+$('lm-sel-all').onclick=function(){
+  document.querySelectorAll('#lm-browse .lm-item[data-id]').forEach(function(el){
+    LM.sel[el.dataset.id]=true; var cb=el.querySelector('input'); if(cb) cb.checked=true; });
+  lmUpdateAddBtn();
+};
+$('lm-sel-none').onclick=function(){ LM.sel={};
+  document.querySelectorAll('#lm-browse .lm-item input[type=checkbox]').forEach(function(cb){ cb.checked=false; });
+  lmUpdateAddBtn();
+};
+$('lm-add-sel').onclick=function(){
+  var ids=[]; for(var k in LM.sel) if(LM.sel[k]) ids.push(k);
+  if(!ids.length){ toast('Nothing selected'); return; }
+  fetch('/ytm/queue/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:ids})})
+    .then(function(r){return r.json()}).then(function(){
+      toast('Added '+ids.length+' to queue'); qReload();
+      LM.sel={}; document.querySelectorAll('#lm-browse .lm-item input[type=checkbox]').forEach(function(cb){cb.checked=false;});
+      lmUpdateAddBtn();
+    }).catch(function(){ toast('Add failed'); });
+};
+$('lm-add-folder').onclick=function(){
+  if(LM.mode==='search'){ toast('Switch to browsing to add a folder'); return; }
+  fetch('/ytm/queue/add-folder',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({path:LM.rel,recursive:true})})
+    .then(function(r){return r.json()}).then(function(d){ toast('Added '+d.added+' tracks'); qReload(); })
+    .catch(function(){ toast('Add failed'); });
+};
+$('save-dir').onclick=function(){
+  saveConfig({local:{music_dir:$('music_dir').value.trim()}}, 'Folder saved — indexing').then(function(){
+    setTimeout(function(){ lmRefreshStatus(); lmBrowse(''); }, 500); });
+};
+$('rescan').onclick=function(){
+  fetch('/ytm/library/reindex',{method:'POST'}).then(function(){ toast('Re-scanning'); setTimeout(lmRefreshStatus,500); });
+};
+
+/* ===== folder picker (server-driven, works from any device) ===== */
+var FS={path:''};
+function openPicker(){ $('fs-modal').classList.add('show'); fsBrowse($('music_dir').value.trim()||''); }
+function closePicker(){ $('fs-modal').classList.remove('show'); }
+function fsBrowse(path){
+  fetch('/ytm/fs/list?path='+encodeURIComponent(path||'')).then(function(r){return r.json()}).then(function(d){
+    FS.path=d.path||''; $('fs-path').textContent=d.path||'(drives)';
+    var list=$('fs-list'); list.innerHTML='';
+    if(d.parent!==null && d.parent!==undefined){
+      var up=document.createElement('div'); up.className='lm-item dir'; up.innerHTML='<div class="grow">⬑ ..</div>';
+      up.onclick=function(){ fsBrowse(d.parent); }; list.appendChild(up);
+    }
+    (d.dirs||[]).forEach(function(dir){
+      var el=document.createElement('div'); el.className='lm-item dir';
+      el.innerHTML='<div class="grow">📁 '+esc(dir.name)+'</div>';
+      el.onclick=(function(p){ return function(){ fsBrowse(p); }; })(dir.path); list.appendChild(el);
+    });
+    if(d.error){ var er=document.createElement('div'); er.className='q-empty'; er.textContent=d.error; list.appendChild(er); }
+    else if(!(d.dirs||[]).length){ list.appendChild(Object.assign(document.createElement('div'),{className:'q-empty',textContent:'No subfolders.'})); }
+  }).catch(function(){});
+}
+$('pick-folder').onclick=openPicker;
+$('fs-cancel').onclick=closePicker;
+$('fs-modal').onclick=function(e){ if(e.target===$('fs-modal')) closePicker(); };
+$('fs-choose').onclick=function(){
+  if(!FS.path){ toast('Pick a folder'); return; }
+  $('music_dir').value=FS.path; closePicker();
+  saveConfig({local:{music_dir:FS.path}}, 'Folder set — indexing').then(function(){
+    setTimeout(function(){ lmRefreshStatus(); lmBrowse(''); }, 500); });
+};
+
+/* ===== preview player (local to this tab, not the stream) ===== */
+var pvAudio=$('pv-audio');
+function pvPlay(id,label){
+  pvAudio.src='/ytm/localfile/'+id;
+  pvAudio.play().catch(function(){});
+  $('pv-title').textContent='Preview: '+(label||'');
+  $('pv-toggle').textContent='⏸';
+}
+$('pv-toggle').onclick=function(){
+  if(!pvAudio.src) return;
+  if(pvAudio.paused){ pvAudio.play(); this.textContent='⏸'; }
+  else { pvAudio.pause(); this.textContent='▸'; }
+};
+pvAudio.addEventListener('ended',function(){ $('pv-toggle').textContent='▸'; });
+
+/* ===== queue (virtualised: only visible rows render, windows fetched on demand) ===== */
+var Q={count:0,index:0,pageSize:200,rowH:34,pages:{},pending:{}};
+function qReload(){ Q.pages={}; Q.pending={}; qLoadState(); }
+function qLoadState(){
+  fetch('/ytm/queue/state').then(function(r){return r.json()}).then(function(s){
+    Q.count=s.count; Q.index=s.index; qRender();
+  }).catch(function(){});
+}
+function qEnsure(pi){
+  if(pi<0 || Q.pages[pi] || Q.pending[pi]) return;
+  Q.pending[pi]=true;
+  fetch('/ytm/queue/items?offset='+(pi*Q.pageSize)+'&limit='+Q.pageSize).then(function(r){return r.json()}).then(function(d){
+    delete Q.pending[pi]; Q.count=d.count; Q.index=d.index;
+    var m={}; d.items.forEach(function(it,k){ m[d.offset+k]=it; }); Q.pages[pi]=m; qRender();
+  }).catch(function(){ delete Q.pending[pi]; });
+}
+function qRow(i,it){
+  var d=document.createElement('div'); d.className='q-item'+(i===Q.index?' cur':'');
+  d.style.cssText='position:absolute;left:0;right:0;height:'+Q.rowH+'px;top:'+(i*Q.rowH)+'px';
+  var idx=document.createElement('span'); idx.className='idx'; idx.textContent=(i+1);
+  var g=document.createElement('div'); g.className='grow'; g.draggable=true;
+  if(!it){ g.textContent='…'; }
+  else {
+    g.textContent = it.missing ? ('(missing) '+it.name) : (it.title||it.name);
+    if(it.artist){ var s=document.createElement('span'); s.className='sub'; s.textContent='  '+it.artist; g.appendChild(s); }
+    g.ondblclick=function(){ qPlay(i); };
+  }
+  var pv=document.createElement('button'); pv.className='pv'; pv.innerHTML='&#9656;'; pv.title='Preview';
+  if(it) pv.onclick=function(e){ e.stopPropagation(); pvPlay(it.id, it.title||it.name); };
+  var x=document.createElement('button'); x.className='x'; x.innerHTML='&#10005;'; x.title='Remove';
+  x.onclick=function(e){ e.stopPropagation(); qRemove(i); };
+  g.addEventListener('dragstart',function(e){ LM.drag=i; e.dataTransfer.effectAllowed='move';
+    try{ e.dataTransfer.setData('text/plain',String(i)); }catch(_){} });
+  d.addEventListener('dragover',function(e){ e.preventDefault(); d.classList.add('drop-before'); });
+  d.addEventListener('dragleave',function(){ d.classList.remove('drop-before'); });
+  d.addEventListener('drop',function(e){ e.preventDefault(); d.classList.remove('drop-before');
+    if(LM.drag!=null && LM.drag!==i) qMove(LM.drag,i); LM.drag=null; });
+  d.appendChild(idx); d.appendChild(g); d.appendChild(pv); d.appendChild(x);
+  return d;
+}
+function qRender(){
+  var sc=$('q-scroll'), rows=$('q-rows');
+  $('q-count').textContent=Q.count;
+  $('q-spacer').style.height=(Q.count*Q.rowH)+'px';
+  if(Q.count===0){ rows.innerHTML='<div class="q-empty">Queue is empty.</div>'; return; }
+  var top=sc.scrollTop, h=sc.clientHeight||440;
+  var start=Math.max(0,Math.floor(top/Q.rowH)-4);
+  var end=Math.min(Q.count, Math.ceil((top+h)/Q.rowH)+4);
+  for(var pi=Math.floor(start/Q.pageSize); pi<=Math.floor(Math.max(start,end-1)/Q.pageSize); pi++) qEnsure(pi);
+  rows.innerHTML='';
+  for(var i=start;i<end;i++){
+    rows.appendChild(qRow(i, (Q.pages[Math.floor(i/Q.pageSize)]||{})[i]));
+  }
+}
+$('q-scroll').addEventListener('scroll', qRender);
+function qMut(url,body){ return fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})})
+  .then(function(){ qReload(); }).catch(function(){}); }
+function qRemove(i){ qMut('/ytm/queue/remove',{index:i}); }
+function qMove(f,t){ qMut('/ytm/queue/move',{from:f,to:t}); }
+function qPlay(i){ qMut('/ytm/queue/play',{index:i}); }
+$('q-clear').onclick=function(){ if(Q.count>50 && !confirm('Clear all '+Q.count+' tracks?')) return; qMut('/ytm/queue/clear',{}); };
+
+/* ===== playlists ===== */
+function loadPlaylists(){ fetch('/ytm/playlists').then(function(r){return r.json()}).then(function(d){ renderPlaylists(d.playlists||[]); }).catch(function(){}); }
+function renderPlaylists(list){
+  var el=$('pl-list'); el.innerHTML='';
+  if(!list.length){ el.innerHTML='<div class="q-empty">No playlists yet.</div>'; return; }
+  list.forEach(function(p){
+    var d=document.createElement('div'); d.className='lm-item';
+    var g=document.createElement('div'); g.className='grow'; g.textContent=p.name;
+    var s=document.createElement('span'); s.className='sub'; s.textContent='  '+p.count; g.appendChild(s);
+    var act=document.createElement('div'); act.className='pl-actions';
+    function btn(txt,title,fn){ var b=document.createElement('button'); b.innerHTML=txt; b.title=title;
+      b.onclick=function(e){ e.stopPropagation(); fn(); }; return b; }
+    act.appendChild(btn('Load','Replace the queue',function(){ plLoad(p.name,'replace'); }));
+    act.appendChild(btn('+','Append to the queue',function(){ plLoad(p.name,'append'); }));
+    act.appendChild(btn('&#9998;','Rename',function(){ plRename(p.name); }));
+    act.appendChild(btn('&#10005;','Delete',function(){ plDelete(p.name); }));
+    d.appendChild(g); d.appendChild(act); el.appendChild(d);
+  });
+}
+function plLoad(name,mode){
+  fetch('/ytm/playlists/load',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name,mode:mode})})
+    .then(function(){ toast(mode==='append'?'Appended '+name:'Loaded '+name); qReload(); }).catch(function(){});
+}
+function plRename(name){ var to=prompt('Rename playlist',name); if(!to||to===name) return;
+  fetch('/ytm/playlists/rename',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name,to:to})}).then(function(){ loadPlaylists(); }); }
+function plDelete(name){ if(!confirm('Delete playlist "'+name+'"?')) return;
+  fetch('/ytm/playlists/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name})}).then(function(){ loadPlaylists(); }); }
+$('q-save-pl').onclick=function(){
+  if(!Q.count){ toast('Queue is empty'); return; }
+  var name=prompt('Save current queue as playlist:'); if(!name) return;
+  fetch('/ytm/playlists/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name})})
+    .then(function(r){return r.json()}).then(function(d){ toast('Saved "'+d.name+'" ('+d.count+')'); loadPlaylists(); })
+    .catch(function(){ toast('Save failed'); });
+};
+
 loadAll().then(connectPanel);
 setInterval(function(){
   fetch('/ytm/api/status').then(function(r){return r.json()}).then(paintStatus);
+  if($('tab-local').classList.contains('sel')) lmRefreshStatus();
 }, 5000);
 </script>
 <script src="/static/hexbar.js"></script>

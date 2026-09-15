@@ -1,25 +1,37 @@
-# YouTube Music Desktop — now playing overlay
+# Music — now playing overlay (YouTube Music **or** local files)
 
-A now-playing overlay fed by the
-[YouTube Music Desktop App](https://ytmdesktop.github.io/)'s companion server.
-Album art, live progress, an accent colour pulled from the artwork itself, an
-audio visualiser, and optionally the music video embedded in the card.
+A now-playing overlay with two sources you pick from the panel:
 
-This integration talks **specifically to that app** — it does not connect to
-YouTube Music in a browser or to the service directly. Requires
-**[YouTube Music Desktop App](https://ytmdesktop.github.io/) 2.0.0 or newer**.
+- **YouTube Music** — fed by the
+  [YouTube Music Desktop App](https://ytmdesktop.github.io/)'s companion server.
+  Album art, live progress, an accent colour pulled from the artwork itself, an
+  audio visualiser, and optionally the music video embedded in the card. It
+  talks **specifically to that app** (2.0.0+) — not the website or the service.
+- **Local files** — map a music folder, build a queue, and play it **through the
+  overlay itself**, so OBS captures the audio straight from the browser source.
+  The same card, styling and visualiser apply; the visualiser reacts to the real
+  audio via the Web Audio API. See [Local files](#local-files) below.
+
+Flip between them with the **Music source** control at the top of the panel.
 Everything lives under `/ytm/*`.
 
 ---
 
 ## Install
 
-Copy `ytmusic.py` next to `hexcast.py`, and these two files into `static/`:
+Copy `ytmusic.py` and `localmusic.py` next to `hexcast.py`, and these two files
+into `static/`:
 
 ```
 static/ytm_panel.html
 static/ytm_overlay.html
 ```
+
+`localmusic.py` is optional — it's the local-file player, mounted automatically
+by `ytmusic.py` when present. Without it the Music tab is YouTube-Music-only.
+The local player needs **ffmpeg/ffprobe** (already a Hexcast dependency) to read
+tags, durations and embedded cover art; without ffmpeg it still plays, showing
+filenames and no art.
 
 Install the dependencies:
 
@@ -76,6 +88,60 @@ not visible**. Settings apply live — save in the panel and the overlay
 restyles without a refresh.
 
 ---
+
+## Local files
+
+Set **Music source → Local files** and open the **Local library** tab.
+
+**Map a folder.** Type a path, or click **Browse…** to pick one with the
+in-panel folder browser (it lists the host's drives and folders, so it works
+even when you're driving the panel from another device). Hexcast then walks the
+folder in a background thread and builds a filename index, so even tens of
+thousands of tracks stay responsive — nothing is copied or modified, and tags/
+duration/art are read only when a track is queued or played. The status line
+shows progress and the final count; **Re-scan** rebuilds it after you add or
+remove files.
+
+**Build a queue.** The **Library** card browses and searches; the **Queue** card
+holds the play order:
+
+- **Browse** folders (breadcrumbs jump back up); **search** filters the whole
+  library by filename/folder.
+- Tick tracks (or **Select shown**) and **Add selected** — selections persist as
+  you move between folders. To queue a lot at once, use **Add this folder (+
+  subfolders)**, which expands server-side — the way to queue thousands (or the
+  whole library from the root) without the browser choking on them.
+- Click **▸** on any track to **preview** it in the panel (local to that tab —
+  it does *not* go to the stream), so you can audition while curating.
+- In the queue, **drag** to reorder, **double-click** to play a track now, **▸**
+  to preview, **✕** to remove, **Clear** to empty. The queue list is virtualised,
+  so a 15k-track queue scrolls smoothly.
+- The queue is saved to `config/localmusic.json` and survives restarts. Track
+  ids are derived from the file path, so a saved queue re-links after a restart;
+  files that have since moved show as *(missing)* and are skipped on play.
+
+**Playlists.** Build a queue, then **Save as playlist** (named, stored in
+`config/playlists.json`). The **Playlists** card lists them: **Load** replaces
+the queue with the playlist, **+** appends it, plus rename and delete. Handy for
+keeping a few set-lists around and swapping between them.
+
+**Playback lives in the overlay.** The audio element is inside the OBS browser
+source, so OBS captures it like any browser-source audio — add the same
+`/ytm/overlay` source to your scene and you'll hear it on stream. Transport
+(play/pause, next, previous) is on the **Now playing** tab and works the same
+for both sources. Metadata, duration and embedded cover art are read on demand
+with ffprobe/ffmpeg and cached.
+
+A couple of things worth knowing:
+
+- If more than one overlay is open, only the **first** one plays the audio (the
+  rest are muted "viewers" that still animate), so you never get double sound.
+- The **visualiser** reacts to the real audio via the Web Audio API right in the
+  overlay — set the visualiser mode to *React to real audio*. No desktop
+  loopback or extra packages are needed for local playback (that server-side
+  capture is only used for the YouTube Music source).
+- Playback needs codecs the browser engine (OBS's Chromium) supports: MP3, M4A/
+  AAC, OGG/Opus, FLAC and WAV all play; exotic formats (e.g. WMA) may not.
 
 ## How the data arrives
 
@@ -226,7 +292,18 @@ The Now playing tab has transport buttons. They post to:
 POST /ytm/api/command   {"command": "next"}
 ```
 
-which proxies to the companion server. Valid commands: `playPause`, `play`,
+The command is routed to whichever source is active. With **Local files** it
+drives the local queue (`playPause`, `play`, `pause`, `next`, `previous`,
+`seekTo`, `setVolume`, `playQueueIndex`, `repeatMode`, `shuffle`). The queue is
+read with `GET /ytm/queue/state` (lightweight — counts + current track) and
+`GET /ytm/queue/items?offset=&limit=` (a window, for the virtualised list), and
+edited with `POST /ytm/queue/{add,add-folder,remove,move,clear,play}`. The
+library is at `GET /ytm/library/{status,browse,search}`, playlists at
+`GET /ytm/playlists` + `POST /ytm/playlists/{save,load,rename,delete}`, and the
+folder picker at `GET /ytm/fs/list?path=`.
+
+With **YouTube Music** the command proxies to the companion server. Valid
+commands there: `playPause`, `play`,
 `pause`, `next`, `previous`, `volumeUp`, `volumeDown`, `setVolume` (0–100),
 `mute`, `unmute`, `seekTo`, `shuffle`, `repeatMode`, `toggleLike`,
 `toggleDislike`, `playQueueIndex`, `changeVideo`.

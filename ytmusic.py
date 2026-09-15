@@ -17,6 +17,12 @@ authorization" switched on while pairing.
 
 State arrives over the app's Socket.IO feed rather than polling, so the
 progress bar is live and the REST rate limits never come into play.
+
+The Music tab has a second source: a local-file player (localmusic.py), mounted
+automatically by attach_ytm() when that module is present. A "source" config key
+("ytm" | "local") decides which player drives the shared overlay; see
+active_source(). The two share this module's overlay, panel, websocket hub,
+config and now-playing contract.
 """
 
 from __future__ import annotations
@@ -109,6 +115,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "track_change_clip": "",
     "use_socketio": True,
     "poll_interval": 2,
+    # Which player drives the shared overlay: "ytm" observes the YouTube Music
+    # Desktop app; "local" plays files from a mapped directory (see localmusic.py).
+    "source": "ytm",
+    "local": {
+        "music_dir": "",           # folder to index / play from
+    },
     "overlay": {
         "layout": "card",
         "font_family": "Inter",
@@ -209,6 +221,11 @@ def save_config(cfg: dict) -> dict:
 CONFIG = load_config()
 
 
+def active_source() -> str:
+    """Which player currently drives the shared overlay: "ytm" | "local"."""
+    return str(CONFIG.get("source") or "ytm").lower()
+
+
 def api_base() -> str:
     return f"http://{CONFIG['host']}:{CONFIG['port']}"
 
@@ -263,7 +280,8 @@ class State:
         self.last_error = ""
         self.pairing_code = ""
         self.pairing = False
-        self.now: dict[str, Any] | None = None
+        self.now: dict[str, Any] | None = None       # active source's now-playing
+        self.ytm_now: dict[str, Any] | None = None   # last YTM payload (for re-seed on switch back)
         self.log: list[str] = []
 
     def note(self, msg: str) -> None:
@@ -304,6 +322,7 @@ class Hub:
     def __init__(self) -> None:
         self.overlay: set[WebSocket] = set()
         self.panel: set[WebSocket] = set()
+        self.player_ws: WebSocket | None = None   # the one overlay that owns local audio playback
 
     async def _send(self, group: set[WebSocket], payload: dict) -> None:
         dead = []
@@ -648,8 +667,11 @@ AUDIO = AudioLevels()
 
 
 def _sync_audio() -> None:
-    """Capture only while an overlay is connected and the mode asks for it."""
-    want = (CONFIG.get("visualizer", {}).get("mode") == "audio") and bool(HUB.overlay)
+    """Capture only while an overlay is connected and the mode asks for it. In
+    local mode the overlay measures its own audio via Web Audio, so the
+    server-side loopback stays off to avoid double-driving the visualiser."""
+    want = ((CONFIG.get("visualizer", {}).get("mode") == "audio")
+            and bool(HUB.overlay) and active_source() == "ytm")
     if want and not AUDIO.running:
         try:
             AUDIO.start(asyncio.get_running_loop())
@@ -754,17 +776,24 @@ class Feed:
             STATE.note(f"could not read state update: {exc}")
             return
 
+        is_ytm = active_source() == "ytm"
         changed = payload.get("id") and payload["id"] != self.last_id
         if changed and payload.get("meta_ready", True):
             self.last_id = payload["id"]
             payload["track_changed"] = True
             STATE.note(f"now playing: {payload['author']} - {payload['title']}")
-            asyncio.create_task(_fire_clip(CONFIG.get("track_change_clip", "")))
-            asyncio.create_task(_forward({**payload, "event": "track_change"}))
+            # Track-change side effects belong to YTM; skip them while local plays.
+            if is_ytm:
+                asyncio.create_task(_fire_clip(CONFIG.get("track_change_clip", "")))
+                asyncio.create_task(_forward({**payload, "event": "track_change"}))
 
-        STATE.now = payload
-        await HUB.to_overlay(payload)
-        await HUB.to_panel({"type": "now", "now": payload})
+        # Always keep the last YTM payload so switching back to YTM is instant, but
+        # only drive the shared overlay/now when YTM is the active source.
+        STATE.ytm_now = payload
+        if is_ytm:
+            STATE.now = payload
+            await HUB.to_overlay(payload)
+            await HUB.to_panel({"type": "now", "now": payload})
 
     async def _run(self, stop: asyncio.Event) -> None:
         backoff = 2
@@ -994,8 +1023,11 @@ async def api_get_config():
 @router.post("/api/config")
 async def api_set_config(request: Request):
     global CONFIG
+    import localmusic
     incoming = await request.json()
     old = (CONFIG["host"], CONFIG["port"])
+    old_source = active_source()
+    old_dir = (CONFIG.get("local") or {}).get("music_dir", "")
     CONFIG = save_config(_deep_merge(CONFIG, incoming))
     await HUB.broadcast_config()
     if AUDIO.running:
@@ -1003,6 +1035,19 @@ async def api_set_config(request: Request):
     _sync_audio()
     if (CONFIG["host"], CONFIG["port"]) != old:
         await FEED.restart()
+    # Local-music side: re-index if the directory changed, and re-drive the
+    # overlay when the source changes so it isn't left showing stale info.
+    new_dir = (CONFIG.get("local") or {}).get("music_dir", "")
+    if new_dir != old_dir:
+        localmusic.reindex_from_config()
+    new_source = active_source()
+    if new_source == "local":
+        await localmusic.activate()
+    elif new_source == "ytm" and old_source != "ytm":
+        if STATE.ytm_now:
+            STATE.now = STATE.ytm_now
+            await HUB.to_overlay(STATE.ytm_now)
+            await HUB.to_panel({"type": "now", "now": STATE.ytm_now})
     return {"ok": True, "config": CONFIG}
 
 
@@ -1037,7 +1082,13 @@ async def api_command(request: Request):
     cmd = body.get("command", "")
     if not cmd:
         return JSONResponse({"error": "command is required"}, status_code=400)
-    ok, err = await send_command(cmd, body.get("data"))
+    # Route transport to whichever player is active. The panel's data-cmd buttons
+    # (playPause/next/previous/…) work unchanged for both sources.
+    if active_source() == "local":
+        import localmusic
+        ok, err = await localmusic.handle_command(cmd, body.get("data"))
+    else:
+        ok, err = await send_command(cmd, body.get("data"))
     if not ok:
         return JSONResponse({"error": err}, status_code=400)
     return {"ok": True}
@@ -1073,20 +1124,48 @@ async def api_nowplaying_json():
 
 @router.websocket("/ws/overlay")
 async def ws_overlay(ws: WebSocket):
+    import localmusic
     await ws.accept()
     HUB.overlay.add(ws)
     await FEED.ensure_started()
     _sync_audio()
+    # The first live overlay becomes the "player" (owns local audio + reports
+    # position/levels); the rest are muted "viewers" that just animate. Prevents
+    # double audio when more than one overlay is open.
+    if HUB.player_ws is None or HUB.player_ws not in HUB.overlay:
+        HUB.player_ws = ws
+    role = "player" if HUB.player_ws is ws else "viewer"
     try:
+        await ws.send_text(json.dumps({"type": "role", "role": role}))
         await ws.send_text(json.dumps({"type": "config", "config": CONFIG}))
         if STATE.now:
             await ws.send_text(json.dumps(STATE.now))
         while True:
-            await ws.receive_text()
+            raw = await ws.receive_text()
+            try:
+                msg = json.loads(raw)
+            except Exception:
+                continue
+            mt = msg.get("type")
+            if ws is not HUB.player_ws:
+                continue                      # only the authority reports
+            if mt == "levels":
+                await HUB.to_overlay({"type": "levels", "v": msg.get("v") or []})
+            elif mt in ("local_progress", "local_ended", "local_error", "local_ready"):
+                await localmusic.handle_overlay_message(msg)
     except (WebSocketDisconnect, Exception):
         pass
     finally:
         HUB.overlay.discard(ws)
+        if HUB.player_ws is ws:              # promote another overlay to player
+            HUB.player_ws = next(iter(HUB.overlay), None)
+            if HUB.player_ws is not None:
+                try:
+                    await HUB.player_ws.send_text(json.dumps({"type": "role", "role": "player"}))
+                    if STATE.now:
+                        await HUB.player_ws.send_text(json.dumps(STATE.now))
+                except Exception:
+                    pass
         _sync_audio()
 
 
@@ -1131,3 +1210,10 @@ def attach_ytm(app, port: int = 4747) -> None:
     app.include_router(router)
     print(f"  Music panel:         http://localhost:{port}/ytm", flush=True)
     print(f"  Music overlay:       http://localhost:{port}/ytm/overlay", flush=True)
+    # Local-file player shares this overlay/panel/hub. Late import avoids an
+    # import cycle (localmusic imports ytmusic, which is fully loaded by now).
+    try:
+        import localmusic
+        localmusic.attach_local(app, port)
+    except Exception as exc:                    # pragma: no cover
+        print(f"  [localmusic] not attached: {exc}", flush=True)

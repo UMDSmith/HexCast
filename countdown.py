@@ -70,14 +70,16 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "target_time": "22:00:00",     # HH:MM[:SS], server-local, used in target mode
     "autostart": False,            # start ticking as soon as an overlay connects
 
-    # --- media cue ---
-    # Auto-fire a soundboard clip so it ENDS at a chosen point in the countdown.
-    # The server reads the clip's playable length and works backwards to trigger
-    # the start on time, so (e.g.) intro music can finish exactly at 0:00.
-    "media_enabled": False,        # arm the cue
-    "media_kind": "audio",         # "audio" | "video"  (which soundboard library)
-    "media_name": "",              # clip name ("" = none)
-    "media_end_offset": 0,         # seconds remaining on the countdown when the clip should END (0 = at 0:00)
+    # --- media cues ---
+    # Auto-fire soundboard clips against the master timer. Add as many as you like.
+    # Each cue is anchored to a countdown threshold (seconds remaining):
+    #   anchor "start" -> the clip STARTS when the countdown hits `offset`.
+    #   anchor "end"   -> the clip ENDS when the countdown hits `offset`; the
+    #                     server reads the clip's playable length and works
+    #                     backwards so (e.g.) intro music finishes exactly at 0:00.
+    # Each cue: {"enabled": bool, "kind": "audio"|"video", "name": str,
+    #            "anchor": "start"|"end", "offset": int}  (offset = seconds remaining)
+    "media_cues": [],
 
     # --- text / format ---
     "label": "",                   # optional caption shown with the digits ("" = none)
@@ -132,6 +134,48 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return out
 
 
+def _norm_cue(c: dict) -> dict:
+    """Coerce one media cue into a clean, fully-populated dict."""
+    kind = str(c.get("kind", "audio")).lower()
+    if kind not in ("audio", "video"):
+        kind = "audio"
+    anchor = str(c.get("anchor", "end")).lower()
+    if anchor not in ("start", "end"):
+        anchor = "end"
+    # `offset` is the canonical field; fall back to the legacy `end_offset`.
+    raw_off = c.get("offset", c.get("end_offset", 0))
+    try:
+        off = max(0, int(float(raw_off or 0)))
+    except (TypeError, ValueError):
+        off = 0
+    return {
+        "enabled": bool(c.get("enabled", True)),
+        "kind": kind,
+        "name": str(c.get("name", "") or "").strip(),
+        "anchor": anchor,
+        "offset": off,
+    }
+
+
+def _migrate_cues(cfg: dict) -> dict:
+    """Normalise `media_cues`, migrating the legacy single-cue flat keys if present."""
+    cues = cfg.get("media_cues")
+    if not isinstance(cues, list):
+        cues = []
+    if not cues and (cfg.get("media_name") or cfg.get("media_enabled")):
+        cues = [{
+            "enabled": bool(cfg.get("media_enabled", False)),
+            "kind": cfg.get("media_kind", "audio"),
+            "name": cfg.get("media_name", ""),
+            "anchor": "end",
+            "offset": cfg.get("media_end_offset", 0),
+        }]
+    cfg["media_cues"] = [_norm_cue(c) for c in cues if isinstance(c, dict)]
+    for k in ("media_enabled", "media_kind", "media_name", "media_end_offset"):
+        cfg.pop(k, None)
+    return cfg
+
+
 def load_config() -> dict:
     raw = {}
     if CONFIG_PATH.exists():
@@ -139,11 +183,11 @@ def load_config() -> dict:
             raw = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
         except Exception:
             raw = {}
-    return _deep_merge(DEFAULT_CONFIG, raw)
+    return _migrate_cues(_deep_merge(DEFAULT_CONFIG, raw))
 
 
 def save_config(cfg: dict) -> dict:
-    merged = _deep_merge(DEFAULT_CONFIG, cfg)
+    merged = _migrate_cues(_deep_merge(DEFAULT_CONFIG, cfg))
     CONFIG_PATH.write_text(json.dumps(merged, indent=2), encoding="utf-8")
     return merged
 
@@ -168,8 +212,8 @@ TIMER: dict[str, Any] = {"running": False, "ends_at": None, "remaining": None}
 # trigger to a different hexcast instance.
 _PORT: int = 4747
 _APP = None                               # FastAPI app, set by attach_countdown()
-MEDIA_TASK: asyncio.Task | None = None   # the pending "trigger at start_epoch" task
-MEDIA_FIRED: bool = False                 # guard so a single run fires the clip once
+MEDIA_TASKS: list[asyncio.Task] = []     # one pending "trigger at start_epoch" task per armed cue
+MEDIA_FIRED: dict[int, bool] = {}        # cue index -> fired this run (so a cue fires once)
 
 
 def _client() -> httpx.AsyncClient:
@@ -207,81 +251,89 @@ async def _clip_play_seconds(kind: str, name: str) -> float | None:
     return None
 
 
-async def _fire_media_clip() -> None:
-    """Trigger the armed soundboard clip via its public /api/play endpoint."""
-    kind = str(CONFIG.get("media_kind", "audio"))
-    name = str(CONFIG.get("media_name", "")).strip()
+async def _fire_media_clip(kind: str, name: str) -> None:
+    """Trigger one soundboard clip via its public /api/play endpoint."""
+    name = (name or "").strip()
     if not name:
         return
     url = f"/api/play/{kind}/{urllib.parse.quote(name)}"
     try:
         async with _client() as c:
             r = await c.get(url)
-            print(f"[countdown cue] /api/play -> {r.status_code} {r.text[:200]}", flush=True)
+            print(f"[countdown cue] /api/play {kind}/{name!r} -> {r.status_code} {r.text[:200]}", flush=True)
     except Exception as exc:
         print(f"[countdown cue] /api/play failed: {exc}", flush=True)
 
 
-async def _media_runner(delay: float) -> None:
-    """Sleep until the computed start moment, then fire the clip once."""
-    global MEDIA_FIRED
+async def _cue_runner(idx: int, kind: str, name: str, delay: float) -> None:
+    """Sleep until the computed start moment, then fire this cue's clip once."""
     try:
         if delay > 0:
             await asyncio.sleep(delay)
-        # The world may have changed while we slept: only fire if the cue is still
-        # armed, the timer is still running, and we haven't already fired.
-        if MEDIA_FIRED or not TIMER["running"] or not CONFIG.get("media_enabled"):
-            print(f"[countdown cue] not firing: fired={MEDIA_FIRED} "
-                  f"running={TIMER['running']} enabled={CONFIG.get('media_enabled')}", flush=True)
+        # The world may have changed while we slept: only fire if the timer is
+        # still running and this cue hasn't already fired this run.
+        if MEDIA_FIRED.get(idx) or not TIMER["running"]:
+            print(f"[countdown cue] not firing #{idx}: fired={MEDIA_FIRED.get(idx)} "
+                  f"running={TIMER['running']}", flush=True)
             return
-        MEDIA_FIRED = True
-        print(f"[countdown cue] FIRING {CONFIG.get('media_kind')}/{CONFIG.get('media_name')!r}", flush=True)
-        await _fire_media_clip()
+        MEDIA_FIRED[idx] = True
+        print(f"[countdown cue] FIRING #{idx} {kind}/{name!r}", flush=True)
+        await _fire_media_clip(kind, name)
     except asyncio.CancelledError:
         pass
 
 
-def _cancel_media_cue() -> None:
-    global MEDIA_TASK
-    if MEDIA_TASK is not None and not MEDIA_TASK.done():
-        MEDIA_TASK.cancel()
-    MEDIA_TASK = None
+def _cancel_media_cues() -> None:
+    global MEDIA_TASKS
+    for t in MEDIA_TASKS:
+        if not t.done():
+            t.cancel()
+    MEDIA_TASKS = []
 
 
-async def _schedule_media_cue(reset_fired: bool = True) -> None:
-    """Arm (or re-arm) the media cue against the current running timer.
+async def _schedule_media_cues(reset_fired: bool = True) -> None:
+    """Arm (or re-arm) every enabled media cue against the current running timer.
 
-    The clip should END at `media_end_offset` seconds remaining, so we start it
-    `clip_length` earlier: start_epoch = ends_at - end_offset - clip_length.
-    If that moment is already past (clip longer than the time left), the runner
-    fires immediately as a best effort. Cancels any previously pending cue."""
-    global MEDIA_TASK, MEDIA_FIRED
-    _cancel_media_cue()
+    A cue is anchored to a countdown threshold (`offset` = seconds remaining):
+      * anchor "start" -> fire when the countdown reaches `offset`:
+                          start_epoch = ends_at - offset.
+      * anchor "end"   -> the clip should END at `offset`, so start it its own
+                          length earlier: start_epoch = ends_at - offset - clip_len.
+    If a start moment is already past, the runner fires immediately as a best
+    effort. Cancels any previously pending cues first."""
+    global MEDIA_TASKS, MEDIA_FIRED
+    _cancel_media_cues()
     if reset_fired:
-        MEDIA_FIRED = False
-    if MEDIA_FIRED:
-        print("[countdown cue] skip: already fired this run", flush=True)
-        return
-    if not CONFIG.get("media_enabled") or not str(CONFIG.get("media_name", "")).strip():
-        print(f"[countdown cue] skip: disabled or no clip "
-              f"(enabled={CONFIG.get('media_enabled')}, name={CONFIG.get('media_name')!r})", flush=True)
-        return
+        MEDIA_FIRED = {}
     if not TIMER["running"] or TIMER["ends_at"] is None:
         print("[countdown cue] skip: timer not running", flush=True)
         return
-    kind = str(CONFIG.get("media_kind", "audio"))
-    name = str(CONFIG.get("media_name", ""))
-    clip_len = await _clip_play_seconds(kind, name)
-    if clip_len is None:
-        print(f"[countdown cue] skip: no playable length for {kind}/{name!r} "
-              f"(clip missing from /index or no duration)", flush=True)
-        return
-    end_offset = float(CONFIG.get("media_end_offset", 0) or 0)
-    start_epoch = float(TIMER["ends_at"]) - end_offset - clip_len
-    delay = start_epoch - time.time()
-    print(f"[countdown cue] armed: {kind}/{name!r} len={clip_len:.2f}s "
-          f"end_offset={end_offset:.0f}s -> fires in {delay:.2f}s", flush=True)
-    MEDIA_TASK = asyncio.create_task(_media_runner(delay))
+    ends_at = float(TIMER["ends_at"])
+    now = time.time()
+    for idx, cue in enumerate(CONFIG.get("media_cues") or []):
+        name = str(cue.get("name", "")).strip()
+        if not cue.get("enabled") or not name:
+            continue
+        if MEDIA_FIRED.get(idx):   # already fired this run (e.g. on resume)
+            continue
+        kind = str(cue.get("kind", "audio"))
+        offset = float(cue.get("offset", 0) or 0)
+        anchor = str(cue.get("anchor", "end"))
+        if anchor == "start":
+            start_epoch = ends_at - offset
+            detail = "start-at"
+        else:
+            clip_len = await _clip_play_seconds(kind, name)
+            if clip_len is None:
+                print(f"[countdown cue] skip #{idx}: no playable length for {kind}/{name!r} "
+                      f"(clip missing from /index or no duration)", flush=True)
+                continue
+            start_epoch = ends_at - offset - clip_len
+            detail = f"end-at (len={clip_len:.2f}s)"
+        delay = start_epoch - now
+        print(f"[countdown cue] armed #{idx}: {kind}/{name!r} {detail} "
+              f"offset={offset:.0f}s -> fires in {delay:.2f}s", flush=True)
+        MEDIA_TASKS.append(asyncio.create_task(_cue_runner(idx, kind, name, delay)))
 
 
 def _target_epoch(hhmmss: str) -> float:
@@ -431,11 +483,11 @@ async def api_timer(request: Request):
     # Arm the media cue on a fresh start, re-arm (without re-firing) on resume,
     # and tear it down on pause/reset.
     if action == "start":
-        await _schedule_media_cue(reset_fired=True)
+        await _schedule_media_cues(reset_fired=True)
     elif action == "resume":
-        await _schedule_media_cue(reset_fired=False)
+        await _schedule_media_cues(reset_fired=False)
     else:  # pause | reset
-        _cancel_media_cue()
+        _cancel_media_cues()
     await HUB.broadcast_timer()
     return {"ok": True, "timer": timer_snapshot()}
 
@@ -449,7 +501,7 @@ async def ws_overlay(ws: WebSocket):
         # Optionally kick off the countdown the moment the overlay appears.
         if CONFIG.get("autostart") and not TIMER["running"]:
             _apply_action("start", {})
-            await _schedule_media_cue(reset_fired=True)
+            await _schedule_media_cues(reset_fired=True)
         await ws.send_text(json.dumps({"type": "timer", **timer_snapshot()}))
         while True:
             await ws.receive_text()

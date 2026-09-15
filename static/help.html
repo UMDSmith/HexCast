@@ -149,14 +149,16 @@ curl http://localhost:4747/clips/api/play/next</pre>
 <section id="music">
 <div class="card">
   <h2>Music <span class="tag">/ytm</span></h2>
-  <p class="hint">Now-playing overlay fed by the YouTube Music Desktop App's companion server.</p>
+  <p class="hint">Now-playing overlay with two sources, chosen with <b>Music source</b> on the panel:
+    the <b>YouTube Music Desktop App</b> (via its companion server), or <b>local files</b> from a
+    mapped folder played through the overlay itself (OBS captures the audio).</p>
   <table class="api">
-    <tr><td>GET /ytm/api/nowplaying</td><td>one plain-text line: <code>Title - Artist (Album)</code> — made for a chat bot's <code>!song</code></td></tr>
+    <tr><td>GET /ytm/api/nowplaying</td><td>one plain-text line: <code>Title - Artist (Album)</code> — made for a chat bot's <code>!song</code> (reflects the active source)</td></tr>
     <tr><td>GET /ytm/api/nowplaying.json</td><td>the full state as JSON</td></tr>
     <tr><td>GET /ytm/api/status</td><td>connection + pairing state</td></tr>
-    <tr><td>POST /ytm/api/command</td><td><code>{"command": "next"}</code> — proxied to the app</td></tr>
+    <tr><td>POST /ytm/api/command</td><td><code>{"command": "next"}</code> — routed to whichever source is active</td></tr>
   </table>
-  <h3>Valid commands</h3>
+  <h3>YouTube Music commands</h3>
   <p class="hint"><code>playPause</code>, <code>play</code>, <code>pause</code>, <code>next</code>,
     <code>previous</code>, <code>volumeUp</code>, <code>volumeDown</code>, <code>setVolume</code> (0–100),
     <code>mute</code>, <code>unmute</code>, <code>seekTo</code>, <code>shuffle</code>,
@@ -164,6 +166,22 @@ curl http://localhost:4747/clips/api/play/next</pre>
     <code>playQueueIndex</code>, <code>changeVideo</code> — so a channel-point redeem can skip a track.</p>
   <p class="hint">A <b>Forward URL</b> on the panel POSTs the full state on every track change, and
     <b>Clip on track change</b> fires a soundboard clip by name through <code>/api/play/{name}</code>.</p>
+  <h3>Local files</h3>
+  <p class="hint">On the <b>Local library</b> tab: pick a folder (<b>Browse…</b> uses an in-panel
+    file browser that works from any device), then browse/search and build a queue. <b>Add this folder
+    (+ subfolders)</b> queues thousands at once server-side; the queue list is virtualised so huge queues
+    stay smooth. Save a queue as a <b>playlist</b> (JSON) and load/append it later. <b>▸</b> previews a
+    track in the panel only (not the stream). The visualiser reacts to the real audio via Web Audio in the
+    overlay. Transport uses the same <code>/ytm/api/command</code>.</p>
+  <table class="api">
+    <tr><td>GET /ytm/library/status</td><td>index progress (root, count, ready/indexing)</td></tr>
+    <tr><td>GET /ytm/library/browse?path= · search?q=</td><td>one folder level · filename/folder search</td></tr>
+    <tr><td>GET /ytm/fs/list?path=</td><td>host drives/folders, for the folder picker</td></tr>
+    <tr><td>GET /ytm/queue/state · items?offset=&amp;limit=</td><td>lightweight state · a window of items</td></tr>
+    <tr><td>POST /ytm/queue/add|add-folder|remove|move|clear|play</td><td>queue edits</td></tr>
+    <tr><td>GET /ytm/playlists · POST /ytm/playlists/save|load|rename|delete</td><td>named playlists</td></tr>
+    <tr><td>GET /ytm/localfile/{id} · localart/{id}</td><td>audio (HTTP Range for seeking) · cover art</td></tr>
+  </table>
 </div>
 </section>
 
@@ -193,23 +211,28 @@ curl http://localhost:4747/clips/api/play/next</pre>
   <h2>Countdown <span class="tag">/countdown</span></h2>
   <p class="hint">Styleable countdown timer overlay — count down a fixed duration or to a clock
     time. The server owns the remaining time and streams it to the overlay, so clock skew never
-    matters. A <b>media cue</b> can fire any soundboard clip timed to <b>end</b> at a chosen point
-    in the countdown (e.g. intro music finishing exactly at 0:00) — the clip plays on the
-    soundboard overlay, honouring its saved trim/volume/cooldown, so keep both browser sources in
-    the scene.</p>
+    matters. <b>Media cues</b> can fire any number of soundboard clips, each anchored to its own
+    countdown threshold — set a clip to <b>end</b> at a point (e.g. intro music finishing exactly
+    at 0:00, timed backwards from the clip's length) or to <b>start</b> at a point. Clips play on
+    the soundboard overlay, honouring their saved trim/volume/cooldown, so keep both browser
+    sources in the scene.</p>
   <table class="api">
     <tr><td>GET /countdown/api/status</td><td>connected overlay count + timer snapshot</td></tr>
     <tr><td>GET /countdown/api/config</td><td>full config as JSON</td></tr>
     <tr><td>POST /countdown/api/config</td><td>merge-and-save any subset of config keys</td></tr>
     <tr><td>POST /countdown/api/timer</td><td><code>{"action": "start"}</code> — also <code>pause</code>, <code>resume</code>, <code>reset</code>; start accepts an optional <code>"seconds"</code> for an ad-hoc duration</td></tr>
   </table>
-  <h3>Media cue config keys</h3>
-  <p class="hint"><code>media_enabled</code> (bool), <code>media_kind</code>
-    (<code>audio</code> | <code>video</code>), <code>media_name</code> (clip name),
-    <code>media_end_offset</code> (seconds remaining when the clip should end; <code>0</code> = at
-    zero). Read when the timer starts — pause cancels the pending cue, resume re-arms it.</p>
+  <h3>Media cues config</h3>
+  <p class="hint">Posted as a <code>media_cues</code> array (replaces the whole list). Each entry:
+    <code>enabled</code> (bool), <code>kind</code> (<code>audio</code> | <code>video</code>),
+    <code>name</code> (clip name), <code>anchor</code> (<code>end</code> = clip finishes at the
+    threshold, timed backwards from its length; <code>start</code> = clip fires at the threshold),
+    <code>offset</code> (seconds remaining at the threshold; <code>0</code> = at zero). Read when
+    the timer starts — pause cancels pending cues, resume re-arms them. The legacy single-cue keys
+    (<code>media_enabled</code>/<code>media_kind</code>/<code>media_name</code>/<code>media_end_offset</code>)
+    are still migrated automatically.</p>
   <pre>curl -X POST http://localhost:4747/countdown/api/timer -H "Content-Type: application/json" -d "{\"action\":\"start\",\"seconds\":90}"
-curl -X POST http://localhost:4747/countdown/api/config -H "Content-Type: application/json" -d "{\"media_enabled\":true,\"media_kind\":\"audio\",\"media_name\":\"intro\"}"</pre>
+curl -X POST http://localhost:4747/countdown/api/config -H "Content-Type: application/json" -d "{\"media_cues\":[{\"enabled\":true,\"kind\":\"audio\",\"name\":\"intro\",\"anchor\":\"end\",\"offset\":0}]}"</pre>
 </div>
 </section>
 

@@ -47,6 +47,14 @@
          transition:transform .25s ease;z-index:20}
   #toast.up{transform:translate(-50%,0)}
 
+  /* media cues */
+  .cue{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;padding:12px 14px;
+       border:1px solid var(--line);border-radius:10px;margin-bottom:10px;background:#0c0c11}
+  .cue label.f{flex:1 1 130px;min-width:0}
+  .cue label.en{flex:0 0 auto;align-self:center}
+  .cue .x{flex:0 0 auto;align-self:center;padding:9px 12px}
+  #cue-list:empty::after{content:'No clips yet — add one below.';color:var(--dim);font-size:13px}
+
   /* placement editor */
   #pl-stage{position:relative;width:100%;aspect-ratio:16/9;background:
       repeating-linear-gradient(0deg,#0c0c11 0 39px,#141420 39px 40px),
@@ -109,23 +117,10 @@
   </div>
 
   <div class="card">
-    <h2>Media cue</h2>
-    <p class="hint">Auto-fire a soundboard clip so it <b>ends</b> at a chosen point in the countdown — e.g. intro music that finishes exactly at 0:00. The server reads the clip's (trimmed) length and works backwards to start it on time. Armed when you press <b>Start</b> (or on autostart).</p>
-    <label class="f sw"><input type="checkbox" id="f-media_enabled"> Fire a soundboard clip on this countdown</label>
-    <div class="grid" style="margin-top:14px">
-      <label class="f">Library
-        <select id="f-media_kind">
-          <option value="audio">Audio</option>
-          <option value="video">Video</option>
-        </select>
-      </label>
-      <label class="f">Clip
-        <select id="f-media_name"><option value="">— none —</option></select>
-      </label>
-      <label class="f">End with … seconds left
-        <input type="number" id="f-media_end_offset" min="0" max="86399" step="1" value="0">
-      </label>
-    </div>
+    <h2>Media cues</h2>
+    <p class="hint">Auto-fire soundboard clips against this master timer — add as many as you like. Each clip is anchored to a countdown threshold (seconds remaining): <b>Start at</b> fires the clip when the countdown hits that point; <b>End at</b> makes the clip <i>finish</i> at that point (the server reads the clip's trimmed length and counts back to start it on time — e.g. intro music finishing exactly at 0:00). Armed when you press <b>Start</b> (or on autostart).</p>
+    <div id="cue-list"></div>
+    <div class="row"><button type="button" class="sec" id="cue-add">+ Add clip</button></div>
   </div>
 
   <div class="card">
@@ -244,9 +239,7 @@ async function loadMediaLibrary(){
        MEDIA = { audio: d.audio || [], video: d.video || [] }; }
   catch(e){ MEDIA = { audio: [], video: [] }; }
 }
-function fillClipOptions(val){
-  var sel = $('f-media_name'); if(!sel) return;
-  var kind = ($('f-media_kind') && $('f-media_kind').value) || 'audio';
+function fillClipOptions(sel, kind, val){
   var list = MEDIA[kind] || [];
   sel.innerHTML = '';
   var none = document.createElement('option'); none.value = ''; none.textContent = '— none —';
@@ -261,6 +254,50 @@ function fillClipOptions(val){
     var o = document.createElement('option'); o.value = val; o.textContent = val + ' (not in this library)'; o.selected = true;
     sel.appendChild(o);
   }
+}
+
+// ---- media cue rows (0..N clips, each anchored to a countdown threshold) ----
+function addCueRow(cue){
+  cue = cue || {};
+  var row = document.createElement('div'); row.className = 'cue';
+  row.innerHTML =
+    '<label class="f sw en"><input type="checkbox" class="c-enabled"> On</label>' +
+    '<label class="f">Library<select class="c-kind">' +
+      '<option value="audio">Audio</option><option value="video">Video</option></select></label>' +
+    '<label class="f">Clip<select class="c-name"><option value="">— none —</option></select></label>' +
+    '<label class="f">Anchor<select class="c-anchor">' +
+      '<option value="end">End at … s left</option><option value="start">Start at … s left</option>' +
+      '</select></label>' +
+    '<label class="f">Seconds left<input type="number" class="c-offset" min="0" max="86399" step="1" value="0"></label>' +
+    '<button type="button" class="sec x" title="Remove clip">✕</button>';
+  var en   = row.querySelector('.c-enabled');
+  var kind = row.querySelector('.c-kind');
+  var name = row.querySelector('.c-name');
+  en.checked   = !!cue.enabled;
+  kind.value   = (cue.kind === 'video') ? 'video' : 'audio';
+  row.querySelector('.c-anchor').value = (cue.anchor === 'start') ? 'start' : 'end';
+  row.querySelector('.c-offset').value = Math.max(0, parseInt(cue.offset, 10) || 0);
+  fillClipOptions(name, kind.value, cue.name || '');
+  kind.addEventListener('change', function(){ fillClipOptions(name, kind.value, name.value); });
+  row.querySelector('.x').addEventListener('click', function(){ row.remove(); });
+  $('cue-list').appendChild(row);
+}
+function renderCues(cues){
+  $('cue-list').innerHTML = '';
+  (cues || []).forEach(function(c){ addCueRow(c); });
+}
+function collectCues(){
+  var out = [];
+  document.querySelectorAll('#cue-list .cue').forEach(function(row){
+    out.push({
+      enabled: row.querySelector('.c-enabled').checked,
+      kind:    row.querySelector('.c-kind').value === 'video' ? 'video' : 'audio',
+      name:    (row.querySelector('.c-name').value || '').trim(),
+      anchor:  row.querySelector('.c-anchor').value === 'start' ? 'start' : 'end',
+      offset:  Math.max(0, parseInt(row.querySelector('.c-offset').value, 10) || 0)
+    });
+  });
+  return out;
 }
 
 // ---- field descriptors -------------------------------------------------
@@ -439,12 +476,10 @@ function loadConfig(cfg){
   $('dur-m').value = Math.floor((total%3600)/60);
   $('dur-s').value = total%60;
   $('f-target_time').value = (cfg.target_time || '22:00:00').slice(0,8);
-  // media cue: set kind/offset/enable now, then fill the clip list from /api/list
-  $('f-media_enabled').checked = !!cfg.media_enabled;
-  $('f-media_kind').value = cfg.media_kind || 'audio';
-  $('f-media_end_offset').value = Math.max(0, parseInt(cfg.media_end_offset, 10) || 0);
-  fillClipOptions(cfg.media_name || '');   // provisional (pre-library) so a saved value shows
-  loadMediaLibrary().then(function(){ fillClipOptions(cfg.media_name || ''); });
+  // media cues: render rows now (provisional, pre-library, so saved values show),
+  // then re-render once the clip library loads so the dropdowns fill in.
+  renderCues(cfg.media_cues || []);
+  loadMediaLibrary().then(function(){ renderCues(cfg.media_cues || []); });
   reflectMode();
   initPlacement();
   // Wire the shared background-library buttons, then pull the current library so
@@ -464,10 +499,7 @@ function collectConfig(){
                          (parseInt($('dur-m').value,10)||0)*60 +
                          (parseInt($('dur-s').value,10)||0);
   out.target_time = $('f-target_time').value || '22:00:00';
-  out.media_enabled = $('f-media_enabled').checked;
-  out.media_kind = $('f-media_kind').value || 'audio';
-  out.media_name = $('f-media_name').value || '';
-  out.media_end_offset = Math.max(0, parseInt($('f-media_end_offset').value, 10) || 0);
+  out.media_cues = collectCues();
   out.box_x = Math.round(PLACE.box_x); out.box_y = Math.round(PLACE.box_y);
   out.box_w = Math.round(PLACE.box_w); out.box_h = Math.round(PLACE.box_h);
   out.bg_full = $('pl-bgfull').checked;
@@ -556,7 +588,7 @@ fetch('/countdown/api/config').then(function(r){ return r.json(); }).then(functi
   $('u-overlay').href = overlayUrl;
 });
 $('f-mode').addEventListener('change', reflectMode);
-$('f-media_kind').addEventListener('change', function(){ fillClipOptions($('f-media_name').value); });
+$('cue-add').addEventListener('click', function(){ addCueRow({enabled:true, kind:'audio', name:'', anchor:'end', offset:0}); });
 $('copy-overlay').addEventListener('click', function(){ copyText(location.origin + '/countdown/overlay'); });
 $('save-all').addEventListener('click', saveAll);
 $('t-start').addEventListener('click', function(){ timerAction('start'); });

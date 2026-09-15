@@ -72,29 +72,37 @@ Settings persist in `config/countdown.json`.
 
 ---
 
-## Media cue
+## Media cues
 
-Auto-fire a soundboard clip so it **ends** at a chosen point in the countdown
-— e.g. intro music that finishes exactly as the timer hits 0:00.
+Auto-fire soundboard clips against the master timer — add **as many as you
+like** (or none) with the **+ Add clip** button, each anchored to its own
+countdown threshold. Every cue names a library (audio or video), a clip, an
+anchor, and a number of seconds remaining:
 
-Enable it on the panel: pick the library (audio or video), the clip, and how
-many seconds should remain on the countdown when the clip ends (`0` = at
-zero). On **Start** (or autostart) the server reads the clip's playable
-length — honouring any start/end trim saved in the clip's editor — and works
-backwards to trigger the start at the right moment.
+- **End at … s left** — the clip *finishes* at that threshold. On **Start**
+  (or autostart) the server reads the clip's playable length — honouring any
+  start/end trim saved in the clip's editor — and counts backwards to trigger
+  the start at the right moment. `0` seconds left = the clip ends exactly at
+  0:00 (e.g. intro music finishing as the timer hits zero).
+- **Start at … s left** — the clip *starts* the instant the countdown reaches
+  that threshold. No length maths — it just fires when the master timer hits
+  the given number of seconds remaining.
+
+The **On** switch on each row arms or disarms that cue without deleting it;
+the **✕** removes the row. All cues share the one master timer.
 
 Details worth knowing:
 
-- The cue fires through the soundboard's own play path, so the clip's saved
-  position, scale, volume, trim and cooldown all apply. The clip plays on the
+- Cues fire through the soundboard's own play path, so each clip's saved
+  position, scale, volume, trim and cooldown all apply. Clips play on the
   **soundboard overlay** (`/overlay`), not the countdown overlay — both
   browser sources need to be in the scene.
-- The cue is read when you press Start; changing it mid-countdown takes
-  effect on the next Start.
-- Pause cancels the pending cue; Resume re-arms it against the new end time
-  (a clip that already fired won't fire twice in the same run).
-- If the clip is longer than the time remaining, it fires immediately as a
-  best effort.
+- Cues are read when you press Start; adding, removing or editing them
+  mid-countdown takes effect on the next Start.
+- Pause cancels the pending cues; Resume re-arms them against the new end
+  time (a clip that already fired won't fire twice in the same run).
+- For an **End at** cue whose clip is longer than the time remaining, it
+  fires immediately as a best effort.
 
 ---
 
@@ -115,10 +123,23 @@ curl -X POST http://localhost:4747/countdown/api/timer -H "Content-Type: applica
 curl -X POST http://localhost:4747/countdown/api/config -H "Content-Type: application/json" -d "{\"label\":\"Starting soon\"}"
 ```
 
-Media cue config keys (settable over `POST /countdown/api/config` like
-everything else): `media_enabled` (bool), `media_kind` (`audio` | `video`),
-`media_name` (clip name), `media_end_offset` (seconds remaining when the clip
-should end).
+Media cues are settable over `POST /countdown/api/config` like everything
+else, as a `media_cues` array. Each entry is an object:
+
+```json
+{
+  "media_cues": [
+    {"enabled": true, "kind": "audio", "name": "intro", "anchor": "end",   "offset": 0},
+    {"enabled": true, "kind": "video", "name": "sting",  "anchor": "start", "offset": 30}
+  ]
+}
+```
+
+`anchor` is `"end"` (clip finishes at `offset` seconds remaining) or
+`"start"` (clip fires when the countdown reaches `offset` seconds remaining).
+Posting `media_cues` replaces the whole list. The legacy single-cue keys
+(`media_enabled` / `media_kind` / `media_name` / `media_end_offset`) are still
+read once and migrated into a one-element `media_cues` list automatically.
 
 ---
 

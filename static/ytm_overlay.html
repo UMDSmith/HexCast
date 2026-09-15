@@ -135,6 +135,11 @@
   </div>
 </div>
 
+<!-- Local-file playback happens right here in the overlay so OBS captures it.
+     Only the "player" overlay (first one connected) actually plays; others are
+     muted viewers. Same-origin src, so a Web Audio AnalyserNode can read it. -->
+<audio id="localplayer" style="display:none" preload="auto"></audio>
+
 <script>
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function hexToRgba(hex,a){
@@ -450,9 +455,93 @@ function drawViz(t){
   }
 }
 
+/* ================= local file player =================
+   The overlay is the actual audio element for local playback. The server owns
+   the queue and play/pause intent and sends "state" messages with a bumped
+   `seq` on every control event (track change / seek / play / pause). This
+   overlay obeys those and reports position/ended back so the server can advance
+   the queue. Only the "player" role makes sound + measures audio. */
+var WS=null, ROLE='viewer', SOURCE='ytm';
+var audio=$('localplayer');
+var curSeq=-1, curSrc='', curLocalId='', pendingSeek=null, pendingPlay=false;
+var lastProgressSent=0;
+/* Web Audio: real reactivity straight off the overlay's own <audio>. */
+var actx=null, anode=null, asrc=null, aData=null;
+
+function wsSend(obj){ try{ if(WS&&WS.readyState===1) WS.send(JSON.stringify(obj)); }catch(e){} }
+
+function ensureGraph(){
+  if(actx){ if(actx.state==='suspended') actx.resume(); return; }
+  try{
+    var AC=window.AudioContext||window.webkitAudioContext; if(!AC) return;
+    actx=new AC();
+    asrc=actx.createMediaElementSource(audio);
+    anode=actx.createAnalyser(); anode.fftSize=1024; anode.smoothingTimeConstant=0.6;
+    aData=new Uint8Array(anode.frequencyBinCount);
+    asrc.connect(anode);
+    anode.connect(actx.destination);   // CRITICAL: without this OBS captures silence
+    actx.resume();
+  }catch(e){ console.log('[localmusic] audio graph failed:',e); }
+}
+function localLevels(n){
+  if(!anode) return null;
+  anode.getByteFrequencyData(aData);
+  var nb=aData.length, ny=(actx.sampleRate||48000)/2, lo=40, hi=16000;
+  var sens=(CFG&&CFG.visualizer&&CFG.visualizer.sensitivity)||1;
+  var out=new Array(n);
+  for(var i=0;i<n;i++){
+    var f0=lo*Math.pow(hi/lo,i/n), f1=lo*Math.pow(hi/lo,(i+1)/n);
+    var b0=Math.max(1,Math.floor(f0/ny*nb)), b1=Math.max(b0+1,Math.floor(f1/ny*nb));
+    b1=Math.min(b1,nb);
+    var s=0,c=0; for(var b=b0;b<b1;b++){ s+=aData[b]; c++; }
+    out[i]=Math.min(1,(c?(s/c)/255:0)*sens);
+  }
+  return out;
+}
+function playLocal(){
+  ensureGraph();
+  var p=audio.play();
+  if(p&&p.catch) p.catch(function(){
+    // Unmuted autoplay can be blocked; mute -> play -> unmute is reliable in CEF.
+    audio.muted=true;
+    var q=audio.play();
+    if(q&&q.then) q.then(function(){ setTimeout(function(){ audio.muted=false; },250); }).catch(function(){});
+  });
+}
+function driveLocalAudio(s){
+  if(ROLE!=='player'){ return; }
+  curLocalId=s.id||'';
+  if(s.volume!=null) audio.volume=Math.max(0,Math.min(1,s.volume/100));
+  if(s.seq===curSeq) return;         // no new control event
+  curSeq=s.seq;
+  if(!s.src){ try{ audio.pause(); }catch(e){} curSrc=''; return; }
+  if(s.src!==curSrc){                 // new track: load, then seek+play on metadata
+    curSrc=s.src; pendingSeek=s.progress||0; pendingPlay=!!s.playing;
+    audio.src=s.src; audio.load();
+  } else {                           // same track: reconcile seek + play/pause
+    if(Math.abs(audio.currentTime-(s.progress||0))>1.2){ try{ audio.currentTime=s.progress||0; }catch(e){} }
+    if(s.playing) playLocal(); else { try{ audio.pause(); }catch(e){} }
+  }
+}
+audio.addEventListener('loadedmetadata',function(){
+  wsSend({type:'local_ready',id:curLocalId,duration:audio.duration||0});
+  if(pendingSeek!=null){ try{ audio.currentTime=pendingSeek; }catch(e){} pendingSeek=null; }
+  if(pendingPlay) playLocal();
+});
+audio.addEventListener('timeupdate',function(){
+  if(actx&&actx.state==='suspended') actx.resume();
+  var now=performance.now();
+  if(now-lastProgressSent>=900){ lastProgressSent=now;
+    wsSend({type:'local_progress',pos:audio.currentTime,duration:audio.duration||0}); }
+});
+audio.addEventListener('ended',function(){ wsSend({type:'local_ended',id:curLocalId}); });
+audio.addEventListener('error',function(){ if(curSrc) wsSend({type:'local_error',id:curLocalId}); });
+
 /* ================= config ================= */
 function applyConfig(cfg){
   CFG=cfg;
+  SOURCE=cfg.source||'ytm';
+  if(SOURCE!=='local'){ try{ audio.pause(); }catch(e){} curSeq=-1; curSrc=''; }
   var o=cfg.overlay, v=cfg.visualizer, r=document.documentElement.style;
   loadFont(o.font_family);
   r.setProperty('--font','"'+o.font_family+'"');
@@ -533,6 +622,9 @@ function render(s){
   var idle=!s.title;
   playing=!!s.playing;
 
+  if(s.source) SOURCE=s.source;
+  if(SOURCE==='local') driveLocalAudio(s);   // obey control events / advance queue
+
   slot.classList.toggle('still',!playing);
 
   var hide=(idle&&o.hide_when_idle)||(s.ad&&o.hide_during_ads)||(!playing&&o.hide_when_paused);
@@ -559,7 +651,7 @@ function render(s){
   //   videoType 0   -> an art track, no video behind it, but YTM pairs songs
   //                    with their video "counterpart", so use that instead
   var embedId = '';
-  if(o.art_source === 'video'){
+  if(o.art_source === 'video' && SOURCE!=='local'){
     var isRealVideo = (s.video_type===1 || s.video_type===2);
     if(o.video_when === 'always')          embedId = s.id;
     else if(o.video_when === 'video_tracks') embedId = isRealVideo ? s.id : '';
@@ -593,11 +685,21 @@ function paint(){
   fill.style.width=(p/NOW.duration*100).toFixed(2)+'%';
   tNow.textContent=mmss(p);
 }
+var lastLevelSent=0;
 function tick(t){
-  if(playing&&NOW&&NOW.duration){
+  if(SOURCE==='local' && ROLE==='player' && curSrc){
+    // The audio element is the source of truth for the player's position.
+    localProgress=audio.currentTime||0; lastSync=performance.now(); paint();
+  } else if(playing&&NOW&&NOW.duration){
     var now=performance.now();
     localProgress+=(now-lastSync)/1000; lastSync=now;
     paint();
+  }
+  if(SOURCE==='local' && ROLE==='player' && anode
+     && CFG && CFG.visualizer && CFG.visualizer.mode==='audio'){
+    var lv=localLevels(CFG.visualizer.bars);
+    if(lv){ levels=lv;
+      if(t-lastLevelSent>80){ lastLevelSent=t; wsSend({type:'levels',v:lv}); } }
   }
   if(CFG) drawViz(t);
   requestAnimationFrame(tick);
@@ -609,11 +711,18 @@ window.addEventListener('resize',resizeViz);
 function connect(){
   var proto=location.protocol==='https:'?'wss':'ws';
   var ws=new WebSocket(proto+'://'+location.host+'/ytm/ws/overlay');
+  WS=ws;
   ws.onmessage=function(e){
     var m; try{ m=JSON.parse(e.data); }catch(err){ return; }
     if(m.type==='config') applyConfig(m.config);
+    else if(m.type==='role'){
+      ROLE=m.role||'viewer';
+      if(ROLE!=='player'){ try{ audio.pause(); }catch(e){} }
+      else curSeq=-1;                 // re-drive playback on the next state
+    }
     else if(m.type==='state'&&CFG) render(m);
-    else if(m.type==='levels') levels=m.v;
+    // The player computes its own levels; don't let echoed ones clobber them.
+    else if(m.type==='levels'){ if(!(SOURCE==='local'&&ROLE==='player')) levels=m.v; }
   };
   ws.onclose=function(){ setTimeout(connect,1500); };
   ws.onerror=function(){ try{ ws.close(); }catch(err){} };

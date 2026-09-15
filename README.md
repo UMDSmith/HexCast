@@ -1,15 +1,16 @@
 # Hexcast
 
-<p align="center">
-  <img src="assets/hexcast.png" width="96" alt="Hexcast">
-</p>
+Self-hosted, completely free stream tools that push audio and video to an OBS
+overlay — with full control over position, scale, start/stop times, volume,
+delay, and more. **No data collection, no monthly fee, no sign-ups, always
+free.**
 
-Self hosted, completely free set of stream tools to fully control audio and video to an OBS overlay. Edit position, scale, start times, stop times, volume, delay, etc. 
-No data collection, no monthly fee, no sign ups, always free!
+---
 
 ## ⚠️ Security: local network use only
 
-**This has no authentication of any kind. It is designed to run on a trusted home/studio LAN — never expose it to the public internet.**
+**Hexcast has no authentication of any kind. It is designed to run on a trusted
+home/studio LAN — never expose it to the public internet.**
 
 Anyone who can reach the port can:
 - trigger any media into your stream,
@@ -17,521 +18,343 @@ Anyone who can reach the port can:
 - **delete any media** in your library,
 - enumerate your entire library via the API.
 
-There is no rate limiting and no input gating beyond file-extension checks. Do **not** port-forward this, do **not** put it on a public VPS, and do **not** assume "nobody knows the URL" protects you.
+There is no rate limiting and no input gating beyond file-extension checks. Do
+**not** port-forward this, do **not** put it on a public VPS, and do **not**
+assume "nobody knows the URL" protects you.
 
-Safe ways to run it:
-- On the same machine as OBS, accessed only via `localhost` (set `host="127.0.0.1"` near the bottom of `hexcast.py`).
+**Safe ways to run it:**
+- On the same machine as OBS, reached only via `localhost` (set the bind host to `127.0.0.1` near the bottom of `hexcast.py`).
 - On a LAN, with a firewall rule restricting the port to your local subnet.
 - If you genuinely need remote access, put it behind a reverse proxy (nginx/Caddy) that enforces authentication and TLS, on a private network or VPN — that's on you to set up correctly.
 
-## Features
+The optional integrations store secrets under `config/` (a Twitch OAuth token +
+client secret, a YouTube Music pairing token, a Discord RPC token). Keep that
+folder out of git and keep the port on your LAN.
 
-- **Folder-watch**: drop media into `media/audio/` or `media/video/` and it appears in the control panel instantly
-- **Drag-and-drop uploads** from the control panel — audio extensions route to `audio/`, everything visual to `video/`
-- **Auto-conversion**: dropped `.gif`/`.webp`/`.apng` files get transcoded to `.mp4` on the spot, so every clip is frame-precise seekable
-- **Per-clip editor** for video: drag-to-position canvas, scale, volume (when the clip has audio), a dual-thumb start/end trim slider with **▶ Preview** that plays the trimmed range live in the canvas, and per-clip **chroma key** (color + tolerance + eyedropper) keyed in the overlay itself so overlapping green-screen clips don't box each other out
-- **Per-clip editor** for audio: volume, start/end trim, and live preview through your speakers
-- **Rename in editor**: change a clip's filename without touching the filesystem; the sidecar and poster follow automatically
-- **Per-clip cooldown**: set ms-level cooldown on any clip so spam clicks don't queue up — `0` = current spam-friendly behavior
-- **🔊 audio badge** on video buttons that carry an audio track
-- **Concurrent playback**: spam-click to layer multiple clips at once (cooldowns are per-clip, so other clips still overlap freely)
-- **Edit Mode** for tuning, **Delete Mode** for cleanup — no manual filesystem digging
-- **Bot API**: trigger anything by name via a simple HTTP GET, no auth needed (designed for trusted LAN)
-- **⏹ Stop All** panic button to clear every visual and stop every playing sound at once
-- **Optional integrations**: Twitch chat and alert overlays, a now-playing overlay for the [YouTube Music Desktop App](https://ytmdesktop.github.io/), a Discord voice-reactive overlay, a Twitch clip player with a bot-drivable queue, and a countdown timer overlay that can fire a soundboard clip to end exactly at zero — see [Integrations](#integrations)
+---
 
-## Prerequisites
+## What can Hexcast do?
 
-- **Python 3.10+** (uses modern type union syntax)
-- **ffmpeg** — for gif/webp → mp4 conversion, thumbnail generation, and duration/audio probing. Hexcast still runs without it, but animated GIFs won't be seekable, thumbnails won't generate, and the audio badge won't appear on video buttons.
-- **OBS Studio 28+** with browser source support
+At its core, Hexcast is a **soundboard + media launcher** that drives a single
+set of OBS browser-source overlays from a web control panel. On top of that core
+sit five optional **integration tabs** — Twitch, Music, Discord, Clips, and
+Countdown — each self-contained, each with its own overlay and settings panel,
+each reachable from a button in the control panel's top bar. Turn on as many or
+as few as you like; none of them changes how the soundboard behaves.
 
-## Install
+Everything runs on your own machine and streams to OBS over your LAN.
 
-Hexcast is meant to be **double-click-and-go**. You do **not** need to know anything about Python. The launcher (`start.bat` on Windows, `start.sh` on Mac/Linux) checks that everything is in place, sets itself up, downloads what it needs, and tells you in plain English if something's missing — you just run it.
+### 🔊 Soundboard (the core)
 
-### Windows — the easy way
+**What it does.** Trigger audio and video clips into your stream with a click.
+Clips **layer** — spam them and they all fire at once (unless you set a per-clip
+cooldown). A **⏹ Stop All** panic button clears every visual and stops every
+sound instantly.
 
-1. **Install Python** (one time only). Open **https://www.python.org/downloads/**, click the big yellow **Download Python** button, and run the installer. On the first screen, **tick the box that says "Add python.exe to PATH"** — this is the one step that matters — then click **Install Now** and let it finish.
-2. **Get Hexcast.** On [the Hexcast GitHub page](https://github.com/UMDSmith/hexcast), click the green **`< > Code`** button → **Download ZIP**. Then right-click the downloaded file → **Extract All…** → choose a permanent spot like your Documents folder.
-   *(Know git already? `git clone https://github.com/UMDSmith/hexcast.git` also works and makes updating a one-liner.)*
-3. **Run it.** Open the extracted `hexcast` folder and **double-click `start.bat`**. The first launch takes a minute or two while it downloads its components; every launch after that starts in seconds. When the black window shows `Control panel: http://localhost:4747/`, open that address in your browser — that's your control panel.
+Each clip has an in-panel **editor**:
+- **Video** — drag-to-position on a 16:9 canvas preview (or a 3×3 quick grid), scale, volume (for clips with an audio track), a dual-thumb **start/end trim** with live **▶ Preview**, per-clip **chroma key** (color + tolerance + eyedropper, keyed inside Hexcast so overlapping green-screen clips composite cleanly), rename, and a per-clip **cooldown**.
+- **Audio** — volume, trim, rename, cooldown, with preview through your speakers.
 
-That's the whole thing. Leave the black window open while you stream; close it (or press a key) to stop Hexcast.
+**Edit Mode** and **Delete Mode** let you tune or remove clips without touching
+the filesystem.
 
-> If **Windows SmartScreen** pops up about running a `.bat`, click **More info → Run anyway**. It's just a plain-text launcher — you can open it in Notepad and read it yourself.
+**How it works.** A small local web server hosts the control panel at
+`http://localhost:4747/` and drives the overlay at `/overlay` over a websocket.
+Media lives in `media/audio/` and `media/video/`; a folder watcher imports new
+files instantly, drag-and-drop uploads route by type, and animated
+`.gif`/`.webp`/`.apng` files auto-convert to seekable `.mp4`. Per-clip settings
+save to a small sidecar JSON next to the file. Anything can also be triggered by
+name over a simple HTTP **[Bot API](#bot-api)** — great for chat bots and
+stream-deck buttons.
 
-**ffmpeg is optional but recommended** — it lets animated GIFs convert and thumbnails generate. You can skip it for now and add it later; Hexcast runs fine without it. See [Installing ffmpeg](#installing-ffmpeg) when you're ready.
+### 💬 Twitch
 
-### Mac / Linux — the easy way
+**What it does.** Adds a **chat overlay** and an **alert overlay** for follows,
+subs, gift subs, bits, raids, channel-point redeems, and hype trains, with a
+FIFO alert queue. Any alert can **fire a soundboard clip by name** — just put
+the clip in the Clip column of the Alerts table — so you don't need a separate
+bot for sound alerts.
 
-1. **Install Python 3.10+** if you don't already have it — macOS: `brew install python`; Ubuntu/Debian: `sudo apt install python3 python3-venv`.
-2. **Get Hexcast** (clone, or download + extract the ZIP as above):
-   ```bash
-   git clone https://github.com/UMDSmith/hexcast.git
-   cd hexcast
-   ```
-3. **Run it:**
+**How it works.** You sign in from the Twitch panel; Hexcast subscribes to
+Twitch EventSub and renders the overlays. It can also POST every event to a
+forward URL if you want your own bot or a model reacting to chat.
+See [docs/twitch.md](docs/twitch.md).
+
+### 🎵 Music
+
+**What it does.** A now-playing overlay — album art, live progress, an accent
+colour pulled from the artwork, and an audio visualiser — from one of **two
+sources you pick in the panel**:
+
+- **YouTube Music** — mirrors the [YouTube Music Desktop App](https://ytmdesktop.github.io/), optionally embedding the music video in the card.
+- **Local files** — map a folder (browse for it in-panel), then browse/search a library of **any size**, build a **queue** (multi-select, "add whole folder", drag-to-reorder, virtualised so 15k tracks stay smooth), save queues as **playlists**, and **preview** tracks in the panel while you curate. Local audio plays *inside the overlay* so OBS captures it, and the visualiser reacts to the real audio.
+
+**How it works.** YouTube Music comes over the desktop app's companion server;
+local files are indexed in a background thread, served with HTTP range requests
+for instant seeking, and played by an `<audio>` element in the overlay with a
+Web Audio visualiser. A plain-text `!song` endpoint is included for chat bots.
+See [docs/music.md](docs/music.md).
+
+### 🎙️ Discord
+
+**What it does.** A voice-reactive overlay: everyone in your current Discord
+voice channel appears in OBS and lights up as they speak — using Discord avatars
+or custom PNGTuber-style idle/talking image pairs.
+
+**How it works.** It talks to the Discord **desktop app's local RPC** — no bot,
+no server-side token setup beyond authorizing once.
+See [docs/discord.md](docs/discord.md).
+
+### 🎬 Clips
+
+**What it does.** Queue up Twitch clip/VOD links — paste a single URL or a whole
+blob of chat — then fire them **one at a time** to a full-window overlay (no
+auto-advance, so you stay in control). Bots can trigger items by number.
+
+**How it works.** yt-dlp resolves direct MP4/HLS playback, with optional
+pre-download so a clip is ready the instant you play it.
+See [docs/clips.md](docs/clips.md).
+
+### ⏱️ Countdown
+
+**What it does.** A fully styleable countdown timer overlay — count down a fixed
+duration or to a wall-clock time — positioned on a 1920×1080 stage like the chat
+window. **Media cues** can fire any number of soundboard clips, each anchored to
+its own countdown threshold: set a clip to *end* at a point (e.g. intro music
+finishing exactly at 0:00, timed backwards from the clip's length) or to *start*
+at a point.
+
+**How it works.** The server owns the authoritative remaining time and streams
+it to the overlay, so clock skew between machines never matters; cues are
+computed against that timer and fired through the soundboard.
+See [docs/countdown.md](docs/countdown.md).
+
+---
+
+## Install, upgrade & uninstall
+
+### What you need
+
+- **Python 3.10+** (uses modern type-union syntax).
+- **OBS Studio 28+** with browser-source support.
+- **ffmpeg** — *optional but recommended*. It powers gif/webp → mp4 conversion, thumbnails, media-duration/audio probing, and the Music tab's local tag/cover-art reading. Hexcast runs without it, but animated GIFs won't be seekable, thumbnails won't generate, the 🔊 audio badge won't appear, and local music shows filenames only.
+
+### Install — the easy way
+
+Hexcast is meant to be **double-click-and-go**; you don't need to know anything
+about Python. The launcher (`start.bat` on Windows, `start.sh` on Mac/Linux)
+checks everything, sets itself up, downloads what it needs, and tells you in
+plain English if something's missing.
+
+**Windows**
+1. **Install Python** (one time). Open <https://www.python.org/downloads/>, click **Download Python**, run the installer, and on the first screen **tick "Add python.exe to PATH"** before clicking **Install Now**.
+2. **Get Hexcast.** On [the GitHub page](https://github.com/UMDSmith/hexcast), click **`< > Code` → Download ZIP**, then right-click → **Extract All…** to a permanent spot like your Documents folder. *(Prefer git? `git clone https://github.com/UMDSmith/hexcast.git` makes updating a one-liner.)*
+3. **Run it.** Double-click **`start.bat`**. First launch takes a minute while it sets up; later launches start in seconds. When the window shows `Control panel: http://localhost:4747/`, open that address in your browser.
+
+   > If **Windows SmartScreen** appears, click **More info → Run anyway** — it's a plain-text launcher you can open in Notepad.
+
+**Mac / Linux**
+1. Install Python 3.10+ — macOS: `brew install python`; Ubuntu/Debian: `sudo apt install python3 python3-venv`.
+2. Get Hexcast: `git clone https://github.com/UMDSmith/hexcast.git && cd hexcast` (or download + extract the ZIP).
+3. Run it:
    ```bash
    chmod +x start.sh   # first time only
    ./start.sh
    ```
-   It sets everything up on the first run and just starts on later runs. Open `http://localhost:4747/` when it prints the address.
+   Open `http://localhost:4747/` when it prints the address.
 
-### Advanced / manual setup
+Leave the launcher window open while you stream; close it to stop Hexcast.
 
-The launchers aren't required — if you'd rather manage the environment yourself:
+### Set it up in OBS
 
-**Windows**
-```cmd
-python -m venv .venv
-.venv\Scripts\activate
+1. In OBS: **Sources → + → Browser**.
+2. **URL:** `http://localhost:4747/overlay` · **Width/Height:** match your canvas (typically 1920×1080).
+3. **Control audio via OBS:** ON (routes sound through your mixer). **Shutdown source when not visible:** OFF (otherwise the websocket dies). **Refresh when scene becomes active:** OFF.
+4. Select the source and press **Ctrl+F** to fit.
+
+Each integration adds its own browser source (e.g. `/ytm/overlay`,
+`/twitch/chat`, `/countdown/overlay`); its panel shows the exact URL.
+
+### Install — advanced / manual
+
+The launchers aren't required:
+
+```bash
+# Windows: python -m venv .venv && .venv\Scripts\activate
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 python hexcast.py
 ```
 
-**Mac / Linux**
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python hexcast.py
-```
+All five integrations work from the main install — their dependencies are
+already included. The only separate optional extra is the **"react to real
+audio" visualiser**, which needs `numpy` + `soundcard`:
+`pip install -r requirements-ytm-audio.txt`.
 
-### Installing ffmpeg
+Each integration is just two lines in `hexcast.py` after the `/media` mount
+(e.g. `from twitch import attach_twitch` then `attach_twitch(app, PORT)`, and
+the same shape for `ytmusic`, `discord_reactive`, `clips`, `countdown`). Delete
+a pair to disable that module.
 
-Without ffmpeg the server still runs, but: animated GIFs/WebPs won't convert to MP4 (they stay as `<img>` elements with limited functionality), thumbnails won't generate (videos show empty cards), and the 🔊 audio badge won't appear on video buttons.
-
-**Linux (Debian/Ubuntu):**
-```bash
-sudo apt install ffmpeg
-```
-
-**Linux (Fedora):**
-```bash
-sudo dnf install ffmpeg
-```
-
-**macOS:**
-```bash
-brew install ffmpeg
-```
-
-**Windows:**
-1. Download a release build from https://www.gyan.dev/ffmpeg/builds/ (get "release essentials")
-2. Extract somewhere permanent (e.g., `C:\ffmpeg\`)
-3. Add `C:\ffmpeg\bin` to your PATH (System Properties → Environment Variables → Path → New)
-4. Open a new terminal and verify: `ffmpeg -version`
-
-### Docker
-
-A `Dockerfile` is provided with a multistage build for efficient image creation. The image includes ffmpeg for full media support.
-
-#### Build a standard image
-
-For your current architecture (e.g., x86_64 on Linux, ARM64 on macOS):
+### Install — Docker
 
 ```bash
-docker build -t hexcast:latest .
-```
-
-#### Build for a specific architecture
-
-To build for a different architecture:
-
-```bash
-# For AMD64 (x86_64)
-docker build --platform linux/amd64 -t hexcast:latest .
-
-# For ARM64 (Apple Silicon, Raspberry Pi, etc.)
-docker build --platform linux/arm64 -t hexcast:latest .
-
-# For ARMv7 (Raspberry Pi 32-bit)
-docker build --platform linux/arm/v7 -t hexcast:latest .
-```
-
-#### Build and push multiarch images
-
-To create and push a multiarch image to a registry (requires Docker Buildx):
-
-```bash
-docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 \
-  -t your-registry/hexcast:latest \
-  --push .
-```
-
-#### Run the container
-
-```bash
-# Create media directories on the host
+docker build -t hexcast:latest .          # add --platform linux/amd64|arm64|arm/v7 to cross-build
 mkdir -p ./hexcast-media/audio ./hexcast-media/video
-
-# Run the container
-docker run -d \
-  --name hexcast \
-  -p 4747:4747 \
-  -v ./hexcast-media:/app/media \
-  hexcast:latest
-```
-
-Access the control panel at `http://localhost:4747/`
-
-For OBS browser source, use: `http://<your-machine-ip>:4747/overlay`
-
-**Notes:**
-- The `-v ./hexcast-media:/app/media` mount persists your media library
-- Media uploaded or discovered will be saved to `./hexcast-media/audio/` and `./hexcast-media/video/`
-- Remember: **⚠️ This is for local networks only** — do not expose port 4747 to the internet
-
-## Updating
-
-Updating is safe: your library (`media/`) and all settings and secrets (`config/`) are ignored by git, so updating never touches them.
-
-**Just get the new files, then run the launcher — it handles the rest.** `start.bat` / `start.sh` now notice when the requirements have changed and re-install what's needed automatically, so there are no manual `pip` commands to remember.
-
-The top bar of every panel shows your version (e.g. `v1.1.0`); when a newer release is out it turns green and reads `• update` — that's your cue to update. Click it to open the repo.
-
-**If you cloned with git:**
-```bash
-git pull
-```
-then double-click `start.bat` (Windows) or run `./start.sh` (Mac/Linux).
-
-**If you downloaded the ZIP:** grab the latest ZIP from the green **`< > Code`** button again and extract it over your existing `hexcast` folder (keep your `media/` and `config/` folders), then run the launcher.
-
-All five integrations (Twitch, YouTube Music, Discord, Clips, Countdown) work straight from the main install — their dependencies are already included. The only separate optional extra is the **"react to real audio" visualiser**, which needs `numpy` + `soundcard`:
-```
-pip install -r requirements-ytm-audio.txt
-```
-
-**Docker:** pull, rebuild the image, and recreate the container (your media persists in the host mount):
-```bash
-git pull
-docker build -t hexcast:latest .
-docker stop hexcast && docker rm hexcast
 docker run -d --name hexcast -p 4747:4747 -v ./hexcast-media:/app/media hexcast:latest
 ```
 
-## Usage
+The image bundles ffmpeg. The `-v` mount persists your library. Control panel at
+`http://localhost:4747/`; OBS source at `http://<your-machine-ip>:4747/overlay`.
+For a registry multiarch push: `docker buildx build --platform
+linux/amd64,linux/arm64,linux/arm/v7 -t your-registry/hexcast:latest --push .`.
+**Still LAN-only — don't expose port 4747 to the internet.**
 
-### 1. Start the server
+### Installing ffmpeg
 
-After running `start.sh` / `start.bat`, you'll see:
+- **Debian/Ubuntu:** `sudo apt install ffmpeg` · **Fedora:** `sudo dnf install ffmpeg` · **macOS:** `brew install ffmpeg`
+- **Windows:** download "release essentials" from <https://www.gyan.dev/ffmpeg/builds/>, extract to e.g. `C:\ffmpeg\`, add `C:\ffmpeg\bin` to your PATH (System Properties → Environment Variables → Path → New), open a new terminal and verify with `ffmpeg -version`.
+
+### Upgrading
+
+Your library (`media/`) and all settings/secrets (`config/`) are git-ignored, so
+updating never touches them. The top bar of every panel shows your version; when
+a newer release is out it turns green and reads **• update**.
+
+- **Git:** `git pull`, then run the launcher.
+- **ZIP:** download the latest from **`< > Code`** and extract over your existing folder (keep `media/` and `config/`), then run the launcher.
+- **Docker:** `git pull && docker build -t hexcast:latest . && docker stop hexcast && docker rm hexcast`, then re-run the `docker run …` command above.
+
+The launcher notices when requirements changed and re-installs automatically —
+no manual `pip` to remember.
+
+### Uninstalling
+
+Hexcast is self-contained — everything lives inside its folder.
+
+1. Stop it (close the launcher window, or `docker stop hexcast && docker rm hexcast && docker rmi hexcast:latest`).
+2. Delete the `hexcast` folder — the app, its `.venv`, your `media/`, and `config/` all live there; nothing is installed elsewhere. (Back up `media/` and `config/` first if you want to keep them.)
+3. Remove the browser source(s) you added in OBS.
+4. Optional: uninstall Python and ffmpeg if you added them only for Hexcast.
+
+### Caveats
+
+- **Security:** LAN-only, no auth — see the **⚠️ Security** warning at the top. Integration tokens live under `config/`; keep it private.
+- **ffmpeg** is optional but strongly recommended (see above for what you lose without it).
+- **Local music playback** happens in the OBS overlay browser source, so open `/ytm/overlay` (in OBS or a browser) to actually hear it; the panel's **▸ Preview** is a local audition only. Playback is limited to codecs the browser engine supports (MP3, M4A/AAC, OGG/Opus, FLAC, WAV all work; exotic formats like WMA may not).
+
+---
+
+## Reference
+
+### Bot API
+
+Trigger media over plain HTTP — for chat bots, stream decks, scripts, anything.
+**No authentication** (trusted-LAN use).
 
 ```
-Control panel:       http://localhost:4747/
-OBS browser source:  http://localhost:4747/overlay
-Media root:          /path/to/hexcast/media
-Canvas:              1920x1080
-Posters (ffmpeg):    enabled
+GET  /api                          → endpoint reference
+GET  /api/list                     → JSON: { audio: [...], video: [...] }
+GET|POST /api/play/{name}          → fuzzy: searches audio, then video
+GET|POST /api/play/{kind}/{name}   → explicit: kind = audio | video
+     ?x=&y=&scale=                 → optional position override (video)
+     ?volume=                      → optional volume override 0.0–1.0
+     ?start=&end=                  → optional trim window in seconds
+GET|POST /api/stop                 → clear all visuals + stop all audio (panic)
+POST /rename                       → {file, kind, new_stem} → rename media + sidecar + poster
 ```
 
-### 2. Add the browser source to OBS
+Names are case-insensitive and match the filename stem (`airhorn`) or full name
+(`airhorn.mp3`). Saved editor values (position/scale/volume/trim) apply
+automatically. If a clip has a non-zero `cooldown_ms`, triggers during its
+cooldown return `{"ok": true, "delivered": 0, "suppressed": true, "next_in_ms": N}`.
 
-In OBS: **Sources** → **+** → **Browser**.
-
-- **URL:** `http://localhost:4747/overlay`
-- **Width / Height:** match your canvas (typically 1920×1080)
-- **Control audio via OBS:** ON (so audio routes through your OBS mixer)
-- **Shutdown source when not visible:** OFF (kills the WebSocket otherwise)
-- **Refresh browser when scene becomes active:** OFF
-
-After clicking OK, select the source in the canvas and press **Ctrl+F** to fit to screen.
-
-### 3. Add media
-
-Two ways:
-- **Drag-and-drop** onto the dropzone in the control panel
-- **Drop directly** into `media/audio/` or `media/video/`
-
-The folder watcher picks up new files instantly. Animated `.gif`/`.webp`/`.apng` files auto-convert to `.mp4` on first sight so the editor can seek into them frame-precisely.
-
-### 4. Trigger clips
-
-Click any button in the control panel. Multiple clicks layer naturally — spam them, they'll all fire (unless you've set a per-clip cooldown).
-
-### 5. Edit a clip: position, volume, trim, rename, cooldown
-
-Toggle **Edit Mode** in the top-right (clip buttons get an amber border + ✎). Click any clip to open its editor.
-
-**Video editor** (any visual file — mp4, gif, png, etc.):
-- **Position** — drag the clip around a 16:9 preview of your OBS canvas, or use the 3×3 quick-position grid
-- **Scale** slider
-- **Volume** slider — only shown for video files that actually have an audio track (the ones with a 🔊 badge on the button)
-- **Playback range** — a dual-thumb slider on a single bar. Drag the start (◀) and end (▶) thumbs to trim. As you drag, the preview canvas scrubs to that frame so you can see exactly where you are.
-- **▶ Preview** — plays the trimmed range inside the editor canvas with current position, scale, and volume so you can fine-tune everything before committing. ⏸ to stop.
-- **Chroma key** — per-clip green-screen removal done *inside Hexcast*, so overlapping clips composite cleanly (an OBS chroma filter keys the flattened browser source, so one clip's green box punches a hole in clips underneath — remove that filter once you key here). Tick the checkbox, pick the key color (or hit 💧 and click the color right on the preview), and set **tolerance**: brightness is ignored, so lighter/darker shades of the key color are always removed; the slider widens toward *different* hues. Built-in spill suppression neutralizes the green fringe on soft edges. The preview shows the keyed result live. Works on videos and static images.
-- **Rename** — change the clip's filename. Sidecar and poster follow automatically.
-- **Cooldown (ms)** — if > 0, after this clip fires, further triggers of *this clip* are dropped until the clip finishes playing plus the cooldown elapses. `0` means no cooldown (current spam-friendly behavior). Per-clip only; other clips still overlap freely.
-
-**Audio editor**:
-- Volume, trim, rename, cooldown — same as above. **▶ Preview** plays through your speakers.
-
-Static images (`.png`, `.jpg`) can't be seeked; for those the trim becomes a single "Display duration" slider, and Preview is disabled.
-
-Click **Test in OBS** to fire the current (unsaved) settings to OBS, **Save** to write them to the sidecar JSON. Defaults are omitted from the JSON to keep it clean: a clip with only a custom end time saves as just `{"volume": 1.0, "end": 3.5}`.
-
-### 6. Delete media
-
-Toggle **Delete Mode** (buttons get a red border + ✕). Click any button → confirms → removes the file, its sidecar, and its thumbnail.
-
-### 7. Panic / Stop All
-
-The **⏹ Stop All** button in the top-right instantly clears every visual from the overlay and stops all playing audio. Also available to bots at `GET /api/stop`.
-
-## Configuration
-
-### Media library location
-
-By default media lives in `media/` next to the script. To store it elsewhere — a different drive, a NAS mount, a shared folder — set the `HEXCAST_MEDIA_DIR` environment variable. The `audio/` and `video/` subfolders are created automatically inside it.
-
-If you're upgrading from a previous version with `sounds/`, `gifs/`, and `videos/` folders, Hexcast migrates them automatically on first run: contents of `sounds/` move to `audio/`, contents of `gifs/` and `videos/` merge into `video/`, and the old folders are removed when empty.
-
-**Linux/macOS:**
 ```bash
-export HEXCAST_MEDIA_DIR="/mnt/storage/hexcast"
-./start.sh
+curl http://localhost:4747/api/play/airhorn
+curl "http://localhost:4747/api/play/video/cheer?x=80&y=20&scale=2&volume=0.6&end=3"
+curl http://localhost:4747/api/stop
 ```
 
-**Windows:**
-```cmd
-set HEXCAST_MEDIA_DIR=D:\hexcast-media
-start.bat
+For Twitch redemptions, the Twitch integration handles this natively (no bot
+needed); or map a redemption/command to a clip name and call `/api/play/{name}`
+from your own bot.
+
+### Supported media formats
+
+- **Audio:** `.mp3`, `.wav`, `.ogg`, `.m4a`, `.flac`, `.opus`
+- **Video — static images:** `.png`, `.jpg`, `.jpeg` (shown for a fixed duration)
+- **Video — animated images:** `.gif`, `.webp`, `.apng` (auto-converted to `.mp4`)
+- **Video — native:** `.mp4`, `.webm`, `.mov`, `.mkv`
+
+For best compatibility, transcode unfamiliar video to H.264 + AAC:
+```bash
+ffmpeg -i input.whatever -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k -movflags +faststart output.mp4
 ```
 
-To make it permanent on Windows, set it via System Properties → Environment Variables. On Linux, add the `export` line to your `~/.bashrc`.
+### Configuration
 
-### Other settings
+**Media location.** Media lives in `media/` by default; set `HEXCAST_MEDIA_DIR`
+to store it elsewhere (a drive, NAS mount, shared folder) — `audio/` and
+`video/` are created inside it. Upgrading from old `sounds/`/`gifs/`/`videos/`
+folders migrates automatically on first run.
 
-Edit the constants at the top of `hexcast.py`:
-
-```python
-PORT = 4747              # change if conflicting with another service
-CANVAS_W = 1920          # only affects the editor preview proportions
-CANVAS_H = 1080
-DEFAULT_X = 50.0         # default position (% of canvas)
-DEFAULT_Y = 50.0
-DEFAULT_SCALE = 3.0      # default scale multiplier for new gifs/videos
+```bash
+export HEXCAST_MEDIA_DIR="/mnt/storage/hexcast"   # Windows: set HEXCAST_MEDIA_DIR=D:\hexcast-media
 ```
 
-And the bind host near the bottom of the file:
+**Other settings** — constants at the top of `hexcast.py` (`PORT`, `CANVAS_W/H`,
+`DEFAULT_X/Y`, `DEFAULT_SCALE`) and the bind host near the bottom:
 
 ```python
 uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="warning")
 #                       ^^^^^^^^^ change to "127.0.0.1" for local-only (no LAN access)
 ```
 
-The overlay itself is canvas-agnostic — it uses percentages, so the same setup works whether your OBS canvas is 1080p, 1440p, 4K, or vertical.
+The overlay is canvas-agnostic (percentage-based), so the same setup works at
+1080p, 1440p, 4K, or vertical.
 
-## Bot API
-
-The server exposes an HTTP API designed for triggering media from chat bots, stream-deck buttons, scripts, or any HTTP client. **No authentication** — intended for trusted LAN use.
-
-```
-GET /api                         → endpoint reference
-GET /api/list                    → JSON: { audio: [...], video: [...] }
-GET|POST /api/play/{name}        → fuzzy: searches audio, then video
-GET|POST /api/play/{kind}/{name} → explicit: kind = audio | video
-    ?x=&y=&scale=                → optional position override (video)
-    ?volume=                     → optional volume override 0.0-1.0 (audio, or video with audio)
-    ?start=&end=                 → optional trim window in seconds (both kinds; static images use end only)
-GET|POST /api/stop               → clear all visuals + stop all audio (panic button)
-POST /rename                     → {file, kind, new_stem} → renames media file + sidecar + poster
-```
-
-Names are case-insensitive and match either the filename stem (`airhorn`) or full filename (`airhorn.mp3`). If you don't pass overrides, the values saved in the editor (position, scale, volume, trim) are applied automatically.
-
-**Cooldowns**: if a clip has a non-zero `cooldown_ms` saved in its sidecar, triggers that arrive while the clip is still in its cooldown window return `{"ok": true, "delivered": 0, "suppressed": true, "next_in_ms": N}` and don't fire. Cooldowns are per-clip — other clips can still overlap freely.
-
-### Examples
-
-```bash
-curl http://localhost:4747/api/list
-curl http://localhost:4747/api/play/airhorn
-curl http://localhost:4747/api/play/video/wow
-curl "http://localhost:4747/api/play/video/cheer?x=80&y=20&scale=2&volume=0.6&end=3"
-curl http://localhost:4747/api/stop
-```
-
-**Python:**
-```python
-import requests
-requests.get("http://localhost:4747/api/play/airhorn")
-```
-
-**Node.js:**
-```js
-await fetch(`http://localhost:4747/api/play/${name}`);
-```
-
-### Triggering from a chat bot / Twitch redemptions
-
-Hexcast ships a dedicated Twitch integration (see [Integrations](#integrations)) that handles this natively: the alerts panel can fire any clip from your library on follows, subs, gift subs, bits, raids, channel-point redeems, and hype trains — just put the clip name in the Clip column of the Alerts table. No bot required.
-
-If you'd rather drive it from your own bot instead, the generic API still works: have it call `GET /api/play/{name}` when the relevant trigger fires. Map a redemption title or chat command to a media name and hit the endpoint. The overlay applies the saved position/scale/volume automatically, so the bot only needs to know the clip name.
-
-## Integrations
-
-Five optional modules ship alongside the soundboard. All are self-contained:
-each is a single Python file plus its own pages in `static/`, each namespaces
-all of its routes, and none changes how the soundboard behaves. Install
-any combination, or none.
-
-| | What it adds | Docs |
-| --- | --- | --- |
-| **Twitch** | Chat overlay, alert overlay for follows/subs/bits/raids/redeems with a FIFO alert queue, settings panel | [docs/twitch.md](docs/twitch.md) |
-| **YouTube Music Desktop** | Now-playing overlay with album art, live progress, audio visualiser, optional embedded music video. Requires the [YouTube Music Desktop App](https://ytmdesktop.github.io/) — it pairs with that app's companion API, not with YouTube Music directly | [docs/music.md](docs/music.md) |
-| **Discord** | Voice-reactive overlay: everyone in your current voice channel appears in OBS, lighting up as they speak — Discord avatars or custom PNGTuber-style idle/talking image pairs. Talks to the Discord desktop app's local RPC; no bot needed | [docs/discord.md](docs/discord.md) |
-| **Clips** | Queue up Twitch clip/VOD links (paste one URL or a whole blob of chat), then fire them one at a time at a full-window overlay — no auto-advance. Direct MP4/HLS playback via yt-dlp with optional pre-download; bots trigger items by number over a simple GET API | [docs/clips.md](docs/clips.md) |
-| **Countdown** | Fully styleable countdown timer overlay — count down a duration or to a clock time, positioned on a 1920×1080 stage like the chat window. A **media cue** can fire any soundboard clip timed to end exactly at a chosen point in the countdown (e.g. intro music finishing at 0:00) | [docs/countdown.md](docs/countdown.md) |
-
-Twitch, Music, and Countdown all hook into the existing soundboard play
-endpoint, so a raid, a track change, or a countdown cue can fire a clip from
-your library. Twitch and Music can also POST every event to a URL of your
-choice, if you want a bot or a local model reacting to chat and to what
-you're listening to.
-
-**All five ship enabled out of the box.** They're already wired into
-`hexcast.py` and their dependencies are part of the main install, so there is
-nothing extra to download or edit — just run the launcher. You set each one up
-(sign in / pair) from its own panel in the control panel; see the per-module
-docs linked in the table above.
-
-*Advanced:* each integration is just two lines in `hexcast.py` after the
-`/media` mount — `from twitch import attach_twitch` then `attach_twitch(app, PORT)`,
-and the same shape for `ytmusic`, `discord_reactive`, `clips`, and `countdown`.
-Delete a pair to disable that module. The only add-on with its own separate dependency is the
-optional "react to real audio" visualiser (`pip install -r requirements-ytm-audio.txt`).
-
-A Twitch, a Music, a Discord, a Clips, and a Countdown button appear in the
-control panel's top bar, each with a status dot showing whether that
-integration is currently connected.
-
-**These carry the same security caveat as everything else here, and then
-some** — the Twitch module stores an OAuth token and a client secret, the
-YouTube Music module stores a pairing token, and the Discord module stores an
-RPC access token, all under `config/`. Keep that folder out of git and keep
-the port on your LAN.
-
-## Supported media formats
-
-**Audio:** `.mp3`, `.wav`, `.ogg`, `.m4a`, `.flac`, `.opus`
-**Video — static images:** `.png`, `.jpg`, `.jpeg` (no seeking, shown for a fixed duration)
-**Video — animated images:** `.gif`, `.webp`, `.apng` (auto-converted to `.mp4` on first sight)
-**Video — native:** `.mp4`, `.webm`, `.mov`, `.mkv`
-
-For best video compatibility, transcode unfamiliar formats to H.264 + AAC MP4:
-
-```bash
-ffmpeg -i input.whatever -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k -movflags +faststart output.mp4
-```
-
-## File layout
+### File layout
 
 ```
 hexcast/
-├── hexcast.py            # the server
-├── twitch.py                # optional Twitch integration
-├── ytmusic.py               # optional YouTube Music integration
-├── discord_reactive.py      # optional Discord voice-reactive integration
-├── clips.py                 # optional Twitch clip player integration
-├── countdown.py             # optional countdown timer integration
-├── static/
-│   ├── control.html         # control panel UI (HTML + CSS + JS)
-│   ├── overlay.html         # OBS browser-source overlay
-│   ├── twitch_panel.html    # Twitch settings panel
-│   ├── twitch_chat.html     # Twitch chat overlay
-│   ├── twitch_events.html   # Twitch alert overlay
-│   ├── twitch_boot.js       # shared overlay helpers
-│   ├── ytm_panel.html       # YouTube Music settings panel
-│   ├── ytm_overlay.html     # YouTube Music now-playing overlay
-│   ├── discord_panel.html   # Discord settings panel
-│   ├── discord_overlay.html # Discord voice-reactive overlay
-│   ├── clips_panel.html     # Clips queue + transport panel
-│   ├── clips_overlay.html   # Clips player overlay
-│   ├── countdown_panel.html # Countdown settings panel
-│   └── countdown_overlay.html # Countdown timer overlay
-├── docs/
-│   ├── twitch.md
-│   ├── music.md
-│   ├── discord.md
-│   ├── clips.md
-│   └── countdown.md
-├── config/                  # tokens and integration settings (gitignored)
-├── requirements.txt
-├── requirements-twitch.txt
-├── requirements-ytm.txt
-├── requirements-ytm-audio.txt
-├── requirements-discord.txt
-├── start.sh / start.bat     # launcher scripts
-├── README.md
-├── LICENSE
-└── media/                   # auto-created on first run
-    ├── audio/               # .mp3, .wav, .ogg, .m4a, .flac, .opus
-    └── video/               # .mp4, .webm, .png/.jpg (static), and animated images auto-converted to .mp4
+├── hexcast.py                 # the server (soundboard core)
+├── twitch.py                  # optional Twitch integration
+├── ytmusic.py                 # optional Music integration (YouTube Music source)
+├── localmusic.py              # optional Music integration (local-file player, shares the Music tab)
+├── discord_reactive.py        # optional Discord voice-reactive integration
+├── clips.py                   # optional Twitch clip player integration
+├── countdown.py               # optional countdown timer integration
+├── static/                    # control panel + every overlay/panel (HTML/CSS/JS)
+├── docs/                      # per-integration docs: twitch, music, discord, clips, countdown
+├── config/                    # tokens, playlists & integration settings (gitignored)
+├── requirements*.txt          # core + per-integration dependency lists
+├── start.sh / start.bat       # launchers
+└── media/                     # auto-created: audio/ and video/
 ```
 
-Each clip can have two adjacent files:
-- `airhorn.mp4` — the media
-- `airhorn.json` — saved settings (created by Edit Mode)
-- `airhorn.poster.jpg` — first-frame thumbnail (auto-generated by ffmpeg for video clips)
+Each clip may have adjacent files: `airhorn.mp4` (media), `airhorn.json` (saved
+settings, non-default values only), `airhorn.poster.jpg` (auto thumbnail). You
+can hand-edit the JSON; the watcher ignores `.json` writes.
 
-The sidecar JSON contains only non-default values. A typical video sidecar might be:
-```json
-{"x": 80, "y": 20, "scale": 2.5, "volume": 0.6, "end": 3.5, "cooldown_ms": 1500}
-```
+### Troubleshooting
 
-A typical audio sidecar:
-```json
-{"volume": 0.8, "start": 0.5, "cooldown_ms": 500}
-```
+- **Check `hexcast.log` first** (next to `hexcast.py`, rotated at 1 MB × 3). It records conversion/poster failures with ffmpeg's real error output, and playback errors reported back from inside the OBS browser source.
+- **No posters / gifs animate in the picker:** ffmpeg isn't in PATH — run `ffmpeg -version`.
+- **Clip fires but nothing shows, log says "decode failed":** the file is corrupt — re-upload (a race in versions ≤1.1.0 could corrupt converted gifs; fixed since).
+- **No audio in OBS:** enable **Control audio via OBS** on the browser source; it appears in the Audio Mixer.
+- **Browser source stays black:** right-click → **Interact** → check the DevTools console; confirm Width/Height match the canvas and you've fit with Ctrl+F.
+- **Overlay CSS changes don't show:** OBS caches hard — **Interact → Ctrl+Shift+R**, or append `?v=N` to the URL.
+- **"unsupported extension" / black-in-OBS video:** convert to H.264 + AAC MP4 as shown above.
+- **SSL error in the browser:** you typed `https://`; the server only speaks `http://`.
 
-You can hand-edit these if you prefer — the watcher ignores `.json` writes so it won't trigger a reindex loop.
+---
 
-## Troubleshooting
+## Links
 
-**Check `hexcast.log` first** (next to `hexcast.py`, rotated at 1 MB × 3). It captures conversion and poster failures with ffmpeg's actual error output, unreadable sidecars, uploads — and **playback errors from inside the OBS browser source**: overlays report decode/load failures back over their websocket, so a clip that dies silently in OBS shows up here as `overlay playback error: video decode failed (/media/video/name.mp4)`.
+- **Repository & downloads:** <https://github.com/UMDSmith/hexcast>
+- **Integration docs:** [Twitch](docs/twitch.md) · [Music](docs/music.md) · [Discord](docs/discord.md) · [Clips](docs/clips.md) · [Countdown](docs/countdown.md)
+- **License:** MIT — see [LICENSE](LICENSE)
 
-**Posters not generating, gifs animate in picker:** ffmpeg not in PATH. Run `ffmpeg -version` to verify.
-
-**A clip triggers but nothing appears, log says "decode failed":** the media file itself is corrupt — re-upload it. (Versions up to 1.1.0 had a race where uploading an animated gif could produce a corrupt mp4; fixed since.)
-
-**Audio doesn't play in OBS:** enable **Control audio via OBS** on the browser source. The soundboard appears in your Audio Mixer. Set monitoring to "Monitor and Output" if you want to hear it locally too.
-
-**Browser source stays black:** right-click the source → **Interact** → check the DevTools console for errors. Make sure Width/Height match your canvas and the source has been transformed to fit (Ctrl+F).
-
-**Changes to overlay CSS don't show up in OBS:** OBS aggressively caches. Right-click source → **Interact** → press **Ctrl+Shift+R** for a hard reload. Or append `?v=N` to the URL and bump N.
-
-**Edit Mode opens once then breaks:** you have an old version. Update to the latest, which uses static posters in the editor preview (no looping video element).
-
-**"unsupported extension" on upload:** the file type isn't in the lists above. Convert it first.
-
-**Video plays in picker editor but is black/silent in OBS overlay:** codec issue, transcode as shown above.
-
-**Page in browser shows SSL error:** you typed `https://`. The server only speaks `http://`. Type the URL explicitly, or disable HTTPS-only mode in your browser for this host.
-
-## Roadmap
-
-- Hotkey triggers via OBS WebSocket
-- Search/filter box in the control panel for large libraries
-- Multi-track audio splitting (separate OBS audio source per clip)
-
-Twitch and YouTube Music now have optional modules of their own — see
-[Integrations](#integrations). The soundboard core stays independent of both:
-anything can still drive it through `GET /api/play/{name}` (see
-[Triggering from a chat bot](#triggering-from-a-chat-bot--twitch-redemptions)).
-
-## License
-
-MIT — see [LICENSE](LICENSE).
-
-
-
-
-
-
-
-
-
-
-
+<p align="center">
+  <img src="assets/hexcast.png" width="96" alt="Hexcast">
+</p>
