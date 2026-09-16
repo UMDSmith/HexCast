@@ -84,6 +84,10 @@ curl http://localhost:4747/api/stop</pre>
     pre-download is enabled. <code>{ref}</code> is a <b>#number</b>, item id, exact clip slug,
     or <code>next</code> (first still-queued item). All endpoints return
     <code>{"ok": true/false, ...}</code>.</p>
+  <p class="hint"><b>Auto-level clip volume</b> (Settings tab) measures each clip's loudness on the
+    server with ffmpeg (nothing downloaded) and turns louder clips down so clips and <code>!so</code>
+    shoutouts arrive at a consistent volume (target default <code>-16</code> LUFS). It normalises toward
+    the target — quieter clips are left alone, iframe fallbacks use master volume only.</p>
   <table class="api">
     <tr><td>GET /clips/api/queue</td><td>full queue + player state as JSON</td></tr>
     <tr><td>GET /clips/api/add?url=...</td><td>add a URL (returns the entry incl. its number); POST <code>{"text": "..."}</code> to extract every link from a blob</td></tr>

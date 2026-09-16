@@ -40,6 +40,7 @@ import os
 import random
 import string
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -60,6 +61,7 @@ CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 QUEUE_PATH = CONFIG_DIR / "localmusic.json"       # queue + player state (mutated often)
 PLAYLISTS_PATH = CONFIG_DIR / "playlists.json"    # saved playlists: name -> {ids, created}
 META_PATH = CONFIG_DIR / "localmusic_meta.json"   # probed tag/duration cache (warm restart)
+INDEX_PATH = CONFIG_DIR / "localmusic_index.json" # cached library index (rebuilt only on Re-scan)
 ART_CACHE_DIR = CONFIG_DIR / "localart"
 ART_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -225,7 +227,8 @@ class LibraryIndex:
         self.lock = threading.Lock()
         self.root: Path | None = None
         self.by_id: dict[str, Path] = {}
-        self.entries: list[dict] = []       # {id, name, folder} for search
+        self.entries: list[dict] = []       # {id, name, folder(posix)} for search
+        self.tree: dict[str, dict] = {}     # folder(posix) -> {dirs:[rel...], tracks:[{id,name}]}
         self.indexing = False
         self.ready = False
         self.thread: threading.Thread | None = None
@@ -251,11 +254,15 @@ class LibraryIndex:
             return
         self._start(new_root)
 
-    def _start(self, new_root: Path | None) -> None:
+    def _start(self, new_root: Path | None, force: bool = False) -> None:
+        """Point at a folder. Loads the cached index from disk when possible (no
+        walk); only walks the filesystem on first use, a new folder, or when
+        `force` (the Re-scan button) is set."""
         with self.lock:
             self.root = new_root
             self.by_id = {}
             self.entries = []
+            self.tree = {}
             self.ready = False
             self.error = ""
             self.indexing = bool(new_root)
@@ -267,9 +274,43 @@ class LibraryIndex:
                 self.error = f"not a directory: {new_root}"
             _note(self.error)
             return
+        if not force and self._load_from_disk(new_root):
+            with self.lock:
+                self.indexing = False
+                self.ready = True
+            _note(f"index loaded from cache: {len(self.by_id)} tracks (Re-scan to refresh)")
+            return
         self.thread = threading.Thread(target=self._build, args=(new_root,),
                                        name="localmusic-index", daemon=True)
         self.thread.start()
+
+    @staticmethod
+    def _build_tree(entries: list[dict]) -> dict:
+        """Folder tree for instant browsing, built once from the flat index."""
+        tree: dict[str, dict] = {"": {"dirs": set(), "tracks": []}}
+        for e in entries:
+            folder = e["folder"]
+            tree.setdefault(folder, {"dirs": set(), "tracks": []})
+            tree[folder]["tracks"].append({"id": e["id"], "name": e["name"]})
+            if folder:
+                parts = folder.split("/")
+                for i in range(len(parts)):
+                    parent = "/".join(parts[:i])
+                    child = "/".join(parts[:i + 1])
+                    tree.setdefault(parent, {"dirs": set(), "tracks": []})["dirs"].add(child)
+                    tree.setdefault(child, {"dirs": set(), "tracks": []})
+        return {k: {"dirs": sorted(v["dirs"], key=str.lower), "tracks": v["tracks"]}
+                for k, v in tree.items()}
+
+    def _apply(self, root: Path, by_id: dict, entries: list[dict]) -> None:
+        with self.lock:
+            if self.root != root:
+                return
+            self.by_id = by_id
+            self.entries = entries
+            self.tree = self._build_tree(entries)
+            self.indexing = False
+            self.ready = True
 
     def _build(self, root: Path) -> None:
         _note(f"indexing {root} ...")
@@ -283,87 +324,86 @@ class LibraryIndex:
                         p = Path(dirpath) / fn
                         tid = _track_id(str(p))
                         by_id[tid] = p
-                        try:
-                            folder = str(p.parent.relative_to(root))
-                        except ValueError:
-                            folder = ""
-                        entries.append({"id": tid, "name": p.stem,
-                                        "folder": "" if folder == "." else folder})
-                # publish progress incrementally so browse works before the walk ends
-                with self.lock:
-                    if self.root != root:   # a newer re-index superseded us
-                        _note("index superseded, aborting")
-                        return
-                    self.by_id = dict(by_id)
-                    self.entries = list(entries)
+                        rel_dir = p.parent.relative_to(root)
+                        folder = "" if str(rel_dir) == "." else rel_dir.as_posix()
+                        entries.append({"id": tid, "name": p.stem, "folder": folder})
         except Exception as exc:            # pragma: no cover - fs surprises
             with self.lock:
+                self.indexing = False
                 self.error = str(exc)
             _note(f"index error: {exc}")
+            return
+        with self.lock:
+            if self.root != root:
+                _note("index superseded, aborting")
+                return
+        self._apply(root, by_id, entries)
+        self._save_to_disk(root)
+        _note(f"index ready: {len(by_id)} tracks (cached to disk)")
+
+    def _save_to_disk(self, root: Path) -> None:
         with self.lock:
             if self.root != root:
                 return
-            self.by_id = by_id
-            self.entries = entries
-            self.indexing = False
-            self.ready = True
-        _note(f"index ready: {len(by_id)} tracks")
+            data = {"root": str(root),
+                    "entries": [{"id": e["id"], "path": str(self.by_id.get(e["id"], "")),
+                                 "name": e["name"], "folder": e["folder"]}
+                                for e in self.entries]}
+        try:
+            INDEX_PATH.write_text(json.dumps(data), encoding="utf-8")
+        except Exception as exc:
+            _note(f"index save failed: {exc}")
+
+    def _load_from_disk(self, root: Path) -> bool:
+        if not INDEX_PATH.exists():
+            return False
+        try:
+            data = json.loads(INDEX_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            return False
+        if str(root) != data.get("root"):
+            return False
+        by_id: dict[str, Path] = {}
+        entries: list[dict] = []
+        for e in data.get("entries") or []:
+            tid, p = e.get("id"), e.get("path")
+            if not tid or not p:
+                continue
+            by_id[tid] = Path(p)
+            entries.append({"id": tid, "name": e.get("name", ""), "folder": e.get("folder", "")})
+        self._apply(root, by_id, entries)
+        return True
 
     def path_for(self, tid: str) -> Path | None:
         with self.lock:
-            p = self.by_id.get(tid)
-        if p is not None:
-            return p
-        return None
-
-    def register(self, p: Path) -> str:
-        """Ensure a browsed file is known (playable) even before the walk reaches it."""
-        tid = _track_id(str(p))
-        with self.lock:
-            self.by_id.setdefault(tid, p)
-        return tid
+            return self.by_id.get(tid)
 
     def browse(self, rel: str) -> dict:
+        """Serve one folder level straight from the in-memory tree - no filesystem
+        access, so it's instant even on a 15k-file library."""
         with self.lock:
             root = self.root
+            tree = self.tree
+            indexing = self.indexing
         if root is None:
             return {"error": "no music directory set", "root": "", "rel": "",
-                    "parent": None, "dirs": [], "tracks": []}
-        # Resolve safely inside root; reject traversal.
-        target = (root / rel).resolve() if rel else root
-        try:
-            inside = target == root or root in target.parents
-        except Exception:
-            inside = False
-        if not inside or not target.is_dir():
-            target = root
-        dirs, tracks = [], []
-        try:
-            for child in sorted(target.iterdir(), key=lambda c: c.name.lower()):
-                if child.is_dir():
-                    dirs.append({"name": child.name,
-                                 "rel": str(child.relative_to(root))})
-                elif child.suffix.lower() in AUDIO_EXTS:
-                    tid = self.register(child)
-                    tracks.append({"id": tid, "name": child.stem,
-                                   "ext": child.suffix.lower()})
-        except OSError as exc:
-            return {"error": str(exc), "root": str(root), "rel": rel,
-                    "parent": None, "dirs": [], "tracks": []}
-        rel_now = "" if target == root else str(target.relative_to(root))
-        parent = None
-        if target != root:
-            parent = "" if target.parent == root else str(target.parent.relative_to(root))
-        return {"root": str(root), "rel": rel_now, "parent": parent,
-                "dirs": dirs, "tracks": tracks}
+                    "parent": None, "dirs": [], "tracks": [], "indexing": False}
+        rel = (rel or "").strip().replace("\\", "/").strip("/")
+        node = tree.get(rel)
+        if node is None:
+            rel, node = "", tree.get("", {"dirs": [], "tracks": []})
+        dirs = [{"name": c.split("/")[-1], "rel": c} for c in node["dirs"]]
+        parent = None if rel == "" else "/".join(rel.split("/")[:-1])
+        return {"root": str(root), "rel": rel, "parent": parent,
+                "dirs": dirs, "tracks": node["tracks"], "indexing": indexing}
 
     def search(self, q: str, limit: int = 500) -> dict:
         q = (q or "").strip().lower()
-        if not q:
-            return {"results": [], "truncated": False, "indexing": self.indexing}
         with self.lock:
             entries = self.entries
             indexing = self.indexing
+        if not q:
+            return {"results": [], "truncated": False, "indexing": indexing}
         results = []
         for e in entries:
             if q in e["name"].lower() or q in e["folder"].lower():
@@ -381,7 +421,7 @@ class LibraryIndex:
             entries = self.entries
         out = []
         for e in entries:
-            folder = e["folder"].replace("\\", "/")
+            folder = e["folder"]
             if not rel:
                 if recursive or folder == "":
                     out.append(e["id"])
@@ -844,11 +884,21 @@ async def api_library_search(q: str = "", limit: int = 500):
     return INDEX.search(q, max(1, min(2000, int(limit or 500))))
 
 
+@router.get("/library/all")
+async def api_library_all():
+    """The full lightweight index (id/name/folder) so the panel can search
+    instantly client-side. Fetched once per library; re-fetched after re-index."""
+    with INDEX.lock:
+        return {"items": list(INDEX.entries), "count": len(INDEX.entries),
+                "indexing": INDEX.indexing, "ready": INDEX.ready}
+
+
 @router.post("/library/reindex")
 async def api_library_reindex():
-    """Force a fresh walk of the configured directory (the 'Re-scan' button)."""
+    """Force a fresh walk of the configured directory (the 'Re-scan' button).
+    Normal startup/config changes reuse the cached index; this rebuilds it."""
     music_dir = str((ytmusic.CONFIG.get("local") or {}).get("music_dir", "") or "").strip()
-    INDEX._start(Path(music_dir).resolve() if music_dir else None)
+    INDEX._start(Path(music_dir).resolve() if music_dir else None, force=True)
     return INDEX.status()
 
 
@@ -896,6 +946,40 @@ def _fs_parent(base: Path):
 @router.get("/fs/list")
 async def api_fs_list(path: str = ""):
     return _fs_list(path)
+
+
+def _native_pick_dir(initial: str = "") -> dict:
+    """Open the host OS's native folder-picker dialog and return the chosen path.
+    Runs in a short-lived subprocess (tkinter) so it never touches the server's
+    event loop or thread state. Blocking - call it from an executor. The dialog
+    appears on the machine running Hexcast, not on a remote panel's screen.
+    Returns {"available": bool, "path": str}; available=False means no GUI/tk."""
+    code = (
+        "import tkinter, tkinter.filedialog as fd\n"
+        "r=tkinter.Tk(); r.withdraw(); r.attributes('-topmost', True)\n"
+        "p=fd.askdirectory(initialdir=%r, title='Choose your music folder')\n"
+        "print(p or '')\n" % (initial or "")
+    )
+    flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    try:
+        r = subprocess.run([sys.executable, "-c", code],
+                           capture_output=True, text=True, timeout=300, creationflags=flags)
+    except Exception as exc:
+        _note(f"native folder picker failed to launch: {exc}")
+        return {"available": False, "path": ""}
+    if r.returncode != 0:
+        _note(f"native folder picker unavailable: {(r.stderr or '').strip()[:200]}")
+        return {"available": False, "path": ""}
+    return {"available": True, "path": (r.stdout or "").strip()}
+
+
+@router.post("/fs/pick")
+async def api_fs_pick():
+    """Pop the native OS folder dialog on the host and return the chosen folder."""
+    initial = str((ytmusic.CONFIG.get("local") or {}).get("music_dir", "") or "")
+    loop = asyncio.get_running_loop()
+    res = await loop.run_in_executor(None, _native_pick_dir, initial)
+    return {"ok": bool(res.get("path")), **res}
 
 
 def _queue_result() -> dict:

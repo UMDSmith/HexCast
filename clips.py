@@ -106,6 +106,15 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "iframe_fallback": True,
     # Master volume applied by the overlay (0.0 - 1.0).
     "volume": 1.0,
+    # Auto level clip loudness so clips (and !so shoutouts) come in at a
+    # consistent volume. The server measures each clip's loudness with ffmpeg at
+    # resolve time (streamed through ffmpeg, nothing saved to disk) and the
+    # overlay attenuates louder clips down to `level_target` LUFS. Streamed
+    # playback can only be turned down, so this normalises toward the target;
+    # clips already quieter than the target are left as-is. Iframe fallbacks
+    # can't be measured or adjusted. Needs ffmpeg.
+    "level_enabled": False,
+    "level_target": -16.0,          # LUFS target (EBU R128); -16 is a good stream level
     # Attribution label drawn over the playing clip: where it came from
     # ("twitch.tv/channelname", "youtube.com/@handle"), pulled from yt-dlp
     # metadata at resolve time. Positioned like the soundboard's edit mode:
@@ -204,6 +213,10 @@ def _ytdlp_cmd() -> list[str] | None:
 
 def has_ytdlp() -> bool:
     return _ytdlp_cmd() is not None
+
+
+HAS_FFMPEG = shutil.which("ffmpeg") is not None   # needed for loudness measurement
+LEVEL_MAX_DUR = 600   # don't measure anything longer than this (seconds) - too slow
 
 
 def cache_path(entry: dict) -> Path:
@@ -638,6 +651,8 @@ async def resolve_entry(eid: str) -> None:
         _apply_info(entry, info)
         save_store()
         await HUB.broadcast_queue()
+        if settings().get("level_enabled") and entry["kind"] != "vod":
+            asyncio.create_task(measure_entry(entry))   # background; ready by play time
         if entry["kind"] != "vod" and settings().get("predownload") \
                 and not cache_path(entry).exists():
             await download_clip(entry)
@@ -673,6 +688,78 @@ async def download_clip(entry: dict) -> None:
         STATE.note(f"cached #{entry['num']} {entry['title'] or entry['slug']} "
                    f"({target.stat().st_size // 1024} KB)")
         await HUB.broadcast_queue()
+
+
+# --------------------------------------------------------------------------
+# loudness leveling - measured server-side (no download), applied as attenuation
+# --------------------------------------------------------------------------
+
+def _level_for(entry: dict) -> float:
+    """Per-clip playback gain (<=1.0). 1.0 when leveling is off or unmeasured."""
+    if not settings().get("level_enabled"):
+        return 1.0
+    g = entry.get("gain")
+    return float(g) if g else 1.0
+
+
+async def measure_lufs(url: str) -> float | None:
+    """Integrated loudness (LUFS) of a media URL, via ffmpeg's loudnorm analysis.
+    Streams the audio through ffmpeg (audio only) and discards it - nothing is
+    written to disk. Returns None on failure / no ffmpeg."""
+    if not HAS_FFMPEG or not url:
+        return None
+    target = float(settings().get("level_target", -16.0))
+    cmd = ["ffmpeg", "-hide_banner", "-nostats", "-i", url,
+           "-map", "0:a:0", "-af", f"loudnorm=I={target}:print_format=json",
+           "-f", "null", "-"]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
+        try:
+            _, err = await asyncio.wait_for(proc.communicate(), timeout=90)
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            return None
+    except Exception:
+        return None
+    m = re.search(rb'"input_i"\s*:\s*"(-?[0-9.]+)"', err or b"")
+    if not m:
+        return None
+    try:
+        return float(m.group(1))
+    except ValueError:
+        return None
+
+
+async def measure_entry(entry: dict) -> None:
+    """Measure a clip's loudness and store a per-clip attenuation gain toward the
+    target. Skips VODs and over-long media. If the clip is playing right now, the
+    new level is pushed to the overlay so it corrects mid-play."""
+    if not (HAS_FFMPEG and settings().get("level_enabled")):
+        return
+    if entry.get("gain") is not None or entry.get("kind") == "vod":
+        return
+    dur = entry.get("duration") or 0
+    if dur and dur > LEVEL_MAX_DUR:
+        return
+    cached = _SRC_CACHE.get(entry["id"])
+    if not cached or cached[1] in ("iframe", "hls"):
+        return
+    lufs = await measure_lufs(cached[0])
+    if lufs is None:
+        return
+    target = float(settings().get("level_target", -16.0))
+    gain = max(0.05, min(1.0, 10 ** ((target - lufs) / 20.0)))
+    entry["lufs"] = round(lufs, 1)
+    entry["gain"] = round(gain, 3)
+    STATE.note(f"leveled #{entry.get('num','?')}: {lufs:.1f} LUFS -> gain {gain:.2f}")
+    if entry.get("id") == PLAYER["item_id"]:
+        await HUB.to_overlay({"type": "level", "level": _level_for(entry)})
+    save_store()
+    await HUB.broadcast_queue()
 
 
 # --------------------------------------------------------------------------
@@ -747,9 +834,16 @@ async def play_entry(entry: dict) -> dict:
         save_store()
         await HUB.broadcast_queue()
 
+    # Measure loudness for a not-yet-measured clip (e.g. shoutouts that play
+    # immediately) in the background; it pushes a level correction when ready.
+    if settings().get("level_enabled") and entry.get("gain") is None \
+            and entry["kind"] != "vod" and src.get("mode") in ("mp4", "file"):
+        asyncio.create_task(measure_entry(entry))
+
     PLAYER.update(state="playing", mode=src["mode"])
     await HUB.to_overlay({"type": "play", "item": public_entry(entry),
-                          "src": src, "volume": settings().get("volume", 1.0)})
+                          "src": src, "volume": settings().get("volume", 1.0),
+                          "level": _level_for(entry)})
     await HUB.broadcast_player()
     STATE.note(f"playing #{entry['num']} {entry['title'] or entry['slug']} ({src['mode']})")
 
@@ -847,7 +941,8 @@ async def _handle_overlay_msg(msg: dict) -> None:
         if src and PLAYER["mode"] != "iframe" and settings().get("iframe_fallback"):
             PLAYER.update(state="playing", mode="iframe")
             await HUB.to_overlay({"type": "play", "item": public_entry(entry),
-                                  "src": src, "volume": settings().get("volume", 1.0)})
+                                  "src": src, "volume": settings().get("volume", 1.0),
+                                  "level": _level_for(entry)})
             if entry.get("duration"):
                 _schedule_iframe_finish(
                     entry, float(entry["duration"]) - (entry.get("start") or 0.0) + 4.0)
@@ -1236,6 +1331,7 @@ async def _resume_overlay(ws: WebSocket) -> None:
         await ws.send_text(json.dumps({
             "type": "play", "item": public_entry(entry), "src": src,
             "volume": settings().get("volume", 1.0),
+            "level": _level_for(entry),
             "paused": PLAYER["state"] == "paused",
         }))
     except Exception as exc:

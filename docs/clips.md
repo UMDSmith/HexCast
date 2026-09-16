@@ -139,6 +139,32 @@ around a 16:9 preview canvas (center-anchored `x`/`y` percentages) or use the
 
 ---
 
+## Volume leveling
+
+Clips (and `!so` shoutouts, which play through this same overlay) can arrive at
+wildly different volumes. Turn on **Auto-level clip volume** in the Settings tab
+and Hexcast evens them out.
+
+How it works: when a clip resolves, the server measures its integrated loudness
+(EBU R128 / LUFS) with ffmpeg — streamed *through* ffmpeg, **nothing is
+downloaded or saved** — then the overlay attenuates louder clips down to your
+**Target loudness** (default `-16` LUFS). It normalises *toward* the target:
+clips louder than it are turned down to match; clips already quieter are left
+alone (browser audio can only be turned *down* for streamed media, not boosted).
+
+Worth knowing:
+
+- Needs **ffmpeg**. Without it, leveling is skipped and the master volume applies.
+- A clip that starts playing before its measurement finishes — e.g. an instant
+  shoutout — plays at full volume for a moment, then corrects itself once the
+  measurement lands.
+- **Iframe-embed** fallbacks can't be measured or adjusted (the audio lives in a
+  cross-origin frame), so those use the master volume only. Very long VODs are
+  skipped too.
+- Independent of pre-download — it works on streamed clips.
+
+---
+
 ## Bot / HTTP API
 
 All endpoints are GET-friendly and return `{"ok": true, ...}` or

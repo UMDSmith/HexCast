@@ -221,8 +221,20 @@ function setAccent(hex){
 }
 var ACCENT='#ff3b30';
 
-/* ================= embedded YouTube player ================= */
-var YT_READY=false, player=null, wantVideo=null, blocked={}, watchdog=null;
+/* ================= embedded YouTube player =================
+   Loaded lazily: the YouTube iframe API pulls in Google/doubleclick tracking,
+   so we don't touch it at all unless the "music video" embed is actually in use
+   (art_source = video, on the YouTube Music source). Local playback and plain
+   artwork never contact YouTube. When it IS used we go through the
+   privacy-enhanced youtube-nocookie.com host. */
+var YT_READY=false, YT_LOADING=false, player=null, wantVideo=null, blocked={}, watchdog=null;
+function ensureYT(){
+  if(YT_READY || YT_LOADING) return;
+  YT_LOADING=true;
+  var t=document.createElement('script');
+  t.src='https://www.youtube.com/iframe_api';
+  document.head.appendChild(t);
+}
 
 function giveUpOnVideo(id, why){
   if(id) blocked[id]=true;
@@ -252,11 +264,6 @@ window.onYouTubeIframeAPIReady=function(){
     }
   });
 };
-(function loadYT(){
-  var t=document.createElement('script');
-  t.src='https://www.youtube.com/iframe_api';
-  document.head.appendChild(t);
-})();
 
 function loadVideo(id){
   if(!player || !player.loadVideoById) return;
@@ -537,6 +544,17 @@ audio.addEventListener('timeupdate',function(){
 audio.addEventListener('ended',function(){ wsSend({type:'local_ended',id:curLocalId}); });
 audio.addEventListener('error',function(){ if(curSrc) wsSend({type:'local_error',id:curLocalId}); });
 
+// OBS's browser engine allows autoplay with sound, so playback is audible there.
+// A normal browser tab blocks autoplay-with-sound (and starts the AudioContext
+// suspended) until you interact — so if you open the overlay in a browser to
+// test, the first click/keypress resumes the graph and unmutes.
+['pointerdown','keydown','touchstart'].forEach(function(ev){
+  window.addEventListener(ev, function(){
+    if(actx && actx.state==='suspended') actx.resume();
+    if(SOURCE==='local' && ROLE==='player' && audio.muted) audio.muted=false;
+  }, {passive:true});
+});
+
 /* ================= config ================= */
 function applyConfig(cfg){
   CFG=cfg;
@@ -661,6 +679,7 @@ function render(s){
 
   if(embedId){
     slot.classList.add('video');
+    ensureYT();                    // pull in the YouTube API only now that it's needed
     if(embedId!==lastEmbed){ wantVideo=embedId; if(YT_READY&&player) loadVideo(embedId); }
   } else {
     slot.classList.remove('video');

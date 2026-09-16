@@ -183,8 +183,12 @@
       <label class="f sw"><input type="checkbox" id="f-iframe_fallback">Fall back to the site's embed</label>
       <label class="f">Master volume <span id="volpct" style="text-transform:none"></span>
         <input type="range" id="f-volume" min="0" max="1" step="0.05"></label>
+      <label class="f sw"><input type="checkbox" id="f-level_enabled">Auto-level clip volume (needs ffmpeg)</label>
+      <label class="f">Target loudness (LUFS)
+        <input type="number" id="f-level_target" min="-40" max="-6" step="1"></label>
     </div>
     <div class="row"><button class="act" id="save-cfg">Save</button></div>
+    <p class="hint" style="margin-top:12px"><b>Auto-level</b> measures each clip's loudness on the server (nothing downloaded) and turns louder clips down so clips and <code>!so</code> shoutouts arrive at a consistent volume. It normalises <i>toward</i> the target — clips quieter than it are left alone, and iframe-embed fallbacks can't be adjusted. A clip that plays before it's measured (e.g. an instant shoutout) corrects itself a moment in. <code>-16</code> LUFS is a good stream level; lower is quieter.</p>
     <p class="hint" style="margin-top:12px">Everything <b>streams straight from the source</b> by default -
       nothing is stored. Pre-download is optional: it fetches clips/videos to <code>media/clips/</code> on add
       for instant starts that survive expiring media URLs (files are deleted with their queue item; VODs
@@ -457,6 +461,8 @@ function paintConfig(){
   $('f-iframe_fallback').checked=!!CFG.iframe_fallback;
   $('f-volume').value=CFG.volume;
   $('volpct').textContent=Math.round(CFG.volume*100)+'%';
+  $('f-level_enabled').checked=!!CFG.level_enabled;
+  $('f-level_target').value=(CFG.level_target!==undefined?CFG.level_target:-16);
   paintCredit();
 }
 $('f-volume').oninput=function(){ $('volpct').textContent=Math.round(this.value*100)+'%'; };
@@ -464,7 +470,9 @@ $('save-cfg').onclick=async function(){
   var r=await fetch('/clips/api/config',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({predownload:$('f-predownload').checked,
                          iframe_fallback:$('f-iframe_fallback').checked,
-                         volume:parseFloat($('f-volume').value)})});
+                         volume:parseFloat($('f-volume').value),
+                         level_enabled:$('f-level_enabled').checked,
+                         level_target:parseFloat($('f-level_target').value)||-16})});
   var d=await r.json(); CFG=d.config; paintConfig(); toast('Saved');
 };
 

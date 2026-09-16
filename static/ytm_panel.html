@@ -201,9 +201,10 @@
       <input id="music_dir" placeholder="D:\Music or /home/you/Music" style="flex:1;min-width:180px">
       <button class="sec" id="pick-folder">Browse…</button>
       <button class="act" id="save-dir">Save &amp; index</button>
-      <button class="sec" id="rescan">Re-scan</button>
+      <button class="sec" id="rescan">Re-index</button>
     </div>
     <p class="lm-status" id="lm-status" style="margin-top:10px">—</p>
+    <p class="hint" style="margin-top:6px">Hexcast saves the index and reuses it on every launch, so browsing and search stay fast. <b>Only re-index when your library actually changes</b> — files added, removed, renamed, or moved on disk. (It re-walks the whole folder, which can take a moment on a large library.)</p>
   </div>
 
   <div class="card">
@@ -615,7 +616,7 @@ document.querySelectorAll('nav button').forEach(function(b){
     document.querySelectorAll('nav button').forEach(function(x){x.classList.remove('sel')});
     document.querySelectorAll('section').forEach(function(x){x.classList.remove('sel')});
     b.classList.add('sel'); $('tab-'+b.dataset.tab).classList.add('sel');
-    if(b.dataset.tab==='local'){ lmRefreshStatus(); qReload(); loadPlaylists(); if(LM.mode!=='search') lmBrowse(LM.rel); }
+    if(b.dataset.tab==='local'){ lmRefreshStatus(); qReload(); loadPlaylists(); lmLoadAll(); if(LM.mode!=='search') lmBrowse(LM.rel); }
   };
 });
 
@@ -675,7 +676,8 @@ document.querySelectorAll('input[name=source]').forEach(function(r){
 });
 
 /* ===== local library ===== */
-var LM = { rel:'', sel:{}, mode:'browse', drag:null };
+var LM = { rel:'', sel:{}, mode:'browse', drag:null, all:null, allLoading:false, _ready:false };
+var LM_MAX = 500;   // cap rendered rows so a huge flat folder can't freeze the panel
 
 function lmRefreshStatus(){
   fetch('/ytm/library/status').then(function(r){return r.json()}).then(function(s){
@@ -685,6 +687,10 @@ function lmRefreshStatus(){
     else if(s.error) el.textContent='Error: '+s.error;
     else if(s.ready) el.textContent=s.count+' tracks indexed'+(s.ffmpeg?'':' · ffmpeg not found: filenames only, no art');
     else el.textContent='—';
+    var nowReady = !!(s.ready && !s.indexing);
+    if(nowReady && !LM._ready && LM.mode==='browse') lmBrowse(LM.rel);  // auto-populate once indexing finishes
+    LM._ready = nowReady;
+    if(nowReady && !LM.all && !LM.allLoading) lmLoadAll();               // warm search cache when ready
   }).catch(function(){});
 }
 function lmSelCount(){ var n=0; for(var k in LM.sel) if(LM.sel[k]) n++; return n; }
@@ -723,8 +729,12 @@ function lmBrowse(rel){
       el.innerHTML='<div class="grow">📁 '+esc(dir.name)+'</div>';
       el.onclick=(function(rel){ return function(){ lmBrowse(rel); }; })(dir.rel); list.appendChild(el);
     });
-    (d.tracks||[]).forEach(function(tr){ list.appendChild(trackRow(tr.id, tr.name)); });
-    if(!(d.dirs||[]).length && !(d.tracks||[]).length) list.innerHTML='<div class="q-empty">Empty folder.</div>';
+    var tracks=d.tracks||[];
+    tracks.slice(0,LM_MAX).forEach(function(tr){ list.appendChild(trackRow(tr.id, tr.name)); });
+    if(tracks.length>LM_MAX){ var m=document.createElement('div'); m.className='q-empty';
+      m.textContent='Showing first '+LM_MAX+' of '+tracks.length+' — search to filter, or use “Add this folder (+ subfolders)”.';
+      list.appendChild(m); }
+    if(!(d.dirs||[]).length && !tracks.length) list.innerHTML='<div class="q-empty">'+(d.indexing?'Indexing… this list refreshes when it finishes.':'Empty folder.')+'</div>';
     lmUpdateAddBtn();
   }).catch(function(){});
 }
@@ -739,11 +749,49 @@ function lmSearch(q){
     lmUpdateAddBtn();
   }).catch(function(){});
 }
+// Pull the whole lightweight index once so search is instant and offline-fast.
+// Only cached when the library is fully indexed; retried otherwise.
+function lmLoadAll(cb){
+  if(LM.all){ if(cb) cb(); return; }
+  if(LM.allLoading) return;
+  LM.allLoading=true;
+  fetch('/ytm/library/all').then(function(r){return r.json()}).then(function(d){
+    LM.allLoading=false;
+    if(d.ready && !d.indexing) LM.all=d.items||[];
+    if(cb) cb();
+  }).catch(function(){ LM.allLoading=false; });
+}
+// Instant client-side filter over the cached index — narrows as you type,
+// broadens as you delete. Matches substring in the filename or its folder path.
+function lmSearchLocal(q){
+  LM.mode='search';
+  var ql=q.toLowerCase(), all=LM.all, list=$('lm-browse');
+  $('lm-crumbs').innerHTML='';
+  var shown=[], total=0;
+  for(var i=0;i<all.length;i++){
+    var e=all[i];
+    if(e.name.toLowerCase().indexOf(ql)>=0 || (e.folder && e.folder.toLowerCase().indexOf(ql)>=0)){
+      total++; if(shown.length<LM_MAX) shown.push(e);
+    }
+  }
+  list.innerHTML='';
+  shown.forEach(function(tr){ list.appendChild(trackRow(tr.id, tr.name, tr.folder||'')); });
+  if(!total) list.innerHTML='<div class="q-empty">No matches.</div>';
+  else if(total>LM_MAX){ var m=document.createElement('div'); m.className='q-empty';
+    m.textContent='Showing '+LM_MAX+' of '+total+' matches — keep typing to narrow.'; list.appendChild(m); }
+  lmUpdateAddBtn();
+}
 var _lmSearchT=null;
-$('lm-search').oninput=function(){ var q=this.value.trim(); clearTimeout(_lmSearchT);
-  if(!q){ lmBrowse(LM.rel); return; }
-  _lmSearchT=setTimeout(function(){ lmSearch(q); }, 220); };
-$('lm-search-clear').onclick=function(){ $('lm-search').value=''; lmBrowse(LM.rel); };
+$('lm-search').oninput=function(){
+  var q=this.value.trim();
+  if(!q){ LM.mode='browse'; lmBrowse(LM.rel); return; }   // empty restores the browse view
+  if(LM.all){ lmSearchLocal(q); return; }                 // instant, no network
+  // Index not cached yet (still indexing / first load): use the server this
+  // keystroke, and warm the cache so the rest are instant.
+  clearTimeout(_lmSearchT); _lmSearchT=setTimeout(function(){ lmSearch(q); }, 180);
+  lmLoadAll(function(){ var cur=$('lm-search').value.trim(); if(cur && LM.all) lmSearchLocal(cur); });
+};
+$('lm-search-clear').onclick=function(){ $('lm-search').value=''; LM.mode='browse'; lmBrowse(LM.rel); };
 $('lm-sel-all').onclick=function(){
   document.querySelectorAll('#lm-browse .lm-item[data-id]').forEach(function(el){
     LM.sel[el.dataset.id]=true; var cb=el.querySelector('input'); if(cb) cb.checked=true; });
@@ -771,11 +819,13 @@ $('lm-add-folder').onclick=function(){
     .catch(function(){ toast('Add failed'); });
 };
 $('save-dir').onclick=function(){
+  LM.all=null;
   saveConfig({local:{music_dir:$('music_dir').value.trim()}}, 'Folder saved — indexing').then(function(){
     setTimeout(function(){ lmRefreshStatus(); lmBrowse(''); }, 500); });
 };
 $('rescan').onclick=function(){
-  fetch('/ytm/library/reindex',{method:'POST'}).then(function(){ toast('Re-scanning'); setTimeout(lmRefreshStatus,500); });
+  LM.all=null;
+  fetch('/ytm/library/reindex',{method:'POST'}).then(function(){ toast('Re-indexing…'); setTimeout(lmRefreshStatus,500); });
 };
 
 /* ===== folder picker (server-driven, works from any device) ===== */
@@ -799,11 +849,25 @@ function fsBrowse(path){
     else if(!(d.dirs||[]).length){ list.appendChild(Object.assign(document.createElement('div'),{className:'q-empty',textContent:'No subfolders.'})); }
   }).catch(function(){});
 }
-$('pick-folder').onclick=openPicker;
+$('pick-folder').onclick=function(){
+  // Native OS folder dialog on the Hexcast host. Falls back to the in-panel
+  // browser only if the host has no GUI/tkinter available.
+  var btn=this; btn.disabled=true; toast('Opening the folder picker on the Hexcast host…');
+  fetch('/ytm/fs/pick',{method:'POST'}).then(function(r){return r.json()}).then(function(d){
+    btn.disabled=false;
+    if(d.available===false){ toast('No desktop dialog on the host — using the in-panel browser'); openPicker(); return; }
+    if(d.path){
+      $('music_dir').value=d.path;
+      saveConfig({local:{music_dir:d.path}}, 'Folder set — indexing').then(function(){
+        setTimeout(function(){ lmRefreshStatus(); lmBrowse(''); }, 500); });
+    }  // else: dialog was cancelled — do nothing
+  }).catch(function(){ btn.disabled=false; openPicker(); });
+};
 $('fs-cancel').onclick=closePicker;
 $('fs-modal').onclick=function(e){ if(e.target===$('fs-modal')) closePicker(); };
 $('fs-choose').onclick=function(){
   if(!FS.path){ toast('Pick a folder'); return; }
+  LM.all=null;
   $('music_dir').value=FS.path; closePicker();
   saveConfig({local:{music_dir:FS.path}}, 'Folder set — indexing').then(function(){
     setTimeout(function(){ lmRefreshStatus(); lmBrowse(''); }, 500); });

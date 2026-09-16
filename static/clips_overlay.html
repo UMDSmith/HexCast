@@ -37,6 +37,7 @@
 var stage = document.getElementById('stage');
 var current = null;       // {id, el, mode, hls}
 var volume = 1.0;
+var level = 1.0;   // per-clip loudness-normalisation gain (<=1), set by the server
 var hbTimer = null;
 var hlsLib = null;        // promise for the hls.js script load
 var creditEl = document.getElementById('credit');
@@ -140,6 +141,7 @@ function play(msg){
   var src = msg.src || {};
   var id = msg.item && msg.item.id;
   volume = (msg.volume === undefined) ? volume : msg.volume;
+  level = (msg.level === undefined) ? 1.0 : msg.level;   // reset per clip
   creditItem = msg.item || null;
   applyCredit();
 
@@ -150,7 +152,7 @@ function play(msg){
       url = 'https://clips.twitch.tv/embed?clip=' + encodeURIComponent(src.slug)
           + '&parent=' + encodeURIComponent(host) + '&autoplay=true';
     } else if (src.kind === 'youtube') {
-      url = 'https://www.youtube.com/embed/' + encodeURIComponent(src.slug)
+      url = 'https://www.youtube-nocookie.com/embed/' + encodeURIComponent(src.slug)
           + '?autoplay=1' + (src.start ? '&start=' + Math.floor(src.start) : '');
     } else {
       url = 'https://player.twitch.tv/?video=' + encodeURIComponent(src.slug)
@@ -167,7 +169,7 @@ function play(msg){
 
   var v = document.createElement('video');
   v.autoplay = true; v.playsInline = true; v.loop = false;
-  v.volume = Math.max(0, Math.min(1, volume));
+  v.volume = Math.max(0, Math.min(1, volume * level));
   var start = src.start || 0;
 
   v.addEventListener('ended', function(){
@@ -250,10 +252,15 @@ function connect(){
     else if (m.type === 'pause') { if (current && current.el.tagName === 'VIDEO') current.el.pause(); }
     else if (m.type === 'resume') { if (current && current.el.tagName === 'VIDEO') current.el.play().catch(function(){}); }
     else if (m.type === 'stop') clearStage();
+    else if (m.type === 'level') {   // loudness correction arrived mid-play
+      level = (m.level === undefined) ? level : m.level;
+      if (current && current.el.tagName === 'VIDEO')
+        current.el.volume = Math.max(0, Math.min(1, volume * level));
+    }
     else if (m.type === 'config') {
       volume = (m.config && m.config.volume !== undefined) ? m.config.volume : volume;
       if (current && current.el.tagName === 'VIDEO')
-        current.el.volume = Math.max(0, Math.min(1, volume));
+        current.el.volume = Math.max(0, Math.min(1, volume * level));
       creditCfg = (m.config && m.config.credit) || creditCfg;
       applyCredit();
     }

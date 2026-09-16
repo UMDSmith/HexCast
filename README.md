@@ -67,13 +67,23 @@ save to a small sidecar JSON next to the file. Anything can also be triggered by
 name over a simple HTTP **[Bot API](#bot-api)** — great for chat bots and
 stream-deck buttons.
 
+> **This `/overlay` is where every soundboard clip plays — including clips fired
+> by the other tabs** (Twitch alerts, Countdown cues, a Music track-change clip).
+> Those integrations trigger the soundboard rather than drawing on their own
+> overlays, so keep the base `/overlay` source in your scene alongside whatever
+> integration overlays you're using.
+
 ### 💬 Twitch
 
 **What it does.** Adds a **chat overlay** and an **alert overlay** for follows,
 subs, gift subs, bits, raids, channel-point redeems, and hype trains, with a
 FIFO alert queue. Any alert can **fire a soundboard clip by name** — just put
 the clip in the Clip column of the Alerts table — so you don't need a separate
-bot for sound alerts.
+bot for sound alerts. (Those clips play on the base soundboard overlay
+(`/overlay`), so keep it in your scene alongside the Twitch overlays.) The
+**`!so` shoutout** command fires the official Twitch shoutout banner, a
+configurable chat line, and a random clip of that channel at the **Clips**
+overlay — all in one.
 
 **How it works.** You sign in from the Twitch panel; Hexcast subscribes to
 Twitch EventSub and renders the overlays. It can also POST every event to a
@@ -87,13 +97,16 @@ colour pulled from the artwork, and an audio visualiser — from one of **two
 sources you pick in the panel**:
 
 - **YouTube Music** — mirrors the [YouTube Music Desktop App](https://ytmdesktop.github.io/), optionally embedding the music video in the card.
-- **Local files** — map a folder (browse for it in-panel), then browse/search a library of **any size**, build a **queue** (multi-select, "add whole folder", drag-to-reorder, virtualised so 15k tracks stay smooth), save queues as **playlists**, and **preview** tracks in the panel while you curate. Local audio plays *inside the overlay* so OBS captures it, and the visualiser reacts to the real audio.
+- **Local files** — point it at a music folder (**Browse…** opens your OS's native folder picker), then browse or **search-as-you-type** across a library of **any size**, build a **queue** (multi-select, "add whole folder + subfolders", drag-to-reorder, virtualised so 15k tracks scroll smoothly), save queues as reusable **playlists** (load to replace or append), and **preview** tracks right in the panel while you curate. Local audio plays *inside the overlay* so OBS captures it, and the visualiser reacts to the real audio.
 
-**How it works.** YouTube Music comes over the desktop app's companion server;
-local files are indexed in a background thread, served with HTTP range requests
-for instant seeking, and played by an `<audio>` element in the overlay with a
-Web Audio visualiser. A plain-text `!song` endpoint is included for chat bots.
-See [docs/music.md](docs/music.md).
+**How it works.** YouTube Music comes over the desktop app's companion server.
+For local files, Hexcast builds a **cached index of your folder** — saved to disk
+and loaded instantly on every launch, so you only press **Re-index** when the
+files on disk actually change. That makes folder browsing and type-ahead search
+(filtered in the browser over the cached index) instant even on tens of thousands
+of tracks. Files are served with HTTP range requests for instant seeking and
+played by an `<audio>` element in the overlay with a Web Audio visualiser. A
+plain-text `!song` endpoint is included for chat bots. See [docs/music.md](docs/music.md).
 
 ### 🎙️ Discord
 
@@ -109,11 +122,18 @@ See [docs/discord.md](docs/discord.md).
 
 **What it does.** Queue up Twitch clip/VOD links — paste a single URL or a whole
 blob of chat — then fire them **one at a time** to a full-window overlay (no
-auto-advance, so you stay in control). Bots can trigger items by number.
+auto-advance, so you stay in control). Bots can trigger items by number, and the
+Twitch **`!so` shoutouts** play through this same overlay. An optional
+**auto-leveler** brings every clip (and shoutout) in at a consistent volume, so
+one clip doesn't blast while the next whispers.
 
 **How it works.** yt-dlp resolves direct MP4/HLS playback, with optional
-pre-download so a clip is ready the instant you play it.
-See [docs/clips.md](docs/clips.md).
+pre-download so a clip is ready the instant you play it. With **auto-level** on,
+the server measures each clip's loudness with ffmpeg (streamed through it —
+nothing is downloaded or saved) and the overlay turns louder clips down toward a
+target loudness (default −16 LUFS). It normalises *toward* the target, so it
+never adds start-up lag; a clip that plays before it's measured (e.g. an instant
+shoutout) corrects its volume a moment in. See [docs/clips.md](docs/clips.md).
 
 ### ⏱️ Countdown
 
@@ -126,8 +146,9 @@ at a point.
 
 **How it works.** The server owns the authoritative remaining time and streams
 it to the overlay, so clock skew between machines never matters; cues are
-computed against that timer and fired through the soundboard.
-See [docs/countdown.md](docs/countdown.md).
+computed against that timer and fired through the soundboard. **Those clips play
+on the base soundboard overlay (`/overlay`), not the countdown overlay** — keep
+both browser sources in your scene. See [docs/countdown.md](docs/countdown.md).
 
 ---
 
