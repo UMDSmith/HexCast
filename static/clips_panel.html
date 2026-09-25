@@ -232,23 +232,38 @@
   <div class="card">
     <h2>yt-dlp</h2>
     <p class="hint">YouTube changes constantly and old yt-dlp builds stop working - if YouTube
-      items suddenly start erroring, <b>update first</b>. If an updated yt-dlp still gets refused
-      ("Sign in to confirm you're not a bot", age-restricted or members-only videos), you can let
-      it borrow your logged-in browser session <b>for this session only</b>: cookies are read
-      straight from the browser profile on the machine running Hexcast at play time, never copied
-      or saved anywhere, and the setting resets to anonymous when Hexcast restarts.</p>
+      items suddenly start erroring, <b>update first</b>.</p>
+    <div class="row"><button class="sec" id="upd-ytdlp">Update yt-dlp</button></div>
+  </div>
+
+  <div class="card">
+    <h2>YouTube sign-in <span class="pill" id="login-pill">not linked</span></h2>
+    <p class="hint">Optional, and <b>off until you click Link</b>. Clips are looked up anonymously.
+      Linking only helps with videos YouTube won't hand out anonymously: age-restricted,
+      members-only, or "Sign in to confirm you're not a bot".</p>
+    <p class="hint"><b>What Link does, exactly:</b> Hexcast saves the <i>name</i> of the browser you
+      pick (in <code>config/clips.json</code>) and nothing else. When an anonymous lookup is refused,
+      it re-runs yt-dlp with <code>--cookies-from-browser</code>, which reads that browser's
+      YouTube cookies from its profile on this PC at that moment. Hexcast never copies, stores or
+      sends your cookies anywhere except to YouTube, as part of that lookup. Before saving, Link
+      runs a test lookup and tells you what it found.</p>
+    <p class="hint">The link <b>stays after restarts</b> until you click <b>Unlink</b>. While linked,
+      those lookups are done as your YouTube account. This setting is separate from the one on
+      the Music page. Hexcast is local-only - never expose its port to the internet.</p>
+    <p class="hint"><b>How to link:</b> (1) Sign in to YouTube in Firefox — or in Chrome, then close Chrome completely (it locks its cookies while open). (2) Check the requirements line below shows both pieces ready. (3) Pick the browser and click <b>Link</b>; it tests everything and says what, if anything, is missing.</p>
+    <p class="hint" id="login-ready"></p>
     <div class="grid">
-      <label class="f">Browser session cookies
-        <select id="f-cookies">
-          <option value="">Off (anonymous)</option>
-          <option value="firefox">Use Firefox session</option>
-          <option value="chrome">Use Chrome session</option>
+      <label class="f">Browser to link
+        <select id="login-browser">
+          <option value="firefox">Firefox</option>
+          <option value="chrome">Chrome (must be fully closed)</option>
         </select></label>
     </div>
-    <div class="row"><button class="sec" id="upd-ytdlp">Update yt-dlp</button></div>
-    <p class="hint" style="margin:12px 0 0">Recent Chrome versions encrypt their cookies while
-      Chrome is running - if the Chrome option errors, close Chrome fully and retry, or use
-      Firefox (which works while open).</p>
+    <div class="row">
+      <button class="sec" id="login-link">Link</button>
+      <button class="sec danger" id="login-unlink">Unlink</button>
+    </div>
+    <p class="hint" id="login-msg" style="margin:12px 0 0"></p>
   </div>
 
   <div class="card">
@@ -571,14 +586,43 @@ $('upd-ytdlp').onclick=async function(){
   b.disabled=false; b.textContent='Update yt-dlp';
   pollStatus();
 };
-$('f-cookies').onchange=async function(){
-  var v=this.value;
-  var r=await fetch('/clips/api/cookies',{method:'POST',headers:{'Content-Type':'application/json'},
-                                          body:JSON.stringify({browser:v})});
+function paintReady(r){
+  var js = r.js_runtime
+    ? '\u2713 JavaScript runtime: '+r.js_runtime
+    : '\u2717 No JavaScript runtime \u2014 install Deno (winget install DenoLand.Deno), then restart Hexcast';
+  var sv = r.solver
+    ? '\u2713 Challenge-solver scripts installed'
+    : '\u2717 Challenge-solver scripts missing \u2014 click Update yt-dlp above';
+  var el=$('login-ready');
+  el.innerHTML = '<b>Requirements for signed-in lookups:</b> '+js+' &nbsp;\u00B7&nbsp; '+sv;
+  el.style.color = (r.js_runtime && r.solver) ? '' : 'var(--warn)';
+}
+function paintLogin(b){
+  var p=$('login-pill');
+  p.textContent = b ? ('linked: '+b) : 'not linked';
+  p.className = 'pill' + (b ? ' on' : '');
+  $('login-unlink').disabled = !b;
+}
+$('login-link').onclick=async function(){
+  var btn=this, b=$('login-browser').value;
+  btn.disabled=true; btn.textContent='Testing\u2026';
+  $('login-msg').textContent='Reading your '+b+' session and running a test lookup\u2026';
+  try{
+    var r=await fetch('/clips/api/login/link',{method:'POST',headers:{'Content-Type':'application/json'},
+                                               body:JSON.stringify({browser:b})});
+    var d=await r.json();
+    $('login-msg').textContent=d.message||'';
+    paintLogin(d.cookies_browser||'');
+    toast(d.ok ? 'Linked' : 'Not linked');
+  }catch(e){ $('login-msg').textContent='Link failed: '+e.message; }
+  btn.disabled=false; btn.textContent='Link';
+};
+$('login-unlink').onclick=async function(){
+  var r=await fetch('/clips/api/login/unlink',{method:'POST'});
   var d=await r.json();
-  if(d.ok) toast(v?('Using your '+v[0].toUpperCase()+v.slice(1)+' session for this session only')
-                  :'Back to anonymous');
-  else toast(d.error||'could not change cookie source');
+  paintLogin(d.cookies_browser||'');
+  $('login-msg').textContent='Unlinked. Lookups are anonymous; nothing of your session is kept.';
+  toast('Unlinked');
 };
 
 /* ---- status / websocket ------------------------------------------------ */
@@ -588,8 +632,8 @@ function paintStatus(s){
   var tool=$('st-tool');
   if(s.ytdlp){ tool.textContent='yt-dlp '+(s.ytdlp_version||'ok'); tool.className='pill on'; }
   else { tool.textContent='yt-dlp missing'; tool.className='pill off'; }
-  if(s.cookies_browser!==undefined && document.activeElement!==$('f-cookies'))
-    $('f-cookies').value=s.cookies_browser||'';
+  if(s.cookies_browser!==undefined) paintLogin(s.cookies_browser||'');
+  if(s.signin) paintReady(s.signin);
   if(s.log) $('log').textContent=s.log.join('\n');
 }
 async function pollStatus(){
@@ -604,10 +648,10 @@ pollStatus(); setInterval(pollStatus, 5000);
    point at the fix instead of leaving a cryptic error badge. */
 var cookieHintShown=false;
 function cookieHint(){
-  if(cookieHintShown || $('f-cookies').value) return;
+  if(cookieHintShown || $('login-unlink').disabled===false) return;
   if(QUEUE.some(function(e){ return /sign in|not a bot|cookies/i.test(e.error||''); })){
     cookieHintShown=true;
-    toast('YouTube wants a login - try updating yt-dlp or enabling browser session cookies (Settings)');
+    toast('YouTube wants a login - try updating yt-dlp, or link your YouTube sign-in (Settings)');
   }
 }
 

@@ -96,7 +96,7 @@ See [docs/twitch.md](docs/twitch.md).
 colour pulled from the artwork, and an audio visualiser — from one of **two
 sources you pick in the panel**:
 
-- **YouTube Music** — mirrors the [YouTube Music Desktop App](https://ytmdesktop.github.io/), optionally embedding the music video in the card.
+- **YouTube Music** — mirrors the [YouTube Music Desktop App](https://ytmdesktop.github.io/), optionally showing the music video in the card. The video is looked up with yt-dlp and streamed through Hexcast (nothing saved to disk, no YouTube player controls), the next song's video is prepared ahead, and each new song is briefly held until its video is ready so the two start in step. See [how video loading works](docs/music.md#how-video-loading-works-step-by-step).
 - **Local files** — point it at a music folder (**Browse…** opens your OS's native folder picker), then browse or **search-as-you-type** across a library of **any size**, build a **queue** (multi-select, "add whole folder + subfolders", drag-to-reorder, virtualised so 15k tracks scroll smoothly), save queues as reusable **playlists** (load to replace or append), and **preview** tracks right in the panel while you curate. Local audio plays *inside the overlay* so OBS captures it, and the visualiser reacts to the real audio.
 
 **How it works.** YouTube Music comes over the desktop app's companion server.
@@ -107,6 +107,13 @@ files on disk actually change. That makes folder browsing and type-ahead search
 of tracks. Files are served with HTTP range requests for instant seeking and
 played by an `<audio>` element in the overlay with a Web Audio visualiser. A
 plain-text `!song` endpoint is included for chat bots. See [docs/music.md](docs/music.md).
+
+**Optional YouTube sign-in (music videos).** Off until you click **Link** on the
+Music page. Linking saves only the *name* of a browser (Firefox/Chrome); when
+YouTube refuses an anonymous lookup (age-restricted, bot check), yt-dlp reads
+that browser's YouTube cookies on this PC for that lookup, so it's done as your
+account. Stays linked across restarts until **Unlink**. Separate from the Clips
+link. Details: [docs/music.md](docs/music.md#youtube-sign-in-optional).
 
 ### 🎙️ Discord
 
@@ -135,6 +142,12 @@ target loudness (default −16 LUFS). It normalises *toward* the target, so it
 never adds start-up lag; a clip that plays before it's measured (e.g. an instant
 shoutout) corrects its volume a moment in. See [docs/clips.md](docs/clips.md).
 
+**Optional YouTube sign-in (clips).** Off until you click **Link** on the Clips
+page. Same mechanism as the Music one, but a separate setting: only the
+browser's *name* is saved, cookies are read by yt-dlp at lookup time and only
+when YouTube refuses anonymously. Stays linked until **Unlink**. Details:
+[docs/clips.md](docs/clips.md#youtube-sign-in-optional).
+
 ### ⏱️ Countdown
 
 **What it does.** A fully styleable countdown timer overlay — count down a fixed
@@ -158,6 +171,7 @@ both browser sources in your scene. See [docs/countdown.md](docs/countdown.md).
 
 - **Python 3.10+** (uses modern type-union syntax).
 - **OBS Studio 28+** with browser-source support.
+- **Deno** — *optional*, only for the YouTube sign-in on the Music and Clips pages (signed-in lookups make yt-dlp solve a JavaScript challenge). Windows: `winget install DenoLand.Deno`; Node or Bun also work if already installed. yt-dlp itself and its solver scripts (`yt-dlp-ejs`) install automatically with the other requirements.
 - **ffmpeg** — *optional but recommended*. It powers gif/webp → mp4 conversion, thumbnails, media-duration/audio probing, and the Music tab's local tag/cover-art reading. Hexcast runs without it, but animated GIFs won't be seekable, thumbnails won't generate, the 🔊 audio badge won't appear, and local music shows filenames only.
 
 ### Install — the easy way
@@ -367,6 +381,7 @@ can hand-edit the JSON; the watcher ignores `.json` writes.
 - **Overlay CSS changes don't show:** OBS caches hard — **Interact → Ctrl+Shift+R**, or append `?v=N` to the URL.
 - **"unsupported extension" / black-in-OBS video:** convert to H.264 + AAC MP4 as shown above.
 - **SSL error in the browser:** you typed `https://`; the server only speaks `http://`.
+- **Music video doesn't show / song pauses at track changes:** see the Music doc's [troubleshooting](docs/music.md#troubleshooting) — the Music panel's *Video:* line gives the reason, and the short pause is the (optional) hold that starts song and video together.
 
 ---
 

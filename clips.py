@@ -101,6 +101,11 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # time. Turning this on downloads clips/videos to media/clips/ on add,
     # for instant starts that survive expiring media URLs. VODs always stream.
     "predownload": False,
+    # YouTube sign-in for yt-dlp: "" (not linked) | "firefox" | "chrome".
+    # Only ever set by the Link button on the clips page. What's saved is the
+    # browser's NAME - yt-dlp reads that browser's cookies itself at lookup
+    # time; Hexcast never copies or stores them. See docs/clips.md.
+    "cookies_browser": "",
     # If direct resolution fails, fall back to the site's iframe embed
     # (Twitch and YouTube only).
     "iframe_fallback": True,
@@ -176,11 +181,6 @@ class State:
     def __init__(self) -> None:
         self.started = False
         self.ytdlp_version = ""
-        # "" | "firefox" | "chrome". Session-only by design: yt-dlp reads the
-        # user's logged-in cookies straight out of the browser profile at call
-        # time (--cookies-from-browser); nothing is copied or persisted, and a
-        # restart always comes back up anonymous.
-        self.cookies_browser = ""
         self.log: list[str] = []
 
     def note(self, msg: str) -> None:
@@ -213,6 +213,33 @@ def _ytdlp_cmd() -> list[str] | None:
 
 def has_ytdlp() -> bool:
     return _ytdlp_cmd() is not None
+
+
+def js_runtime() -> tuple[str, list[str]]:
+    """The JavaScript runtime yt-dlp can use for YouTube's challenges, and the
+    args to select it. yt-dlp only turns on Deno by default; Node and Bun work
+    too but have to be named with --js-runtimes."""
+    if shutil.which("deno"):
+        return "deno", []
+    for rt in ("node", "bun"):
+        if shutil.which(rt):
+            return rt, ["--js-runtimes", rt]
+    return "", []
+
+
+def has_solver() -> bool:
+    """yt-dlp's challenge-solver scripts (the yt-dlp-ejs package)."""
+    return importlib.util.find_spec("yt_dlp_ejs") is not None
+
+
+def signin_readiness() -> dict:
+    """What a signed-in YouTube lookup needs besides the sign-in itself. Shown
+    on the Music and Clips sign-in cards."""
+    return {"js_runtime": js_runtime()[0], "solver": has_solver()}
+
+
+_DENO_HINT = "install Deno (winget install DenoLand.Deno), then restart Hexcast"
+_SOLVER_HINT = "click Update yt-dlp on the Clips page (it installs yt-dlp-ejs)"
 
 
 HAS_FFMPEG = shutil.which("ffmpeg") is not None   # needed for loudness measurement
@@ -258,7 +285,8 @@ def status_snapshot() -> dict:
         "queued": sum(1 for e in q if e.get("status") == "queued"),
         "played": sum(1 for e in q if e.get("status") == "played"),
         "total": len(q),
-        "cookies_browser": STATE.cookies_browser,
+        "cookies_browser": settings().get("cookies_browser", ""),
+        "signin": signin_readiness(),
         "log": STATE.log[-25:],
     }
 
@@ -472,14 +500,15 @@ def add_links(links: list[dict], source: str) -> tuple[list[dict], int]:
 # yt-dlp - one consistent mechanism: subprocess `python -m yt_dlp`, JSON via -j
 # --------------------------------------------------------------------------
 
-async def _ytdlp(*args: str, timeout: float = 120, cookies: bool = True) -> bytes:
+async def ytdlp_run(*args: str, timeout: float = 120, browser: str = "") -> bytes:
+    """One yt-dlp call. `browser` adds --cookies-from-browser for that browser.
+    Shared with ytmusic.py (music videos), which has its own, separate link."""
     cmd = _ytdlp_cmd()
     if cmd is None:
         raise RuntimeError("yt-dlp not found - install it in this environment "
                            "(pip install yt-dlp) or put it on PATH")
-    extra: list[str] = []
-    if cookies and STATE.cookies_browser:
-        extra = ["--cookies-from-browser", STATE.cookies_browser]
+    extra = ["--cookies-from-browser", browser] if browser else []
+    extra += js_runtime()[1]
     proc = await asyncio.create_subprocess_exec(
         *cmd, "--no-warnings", "--no-playlist", *extra, *args,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
@@ -494,6 +523,88 @@ async def _ytdlp(*args: str, timeout: float = 120, cookies: bool = True) -> byte
             or (lines[-1] if lines else f"yt-dlp exited {proc.returncode}")
         raise RuntimeError(detail.replace("ERROR: ", ""))
     return out
+
+
+# YouTube refusals that a signed-in session can get past.
+_NEEDS_LOGIN = re.compile(r"sign in|not a bot|age.restrict|confirm your age|members.only|"
+                          r"private video|login required|use --cookies", re.I)
+
+
+def needs_login(err: str) -> bool:
+    return bool(_NEEDS_LOGIN.search(err or ""))
+
+
+async def ytdlp_with_login(*args: str, timeout: float = 120, browser: str = "") -> bytes:
+    """Anonymous first; retry with the linked browser only if YouTube refused
+    for a reason a login can fix. Signed-in lookups go through a different
+    YouTube client that needs extra JavaScript tooling, so using the login
+    for everything would make ordinary lookups fail."""
+    try:
+        return await ytdlp_run(*args, timeout=timeout)
+    except RuntimeError as exc:
+        if not browser or not needs_login(str(exc)):
+            raise
+        try:
+            return await ytdlp_run(*args, timeout=timeout, browser=browser)
+        except RuntimeError as exc2:
+            raise RuntimeError(f"{exc} (also failed with your linked {browser} "
+                               f"sign-in: {exc2})") from exc2
+
+
+async def _ytdlp(*args: str, timeout: float = 120, cookies: bool = True) -> bytes:
+    browser = settings().get("cookies_browser", "") if cookies else ""
+    return await ytdlp_with_login(*args, timeout=timeout, browser=browser)
+
+
+VALID_COOKIE_BROWSERS = ("firefox", "chrome")
+_LINK_TEST_URL = "https://www.youtube.com/watch?v=jNQXAC9IVRw"   # "Me at the zoo"
+
+
+async def test_login_link(browser: str) -> dict:
+    """What the Link buttons run before saving anything: can yt-dlp read this
+    browser's cookies, is there a YouTube sign-in among them, and does a
+    lookup with them work right now. Returns {ok, message}; ok means the link
+    may be saved."""
+    cmd = _ytdlp_cmd()
+    if cmd is None:
+        return {"ok": False, "message": "yt-dlp is not installed"}
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, "-v", "--no-playlist", "--cookies-from-browser", browser, *js_runtime()[1],
+        "--skip-download", "--print", "id", _LINK_TEST_URL,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    try:
+        _, err = await asyncio.wait_for(proc.communicate(), 90)
+    except asyncio.TimeoutError:
+        proc.kill()
+        return {"ok": False, "message": "Timed out reading the browser session."}
+    text = (err or b"").decode("utf-8", errors="replace")
+    last_error = next((ln for ln in reversed(text.splitlines()) if "ERROR" in ln), "")
+    last_error = last_error.replace("ERROR: ", "").strip()
+    m = re.search(r"Extracted (\d+) cookies", text)
+    if not m:
+        hint = (" Chrome locks its cookies while it's running - close Chrome "
+                "completely and try again, or use Firefox.") if browser == "chrome" else ""
+        return {"ok": False, "message": f"Couldn't read {browser}'s cookies: "
+                f"{last_error or 'unknown error'}.{hint}"}
+    if "Found YouTube account cookies" not in text:
+        return {"ok": False, "message": f"Read {m.group(1)} cookies from {browser}, but "
+                f"none of them are a YouTube sign-in. Sign in to YouTube in {browser} "
+                "first, then click Link again."}
+    if proc.returncode == 0:
+        return {"ok": True, "message": f"Linked to your {browser} YouTube sign-in. "
+                "A test lookup with it worked."}
+    # Signed-in lookups need YouTube's JavaScript challenge solved; name the
+    # missing piece rather than passing on yt-dlp's raw error.
+    runtime, solver = js_runtime()[0], has_solver()
+    if not runtime:
+        fix = f"No JavaScript runtime was found - {_DENO_HINT}, and click Link again."
+    elif not solver:
+        fix = f"yt-dlp's challenge-solver scripts are missing - {_SOLVER_HINT}, then click Link again."
+    else:
+        fix = f"yt-dlp said: {last_error[:160]}. Try Update yt-dlp on the Clips page."
+    return {"ok": True, "message": f"Linked to your {browser} YouTube sign-in, but a "
+            f"test lookup with it failed. {fix} Until then lookups stay anonymous, "
+            "which only matters for age-restricted or bot-checked videos."}
 
 
 async def resolve_info(url: str) -> dict:
@@ -515,7 +626,8 @@ async def update_ytdlp() -> dict:
             return {"ok": False, "error": "yt-dlp is not installed"}
         old = STATE.ytdlp_version
         if importlib.util.find_spec("yt_dlp") is not None:
-            cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"]
+            # The solver scripts have to match the yt-dlp version.
+            cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp", "yt-dlp-ejs"]
         else:
             cmd = [shutil.which("yt-dlp") or "yt-dlp", "-U"]
         STATE.note("updating yt-dlp...")
@@ -1259,26 +1371,33 @@ async def api_update_ytdlp():
     return result
 
 
-VALID_COOKIE_BROWSERS = ("", "firefox", "chrome")
-
-
-@router.post("/api/cookies")
-async def api_cookies(request: Request):
-    """Turn --cookies-from-browser on or off for this server session. The
-    choice is deliberately never written to clips.json: the streamer grants
-    their logged-in browser session per session, and a restart revokes it."""
+@router.post("/api/login/link")
+async def api_login_link(request: Request):
+    """Link button. Tests the browser session first and only saves the
+    browser's name if its cookies were readable and include a YouTube sign-in.
+    The link stays until Unlink is clicked (it survives restarts)."""
     try:
         body = await request.json()
     except Exception:
         body = {}
     browser = str(body.get("browser") or "").strip().lower()
     if browser not in VALID_COOKIE_BROWSERS:
-        return JSONResponse({"ok": False, "error": "browser must be firefox, chrome, "
-                             "or empty to go back to anonymous"}, status_code=400)
-    STATE.cookies_browser = browser
-    STATE.note(f"using {browser} session cookies for this session" if browser
-               else "browser cookies off - back to anonymous")
-    return {"ok": True, "cookies_browser": browser}
+        return JSONResponse({"ok": False, "message": "browser must be firefox or chrome"},
+                            status_code=400)
+    result = await test_login_link(browser)
+    if result["ok"]:
+        settings()["cookies_browser"] = browser
+        save_store()
+    STATE.note(result["message"])
+    return {**result, "cookies_browser": settings().get("cookies_browser", "")}
+
+
+@router.post("/api/login/unlink")
+async def api_login_unlink():
+    settings()["cookies_browser"] = ""
+    save_store()
+    STATE.note("YouTube sign-in unlinked - clips lookups are anonymous")
+    return {"ok": True, "cookies_browser": ""}
 
 
 @router.get("/api/config")

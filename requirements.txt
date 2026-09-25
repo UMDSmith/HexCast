@@ -15,4 +15,9 @@ aiohttp>=3.9
 # Clips module: resolves Twitch clip/VOD links to direct media URLs.
 # (Not YouTube-specific - yt-dlp is the standard Twitch resolver as well.)
 # A yt-dlp already on PATH is used if this one is not installed.
-yt-dlp>=2024.10.22
+yt-dlp>=2025.11.12
+# yt-dlp's YouTube challenge-solver scripts. YouTube makes yt-dlp solve a
+# JavaScript challenge for some lookups (always for signed-in ones); these
+# scripts do it, run by a JavaScript runtime already on the PC (Deno, or
+# Node/Bun). The "Update yt-dlp" button upgrades both together.
+yt-dlp-ejs

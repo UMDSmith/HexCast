@@ -64,7 +64,9 @@ except Exception as _exc:          # pragma: no cover - depends on the host
     HAS_AUDIO_CAPTURE = False
     _AUDIO_IMPORT_ERROR = str(_exc)
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
+from fastapi.responses import (HTMLResponse, JSONResponse, PlainTextResponse, Response,
+                               StreamingResponse)
+from starlette.background import BackgroundTask
 
 # --------------------------------------------------------------------------
 # paths / constants
@@ -121,6 +123,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "local": {
         "music_dir": "",           # folder to index / play from
     },
+    # YouTube sign-in used when looking up music-video streams: "" (not linked)
+    # | "firefox" | "chrome". Only the Link button on the Music page sets it
+    # (the generic config POST ignores it). What's saved is the browser's NAME;
+    # yt-dlp reads that browser's cookies itself at lookup time and Hexcast
+    # never copies or stores them. Separate from the clips page's link.
+    "youtube_login": {"browser": ""},
     "overlay": {
         "layout": "card",
         "font_family": "Inter",
@@ -143,6 +151,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "video_when": "auto",
         "video_fit": "cover",
         "video_quality": "small",
+        # Start buffering the next song's video a few seconds before the
+        # current one ends, so it appears right at the track change.
+        "video_prebuffer": False,
+        # At each track change, pause the app and rewind to 0:00 until the
+        # overlay says the video is buffered (or failed), then resume, so the
+        # song and video start together. Capped at VIDEO_HOLD_MAX seconds.
+        "video_hold": True,
         "art_size": 96,
         "art_radius": 12,
         "art_spin": False,
@@ -349,6 +364,7 @@ class Hub:
 
 
 HUB = Hub()
+VIDEO_STATUS: dict = {}     # last video_status reported by the player overlay
 
 
 # --------------------------------------------------------------------------
@@ -413,6 +429,9 @@ def _queue_next(player: dict) -> dict | None:
         "author": nxt.get("author", ""),
         "art": _proxied(raw),
         "art_url": raw,
+        "id": nxt.get("videoId", ""),
+        "video_type": nxt.get("videoType"),
+        "counterpart_id": _counterpart_id(nxt),
     }
 
 
@@ -786,11 +805,13 @@ class Feed:
             if is_ytm:
                 asyncio.create_task(_fire_clip(CONFIG.get("track_change_clip", "")))
                 asyncio.create_task(_forward({**payload, "event": "track_change"}))
+                _maybe_hold_for_video(payload)
 
         # Always keep the last YTM payload so switching back to YTM is instant, but
         # only drive the shared overlay/now when YTM is the active source.
         STATE.ytm_now = payload
         if is_ytm:
+            _prefetch_videos(payload)
             STATE.now = payload
             await HUB.to_overlay(payload)
             await HUB.to_panel({"type": "now", "now": payload})
@@ -1010,6 +1031,251 @@ async def art_proxy(u: str = ""):
     return Response(status_code=404)
 
 
+# --------------------------------------------------------------------------
+# music videos: yt-dlp finds the stream, Hexcast relays it
+# --------------------------------------------------------------------------
+# The overlay used to embed YouTube's iframe player, which drags in YouTube's
+# own controls (the stuck centre pause button, auto captions) and refuses any
+# video whose uploader disabled embedding. Instead, yt-dlp (already used by
+# clips) looks up the direct video-only stream and /ytm/video/<id> relays it
+# to the overlay's plain <video>. Browsers can't load these streams directly
+# (YouTube's servers don't allow it cross-site), so the bytes pass through
+# Hexcast - streamed, never written to disk. Lookups are anonymous; the
+# linked sign-in (if any) is only tried when YouTube refuses.
+
+_VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{11}")
+_QUALITY_HEIGHT = {"small": 240, "medium": 360, "large": 480, "hd720": 720}
+_VID_URLS: dict[tuple[str, int], tuple[str, float]] = {}   # (id, height) -> (url, when)
+_VID_FAILS: dict[tuple[str, int], tuple[str, float]] = {}  # (id, height) -> (error, when)
+_VID_TASKS: dict[tuple[str, int], asyncio.Task] = {}
+_VID_URL_TTL = 3 * 3600       # stream URLs expire after ~6h; refresh well before
+_VID_FAIL_TTL = 15 * 60
+
+
+def _video_height() -> int:
+    q = (CONFIG.get("overlay") or {}).get("video_quality", "small")
+    return _QUALITY_HEIGHT.get(q, 240)
+
+
+def _login_browser() -> str:
+    return (CONFIG.get("youtube_login") or {}).get("browser", "")
+
+
+async def _lookup_stream(vid: str, height: int) -> str:
+    import clips
+    fmt = (f"bestvideo[height<={height}][vcodec^=avc1][protocol=https]"
+           f"/bestvideo[height<={height}][protocol=https]"
+           f"/best[height<={height}][protocol=https]")
+    out = await clips.ytdlp_with_login(
+        "-f", fmt, "-g", f"https://www.youtube.com/watch?v={vid}",
+        timeout=60, browser=_login_browser())
+    lines = out.decode("utf-8", errors="replace").strip().splitlines()
+    if not lines or not lines[0].startswith("http"):
+        raise RuntimeError("no playable video stream")
+    return lines[0]
+
+
+async def video_stream_url(vid: str, fresh: bool = False) -> str:
+    """Direct stream URL for a video, looked up once and shared by concurrent
+    callers (the overlay and the next-song prefetch). Kept in memory only."""
+    key = (vid, _video_height())
+    now = time.monotonic()
+    if not fresh:
+        hit = _VID_URLS.get(key)
+        if hit and now - hit[1] < _VID_URL_TTL:
+            return hit[0]
+        fail = _VID_FAILS.get(key)
+        if fail and now - fail[1] < _VID_FAIL_TTL:
+            raise RuntimeError(fail[0])
+    task = _VID_TASKS.get(key)
+    if task is None:
+        task = asyncio.create_task(_lookup_stream(*key))
+        _VID_TASKS[key] = task
+    try:
+        url = await asyncio.shield(task)
+    except Exception as exc:
+        _VID_FAILS[key] = (str(exc), time.monotonic())
+        raise RuntimeError(str(exc)) from exc
+    finally:
+        if task.done():
+            _VID_TASKS.pop(key, None)
+    _VID_URLS[key] = (url, time.monotonic())
+    _VID_FAILS.pop(key, None)
+    if len(_VID_URLS) > 40:
+        for k in sorted(_VID_URLS, key=lambda k: _VID_URLS[k][1])[:10]:
+            _VID_URLS.pop(k, None)
+    return url
+
+
+def _video_choice(vid: str, video_type, counterpart: str) -> str:
+    """Same rule as the overlay: which id (if any) to show for a track."""
+    o = CONFIG.get("overlay") or {}
+    if o.get("art_source") != "video" or not vid:
+        return ""
+    real = video_type in (1, 2)
+    when = o.get("video_when", "auto")
+    if when == "always":
+        return vid
+    if when == "video_tracks":
+        return vid if real else ""
+    return vid if real else (counterpart or "")
+
+
+def _prefetch_videos(payload: dict) -> None:
+    """Look up the current and next song's streams in the background, so the
+    overlay (or the track change) doesn't wait on yt-dlp."""
+    ids = [_video_choice(payload.get("id", ""), payload.get("video_type"),
+                         payload.get("counterpart_id", ""))]
+    nxt = payload.get("next") or {}
+    ids.append(_video_choice(nxt.get("id", ""), nxt.get("video_type"),
+                             nxt.get("counterpart_id", "")))
+    height = _video_height()
+    for vid in ids:
+        if not vid or (vid, height) in _VID_URLS or (vid, height) in _VID_TASKS:
+            continue
+
+        async def go(v=vid):
+            try:
+                await video_stream_url(v)
+            except Exception:
+                pass                    # the overlay reports it if it asks
+        asyncio.create_task(go())
+
+
+# ---- holding the song for its video --------------------------------------
+
+VIDEO_HOLD_MAX = 8.0
+_HOLD: dict[str, Any] = {}      # {"track", "vid", "event"} while a hold is running
+
+
+def _maybe_hold_for_video(payload: dict) -> None:
+    """Called on a track change. Only for a genuine song start (not the first
+    state after Hexcast boots mid-song), only when a video will be shown and
+    an overlay is connected to say when it's ready."""
+    o = CONFIG.get("overlay") or {}
+    if not o.get("video_hold", True) or HUB.player_ws is None:
+        return
+    if not payload.get("playing") or float(payload.get("progress") or 0) > 3:
+        return
+    vid = _video_choice(payload.get("id", ""), payload.get("video_type"),
+                        payload.get("counterpart_id", ""))
+    if not vid:
+        return
+    if VIDEO_STATUS.get("id") == vid and VIDEO_STATUS.get("state") in ("ready", "playing"):
+        return                                  # pre-buffered and already there
+    ev = asyncio.Event()
+    _HOLD.clear()
+    _HOLD.update(track=payload.get("id", ""), vid=vid, event=ev)
+    asyncio.create_task(_hold_for_video(payload.get("id", ""), vid, ev))
+
+
+def _release_hold(status: dict) -> None:
+    if _HOLD and status.get("id") == _HOLD.get("vid") \
+            and status.get("state") in ("ready", "playing", "fallback"):
+        _HOLD["event"].set()
+
+
+async def _hold_for_video(track: str, vid: str, ev: asyncio.Event) -> None:
+    started = time.monotonic()
+    await send_command("pause")
+    await send_command("seekTo", 0)      # the song ran briefly before we saw it
+    try:
+        await asyncio.wait_for(ev.wait(), VIDEO_HOLD_MAX)
+        why = f"video ready after {time.monotonic() - started:.1f}s"
+    except asyncio.TimeoutError:
+        why = f"video not ready after {VIDEO_HOLD_MAX:.0f}s - playing anyway"
+    if _HOLD.get("event") is ev:
+        _HOLD.clear()
+    # Only resume if it's still the same song (a skip during the hold moves on).
+    if FEED.last_id == track:
+        await send_command("play")
+        STATE.note(f"held the song for its video: {why}")
+
+
+@router.get("/api/video/{vid}")
+async def api_video(vid: str):
+    """The overlay asks this before pointing its <video> at /ytm/video/<id>,
+    so a failure comes back as a readable reason for the panel."""
+    if not _VIDEO_ID.fullmatch(vid):
+        return JSONResponse({"ok": False, "error": "bad video id"}, status_code=400)
+    try:
+        await video_stream_url(vid)
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True}
+
+
+_RELAY_HEADERS = ("content-type", "content-length", "content-range", "accept-ranges")
+
+
+@router.get("/video/{vid}")
+async def video_relay(vid: str, request: Request):
+    if not _VIDEO_ID.fullmatch(vid):
+        return Response(status_code=400)
+    headers = {}
+    if request.headers.get("range"):
+        headers["Range"] = request.headers["range"]
+    client = httpx.AsyncClient(timeout=httpx.Timeout(20, read=60), follow_redirects=True)
+    try:
+        for attempt in (0, 1):
+            url = await video_stream_url(vid, fresh=attempt == 1)
+            upstream = await client.send(client.build_request("GET", url, headers=headers),
+                                         stream=True)
+            if upstream.status_code in (403, 410) and attempt == 0:
+                await upstream.aclose()          # expired/rotated URL: look it up again
+                continue
+            break
+    except Exception:
+        await client.aclose()
+        return Response(status_code=502)
+
+    async def close():
+        await upstream.aclose()
+        await client.aclose()
+
+    out = {k: v for k, v in upstream.headers.items() if k.lower() in _RELAY_HEADERS}
+    out["Cache-Control"] = "no-store"
+    return StreamingResponse(upstream.aiter_raw(), status_code=upstream.status_code,
+                             headers=out, background=BackgroundTask(close))
+
+
+@router.post("/api/login/link")
+async def api_login_link(request: Request):
+    """Music page Link button. Tests the browser session and only saves the
+    browser's name if its cookies were readable and include a YouTube sign-in.
+    Stays linked across restarts until Unlink."""
+    global CONFIG
+    import clips
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    browser = str(body.get("browser") or "").strip().lower()
+    if browser not in clips.VALID_COOKIE_BROWSERS:
+        return JSONResponse({"ok": False, "message": "browser must be firefox or chrome"},
+                            status_code=400)
+    result = await clips.test_login_link(browser)
+    if result["ok"]:
+        CONFIG = save_config(_deep_merge(CONFIG, {"youtube_login": {"browser": browser}}))
+        _VID_FAILS.clear()                       # give refused videos another go
+    STATE.note(result["message"])
+    return {**result, "browser": _login_browser()}
+
+
+@router.get("/api/login")
+async def api_login_status():
+    import clips
+    return {"browser": _login_browser(), **clips.signin_readiness()}
+
+
+@router.post("/api/login/unlink")
+async def api_login_unlink():
+    global CONFIG
+    CONFIG = save_config(_deep_merge(CONFIG, {"youtube_login": {"browser": ""}}))
+    STATE.note("YouTube sign-in unlinked - music video lookups are anonymous")
+    return {"ok": True, "browser": ""}
+
+
 @router.get("/api/status")
 async def api_status():
     return STATE.snapshot()
@@ -1025,6 +1291,8 @@ async def api_set_config(request: Request):
     global CONFIG
     import localmusic
     incoming = await request.json()
+    if isinstance(incoming, dict):
+        incoming.pop("youtube_login", None)      # only the Link/Unlink buttons change it
     old = (CONFIG["host"], CONFIG["port"])
     old_source = active_source()
     old_dir = (CONFIG.get("local") or {}).get("music_dir", "")
@@ -1124,6 +1392,7 @@ async def api_nowplaying_json():
 
 @router.websocket("/ws/overlay")
 async def ws_overlay(ws: WebSocket):
+    global VIDEO_STATUS
     import localmusic
     await ws.accept()
     HUB.overlay.add(ws)
@@ -1153,6 +1422,12 @@ async def ws_overlay(ws: WebSocket):
                 await HUB.to_overlay({"type": "levels", "v": msg.get("v") or []})
             elif mt in ("local_progress", "local_ended", "local_error", "local_ready"):
                 await localmusic.handle_overlay_message(msg)
+            elif mt == "video_status":
+                # What the overlay's music-video slot is doing, and why it fell
+                # back to artwork if it did - shown in the panel.
+                VIDEO_STATUS = {k: str(msg.get(k) or "")[:200] for k in ("state", "id", "reason")}
+                await HUB.to_panel({"type": "video_status", **VIDEO_STATUS})
+                _release_hold(VIDEO_STATUS)
     except (WebSocketDisconnect, Exception):
         pass
     finally:
@@ -1176,6 +1451,8 @@ async def ws_panel(ws: WebSocket):
     await FEED.ensure_started()
     try:
         await ws.send_text(json.dumps({"type": "status", "status": STATE.snapshot()}))
+        if VIDEO_STATUS:
+            await ws.send_text(json.dumps({"type": "video_status", **VIDEO_STATUS}))
         while True:
             await ws.receive_text()
     except (WebSocketDisconnect, Exception):

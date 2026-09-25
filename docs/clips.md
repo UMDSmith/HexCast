@@ -165,6 +165,57 @@ Worth knowing:
 
 ---
 
+## YouTube sign-in (optional)
+
+Clips are looked up anonymously. For YouTube videos that won't look up
+anonymously, the Settings tab has a **YouTube sign-in** card with **Link** and
+**Unlink** buttons. This is separate from the Music page's sign-in; linking one
+doesn't link the other.
+
+**What Link does, exactly**
+
+- Nothing happens until you click **Link**. The default is *not linked*, and
+  every lookup is anonymous.
+- Link first runs a test: yt-dlp reads the chosen browser's cookies, checks
+  there's a YouTube sign-in among them, and does one test lookup. It tells
+  you what it found. If the cookies can't be read or there's no YouTube
+  sign-in, nothing is saved.
+- What's saved is only the **browser's name** (`"firefox"` or `"chrome"`),
+  in `config/clips.json` (`settings.cookies_browser`). Your cookies are never copied, stored or logged by Hexcast.
+- Lookups stay **anonymous first**. Only when YouTube refuses one for a reason
+  a sign-in can fix (age-restricted, members-only, "Sign in to confirm you're
+  not a bot") does Hexcast re-run yt-dlp with `--cookies-from-browser <name>`.
+  yt-dlp then reads that browser's cookies from its profile on the PC running
+  Hexcast, at that moment, and sends them to YouTube as part of that one
+  lookup. That lookup is done **as your YouTube account**.
+- The link **stays across restarts** until you click **Unlink**, which takes
+  effect immediately.
+- Chrome locks its cookie database while it's running, so the Chrome option
+  only works with Chrome fully closed. Firefox works while open.
+- Signed-in lookups make yt-dlp solve a JavaScript challenge from YouTube,
+  which needs two things on the PC running Hexcast:
+  - **a JavaScript runtime** — [Deno](https://deno.com) is what yt-dlp prefers
+    (`winget install DenoLand.Deno` on Windows, then restart Hexcast). If
+    there's no Deno but Node or Bun is installed, Hexcast uses that instead.
+  - **yt-dlp's challenge-solver scripts** — the `yt-dlp-ejs` package, installed
+    by `requirements.txt`. **Update yt-dlp** (Clips page) upgrades it together
+    with yt-dlp, since the two have to match.
+
+  The sign-in card shows a *Requirements* line with both, and if the Link test
+  fails it names the missing piece.
+
+**How to link**
+
+1. Sign in to YouTube in Firefox — or in Chrome, then close Chrome completely.
+2. Check the card's *Requirements* line shows both pieces ready.
+3. Pick the browser and click **Link**. Read the message: it says whether the
+   test lookup worked, or what's missing.
+
+Hexcast is built for a home/studio network. Anything that can reach its port
+can use these features, so **never expose Hexcast to the internet** (see
+[Security](../README.md#️-security-local-network-use-only)). Linking is your
+choice and your responsibility.
+
 ## Bot / HTTP API
 
 All endpoints are GET-friendly and return `{"ok": true, ...}` or
@@ -181,7 +232,8 @@ exact clip slug, or `next` (the first still-queued item).
 | `GET /clips/api/remove/{ref}` | remove an item (`DELETE /clips/api/queue/{ref}` also works) |
 | `POST /clips/api/reset_numbers` | renumber the queue 1..N and restart the counter |
 | `POST /clips/api/update_ytdlp` | upgrade yt-dlp in place (pip for the bundled module, `-U` for a standalone binary) |
-| `POST /clips/api/cookies` | body `{"browser": "firefox"}` / `"chrome"` / `""` — use that browser's logged-in session for this server session only (never persisted) |
+| `POST /clips/api/login/link` | body `{"browser": "firefox"}` or `"chrome"` — test the browser's YouTube sign-in, then link it if the test passes (see [YouTube sign-in](#youtube-sign-in-optional)) |
+| `POST /clips/api/login/unlink` | unlink (back to anonymous) |
 | `GET /clips/api/shoutout/{channel}?count=2` | play random clips from that Twitch channel back to back, ephemerally (nothing queued or saved) — this is what the Twitch module's `!so` command uses |
 
 Examples:
@@ -233,13 +285,9 @@ the panel's Settings tab.
 **YouTube items suddenly error (but Twitch works).** YouTube changes
 constantly and old yt-dlp builds stop working — hit **Update yt-dlp** on the
 Settings tab first. If an up-to-date yt-dlp is still refused ("Sign in to
-confirm you're not a bot", age-restricted or members-only videos), enable
-**Browser session cookies** on the same tab: yt-dlp reads your logged-in
-session straight from the Firefox or Chrome profile on the machine running
-Hexcast, at play time. Nothing is copied or stored — the choice lives in
-memory only and resets to anonymous when Hexcast restarts. Note that recent
-Chrome versions encrypt their cookies while Chrome is running; if the Chrome
-option errors, close Chrome fully and retry, or use Firefox.
+confirm you're not a bot", age-restricted or members-only videos), you can
+**Link** your YouTube sign-in on the same tab — see
+[YouTube sign-in](#youtube-sign-in-optional).
 
 **Old clips error with "no longer available".** Twitch deletes clips; the
 error badge shows exactly what yt-dlp reported. Remove the row.

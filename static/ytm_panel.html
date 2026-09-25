@@ -277,8 +277,29 @@
   </div>
   <div class="card">
     <h2>Artwork</h2>
-    <p class="hint">YouTube Music plays either a real music video or an "art track" — an auto-generated audio upload with a still image. Art tracks cannot be embedded. But YouTube Music pairs most songs with a video counterpart, so the default setting shows that video even while the app plays the audio version. Flipping the app's own Song/Video toggle works too. Videos whose owner blocks embedding fall back to album art on their own.</p>
+    <p class="hint">YouTube Music plays either a real music video or an "art track" — an auto-generated audio upload with a still image. YouTube Music pairs most songs with a video counterpart, so the default setting shows that video even while the app plays the audio version. Flipping the app's own Song/Video toggle works too. Songs with no linked video show album art.</p>
+    <p class="hint">Music videos are looked up with yt-dlp and streamed to the overlay through Hexcast (<code>/ytm/video/…</code>) — nothing is saved to disk. This needs yt-dlp (it's in requirements.txt; the Clips page can update it).</p>
     <div class="grid" id="g-art"></div>
+  </div>
+  <div class="card">
+    <h2>YouTube sign-in for music videos <span class="pill" id="login-pill">not linked</span></h2>
+    <p class="hint">Optional, and <b>off until you click Link</b>. Music videos are looked up anonymously. Linking only helps with videos YouTube won't hand out anonymously: age-restricted, members-only, or "Sign in to confirm you're not a bot".</p>
+    <p class="hint"><b>What Link does, exactly:</b> Hexcast saves the <i>name</i> of the browser you pick (in <code>config/ytmusic.json</code>) and nothing else. When an anonymous lookup is refused, it re-runs yt-dlp with <code>--cookies-from-browser</code>, which reads that browser's YouTube cookies from its profile on this PC at that moment. Hexcast never copies, stores or sends your cookies anywhere except to YouTube, as part of that lookup. Before saving, Link runs a test lookup and tells you what it found. This is not the YouTube Music Desktop app's session — that app doesn't share its sign-in.</p>
+    <p class="hint">The link <b>stays after restarts</b> until you click <b>Unlink</b>. While linked, those lookups are done as your YouTube account. This setting is separate from the one on the Clips page. Hexcast is local-only — never expose its port to the internet.</p>
+    <p class="hint"><b>How to link:</b> (1) Sign in to YouTube in Firefox — or in Chrome, then close Chrome completely (it locks its cookies while open). (2) Check the requirements line below shows both pieces ready. (3) Pick the browser and click <b>Link</b>; it tests everything and says what, if anything, is missing.</p>
+    <p class="hint" id="login-ready"></p>
+    <div class="grid">
+      <label class="f">Browser to link
+        <select id="login-browser">
+          <option value="firefox">Firefox</option>
+          <option value="chrome">Chrome (must be fully closed)</option>
+        </select></label>
+    </div>
+    <div class="row">
+      <button class="sec" id="login-link">Link</button>
+      <button class="sec" id="login-unlink">Unlink</button>
+    </div>
+    <p class="hint" id="login-msg" style="margin:12px 0 0"></p>
   </div>
   <div class="card">
     <h2>What to show</h2>
@@ -321,6 +342,7 @@
         <div class="t" id="np-title">Nothing playing</div>
         <div class="a" id="np-artist"></div>
         <div class="s" id="np-state"></div>
+        <div class="s" id="np-video" style="display:none"></div>
       </div>
     </div>
     <div class="row">
@@ -402,6 +424,8 @@ var ART=[
   ['video_when','When to try video',{t:'sel',opts:[['auto','Video, or the song\'s video counterpart'],['video_tracks','Only when playing the video version'],['always','Every track (expect failures)']]}],
   ['video_fit','Video shape',{t:'sel',opts:[['cover','Crop to square'],['wide','16:9 box']]}],
   ['video_quality','Video quality',{t:'sel',opts:[['small','240p'],['medium','360p'],['large','480p'],['hd720','720p']]}],
+  ['video_prebuffer','Pre-buffer the next song\'s video',{t:'bool'}],
+  ['video_hold','Hold each new song until its video is ready (max 8s)',{t:'bool'}],
   ['art_size','Art size',{t:'num',min:32,max:400}],
   ['art_radius','Art corner radius',{t:'num',min:0,max:200}],
   ['art_spin','Spin the art like a record',{t:'bool'}],
@@ -522,6 +546,53 @@ async function saveConfig(patch,msg){
   var d=await r.json(); CFG=d.config; toast(msg||'Saved');
 }
 
+function paintReady(r){
+  var js = r.js_runtime
+    ? '\u2713 JavaScript runtime: '+r.js_runtime
+    : '\u2717 No JavaScript runtime \u2014 install Deno (winget install DenoLand.Deno), then restart Hexcast';
+  var sv = r.solver
+    ? '\u2713 Challenge-solver scripts installed'
+    : '\u2717 Challenge-solver scripts missing \u2014 click Update yt-dlp on the Clips page';
+  var el=$('login-ready');
+  el.innerHTML = '<b>Requirements for signed-in lookups:</b> '+js+' &nbsp;\u00B7&nbsp; '+sv;
+  el.style.color = (r.js_runtime && r.solver) ? '' : 'var(--warn)';
+}
+async function loadLogin(){
+  try{
+    var r=await (await fetch('/ytm/api/login')).json();
+    paintLogin(r.browser||''); paintReady(r);
+  }catch(e){}
+}
+function paintLogin(b){
+  var p=$('login-pill');
+  p.textContent = b ? ('linked: '+b) : 'not linked';
+  p.className = 'pill' + (b ? ' on' : '');
+  $('login-unlink').disabled = !b;
+}
+$('login-link').onclick=async function(){
+  var btn=this, b=$('login-browser').value;
+  btn.disabled=true; btn.textContent='Testing\u2026';
+  $('login-msg').textContent='Reading your '+b+' session and running a test lookup\u2026';
+  try{
+    var r=await fetch('/ytm/api/login/link',{method:'POST',headers:{'Content-Type':'application/json'},
+                                             body:JSON.stringify({browser:b})});
+    var d=await r.json();
+    $('login-msg').textContent=d.message||'';
+    paintLogin(d.browser||'');
+    if(CFG) CFG.youtube_login={browser:d.browser||''};
+    toast(d.ok ? 'Linked' : 'Not linked');
+  }catch(e){ $('login-msg').textContent='Link failed: '+e.message; }
+  btn.disabled=false; btn.textContent='Link';
+};
+$('login-unlink').onclick=async function(){
+  var r=await fetch('/ytm/api/login/unlink',{method:'POST'});
+  var d=await r.json();
+  paintLogin(d.browser||'');
+  if(CFG) CFG.youtube_login={browser:''};
+  $('login-msg').textContent='Unlinked. Lookups are anonymous; nothing of your session is kept.';
+  toast('Unlinked');
+};
+
 async function loadAll(){
   var res = await fetch('/ytm/api/config');
   if(!res.ok){ toast('Could not read settings from the server'); return; }
@@ -533,6 +604,8 @@ async function loadAll(){
   $('hexcast_url').value = CFG.hexcast_url || '';
   $('music_dir').value = (CFG.local && CFG.local.music_dir) || '';
   reflectSource(CFG.source);
+  paintLogin((CFG.youtube_login && CFG.youtube_login.browser) || '');
+  loadLogin();
   $('u-overlay').textContent = location.origin + '/ytm/overlay';
   $('u-song').textContent = location.origin + '/ytm/api/nowplaying';
   renderGroup('g-layout', LAYOUT);
@@ -597,6 +670,21 @@ function paintNow(n){
   $('np-state').textContent = bits.join('  \u00B7  ');
 }
 
+// What the overlay's music-video slot is doing (only when it's set to show video).
+function paintVideo(v){
+  var el=$('np-video');
+  var text='';
+  if(v.state==='playing')       text='Video: playing';
+  else if(v.state==='loading')  text='Video: loading…';
+  else if(v.state==='ready')    text='Video: buffered, starting…';
+  else if(v.state==='fallback') text='Video: showing album art — '+(v.reason||'unknown reason');
+  else if(v.state==='none')     text='Video: nothing to show';
+  el.textContent=text;
+  el.title=v.id ? 'youtube.com/watch?v='+v.id : '';
+  el.style.color = v.state==='fallback' ? 'var(--warn)' : '';
+  el.style.display = text ? '' : 'none';
+}
+
 function connectPanel(){
   var proto = location.protocol==='https:' ? 'wss' : 'ws';
   var ws = new WebSocket(proto+'://'+location.host+'/ytm/ws/panel');
@@ -604,6 +692,7 @@ function connectPanel(){
     var m=JSON.parse(e.data);
     if(m.type==='status') paintStatus(m.status);
     else if(m.type==='now') paintNow(m.now);
+    else if(m.type==='video_status') paintVideo(m);
     else if(m.type==='queue_changed') qReload();
     else if(m.type==='queue_index'){ Q.index=m.index; Q.count=m.count; qRender(); }
     else if(m.type==='playlists') renderPlaylists(m.playlists||[]);

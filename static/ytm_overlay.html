@@ -54,20 +54,16 @@
   #slot.spin.still #art{ animation-play-state:paused; }
   @keyframes spin{ from{transform:rotate(0)} to{transform:rotate(360deg)} }
 
-  #ytwrap{ position:absolute; inset:0; display:none; }
+  #ytwrap{ position:absolute; inset:0; display:none; overflow:hidden; }
   #slot.video #ytwrap{ display:block; }
   #slot.video #art{ visibility:hidden; }
-  #ytwrap{ overflow:hidden; }
-  #ytwrap iframe{
-    position:absolute; top:50%; left:50%;
-    /* Oversize + centre so YouTube's own chrome (the title bar up top, the
-       branding/gradient strip along the bottom, and the big play/pause overlay
-       band) is pushed outside the crop, leaving just clean video. */
-    transform:translate(-50%,-50%) scale(1.25);
-    width:calc(var(--art,96px) * 1.7778); height:var(--art,96px);
-    border:0; pointer-events:none;
+  /* Two stacked players: the one showing, and one free to pre-buffer the
+     next song's video. */
+  #ytwrap video{
+    position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
+    opacity:0; transition:opacity .4s ease; pointer-events:none;
   }
-  #slot.wide #ytwrap iframe{ width:100%; height:100%; top:50%; left:50%; transform:translate(-50%,-50%) scale(1.4); }
+  #ytwrap video.on{ opacity:1; }
 
   /* text-stroke inherits, so setting it on #meta outlines every text line
      (title, artist, album, times, up next). paint-order does not inherit,
@@ -120,7 +116,7 @@
     <div id="inner">
       <div id="slot">
         <img id="art" alt="">
-        <div id="ytwrap"><div id="ytplayer"></div></div>
+        <div id="ytwrap"><video muted playsinline preload="auto"></video><video muted playsinline preload="auto"></video></div>
       </div>
       <div id="meta">
         <div class="eyebrow" id="eyebrow">Now playing</div>
@@ -221,71 +217,160 @@ function setAccent(hex){
 }
 var ACCENT='#ff3b30';
 
-/* ================= embedded YouTube player =================
-   Loaded lazily: the YouTube iframe API pulls in Google/doubleclick tracking,
-   so we don't touch it at all unless the "music video" embed is actually in use
-   (art_source = video, on the YouTube Music source). Local playback and plain
-   artwork never contact YouTube. When it IS used we go through the
-   privacy-enhanced youtube-nocookie.com host. */
-var YT_READY=false, YT_LOADING=false, player=null, wantVideo=null, blocked={}, watchdog=null;
-function ensureYT(){
-  if(YT_READY || YT_LOADING) return;
-  YT_LOADING=true;
-  var t=document.createElement('script');
-  t.src='https://www.youtube.com/iframe_api';
-  document.head.appendChild(t);
+/* ================= music video =================
+   A plain <video> fed by Hexcast: yt-dlp looks up the video's stream and
+   /ytm/video/<id> relays it (see ytmusic.py). There's no YouTube player in
+   the page, so no YouTube controls or captions, and "embedding disabled"
+   doesn't apply. Only used when art_source = video on the YouTube Music
+   source; local playback and plain artwork never contact YouTube. */
+var mv=[].slice.call(document.querySelectorAll('#ytwrap video'));
+var cur=null;                 // the <video> showing (or loading) curVid
+var curVid='', watchdog=null, embedIsCounterpart=false;
+var VIDEO_TIMEOUT_MS=20000;
+
+// Tell the server (and so the panel) what the video slot is doing, once per change.
+var lastVideoStatus=null;
+function videoStatus(state, id, reason){
+  var st={type:'video_status', state:state, id:id||'', reason:reason||''};
+  if(lastVideoStatus && JSON.stringify(st)===JSON.stringify(lastVideoStatus)) return;
+  lastVideoStatus=st;
+  wsSend(st);
+}
+
+// Which video, if any, goes with a track.
+//   videoType 1/2 -> the app is on the Video toggle, the id is the real thing
+//   videoType 0   -> an art track, no video behind it, but YTM pairs songs
+//                    with their video "counterpart", so use that instead
+function chooseVideo(id, type, counterpart, o){
+  if(!id) return '';
+  var real = (type===1 || type===2);
+  if(o.video_when === 'always')       return id;
+  if(o.video_when === 'video_tracks') return real ? id : '';
+  return real ? id : (counterpart || '');
+}
+
+function otherEl(el){ return mv[0]===el ? mv[1] : mv[0]; }
+function clearEl(el){
+  try{ el.pause(); }catch(e){}
+  el.classList.remove('on');
+  if(el.getAttribute('src')){ el.removeAttribute('src'); try{ el.load(); }catch(e){} }
+  el.dataset.id=''; el.dataset.start='0';
 }
 
 function giveUpOnVideo(id, why){
-  if(id) blocked[id]=true;
+  if(id!==curVid) return;
   slot.classList.remove('video');
   clearTimeout(watchdog);
   console.log('[ytm overlay] falling back to artwork:', why || 'unknown');
+  videoStatus('fallback', id, why);
 }
 
-window.onYouTubeIframeAPIReady=function(){
-  YT_READY=true;
-  player=new YT.Player('ytplayer',{
-    height:'100%', width:'100%',
-    playerVars:{ autoplay:1, controls:0, disablekb:1, fs:0, modestbranding:1,
-                 rel:0, iv_load_policy:3, playsinline:1, mute:1, loop:0,
-                 // Without origin, YouTube rejects a fair number of embeds
-                 // outright - especially inside OBS's browser source.
-                 origin: location.origin },
-    events:{
-      onReady:function(e){ e.target.mute(); if(wantVideo) loadVideo(wantVideo); },
-      onStateChange:function(e){
-        // 1 playing, 3 buffering - either means the embed is genuinely working.
-        if(e.data===1||e.data===3) clearTimeout(watchdog);
-      },
-      onError:function(e){
-        giveUpOnVideo(wantVideo, 'player error ' + e.data);
-      }
+function showEl(el){
+  if(cur && cur!==el) clearEl(cur);
+  cur=el;
+  el.loop = embedIsCounterpart;     // a paired video may be shorter than the song
+  // Hexcast may be holding the song until this video is buffered; it only
+  // plays once the song does (kickVideo), so the two start together.
+  if(el.readyState>=3) videoStatus('ready', el.dataset.id);
+  kickVideo();
+}
+
+// Follow the song's play/pause straight away (syncVideo only runs every 3s).
+function kickVideo(){
+  if(!cur || !curVid || cur.dataset.id!==curVid || !cur.getAttribute('src')) return;
+  try{
+    if(playing && cur.paused){
+      if(!embedIsCounterpart && cur.readyState>=1 && Math.abs(cur.currentTime-localProgress)>0.5)
+        cur.currentTime=localProgress;
+      var p=cur.play(); if(p && p.catch) p.catch(function(){});
+    } else if(!playing && !cur.paused){
+      cur.pause();
     }
-  });
-};
-
-function loadVideo(id){
-  if(!player || !player.loadVideoById) return;
-  try{
-    player.loadVideoById({videoId:id, startSeconds:Math.max(0,localProgress)});
-    player.mute();
-    if(CFG && CFG.overlay.video_quality) player.setPlaybackQuality(CFG.overlay.video_quality);
-    // Some failures render an error card inside the iframe without ever firing
-    // onError, so fall back if nothing starts playing.
-    clearTimeout(watchdog);
-    watchdog = setTimeout(function(){ giveUpOnVideo(id, 'never started playing'); }, 6000);
-  }catch(e){ giveUpOnVideo(id, e.message); }
-}
-function syncVideo(){
-  if(!player || !player.getCurrentTime || !slot.classList.contains('video')) return;
-  try{
-    var t=player.getCurrentTime();
-    if(Math.abs(t-localProgress)>1.5) player.seekTo(localProgress,true);
-    var st=player.getPlayerState();
-    if(playing && st!==1) player.playVideo();
-    if(!playing && st===1) player.pauseVideo();
   }catch(e){}
+}
+
+function startVideo(id){
+  curVid=id;
+  clearTimeout(watchdog);
+  // Already pre-buffered by the end of the last song?
+  var ready = mv.filter(function(el){ return el.dataset.id===id; })[0];
+  if(ready){ showEl(ready); return; }
+  videoStatus('loading', id);
+  fetch('/ytm/api/video/'+id).then(function(r){ return r.json(); }).then(function(d){
+    if(curVid!==id) return;
+    if(!d.ok){ giveUpOnVideo(id, d.error||'lookup failed'); return; }
+    var el = cur ? otherEl(cur) : mv[0];
+    clearEl(el);
+    el.dataset.id=id;
+    el.dataset.start = embedIsCounterpart ? '0' : String(localProgress);
+    el.src='/ytm/video/'+id;
+    showEl(el);
+    watchdog=setTimeout(function(){
+      giveUpOnVideo(id, 'didn\u2019t start within '+(VIDEO_TIMEOUT_MS/1000)+'s');
+    }, VIDEO_TIMEOUT_MS);
+  }).catch(function(e){ giveUpOnVideo(id, 'lookup failed: '+e.message); });
+}
+
+function stopVideo(){
+  curVid='';
+  clearTimeout(watchdog);
+  if(cur){ clearEl(cur); cur=null; }
+  slot.classList.remove('video');
+}
+
+// Load (but don't play) the next song's video in the spare element.
+function prebufferVideo(id){
+  if(!id || id===curVid || !cur) return;
+  var el=otherEl(cur);
+  if(el.dataset.id===id) return;
+  el.dataset.id=id;                 // claim it now so this only runs once
+  fetch('/ytm/api/video/'+id).then(function(r){ return r.json(); }).then(function(d){
+    if(el===cur || el.dataset.id!==id) return;
+    if(!d.ok){ el.dataset.id=''; return; }
+    el.dataset.start='0';
+    el.src='/ytm/video/'+id;        // preload="auto" buffers the start
+  }).catch(function(){ el.dataset.id=''; });
+}
+
+mv.forEach(function(el){
+  el.addEventListener('loadedmetadata', function(){
+    var st=parseFloat(el.dataset.start||'0');
+    if(st>1 && (!el.duration || st<el.duration-2)) el.currentTime=st;
+  });
+  el.addEventListener('canplay', function(){
+    if(el===cur && el.dataset.id===curVid) videoStatus('ready', curVid);
+  });
+  el.addEventListener('playing', function(){
+    if(el!==cur || el.dataset.id!==curVid) return;
+    clearTimeout(watchdog);
+    el.classList.add('on');
+    slot.classList.add('video');      // also brings it back after a slow start
+    videoStatus('playing', curVid);
+  });
+  el.addEventListener('error', function(){
+    if(!el.getAttribute('src')) return;
+    if(el===cur) giveUpOnVideo(el.dataset.id, 'stream error '+(el.error?el.error.code:''));
+    else clearEl(el);
+  });
+});
+
+function syncVideo(){
+  if(!cur || !curVid) return;
+  try{
+    // A paired music video runs on its own timeline (intros, skits), so only
+    // a real video track is kept in step with the song.
+    if(!embedIsCounterpart && cur.readyState>=1 && Math.abs(cur.currentTime-localProgress)>2)
+      cur.currentTime=localProgress;
+    if(playing && cur.paused){ var p=cur.play(); if(p && p.catch) p.catch(function(){}); }
+    if(!playing && !cur.paused) cur.pause();
+  }catch(e){}
+  // Near the end of the song, start buffering the next one's video.
+  var o=CFG && CFG.overlay;
+  if(o && o.video_prebuffer && NOW && NOW.next && NOW.duration
+     && NOW.duration-localProgress < 15){
+    var n=NOW.next;
+    prebufferVideo(chooseVideo(n.id, n.video_type, n.counterpart_id, o));
+  }
 }
 setInterval(syncVideo,3000);
 
@@ -639,6 +724,8 @@ function render(s){
   var o=CFG.overlay;
   var idle=!s.title;
   playing=!!s.playing;
+  // Before the video logic below, which starts a real video at this position.
+  localProgress=s.progress||0; lastSync=performance.now();
 
   if(s.source) SOURCE=s.source;
   if(SOURCE==='local') driveLocalAudio(s);   // obey control events / advance queue
@@ -664,26 +751,22 @@ function render(s){
   }
   if(!s.art) card.classList.remove('has-backdrop');
 
-  // Which id, if any, is worth embedding.
-  //   videoType 1/2 -> the app is on the Video toggle, s.id is the real thing
-  //   videoType 0   -> an art track, no video behind it, but YTM pairs songs
-  //                    with their video "counterpart", so use that instead
-  var embedId = '';
-  if(o.art_source === 'video' && SOURCE!=='local'){
-    var isRealVideo = (s.video_type===1 || s.video_type===2);
-    if(o.video_when === 'always')          embedId = s.id;
-    else if(o.video_when === 'video_tracks') embedId = isRealVideo ? s.id : '';
-    else /* auto */                        embedId = isRealVideo ? s.id : (s.counterpart_id || '');
-    if(embedId && blocked[embedId]) embedId = '';
+  var embedId = '', whyNone = '';
+  var videoOn = (o.art_source === 'video' && SOURCE!=='local');
+  if(videoOn){
+    embedId = chooseVideo(s.id, s.video_type, s.counterpart_id, o);
+    if(s.id && !embedId) whyNone = o.video_when === 'video_tracks'
+                           ? 'playing the song version (set to video tracks only)'
+                           : 'YouTube Music has no video linked to this track';
   }
 
   if(embedId){
-    slot.classList.add('video');
-    ensureYT();                    // pull in the YouTube API only now that it's needed
-    if(embedId!==lastEmbed){ wantVideo=embedId; if(YT_READY&&player) loadVideo(embedId); }
+    if(embedId!==lastEmbed){ embedIsCounterpart = (embedId !== s.id); startVideo(embedId); }
   } else {
-    slot.classList.remove('video');
-    clearTimeout(watchdog);
+    stopVideo();
+    if(!videoOn)     videoStatus('off');
+    else if(whyNone) videoStatus('fallback', s.id, whyNone);
+    else             videoStatus('none');
   }
   lastEmbed = embedId;
   lastId=s.id;
@@ -694,7 +777,7 @@ function render(s){
   nextEl.innerHTML = (o.show_next&&s.next&&s.next.title)
     ? 'Up next &nbsp;<b>'+esc(s.next.title)+'</b> \u00B7 '+esc(s.next.author) : '';
 
-  localProgress=s.progress||0; lastSync=performance.now();
+  kickVideo();
   tEnd.textContent = s.is_live?'LIVE':mmss(s.duration);
   paint();
 }
@@ -736,6 +819,8 @@ function connect(){
     if(m.type==='config') applyConfig(m.config);
     else if(m.type==='role'){
       ROLE=m.role||'viewer';
+      // (Re)connected, maybe to a restarted server - repeat what the video is doing.
+      if(lastVideoStatus) wsSend(lastVideoStatus);
       if(ROLE!=='player'){ try{ audio.pause(); }catch(e){} }
       else curSeq=-1;                 // re-drive playback on the next state
     }

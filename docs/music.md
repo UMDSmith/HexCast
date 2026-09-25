@@ -5,7 +5,7 @@ A now-playing overlay with two sources you pick from the panel:
 - **YouTube Music** — fed by the
   [YouTube Music Desktop App](https://ytmdesktop.github.io/)'s companion server.
   Album art, live progress, an accent colour pulled from the artwork itself, an
-  audio visualiser, and optionally the music video embedded in the card. It
+  audio visualiser, and optionally the music video shown in the card. It
   talks **specifically to that app** (2.0.0+) — not the website or the service.
 - **Local files** — map a music folder, build a queue, and play it **through the
   overlay itself**, so OBS captures the audio straight from the browser source.
@@ -45,6 +45,12 @@ Add to `hexcast.py`, after `app.mount("/media", ...)`:
 from ytmusic import attach_ytm
 attach_ytm(app, PORT)
 ```
+
+The music video (optional) is looked up with **yt-dlp**, which comes from the
+main `requirements.txt` along with `yt-dlp-ejs`, its YouTube challenge-solver
+scripts. Nothing else is needed for anonymous lookups; the optional YouTube
+sign-in also needs a JavaScript runtime (see
+[YouTube sign-in](#youtube-sign-in-optional)).
 
 Optionally, for real audio reactivity in the visualiser:
 
@@ -186,37 +192,170 @@ spinning-record mode.
 
 ## The music video
 
-**Artwork → What to show there → The music video** embeds the track's video in
-the art slot, muted, synced to `videoProgress` with drift correction every few
-seconds. Crop-to-square or 16:9 box.
+**Artwork → What to show there → The music video** shows the track's video in
+the art slot, muted and kept in step with the song. Crop-to-square or 16:9 box.
 
-YouTube Music plays two different kinds of thing. Real music videos embed fine.
-**Art tracks** — auto-generated audio uploads with a still image, which is what
-you get on the Song side of the app's Song/Video toggle — cannot be embedded
-and produce a YouTube error card. The state feed exposes `videoType`, so the
-overlay knows which it has.
+**How it's played.** Hexcast doesn't use YouTube's embed player. When a track
+starts, yt-dlp looks up the video's direct stream (video only, at the **Video
+quality** you pick), and the overlay plays it in a plain `<video>` through
+`/ytm/video/<id>`, which relays the stream from YouTube. Browsers can't load
+these streams straight from YouTube, which is why they pass through Hexcast.
+Nothing is written to disk; the stream address lives in memory and is
+refreshed when it expires. Because there's no YouTube player in the overlay:
+
+- no YouTube controls, pause button or captions ever appear on the video;
+- videos whose owner turned off embedding play fine (that rule only applies
+  to YouTube's embed player).
+
+It needs yt-dlp (in `requirements.txt`). YouTube changes often, so if videos
+stop appearing, update yt-dlp from the Clips page first.
+
+YouTube Music plays two different kinds of thing: real music videos, and
+**art tracks** (auto-generated audio uploads with a still image, what you get
+on the Song side of the app's Song/Video toggle). The state feed exposes
+`videoType`, so the overlay knows which it has.
 
 **When to try video** controls the policy:
 
 - **Video, or the song's video counterpart** *(default)* — if the app is on the
-  Video toggle, embeds that. If it's on Song, it reads the `counterparts` entry
-  from the queue and embeds the paired video version instead, so you get the
-  music video on screen while the app plays the audio track.
+  Video toggle, shows that. If it's on Song, it reads the `counterparts` entry
+  from the queue and shows the paired video instead, so you get the music video
+  on screen while the app plays the audio track. A paired video runs on its own
+  timeline (intros, skits), so it isn't forced into step with the song.
 - **Only when playing the video version** — mirrors the app exactly.
-- **Every track** — tries the raw id regardless. Expect failures.
+- **Every track** — tries the raw id regardless.
 
-Embedding permission is still the video owner's call, and a lot of official
-music videos block it. Those hit a six-second watchdog and fall back to artwork
-silently, then get remembered so they don't retry. The watchdog exists because
-some failures render an error card inside the iframe without ever firing the
-API's error event.
+If YouTube Music has no video paired with a song, there's nothing to show and
+the art stays up.
+
+**Getting it on screen faster.** As soon as a song starts, Hexcast looks up the
+*next* song's stream in the background, so the lookup (a second or two) is
+already done at the track change. **Pre-buffer the next song's video**
+*(off by default)* goes further: in the last ~15 seconds of a song, the overlay
+starts loading the next video in a hidden second player, so it appears the
+moment the track changes. It costs a second stream for those few seconds.
+If you skip or reorder, the prepared video simply isn't used.
+
+**Starting song and video together.** **Hold each new song until its video is
+ready** *(on by default)*: at a track change, Hexcast pauses the app and rewinds
+it to 0:00, waits for the overlay to report the video buffered (or failed), then
+resumes, so the song and video start in step. The hold never lasts more than
+8 seconds. It only happens at the very start of a song, only when a video will
+be shown, and only while an overlay is connected to report back. With
+pre-buffering on, the video is usually ready already and the pause is barely
+noticeable.
+
+### How video loading works, step by step
+
+What happens from one song to the next, with the default settings (hold on,
+pre-buffer off):
+
+1. **A song starts in the app.** Its state arrives over the companion feed with
+   the track's id, its `videoType` and any paired `counterparts`. Hexcast works
+   out which video, if any, goes with it (per **When to try video**).
+2. **The lookups start straight away, in the background.** Hexcast asks yt-dlp
+   for the direct stream of this song's video *and* the next song's in the
+   queue. A lookup takes a second or two; the result is just a URL, kept in
+   memory (never on disk) for up to 3 hours and shared by everything that
+   needs it. Failed lookups are remembered for 15 minutes so a refused video
+   isn't retried on every state update.
+3. **The song is held (track changes only).** If this is the very start of a
+   song, a video will be shown, and an overlay is connected, Hexcast pauses the
+   app and rewinds it to 0:00 (the song has usually played for a moment before
+   Hexcast hears about it).
+4. **The overlay loads the video, paused.** It asks `/ytm/api/video/<id>` whether
+   the stream is ready (instant if step 2 already did it) and points a hidden,
+   muted `<video>` at `/ytm/video/<id>`. That address relays the stream from
+   YouTube through Hexcast, passing seek (range) requests along. A real video
+   track starts at the song's position; a paired video starts at 0:00.
+5. **The overlay reports back.** When the video has buffered enough to play it
+   sends *ready*; if the lookup or stream fails it sends *fallback* with the
+   reason. The panel's *Video:* line shows each step.
+6. **The song resumes.** On *ready* or *fallback* — or after 8 seconds at most —
+   Hexcast tells the app to play. The overlay starts the video the moment the
+   song's state flips to playing, and fades it in over the artwork. On
+   *fallback* the artwork simply stays.
+7. **While it plays.** Every few seconds the overlay follows the song's
+   play/pause, and keeps a real video track within 2 seconds of the song.
+   A paired video isn't forced into step (its timeline differs), and loops if
+   it's shorter than the song.
+8. **Near the end (pre-buffer on).** In the last ~15 seconds, the overlay loads
+   the next song's video into its second, hidden `<video>`. At the track change
+   it swaps to that one instead of loading from scratch, so step 5 happens
+   almost immediately and the hold in step 3 is barely noticeable.
+
+If the queue changes (you skip, reorder or pick something else), the prepared
+lookup or buffer just goes unused and the new song goes through the steps
+above. Stream URLs expire after a few hours; if YouTube rejects an expired one
+mid-song, the relay looks it up again and carries on.
+
+**Seeing why a video didn't show.** The Music panel's now-playing box has a
+*Video:* line — playing, loading, or "showing album art — <reason>" (no linked
+video, lookup refused, didn't start in time, …). Hover it for the video id.
+
+## YouTube sign-in (optional)
+
+Most videos look up fine anonymously. For the ones that don't, the Music page
+has a **YouTube sign-in for music videos** card with **Link** and **Unlink**
+buttons. This is separate from the Clips page's sign-in; linking one doesn't
+link the other. It is *not* the YouTube Music Desktop app's session — that app
+doesn't share its sign-in with other programs.
+
+**What Link does, exactly**
+
+- Nothing happens until you click **Link**. The default is *not linked*, and
+  every lookup is anonymous.
+- Link first runs a test: yt-dlp reads the chosen browser's cookies, checks
+  there's a YouTube sign-in among them, and does one test lookup. It tells
+  you what it found. If the cookies can't be read or there's no YouTube
+  sign-in, nothing is saved.
+- What's saved is only the **browser's name** (`"firefox"` or `"chrome"`),
+  in `config/ytmusic.json` (`youtube_login.browser`). Your cookies are never copied, stored or logged by Hexcast.
+- Lookups stay **anonymous first**. Only when YouTube refuses one for a reason
+  a sign-in can fix (age-restricted, members-only, "Sign in to confirm you're
+  not a bot") does Hexcast re-run yt-dlp with `--cookies-from-browser <name>`.
+  yt-dlp then reads that browser's cookies from its profile on the PC running
+  Hexcast, at that moment, and sends them to YouTube as part of that one
+  lookup. That lookup is done **as your YouTube account**.
+- The link **stays across restarts** until you click **Unlink**, which takes
+  effect immediately.
+- Chrome locks its cookie database while it's running, so the Chrome option
+  only works with Chrome fully closed. Firefox works while open.
+- Signed-in lookups make yt-dlp solve a JavaScript challenge from YouTube,
+  which needs two things on the PC running Hexcast:
+  - **a JavaScript runtime** — [Deno](https://deno.com) is what yt-dlp prefers
+    (`winget install DenoLand.Deno` on Windows, then restart Hexcast). If
+    there's no Deno but Node or Bun is installed, Hexcast uses that instead.
+  - **yt-dlp's challenge-solver scripts** — the `yt-dlp-ejs` package, installed
+    by `requirements.txt`. **Update yt-dlp** (Clips page) upgrades it together
+    with yt-dlp, since the two have to match.
+
+  The sign-in card shows a *Requirements* line with both, and if the Link test
+  fails it names the missing piece.
+
+**How to link**
+
+1. Sign in to YouTube in Firefox — or in Chrome, then close Chrome completely.
+2. Check the card's *Requirements* line shows both pieces ready.
+3. Pick the browser and click **Link**. Read the message: it says whether the
+   test lookup worked, or what's missing.
+
+Hexcast is built for a home/studio network. Anything that can reach its port
+can use these features, so **never expose Hexcast to the internet** (see
+[Security](../README.md#️-security-local-network-use-only)). Linking is your
+choice and your responsibility.
+
+| Endpoint | |
+|---|---|
+| `POST /ytm/api/login/link` | body `{"browser": "firefox"}` or `"chrome"` — test, then link if the test passes |
+| `POST /ytm/api/login/unlink` | unlink (back to anonymous) |
+| `GET /ytm/api/video/{id}` | look up a video's stream; `{"ok": true}` or `{"ok": false, "error": "…"}` |
+| `GET /ytm/video/{id}` | the relayed video stream (supports range requests) |
 
 **Worth considering instead:** capture the YouTube Music Desktop window in OBS
-directly, cropped to the video area. No embedding restrictions, no second
-decode of the same video, no sync drift, works on every track. Then run this
-overlay beside it for the title, progress and visualiser, with the art slot
-hidden. The embed's only real advantage is that everything stays in one browser
-source you can move as a unit.
+directly, cropped to the video area. It shows exactly what the app shows with
+no lookups at all. Then run this overlay beside it for the title, progress and
+visualiser, with the art slot hidden.
 
 ---
 
@@ -339,3 +478,19 @@ browser caches the page even though the server doesn't.
 
 **No album art.** YouTube Music fills metadata in two passes; artwork arrives a
 moment after the track starts.
+
+**The music video never appears.** Check the *Video:* line on the Music panel's
+now-playing box — it gives the reason. "No video linked to this track" means
+YouTube Music has no video paired with that song. A lookup error usually means
+yt-dlp is out of date: **Update yt-dlp** on the Clips page. Age-restricted and
+bot-checked videos need the optional [YouTube sign-in](#youtube-sign-in-optional).
+
+**The song pauses for a moment at every track change.** That's **Hold each new
+song until its video is ready** keeping the song and video in step (8 seconds
+at most). Turn on **Pre-buffer the next song's video** to shorten it, or turn
+the hold off under Artwork if you'd rather the song never waits.
+
+**The video drifts out of step.** Real video tracks are corrected to within
+2 seconds. Paired videos (the song's video counterpart) are deliberately not
+forced into step, because their timeline often differs from the song's (intros,
+skits); switch the app to its Video toggle for a frame-accurate match.
