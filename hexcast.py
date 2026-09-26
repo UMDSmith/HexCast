@@ -586,6 +586,14 @@ except ImportError as exc:
     if getattr(exc, "name", "") != "clips":
         print(f"  Clips module found but not loaded ({exc})", flush=True)
 
+# Games is optional too: skip quietly if the module file is gone.
+try:
+    from games import attach_games
+    attach_games(app, PORT)
+except ImportError as exc:
+    if getattr(exc, "name", "") != "games":
+        print(f"  Games module found but not loaded ({exc})", flush=True)
+
 
 # ---- HTML (inlined) --------------------------------------------------------
 

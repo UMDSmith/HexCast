@@ -37,10 +37,11 @@ folder out of git and keep the port on your LAN.
 
 At its core, Hexcast is a **soundboard + media launcher** that drives a single
 set of OBS browser-source overlays from a web control panel. On top of that core
-sit five optional **integration tabs** — Twitch, Music, Discord, Clips, and
-Countdown — each self-contained, each with its own overlay and settings panel,
-each reachable from a button in the control panel's top bar. Turn on as many or
-as few as you like; none of them changes how the soundboard behaves.
+sit six optional **integration tabs** — Twitch, Music, Discord, Clips,
+Countdown, and Games — each self-contained, each with its own overlay and
+settings panel, each reachable from a button in the control panel's top bar.
+Turn on as many or as few as you like; none of them changes how the soundboard
+behaves.
 
 Everything runs on your own machine and streams to OBS over your LAN.
 
@@ -68,7 +69,8 @@ name over a simple HTTP **[Bot API](#bot-api)** — great for chat bots and
 stream-deck buttons.
 
 > **This `/overlay` is where every soundboard clip plays — including clips fired
-> by the other tabs** (Twitch alerts, Countdown cues, a Music track-change clip).
+> by the other tabs** (Twitch alerts, Countdown cues, a Music track-change clip,
+> Games launch/landing clips).
 > Those integrations trigger the soundboard rather than drawing on their own
 > overlays, so keep the base `/overlay` source in your scene alongside whatever
 > integration overlays you're using.
@@ -163,6 +165,28 @@ computed against that timer and fired through the soundboard. **Those clips play
 on the base soundboard overlay (`/overlay`), not the countdown overlay** — keep
 both browser sources in your scene. See [docs/countdown.md](docs/countdown.md).
 
+### 🎰 Games
+
+**What it does.** Bot-driven games on stream, starting with **Roulette**: a
+casino wheel pops onto the overlay, spins, launches the ball the other way, and
+the ball slows, drops, bounces off the deflectors and settles in a pocket — then
+the result pops up with a history strip of recent numbers. It's a standard
+**American double-zero** wheel (38 pockets) in one of four themes, placed with
+the same **Edit Mode** as the soundboard. Chat bots can send **bets** with a
+spin (straight, split, street, corner, dozens, columns, red/black and the rest)
+and get every one back resolved at standard odds, ready to pay out; soundboard
+clips can fire at launch and landing.
+
+**How it works.** The server picks the pocket with a cryptographic RNG
+(`secrets.SystemRandom`), uniformly over every pocket — the overlay only animates
+the server's result, and nothing in the API or panel can force an outcome. The
+animation is seeded, so every overlay (and the panel's live preview) shows the
+identical spin, and a source that reconnects mid-spin rejoins at the right
+moment. A spin is one HTTP call, and `wait=true` holds the response until the
+ball lands. **Launch/landing clips play on the base soundboard overlay
+(`/overlay`)** — keep both browser sources in your scene. See
+[docs/games.md](docs/games.md).
+
 ---
 
 ## Install, upgrade & uninstall
@@ -208,7 +232,8 @@ Leave the launcher window open while you stream; close it to stop Hexcast.
 4. Select the source and press **Ctrl+F** to fit.
 
 Each integration adds its own browser source (e.g. `/ytm/overlay`,
-`/twitch/chat`, `/countdown/overlay`); its panel shows the exact URL.
+`/twitch/chat`, `/countdown/overlay`, `/games/overlay`); its panel shows the
+exact URL.
 
 ### Install — advanced / manual
 
@@ -221,15 +246,15 @@ pip install -r requirements.txt
 python hexcast.py
 ```
 
-All five integrations work from the main install — their dependencies are
+All six integrations work from the main install — their dependencies are
 already included. The only separate optional extra is the **"react to real
 audio" visualiser**, which needs `numpy` + `soundcard`:
 `pip install -r requirements-ytm-audio.txt`.
 
 Each integration is just two lines in `hexcast.py` after the `/media` mount
 (e.g. `from twitch import attach_twitch` then `attach_twitch(app, PORT)`, and
-the same shape for `ytmusic`, `discord_reactive`, `clips`, `countdown`). Delete
-a pair to disable that module.
+the same shape for `ytmusic`, `discord_reactive`, `clips`, `countdown`,
+`games`). Delete a pair to disable that module.
 
 ### Install — Docker
 
@@ -314,6 +339,35 @@ For Twitch redemptions, the Twitch integration handles this natively (no bot
 needed); or map a redemption/command to a clip name and call `/api/play/{name}`
 from your own bot.
 
+**Games (roulette)** — same idea, every call returns `{"ok": true|false, ...}`:
+
+```
+GET  /games/api                                → games endpoint reference
+GET|POST /games/api/roulette/spin              → spin (alias /play); result + resolved bets
+     ?user=&duration=                          → caption name (≤ 40 chars) · spin seconds 4–30
+     ?wait=true                                → respond when the ball lands
+     ?test=true                                → not recorded, no clip cues
+     ?bet=red&amount=100                       → one bet (POST {"bets": [...]} for up to 200)
+     ?x=&y=&scale=                             → per-spin placement (POST "overrides" for more)
+GET  /games/api/roulette/last                  → last committed spin
+GET  /games/api/roulette/history?limit=20      → recent spins + stats (hot/cold, streak, counts)
+POST /games/api/roulette/history/clear         → clear history + stats
+GET  /games/api/roulette/validate?bet=17/20    → parse a bet: type, numbers, odds, or error
+GET  /games/api/roulette/bets                  → bet-type reference (syntax, odds)
+GET|POST /games/api/roulette/show | hide       → idle wheel on / off screen
+GET|POST /games/api/stop                       → abort + hide everything (games only)
+GET  /games/api/status · GET|POST /games/api/config
+```
+
+A spin while another is still spinning, showing its result or in cooldown
+returns HTTP 409 `{"ok": false, "error": "busy", "retry_in_ms": N, "state": "..."}`.
+Bet syntax, odds and bot recipes: [docs/games.md](docs/games.md).
+
+```bash
+curl "http://localhost:4747/games/api/roulette/spin?user=bob&bet=red&amount=100&wait=true"
+curl "http://localhost:4747/games/api/roulette/validate?bet=split:17/20"
+```
+
 ### Supported media formats
 
 - **Audio:** `.mp3`, `.wav`, `.ogg`, `.m4a`, `.flac`, `.opus`
@@ -359,8 +413,10 @@ hexcast/
 ├── discord_reactive.py        # optional Discord voice-reactive integration
 ├── clips.py                   # optional Twitch clip player integration
 ├── countdown.py               # optional countdown timer integration
+├── games.py                   # optional games integration (roulette)
 ├── static/                    # control panel + every overlay/panel (HTML/CSS/JS)
-├── docs/                      # per-integration docs: twitch, music, discord, clips, countdown
+│   └── games/                 # game renderers shared by the games overlay + panel (roulette.js)
+├── docs/                      # per-integration docs: twitch, music, discord, clips, countdown, games
 ├── config/                    # tokens, playlists & integration settings (gitignored)
 ├── requirements*.txt          # core + per-integration dependency lists
 ├── start.sh / start.bat       # launchers
@@ -388,7 +444,7 @@ can hand-edit the JSON; the watcher ignores `.json` writes.
 ## Links
 
 - **Repository & downloads:** <https://github.com/UMDSmith/hexcast>
-- **Integration docs:** [Twitch](docs/twitch.md) · [Music](docs/music.md) · [Discord](docs/discord.md) · [Clips](docs/clips.md) · [Countdown](docs/countdown.md)
+- **Integration docs:** [Twitch](docs/twitch.md) · [Music](docs/music.md) · [Discord](docs/discord.md) · [Clips](docs/clips.md) · [Countdown](docs/countdown.md) · [Games](docs/games.md)
 - **License:** MIT — see [LICENSE](LICENSE)
 
 <p align="center">

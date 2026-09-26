@@ -19,6 +19,7 @@
   --hb-music:   #ff0033;
   --hb-discord: #5865f2;
   --hb-clips:   #1fc7a8;
+  --hb-games:   #d4af37;
   --hb-mono:    'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
 }
 
@@ -61,6 +62,7 @@
 .hb-nav a[data-key="music"].sel{ border-color:var(--hb-music); }
 .hb-nav a[data-key="discord"].sel{ border-color:var(--hb-discord); }
 .hb-nav a[data-key="clips"].sel{ border-color:var(--hb-clips); }
+.hb-nav a[data-key="games"].sel{ border-color:var(--hb-games); }
 .hb-nav a[data-key="help"].sel{ border-color:var(--hb-line-hi); }
 
 .hb-dot{

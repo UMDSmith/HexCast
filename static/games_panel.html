@@ -1,0 +1,1385 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="/static/hexcast.png">
+<link rel="stylesheet" href="/static/hexbar.css">
+<title>HexCast - Games</title>
+<style>
+  :root{
+    --bg:var(--hb-bg); --panel:var(--hb-panel); --line:var(--hb-line); --ink:var(--hb-ink);
+    --dim:var(--hb-dim); --accent:var(--hb-accent); --good:var(--hb-good); --warn:var(--hb-warn);
+    --mono:var(--hb-mono);
+    /* The soundboard's edit-mode palette (control.html), mapped onto the hexbar variables
+       so the Edit Mode toggle + placement modal match it pixel for pixel. */
+    --card:var(--hb-card); --border:var(--hb-line); --border-hover:var(--hb-line-hi);
+    --text:var(--hb-ink); --muted:var(--hb-muted);
+    --red:var(--hb-accent); --red-soft:var(--hb-accent-soft); --red-deep:#8c1f1a;
+    --amber:var(--hb-warn); --amber-soft:#ffc95c;
+    --gold:var(--hb-games, #d4af37);
+    /* pocket colours for chips (classic theme; follow the saved *_color overrides) */
+    --pk-red:#c0282d; --pk-black:#16161a; --pk-green:#0f7a3c;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.5 'Segoe UI',system-ui,-apple-system,sans-serif;}
+  main{padding:18px 22px 60px;max-width:1080px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
+  .card h2{margin:0 0 4px;font-size:14px;letter-spacing:.14em;text-transform:uppercase}
+  .card h2 .pill{margin-left:8px;vertical-align:2px;letter-spacing:.04em}
+  .card h3{margin:16px 0 4px;font-size:13px;color:var(--ink)}
+  .card p.hint{margin:0 0 14px;color:var(--dim);font-size:13px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px}
+  label.f{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--dim);
+          letter-spacing:.06em;text-transform:uppercase;font-weight:600}
+  main input,main select,main textarea{background:#08080c;border:1px solid var(--line);color:var(--ink);
+        border-radius:8px;padding:9px 10px;font:14px/1.3 inherit;width:100%}
+  main input:focus,main select:focus,main textarea:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:var(--accent)}
+  main input[type=range]{padding:0;border:0;background:transparent;accent-color:var(--accent)}
+  main input[type=range]:focus{outline:none}
+  label.sw{flex-direction:row;align-items:center;gap:9px;text-transform:none;font-size:14px;color:var(--ink)}
+  label.sw input{width:auto}
+  button.act{background:var(--accent);color:#fff;border:0;border-radius:9px;padding:10px 16px;
+             font:700 14px inherit;cursor:pointer}
+  button.act:hover{filter:brightness(1.12)}
+  button.sec{background:#1c1c25;color:var(--ink);border:1px solid var(--line);border-radius:9px;
+             padding:9px 14px;font:600 13px inherit;cursor:pointer}
+  button.sec:hover{border-color:var(--accent)}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  .row{display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin-top:14px}
+  .url{display:flex;gap:8px;align-items:center;margin:8px 0}
+  .url a{flex:1;background:#08080c;border:1px solid var(--line);border-radius:8px;
+            padding:9px 11px;font:13px var(--mono);color:var(--good);overflow:auto;white-space:nowrap;
+            text-decoration:none}
+  .url a:hover{border-color:var(--accent);text-decoration:underline}
+  #toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,calc(100% + 30px));background:var(--accent);
+         color:#fff;padding:11px 20px;border-radius:99px;font-weight:700;font-size:14px;
+         transition:transform .25s ease;z-index:200;max-width:calc(100vw - 32px);text-align:center}
+  #toast.up{transform:translate(-50%,0)}
+  .pill{font:600 12px/1 var(--mono);padding:6px 10px;border-radius:99px;border:1px solid var(--line);color:var(--dim)}
+  .pill.on{color:var(--good);border-color:#1d4d33;background:#0e2118}
+  .pill.off{color:var(--warn);border-color:#4d3a10;background:#211a0b}
+  code{color:var(--good);font:12.5px var(--mono)}
+  pre{background:#08080c;border:1px solid var(--line);border-radius:8px;padding:12px;
+      font:12.5px/1.6 var(--mono);color:var(--good);overflow:auto;margin:8px 0}
+  table.api{width:100%;border-collapse:collapse;font-size:13px;margin:6px 0 4px}
+  table.api td{padding:6px 8px;border-top:1px solid var(--line);vertical-align:top;color:var(--dim)}
+  table.api td:first-child{white-space:nowrap;font:12.5px var(--mono);color:var(--good)}
+  .tscroll{overflow-x:auto}
+  .kv{font-size:11px;color:var(--dim);letter-spacing:.08em;text-transform:uppercase;font-weight:600;margin-bottom:6px}
+
+  /* ---- hexbar actions: the soundboard's buttons (control.html), verbatim look ---- */
+  .editmode-btn{background:var(--card);border:1px solid var(--border);color:var(--text);
+                padding:6px 10px;font-size:13px;border-radius:6px;cursor:pointer;line-height:normal}
+  button.editmode-btn{font-family:inherit;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  button.editmode-btn:hover{border-color:var(--border-hover)}
+  button.editmode-btn:active{transform:translateY(1px)}
+  .editmode-btn:hover{background:#2a1c1c}
+  a.editmode-btn{text-decoration:none;display:inline-block}
+  body.edit-mode #editmode{background:#3a2a18;border-color:var(--amber);color:var(--amber-soft)}
+  #stopall{background:#3a1414;border-color:var(--red-deep);color:var(--red-soft);font-weight:600}
+  #stopall:hover{background:#4a1a1a;border-color:var(--red)}
+  #stopall:active{background:#5a2020;transform:translateY(1px)}
+
+  /* ---- roulette game card + live mirror ---- */
+  .game{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);gap:18px;align-items:start}
+  .mirror{position:relative;width:100%;aspect-ratio:16/9;background:
+      repeating-linear-gradient(0deg,#0c0c11 0 39px,#141420 39px 40px),
+      repeating-linear-gradient(90deg,#0c0c11 0 39px,#141420 39px 40px),#0a0a0e;
+    border:1px solid var(--line);border-radius:8px;overflow:hidden;user-select:none}
+  .gstage{position:absolute;left:0;top:0;width:1920px;height:1080px;transform-origin:0 0;pointer-events:none}
+  .gwheel{position:absolute;left:50%;top:50%;transform-origin:center center;will-change:transform,left,top;pointer-events:auto}
+  .gwheel.empty{border:6px dashed rgba(255,176,32,.55);border-radius:50%}
+  .mirror .gwheel{pointer-events:none;transition:opacity .35s ease}
+  .mirror .gwheel.off{opacity:.22}
+  .mtag{position:absolute;top:8px;left:8px;font:700 10px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;
+        padding:5px 8px;border-radius:99px;border:1px solid var(--line);background:rgba(10,10,14,.8);color:var(--dim);pointer-events:none}
+  .mtag.on{color:var(--good);border-color:#1d4d33;background:rgba(14,33,24,.85)}
+  .pmsg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;
+        padding:16px;color:var(--dim);font-size:13px;pointer-events:none}
+  .readout{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+  #g-readout{font:800 30px/1 var(--mono);color:var(--ink);font-variant-numeric:tabular-nums}
+  #g-state{font:600 12px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
+  #g-state.spinning{color:var(--gold)}
+  #g-state.result{color:var(--good)}
+  #g-state.cooldown{color:var(--warn)}
+  #g-sub{font-size:12px;color:var(--dim);margin-top:4px;min-height:18px}
+  .last{display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;
+        background:#0c0c11;min-height:66px}
+  .last .none{color:var(--dim);font-size:13px}
+  .last .meta{display:flex;flex-direction:column;gap:2px;min-width:0}
+  .last .det{font:700 12px var(--mono);letter-spacing:.08em;color:var(--ink)}
+  .last .who{font-size:12px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tagt{font:700 10px/1 var(--mono);letter-spacing:.1em;padding:3px 6px;border-radius:99px;border:1px solid #4d3a10;color:var(--warn);margin-left:6px}
+  .disc{flex:0 0 auto;width:46px;height:46px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+        font:800 18px/1 var(--mono);color:#fff;box-shadow:inset 0 0 0 2px rgba(255,255,255,.2),0 2px 8px rgba(0,0,0,.5)}
+  .disc.red{background:var(--pk-red)} .disc.black{background:var(--pk-black)} .disc.green{background:var(--pk-green)}
+  .edit-only{display:none}
+  body.edit-mode .edit-only{display:inline-block}
+  body.edit-mode #edit-place{background:#3a2a18;border-color:var(--amber);color:var(--amber-soft)}
+  body.edit-mode #card-roulette{border-color:var(--amber);cursor:pointer;position:relative}
+  body.edit-mode #card-roulette::after{content:"✎";position:absolute;top:12px;right:16px;color:var(--amber-soft);
+        text-shadow:0 1px 2px #000;font-size:16px}
+  body.edit-mode #card-roulette:hover{border-color:var(--amber-soft)}
+  body.edit-mode .mirror::after{content:"✎ Click to edit placement";position:absolute;left:0;right:0;bottom:0;
+        padding:14px 8px 7px;text-align:center;font-size:12px;font-weight:600;color:var(--amber-soft);
+        background:linear-gradient(transparent,rgba(0,0,0,.8));pointer-events:none}
+
+  /* ---- history & stats ---- */
+  .two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;margin-bottom:16px}
+  .two > .card{margin-bottom:0}
+  .hist{display:flex;flex-wrap:wrap;gap:6px;min-height:30px}
+  .hist:empty::after{content:'No spins yet.';color:var(--dim);font-size:13px}
+  .pk{display:inline-flex;align-items:center;justify-content:center;min-width:30px;height:30px;padding:0 7px;
+      border-radius:99px;font:700 13px/1 var(--mono);color:#fff;border:1px solid rgba(255,255,255,.14);
+      font-variant-numeric:tabular-nums}
+  .pk.sm{min-width:26px;height:26px;padding:0 6px;font-size:12px}
+  .pk.red{background:var(--pk-red)} .pk.black{background:var(--pk-black)} .pk.green{background:var(--pk-green)}
+  .pk.first{box-shadow:0 0 0 2px var(--gold)}
+  .srow{margin-top:12px}
+  .srow .top{display:flex;justify-content:space-between;gap:10px;font-size:11px;margin-bottom:4px}
+  .srow .lbl{color:var(--dim);text-transform:uppercase;letter-spacing:.08em;font-weight:600}
+  .srow .cnt{font:12px var(--mono);color:var(--ink);text-align:right}
+  .bar{display:flex;height:10px;border-radius:99px;overflow:hidden;background:#0c0c11;border:1px solid var(--line)}
+  .bar i{display:block;height:100%}
+  .bar i.red{background:var(--pk-red)} .bar i.black{background:#3a3a46} .bar i.green{background:var(--pk-green)}
+  .bar i.a{background:#4ea1ff} .bar i.b{background:#a970ff}
+  .chips{display:flex;flex-wrap:wrap;gap:5px;align-items:center}
+  .chips .none{color:var(--dim);font-size:12px}
+  .hc{display:grid;grid-template-columns:auto 1fr;gap:8px 12px;align-items:center;margin-top:14px}
+  .hc .lbl{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.08em;font-weight:600}
+  .note{font-size:12px;color:var(--dim)}
+
+  /* ---- bet tester ---- */
+  .bt{grid-template-columns:minmax(0,2fr) minmax(0,1fr) minmax(0,1fr)}
+  .ex{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+  .ex button{padding:4px 9px;font:600 12px var(--mono);border-radius:99px;background:#1c1c25;color:var(--ink);
+             border:1px solid var(--line);cursor:pointer}
+  .ex button:hover{border-color:var(--accent)}
+  .bout{margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#0c0c11;
+        font-size:13px;min-height:44px}
+  .bout .none{color:var(--dim)}
+  .bout .ok{color:var(--good);font-weight:700}
+  .bout .bad{color:var(--warn);font-weight:700}
+  .bout .odds{font:700 13px var(--mono);color:var(--gold)}
+  .bout .chips{margin-top:8px}
+  .bres{margin-top:6px;font-size:13px}
+  .bres b{font:800 11px/1 var(--mono);letter-spacing:.1em;padding:3px 7px;border-radius:99px;margin-right:6px}
+  .bres.win b{background:#0e2118;color:var(--good);border:1px solid #1d4d33}
+  .bres.lose b{background:#2a1414;color:var(--red-soft);border:1px solid var(--red-deep)}
+  .bres.void b{background:#211a0b;color:var(--warn);border:1px solid #4d3a10}
+  .bres .m{font:12px var(--mono);color:var(--ink)}
+  .bres .u,.bres .e{color:var(--dim);font-size:12px}
+  #b-result .landed{display:flex;align-items:center;gap:10px;margin-top:10px}
+
+  /* ---- settings ---- */
+  .rng{display:flex;align-items:center;gap:10px}
+  .rng b{font:600 12px var(--mono);color:var(--ink);min-width:40px;text-align:right}
+  .dirty{font-size:12px;color:var(--warn)}
+
+  @media (max-width: 860px){
+    .game,.two{grid-template-columns:1fr}
+    .bt{grid-template-columns:1fr 1fr}
+  }
+  @media (max-width: 560px){
+    main{padding:14px 12px 60px}
+    .card{padding:14px}
+    .bt{grid-template-columns:1fr}
+    table.api tr{display:block;border-top:1px solid var(--line);padding:5px 0}
+    table.api td{display:block;border-top:0;padding:2px 8px}
+    table.api td:first-child{white-space:normal;word-break:break-word}
+  }
+
+  /* ---- editor modal: the soundboard's openEditor() (control.html), same rules ---- */
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+                   display: flex; align-items: center; justify-content: center; z-index: 100;
+                   padding: 20px; font: 14px/normal system-ui, -apple-system, sans-serif; color: var(--text); }
+  .modal { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+           padding: 16px; max-width: 720px; width: 100%; max-height: 90vh; overflow-y: auto;
+           box-shadow: 0 10px 40px rgba(0,0,0,0.6); display: flex; flex-direction: column; gap: 10px; }
+  :where(.modal) button { background: var(--card); border: 1px solid var(--border); color: var(--text);
+           padding: 10px 12px; font-size: 13px; border-radius: 6px; cursor: pointer;
+           text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+           font-family: inherit; }
+  :where(.modal) button:hover { background: #2a1e1e; border-color: var(--border-hover); }
+  :where(.modal) button:active { background: #341f1f; transform: translateY(1px); }
+  .modal-header { display: flex; justify-content: space-between; align-items: center;
+                  margin-bottom: 4px; }
+  .modal-header .title { font-size: 15px; font-weight: 600; color: var(--red-soft); }
+  .modal-header .close { background: transparent; border: none; color: var(--muted);
+                         font-size: 22px; cursor: pointer; padding: 0 4px; }
+  .modal-header .close:hover { color: var(--text); }
+  .canvas-preview { background: #050303; border: 1px solid var(--border); border-radius: 6px;
+                    aspect-ratio: 16/9; position: relative; overflow: hidden; cursor: grab; flex: 0 0 auto; }
+  .canvas-preview.dragging { cursor: grabbing; }
+  .canvas-preview .grid-overlay {
+    position: absolute; inset: 0; pointer-events: none;
+    background-image:
+      linear-gradient(to right, rgba(120,30,30,0.18) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(120,30,30,0.18) 1px, transparent 1px);
+    background-size: 12.5% 12.5%;
+  }
+  .canvas-preview .gwheel { touch-action: none; user-select: none; }
+  .editor-controls { display: flex; flex-direction: column; gap: 8px; }
+  .editor-row { display: flex; align-items: center; gap: 10px; }
+  .editor-row.wrap { flex-wrap: wrap; }
+  .editor-row label { min-width: 60px; font-size: 12px; color: var(--muted); }
+  .editor-row label.tog { min-width: 0; display: inline-flex; align-items: center; gap: 5px;
+                          font-size: 13px; color: var(--text); cursor: pointer; white-space: nowrap; }
+  .editor-row input[type=range] { flex: 1; }
+  .editor-row input[type=text], .editor-row input[type=number] {
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; padding: 5px 7px; font-family: inherit; font-size: 13px;
+    flex: 1; min-width: 0;
+  }
+  .editor-row input[type=number] { max-width: 120px; flex: 0 0 120px; }
+  .editor-row select {
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; padding: 5px 7px; font-family: inherit; font-size: 13px;
+    flex: 1; min-width: 0;
+  }
+  .editor-row.wrap select { flex: 1 1 170px; }
+  .editor-row input[type=color] {
+    flex: 0 0 44px; height: 26px; padding: 2px;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 4px; cursor: pointer;
+  }
+  .editor-row input[type=color].dflt { opacity: .45; }
+  .editor-row .pick { flex: 0 0 auto; padding: 3px 9px; font-size: 13px; min-width: 0; }
+  .editor-row .value { font-family: ui-monospace, monospace; font-size: 12px;
+                       color: var(--red-soft); min-width: 56px; text-align: right; }
+  .quick-positions { display: grid; grid-template-columns: repeat(3, 26px); gap: 2px; }
+  .quick-positions button { padding: 2px; font-size: 12px; min-width: 0;
+                            text-align: center; line-height: 1; }
+  .modal-actions { display: flex; justify-content: space-between; gap: 6px;
+                   padding-top: 8px; border-top: 1px solid var(--border); }
+  .modal-actions .left, .modal-actions .right { display: flex; gap: 6px; }
+  .modal-actions .reset { background: #2a1818; color: var(--muted); border-color: var(--border); }
+  .modal-actions .reset:hover { background: #3a1818; color: var(--red-soft); }
+  .modal-actions .save { background: #2a3a1f; border-color: #3f5028; color: #c5e0a0; }
+  .modal-actions .save:hover { background: #344b28; }
+  .modal-actions .test { background: #3a2a18; border-color: var(--amber); color: var(--amber-soft); }
+  .modal-actions .test:hover { background: #5a4520; }
+  .modal-actions .preview { background: #1f2a3a; border-color: #2a3a52; color: #9ab; }
+  .modal-actions .preview:hover { background: #2a3a52; border-color: #3a4a68; color: #cde; }
+  .modal-actions .preview.playing { background: #4a2020; border-color: var(--red); color: var(--red-soft); }
+  @media (max-width: 560px){
+    .modal-overlay { padding: 10px; }
+    .modal-actions { flex-wrap: wrap; }
+  }
+</style></head>
+<body>
+<div id="hexbar" data-section="Games" data-key="games"></div>
+<div id="hexbar-actions">
+  <a class="editmode-btn" id="openoverlay" href="/games/overlay" target="_blank" rel="noopener" title="Open the OBS browser-source overlay in a new tab (this is the URL to paste into OBS)">↗ Overlay</a>
+  <button class="editmode-btn" id="stopall" title="Abort any game animation and hide everything (a spin already started still counts)">⏹ Stop</button>
+  <button class="editmode-btn" id="editmode" title="Turn on, then click the Roulette card to place and style the wheel">Edit Mode</button>
+</div>
+<script src="/static/hexbar.js"></script>
+
+<main>
+  <div class="card">
+    <h2>OBS browser source</h2>
+    <p class="hint">Add this as a Browser source in OBS (1920×1080). It scales to whatever size you give it and stays transparent until a game runs. Append <code>?game=roulette</code> to limit a source to one game.</p>
+    <div class="url"><a id="u-overlay" target="_blank" rel="noopener"></a><button class="sec" id="copy-overlay">Copy</button></div>
+  </div>
+
+  <div class="card" id="card-roulette">
+    <h2>Roulette <span class="pill" id="ws-pill">connecting…</span></h2>
+    <p class="hint">Live mirror of what the overlay shows — it plays the very same spins. The server draws every result with a cryptographic RNG; nothing on this page (or the API) can pick the number. Turn on <b>Edit Mode</b> and click this card to place and style the wheel.</p>
+    <div class="game">
+      <div class="mirror" id="mirror">
+        <div class="gstage" id="mirror-stage"><div class="gwheel off" id="mirror-wheel"></div></div>
+        <span class="mtag" id="mirror-tag">hidden</span>
+        <div class="pmsg" id="mirror-msg" style="display:none"></div>
+      </div>
+      <div class="gside">
+        <div class="kv">State</div>
+        <div class="readout"><span id="g-readout">—</span><span id="g-state">offline</span></div>
+        <div id="g-sub"></div>
+        <div class="kv" style="margin-top:14px">Last result</div>
+        <div class="last" id="g-last"><span class="none">No spins yet.</span></div>
+        <div class="row">
+          <button class="act" id="g-spin">Spin</button>
+          <button class="sec" id="g-show" title="Show the idle wheel on stream">Show</button>
+          <button class="sec" id="g-hide" title="Hide the wheel (not possible mid-spin)">Hide</button>
+          <button class="sec edit-only" id="edit-place">✎ Edit placement</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="two">
+    <div class="card" id="card-history">
+      <h2>History &amp; stats</h2>
+      <p class="hint">Last 20 landed results, newest first. Stats cover every spin since the last clear or restart — test spins never count.</p>
+      <div class="hist" id="h-chips"></div>
+      <div id="h-stats"></div>
+      <div class="row"><span class="note" id="h-spins"></span><span style="flex:1"></span><button class="sec" id="h-clear">Clear history</button></div>
+    </div>
+
+    <div class="card" id="card-bets">
+      <h2>Bet tester</h2>
+      <p class="hint">Check how a bet string is read (the same parser bots hit), then optionally spin with it. Invalid bets never block a spin — they come back refunded.</p>
+      <div class="grid bt">
+        <label class="f">Bet <input id="b-bet" placeholder="red, 17, split:17/20, dozen2…" autocomplete="off" spellcheck="false"></label>
+        <label class="f">Amount <input type="number" id="b-amount" min="0" step="any" placeholder="optional"></label>
+        <label class="f">User <input id="b-user" maxlength="40" placeholder="optional" autocomplete="off"></label>
+      </div>
+      <div class="ex" id="b-examples"></div>
+      <div class="bout" id="b-out"><span class="none">Type a bet (or pick an example) to see how it resolves.</span></div>
+      <div class="row">
+        <button class="sec" id="b-check">Check</button>
+        <button class="act" id="b-spin">Spin with this bet</button>
+      </div>
+      <div id="b-result"></div>
+    </div>
+  </div>
+
+  <div class="card" id="card-settings">
+    <h2>Settings</h2>
+    <p class="hint">Timing, captions and sounds for the American (double-zero) wheel. Placement and look live in <b>Edit Mode</b> (click the Roulette card). Soundboard clips fire server-side on the soundboard overlay at launch / landing — keep that browser source in the scene too.</p>
+    <div class="grid">
+      <label class="f">Spin seconds (4–30)<input type="number" id="s-spin_seconds" min="4" max="30" step="0.5"></label>
+      <label class="f">Result seconds (1–120)<input type="number" id="s-result_seconds" min="1" max="120" step="0.5"></label>
+      <label class="f">Cooldown seconds (0–3600)<input type="number" id="s-cooldown_seconds" min="0" max="3600" step="1"></label>
+      <label class="f">Launch clip<input id="s-spin_clip" list="clip-list" placeholder="— none —" autocomplete="off" spellcheck="false"></label>
+      <label class="f">Landing clip<input id="s-land_clip" list="clip-list" placeholder="— none —" autocomplete="off" spellcheck="false"></label>
+      <label class="f">Bets shown (1–20)<input type="number" id="s-bets_max" min="1" max="20" step="1"></label>
+      <label class="f">Built-in sound volume
+        <span class="rng"><input type="range" id="s-sfx_volume" min="0" max="1" step="0.05"><b id="s-sfx_volume-val">50%</b></span>
+      </label>
+    </div>
+    <div class="grid" style="margin-top:14px">
+      <label class="f sw"><input type="checkbox" id="s-hide_when_idle"> Hide the wheel when idle</label>
+      <label class="f sw"><input type="checkbox" id="s-show_user"> Show "@user spins" caption</label>
+      <label class="f sw"><input type="checkbox" id="s-show_bets"> Show winners list after landing</label>
+      <label class="f sw"><input type="checkbox" id="s-sfx"> Built-in ball sounds</label>
+    </div>
+    <div class="row">
+      <button class="act" id="s-save">Save settings</button>
+      <button class="sec" id="s-revert">Revert</button>
+      <span class="dirty" id="s-dirty"></span>
+    </div>
+  </div>
+
+  <div class="card" id="card-api">
+    <h2>API</h2>
+    <p class="hint">Everything a bot needs is plain HTTP; every endpoint returns <code>{"ok": true|false, …}</code>. While a spin is in flight, on screen, or cooling down, new spins get HTTP 409 <code>{"error":"busy","retry_in_ms":…}</code>. Full reference as JSON at <code>GET /games/api</code>.</p>
+    <div class="tscroll"><table class="api" id="api-table"></table></div>
+    <h3>Bet syntax — American wheel (case-insensitive, spaces ignored; bare lists use <code>/</code> or <code>,</code>; even money loses on 0 and 00)</h3>
+    <div class="tscroll"><table class="api" id="bet-table"></table></div>
+    <h3>Examples</h3>
+    <pre id="api-curl"></pre>
+  </div>
+</main>
+
+<div id="toast">Saved</div>
+<datalist id="clip-list"></datalist>
+<script src="/static/games/roulette.js"></script>
+<script>
+var $ = function(id){ return document.getElementById(id); };
+
+/* ---------- constants (spec §2 / §4) — American double-zero wheel only ---------- */
+var DEFAULTS = {
+  x:50, y:50, scale:1.25, theme:'classic',
+  red_color:'', black_color:'', green_color:'',
+  spin_seconds:9, result_seconds:6, hide_when_idle:true,
+  show_result:true, result_position:'center', result_details:true,
+  show_history:true, history_count:10, show_user:true, show_bets:true, bets_max:5,
+  sfx:true, sfx_volume:0.5, spin_clip:'', land_clip:'', cooldown_seconds:0
+};
+// Keys the spin `overrides` may carry (spec §4 APPEARANCE).
+var APPEARANCE = ['x','y','scale','theme','red_color','black_color','green_color','result_position',
+  'result_details','show_result','show_history','history_count','show_user','show_bets','bets_max','sfx','sfx_volume'];
+// Keys the placement modal edits (and saves / sends as Test-in-OBS overrides).
+var EDIT_KEYS = ['x','y','scale','theme','red_color','black_color','green_color','result_position',
+  'result_details','show_result','show_history','history_count'];
+var THEMES = [['classic','Classic — walnut & gold'],['neon','Neon'],['midnight','Midnight'],['royal','Royal']];
+var CLASSIC = { red:'#c0282d', black:'#16161a', green:'#0f7a3c' };
+var RED_NUMS = {1:1,3:1,5:1,7:1,9:1,12:1,14:1,16:1,18:1,19:1,21:1,23:1,25:1,27:1,30:1,32:1,34:1,36:1};
+// Wheel order (spec §2). Only a fallback: the renderer's HexGames.roulette.AMERICAN is preferred.
+var AMERICAN = ["0","28","9","26","30","11","7","20","32","17","5","22","34","15","3","24","36","13",
+                "1","00","27","10","25","29","12","8","19","31","18","6","21","33","16","4","23","35","14","2"];
+// Every pocket label in table order (0, 00, 1..36) — for local stats.
+var POCKETS = ['0', '00'];
+for(var _n = 1; _n <= 36; _n++) POCKETS.push(String(_n));
+
+/* ---------- helpers ---------- */
+function esc(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+  });
+}
+function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
+function num(v, d){ v = parseFloat(v); return isFinite(v) ? v : d; }
+function pick(o, keys){ var r = {}; keys.forEach(function(k){ if(o && o[k] !== undefined) r[k] = o[k]; }); return r; }
+function noop(){}
+function safe(fn){ try{ return fn(); }catch(e){ console.error('[games] renderer error:', e); } }
+function R(){ return (window.HexGames && window.HexGames.roulette) || null; }
+function baseSize(){ var r = R(); return (r && +r.BASE_SIZE) || 400; }
+function colorOf(label){
+  label = String(label);
+  if(label === '0' || label === '00') return 'green';
+  return RED_NUMS[parseInt(label, 10)] ? 'red' : 'black';
+}
+function detailsOf(res){
+  if(!res) return '';
+  if(res.color === 'green' || res.parity == null) return res.number === '00' ? 'DOUBLE ZERO' : 'ZERO';
+  var parts = [];
+  if(res.parity) parts.push(String(res.parity).toUpperCase());
+  if(res.range) parts.push(String(res.range).toUpperCase());
+  if(res.dozen) parts.push((['1ST','2ND','3RD'][res.dozen - 1] || res.dozen) + ' 12');
+  return parts.join(' · ');
+}
+function fmtSec(ms){
+  ms = Math.max(0, ms);
+  if(ms >= 60000){ var s = Math.ceil(ms/1000); return Math.floor(s/60) + ':' + String(s%60).padStart(2,'0'); }
+  return (ms/1000).toFixed(1) + 's';
+}
+function fmtAmt(v){ v = +v || 0; return (Math.round(v*100)/100).toLocaleString(); }
+function pkChip(label, cls, title){
+  var c = colorOf(label);
+  return '<span class="pk ' + c + (cls ? ' ' + cls : '') + '"' + (title ? ' title="' + esc(title) + '"' : '') + '>' + esc(label) + '</span>';
+}
+
+/* ---------- toast / copy ---------- */
+var _toastT = null;
+function toast(msg, ms){
+  var t = $('toast'); t.textContent = msg; t.classList.add('up');
+  clearTimeout(_toastT); _toastT = setTimeout(function(){ t.classList.remove('up'); }, ms || 1600);
+}
+function copyText(str){
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(str).then(function(){ toast('Copied'); }, function(){ _copyFallback(str); });
+  } else { _copyFallback(str); }
+}
+function _copyFallback(str){
+  var ta = document.createElement('textarea'); ta.value = str;
+  ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta);
+  ta.focus(); ta.select();
+  try{ document.execCommand('copy'); toast('Copied'); }catch(e){ toast('Copy failed'); }
+  document.body.removeChild(ta);
+}
+
+/* ---------- HTTP (spec §5) ---------- */
+var BUSY_WHAT = { spinning:'the wheel is still spinning', result:'the result is still on screen', cooldown:'cooling down' };
+function busyToast(d, verb){
+  var secs = Math.max(1, Math.ceil((+(d && d.retry_in_ms) || 0) / 1000));
+  var what = BUSY_WHAT[d && d.state] || 'a game is running';
+  toast((verb || 'Busy') + ' — ' + what + '. Try again in ' + secs + 's', 3000);
+}
+async function api(method, path, body, verb){
+  var opt = { method: method };
+  if(body !== undefined){ opt.headers = {'Content-Type':'application/json'}; opt.body = JSON.stringify(body); }
+  var r, d = {};
+  try{ r = await fetch(path, opt); }
+  catch(e){ toast('Network error — is Hexcast running?', 2400); return null; }
+  try{ d = (await r.json()) || {}; }catch(e){ d = {}; }
+  if(r.status === 409 || d.error === 'busy'){ busyToast(d, verb); return null; }
+  if(!r.ok || d.ok === false){
+    var msg = (typeof d.error === 'string' && d.error) || (typeof d.detail === 'string' && d.detail) || ('Request failed (HTTP ' + r.status + ')');
+    toast(msg, 2600);
+    return null;
+  }
+  return d;
+}
+
+/* ---------- config ---------- */
+var CFG_RAW = null;   // server's config.roulette (null until the first config message)
+function cfgFull(){
+  var c = Object.assign({}, DEFAULTS, CFG_RAW || {});
+  delete c.wheel;   // American wheel only: a legacy `wheel` key from an old config is ignored
+  return c;
+}
+function setPocketVars(c){
+  var s = document.documentElement.style;
+  s.setProperty('--pk-red',   c.red_color   || themeColor(c.theme, 'red'));
+  s.setProperty('--pk-black', c.black_color || themeColor(c.theme, 'black'));
+  s.setProperty('--pk-green', c.green_color || themeColor(c.theme, 'green'));
+}
+function onConfig(config){
+  var rc = config && config.roulette;
+  if(!rc || typeof rc !== 'object') return;
+  CFG_RAW = rc;
+  setPocketVars(cfgFull());
+  fillSettings(false);
+  if(ensureMirror()) mirrorConfig();
+  if(ED) ED.refresh();
+}
+
+/* ---------- stage views (a 1920x1080 stage scaled into a 16:9 box) ---------- */
+function makeView(box, stage, wheel){
+  var v = { box: box, stage: stage, wheel: wheel, inst: null, _rz: false, ro: null };
+  var bs = baseSize();
+  wheel.style.width = bs + 'px'; wheel.style.height = bs + 'px';
+  fitView(v);
+  if(window.ResizeObserver){ v.ro = new ResizeObserver(function(){ fitView(v); }); v.ro.observe(box); }
+  return v;
+}
+function fitView(v){
+  var w = v.box.clientWidth;
+  if(!w) return;
+  v.stage.style.transform = 'scale(' + (w / 1920) + ')';
+  requestResize(v);
+}
+function placeView(v, x, y, scale){
+  v.wheel.style.left = x + '%';
+  v.wheel.style.top = y + '%';
+  v.wheel.style.transform = 'translate(-50%,-50%) scale(' + scale + ')';
+  requestResize(v);
+}
+// resize() after any change, coalesced to one call per frame.
+function requestResize(v){
+  if(v._rz) return;
+  v._rz = true;
+  requestAnimationFrame(function(){ v._rz = false; if(v.inst) safe(function(){ v.inst.resize(); }); });
+}
+function viewMsg(el, text){ el.textContent = text || ''; el.style.display = text ? 'flex' : 'none'; }
+
+/* ---------- live mirror (driven by WS state, like the overlay §8) ---------- */
+var STATE = null, STATE_AT = 0;
+var MIR = null;
+var MIRS = { id: null, cfgKey: '', hist: null, idled: false, failed: false };
+function ensureMirror(){
+  if(MIR && MIR.inst) return true;
+  if(!MIR || MIRS.failed) return false;
+  var r = R();
+  if(!r || typeof r.create !== 'function'){
+    MIRS.failed = true;
+    MIR.wheel.classList.add('empty');
+    viewMsg($('mirror-msg'), 'Wheel renderer not loaded (/static/games/roulette.js).');
+    return false;
+  }
+  var eff = mirrorEffective();
+  try{ MIR.inst = r.create(MIR.wheel, eff, { sound: false }); }
+  catch(e){
+    console.error('[games] renderer create failed:', e);
+    MIRS.failed = true;
+    viewMsg($('mirror-msg'), 'Wheel renderer failed to start: ' + (e && e.message || e));
+    return false;
+  }
+  MIRS.cfgKey = JSON.stringify(eff);
+  placeView(MIR, num(eff.x, 50), num(eff.y, 50), num(eff.scale, 1.25));
+  return true;
+}
+// Saved config, plus the current spin's appearance overrides while it is on screen.
+function mirrorEffective(){
+  var c = cfgFull();
+  var sp = STATE && STATE.spin;
+  if(sp && sp.overrides && typeof sp.overrides === 'object') Object.assign(c, pick(sp.overrides, APPEARANCE));
+  return c;
+}
+function mirrorConfig(){
+  if(!MIR || !MIR.inst) return;
+  var eff = mirrorEffective();
+  var key = JSON.stringify(eff);
+  if(key !== MIRS.cfgKey){ MIRS.cfgKey = key; safe(function(){ MIR.inst.setConfig(eff); }); }
+  placeView(MIR, num(eff.x, 50), num(eff.y, 50), num(eff.scale, 1.25));
+}
+function setMirrorVisible(on){
+  if(!MIR) return;
+  MIR.wheel.classList.toggle('off', !on);
+  var t = $('mirror-tag');
+  t.textContent = on ? 'on stream' : 'hidden';
+  t.classList.toggle('on', !!on);
+}
+function histKey(h){ return (h || []).map(function(r){ return r && r.number; }).join(','); }
+function mirrorState(st){
+  setMirrorVisible(!!st.visible);
+  if(!ensureMirror()) return;
+  mirrorConfig();
+  var inst = MIR.inst, sp = st.spin;
+  var hk = histKey(st.history) + '|' + ((st.last && st.last.id) || '');
+  if(hk !== MIRS.hist){ MIRS.hist = hk; safe(function(){ inst.setHistory(st.history || []); }); }
+  if(sp && sp.id){
+    if(sp.id !== MIRS.id){
+      MIRS.id = sp.id; MIRS.idled = false;
+      var landed = st.state !== 'spinning' || (+sp.elapsed_ms || 0) >= (+sp.duration_ms || 0);
+      if(landed) safe(function(){ inst.showResult(sp); });
+      else safe(function(){ var p = inst.play(sp); if(p && typeof p.catch === 'function') p.catch(noop); });
+    }
+  } else if(MIRS.id !== null || !MIRS.idled){
+    // No spin in the air or on screen (idle, or cooldown after the result phase):
+    // back to the idle wheel, exactly when the overlay resets (§8 reconcile).
+    MIRS.id = null; MIRS.idled = true;
+    safe(function(){ inst.reset(); });
+  }
+}
+function onStop(){
+  setMirrorVisible(false);
+  MIRS.id = null; MIRS.idled = true;
+  if(MIR && MIR.inst) safe(function(){ MIR.inst.reset(); });
+}
+
+/* ---------- state readout + last result ---------- */
+function renderReadout(){
+  var elR = $('g-readout'), elS = $('g-state'), elSub = $('g-sub');
+  var st = STATE;
+  if(!st){ elR.textContent = '—'; elS.textContent = 'offline'; elS.className = ''; elSub.textContent = ''; return; }
+  var dt = performance.now() - STATE_AT;
+  var s = st.state || 'idle', sp = st.spin;
+  var busy = Math.max(0, (+st.busy_ms || 0) - dt);
+  var phase = null, sub = '';
+  if(s === 'spinning' && sp){
+    phase = (+sp.duration_ms || 0) - (+sp.elapsed_ms || 0) - dt;
+    sub = 'until the ball lands' + (busy > 0 ? ' · next spin in ' + fmtSec(busy) : '');
+  } else if(s === 'result' && sp){
+    var rm = (sp.result_ms != null) ? +sp.result_ms : num(cfgFull().result_seconds, 6) * 1000;
+    phase = (+sp.duration_ms || 0) + rm - (+sp.elapsed_ms || 0) - dt;
+    sub = 'result on screen' + (busy > 0 ? ' · next spin in ' + fmtSec(busy) : '');
+  } else if(s === 'result' || s === 'cooldown'){
+    phase = busy;
+    sub = s === 'cooldown' ? 'cooling down — next spin when this hits 0' : 'result on screen';
+  } else {
+    sub = st.visible ? 'ready — wheel is showing' : 'ready to spin';
+  }
+  elR.textContent = (phase == null) ? '—' : fmtSec(phase);
+  elS.textContent = s;
+  elS.className = s;
+  elSub.textContent = sub;
+}
+setInterval(renderReadout, 100);
+
+function renderLast(st){
+  var host = $('g-last');
+  var sp = null;
+  // The in-flight spin only once it has landed (never spoil it); otherwise the last committed one.
+  if(st.spin && st.spin.result && st.state && st.state !== 'spinning' && st.state !== 'idle') sp = st.spin;
+  else if(st.last && st.last.result) sp = st.last;
+  if(!sp){ host.innerHTML = '<span class="none">No spins yet.</span>'; return; }
+  var res = sp.result, c = res.color || colorOf(res.number);
+  var who = [];
+  if(sp.user) who.push('@' + esc(sp.user));
+  var sm = sp.summary;
+  if(sm && +sm.bets) who.push(esc(sm.bets) + ' bet' + (+sm.bets === 1 ? '' : 's') + ' · ' + esc(+sm.winners || 0) + ' won');
+  host.innerHTML =
+    '<span class="disc ' + esc(c) + '">' + esc(res.number) + '</span>' +
+    '<span class="meta"><span class="det">' + esc(detailsOf(res)) + (sp.test ? '<span class="tagt">TEST</span>' : '') + '</span>' +
+    (who.length ? '<span class="who">' + who.join(' · ') + '</span>' : '') + '</span>';
+}
+
+/* ---------- history & stats ---------- */
+function renderHistory(list){
+  $('h-chips').innerHTML = (list || []).slice(0, 20).map(function(r, i){
+    if(!r) return '';
+    var d = detailsOf(r);
+    return pkChip(r.number, i === 0 ? 'first' : '', r.number + ' ' + (r.color || colorOf(r.number)) + (d ? ' · ' + d : ''));
+  }).join('');
+}
+function localStats(list){
+  var s = { spins: 0, red: 0, black: 0, green: 0, odd: 0, even: 0, low: 0, high: 0, counts: {}, hot: [], cold: [], streak: null };
+  (list || []).forEach(function(r){
+    if(!r) return;
+    s.spins++;
+    if(s[r.color] !== undefined) s[r.color]++;
+    if(r.parity === 'odd') s.odd++; else if(r.parity === 'even') s.even++;
+    if(r.range === 'low') s.low++; else if(r.range === 'high') s.high++;
+    s.counts[r.number] = (s.counts[r.number] || 0) + 1;
+  });
+  var labels = POCKETS;
+  var byCount = labels.slice().sort(function(a, b){ return (s.counts[b] || 0) - (s.counts[a] || 0); });
+  s.hot = byCount.filter(function(l){ return s.counts[l]; }).slice(0, 5);
+  s.cold = labels.slice().sort(function(a, b){ return (s.counts[a] || 0) - (s.counts[b] || 0); }).slice(0, 5);
+  if(list && list.length && list[0]){
+    var col = list[0].color, len = 0;
+    for(var i = 0; i < list.length && list[i] && list[i].color === col; i++) len++;
+    s.streak = { color: col, length: len };
+  }
+  return s;
+}
+function renderStats(s){
+  var host = $('h-stats');
+  s = s || {};
+  var n = +s.spins || 0;
+  $('h-spins').textContent = n ? (n + ' spin' + (n === 1 ? '' : 's') + ' counted') : '';
+  if(!n){ host.innerHTML = ''; return; }
+  function bar(label, parts){
+    var total = parts.reduce(function(a, p){ return a + (+p[1] || 0); }, 0);
+    var segs = parts.map(function(p){ var v = +p[1] || 0; return v ? '<i class="' + p[0] + '" style="flex:' + v + '"></i>' : ''; }).join('');
+    var cnt = parts.map(function(p){
+      var v = +p[1] || 0;
+      return p[2] + ' ' + v + (total ? ' (' + Math.round(v * 100 / total) + '%)' : '');
+    }).join(' · ');
+    return '<div class="srow"><div class="top"><span class="lbl">' + label + '</span><span class="cnt">' + cnt + '</span></div>' +
+           '<div class="bar">' + segs + '</div></div>';
+  }
+  var counts = s.counts || {};
+  function chipList(arr){
+    arr = arr || [];
+    if(!arr.length) return '<span class="none">—</span>';
+    return arr.map(function(l){ var c = +counts[l] || 0; return pkChip(l, 'sm', l + ' — seen ' + c + ' time' + (c === 1 ? '' : 's')); }).join('');
+  }
+  var streak = '<span class="none">—</span>';
+  if(s.streak && s.streak.color && +s.streak.length){
+    streak = '<span class="pk sm ' + esc(s.streak.color) + '" style="padding:0 9px">' + esc(s.streak.length) + '× ' + esc(String(s.streak.color).toUpperCase()) + '</span>';
+  }
+  host.innerHTML =
+    bar('Colour', [['red', s.red, 'R'], ['black', s.black, 'B'], ['green', s.green, 'G']]) +
+    bar('Odd / even', [['a', s.odd, 'odd'], ['b', s.even, 'even']]) +
+    bar('Low / high', [['a', s.low, 'low'], ['b', s.high, 'high']]) +
+    '<div class="hc">' +
+      '<span class="lbl">Hot</span><span class="chips">' + chipList(s.hot) + '</span>' +
+      '<span class="lbl">Cold</span><span class="chips">' + chipList(s.cold) + '</span>' +
+      '<span class="lbl">Streak</span><span class="chips">' + streak + '</span>' +
+    '</div>';
+}
+// Stats aren't in the WS state, so re-read them when the history actually changes (event-driven, no polling).
+var _statsKey = null, _statsT = null, _statsSeq = 0;
+function maybeFetchStats(st){
+  var key = histKey(st.history) + '|' + ((st.last && st.last.id) || '');
+  if(key === _statsKey) return;
+  _statsKey = key;
+  clearTimeout(_statsT);
+  _statsT = setTimeout(fetchStats, 150);
+}
+async function fetchStats(){
+  var seq = ++_statsSeq;   // a slow, older reply must not overwrite a newer one
+  try{
+    var r = await fetch('/games/api/roulette/history?limit=20');
+    var d = await r.json();
+    if(seq !== _statsSeq) return;
+    if(r.ok && d && d.ok !== false && d.stats){ renderStats(d.stats); return; }
+  }catch(e){
+    if(seq !== _statsSeq) return;
+  }
+  renderStats(localStats(STATE && STATE.history));
+}
+
+/* ---------- bet tester ---------- */
+var EXAMPLES = [
+  'red', 'black', 'odd', 'low', '17', '0', '00',
+  'split:17/20', '0/00', 'street:13', '0/00/2', 'corner:17', 'basket', 'line:13',
+  'dozen2', 'col3'
+];
+function renderExamples(){
+  $('b-examples').innerHTML = EXAMPLES.map(function(e){
+    return '<button type="button" data-bet="' + esc(e) + '">' + esc(e) + '</button>';
+  }).join('');
+}
+var _vSeq = 0, _vT = null;
+function renderBetOut(d){
+  var host = $('b-out');
+  if(!d){ host.innerHTML = '<span class="none">Type a bet (or pick an example) to see how it resolves.</span>'; return; }
+  if(d.ok === false && d.valid === undefined){ host.innerHTML = '<span class="bad">✕</span> ' + esc(d.error || 'could not check that bet'); return; }
+  if(!d.valid){ host.innerHTML = '<span class="bad">✕ Invalid</span> — ' + esc(d.error || 'not a recognised bet') + '<div class="note" style="margin-top:4px">It would be refunded, not lost.</div>'; return; }
+  var amt = parseFloat($('b-amount').value);
+  var odds = +d.odds || 0;
+  var pay = (isFinite(amt) && amt > 0)
+    ? ' · a win pays <b>+' + esc(fmtAmt(amt * odds)) + '</b> (returns ' + esc(fmtAmt(amt * (odds + 1))) + ')' : '';
+  host.innerHTML =
+    '<span class="ok">✓ ' + esc(d.label || d.type) + '</span> <span class="note">(' + esc(d.type) + ')</span> · ' +
+    '<span class="odds">' + esc(odds) + ' to 1</span>' + pay +
+    '<div class="chips">' + (d.numbers || []).map(function(l){ return pkChip(l, 'sm'); }).join('') + '</div>';
+}
+async function validateBet(){
+  clearTimeout(_vT);
+  var bet = $('b-bet').value.trim();
+  var seq = ++_vSeq;
+  if(!bet){ renderBetOut(null); return null; }
+  try{
+    var r = await fetch('/games/api/roulette/validate?bet=' + encodeURIComponent(bet));
+    var d = null;
+    try{ d = await r.json(); }catch(_){ d = null; }
+    if(seq !== _vSeq) return null;
+    if(!d || (!r.ok && d.valid === undefined)){
+      var msg = (d && typeof d.error === 'string' && d.error) || (d && typeof d.detail === 'string' && d.detail) || ('HTTP ' + r.status);
+      d = { ok: false, error: 'validate failed — ' + msg };
+    }
+    renderBetOut(d);
+    return d;
+  }catch(e){
+    if(seq === _vSeq) renderBetOut({ ok: false, error: 'validate failed — is the Games module running?' });
+    return null;
+  }
+}
+var PENDING = null, _pendT = null;   // a tester spin whose outcome we reveal only once it lands
+async function spinWithBet(){
+  var bet = $('b-bet').value.trim();
+  if(!bet){ toast('Type a bet first'); $('b-bet').focus(); return; }
+  var one = { bet: bet };
+  var user = $('b-user').value.trim().slice(0, 40);
+  var amt = parseFloat($('b-amount').value);
+  if(user) one.user = user;
+  if(isFinite(amt)) one.amount = amt;
+  var body = { bets: [one] };
+  if(user) body.user = user;
+  var d = await api('POST', '/games/api/roulette/spin', body, "Can't spin");
+  if(!d) return;
+  PENDING = d;
+  $('b-result').innerHTML = '<div class="note" style="margin-top:10px">Spinning… the outcome shows here when the ball lands.</div>';
+  toast('Spinning — lands in ' + Math.round((+d.duration_ms || num(cfgFull().spin_seconds, 9) * 1000) / 1000) + 's');
+  clearTimeout(_pendT);
+  _pendT = setTimeout(function(){ if(PENDING === d) revealPending(); }, (+d.duration_ms || 9000) + 3000);
+}
+function checkPending(st){
+  if(!PENDING) return;
+  var id = PENDING.id;
+  var landed = (st.spin && st.spin.id === id && st.state !== 'spinning') || (st.last && st.last.id === id);
+  if(landed) revealPending();
+}
+function revealPending(){
+  var sp = PENDING; PENDING = null; clearTimeout(_pendT);
+  if(!sp || !sp.result) return;
+  var res = sp.result;
+  var rows = (sp.bets || []).map(function(b){
+    var cls = !b.valid ? 'void' : (b.win ? 'win' : 'lose');
+    var tag = !b.valid ? 'REFUND' : (b.win ? 'WIN' : 'LOSE');
+    var money = '';
+    if(b.amount != null && +b.amount){
+      money = !b.valid ? 'returns ' + fmtAmt(b.returned)
+            : (b.win ? '+' + fmtAmt(b.payout) + ' (returns ' + fmtAmt(b.returned) + ')' : fmtAmt(b.payout));
+    }
+    return '<div class="bres ' + cls + '"><b>' + tag + '</b>' + esc(b.label || b.bet) +
+      (b.user ? ' <span class="u">@' + esc(b.user) + '</span>' : '') +
+      (money ? ' · <span class="m">' + esc(money) + '</span>' : '') +
+      (b.error ? ' <span class="e">— ' + esc(b.error) + '</span>' : '') + '</div>';
+  }).join('');
+  $('b-result').innerHTML =
+    '<div class="landed"><span class="disc ' + esc(res.color || colorOf(res.number)) + '" style="width:36px;height:36px;font-size:15px">' + esc(res.number) + '</span>' +
+    '<span class="note">Landed on <b style="color:var(--ink)">' + esc(res.number) + '</b> · ' + esc(detailsOf(res)) + '</span></div>' + rows;
+}
+
+/* ---------- settings (spec §9.4) ---------- */
+var SET = [
+  { k:'spin_seconds', t:'num', min:4, max:30 },
+  { k:'result_seconds', t:'num', min:1, max:120 },
+  { k:'cooldown_seconds', t:'num', min:0, max:3600 },
+  { k:'hide_when_idle', t:'check' },
+  { k:'show_user', t:'check' },
+  { k:'show_bets', t:'check' },
+  { k:'bets_max', t:'int', min:1, max:20 },
+  { k:'spin_clip', t:'text' },
+  { k:'land_clip', t:'text' },
+  { k:'sfx', t:'check' },
+  { k:'sfx_volume', t:'num', min:0, max:1 }
+];
+var DIRTY = {};
+function paintVol(){ $('s-sfx_volume-val').textContent = Math.round(num($('s-sfx_volume').value, 0.5) * 100) + '%'; }
+function paintDirty(){ $('s-dirty').textContent = Object.keys(DIRTY).length ? 'unsaved changes' : ''; }
+function fillOne(f, c){
+  var el = $('s-' + f.k); if(!el) return;
+  if(f.t === 'check') el.checked = !!c[f.k];
+  else el.value = (c[f.k] == null ? '' : c[f.k]);
+}
+// force=false: never clobber a field the user has touched (dirty) or is focused in.
+function fillSettings(force){
+  var c = cfgFull();
+  SET.forEach(function(f){
+    var el = $('s-' + f.k); if(!el) return;
+    if(!force && (DIRTY[f.k] || el === document.activeElement)) return;
+    fillOne(f, c);
+  });
+  paintVol(); paintDirty();
+}
+function collectSettings(){
+  var out = {};
+  SET.forEach(function(f){
+    var el = $('s-' + f.k); if(!el) return;
+    if(f.t === 'check'){ out[f.k] = el.checked; return; }
+    if(f.t === 'num' || f.t === 'int'){
+      var v = parseFloat(el.value);
+      if(!isFinite(v)) return;                 // blank / junk: leave the saved value alone
+      if(f.t === 'int') v = Math.round(v);
+      if(f.min != null) v = Math.max(f.min, v);
+      if(f.max != null) v = Math.min(f.max, v);
+      out[f.k] = v; return;
+    }
+    out[f.k] = String(el.value || '').trim();
+  });
+  return out;
+}
+async function saveSettings(){
+  var out = collectSettings();
+  var d = await api('POST', '/games/api/config', { roulette: out }, "Can't save");
+  if(!d) return;
+  DIRTY = {};
+  var conf = d.config || (d.roulette ? { roulette: d.roulette } : null);
+  if(conf && conf.roulette) onConfig(conf);
+  else CFG_RAW = Object.assign({}, CFG_RAW || {}, out);
+  fillSettings(true);
+  toast('Saved');
+}
+async function loadClipList(){
+  try{
+    var d = await (await fetch('/api/list')).json();
+    var seen = {}, dl = $('clip-list');
+    dl.innerHTML = '';
+    [['audio', d.audio || []], ['video', d.video || []]].forEach(function(g){
+      g[1].forEach(function(name){
+        if(seen[name]) return; seen[name] = 1;
+        var o = document.createElement('option'); o.value = name; o.label = g[0];
+        dl.appendChild(o);
+      });
+    });
+  }catch(e){}
+}
+
+/* ---------- API card ---------- */
+function buildApiCard(){
+  var rows = [
+    ['GET|POST /games/api/roulette/spin', 'start a spin (alias <code>/play</code>). <code>user</code>, <code>duration</code> (4–30 s), <code>wait</code> (reply at landing), <code>test</code> (no history, no clips), <code>bet</code>+<code>amount</code> for one bet or JSON <code>bets:[{user,bet,amount}]</code> (≤200), <code>overrides</code> or <code>x</code>/<code>y</code>/<code>scale</code>. Returns the spin incl. result, resolved bets and <code>lands_at</code>'],
+    ['GET /games/api/roulette/last', 'last committed spin: <code>{"result":…,"spin":…}</code>'],
+    ['GET /games/api/roulette/history?limit=20', 'landed spins, newest first, plus stats (hot/cold, streak, counts)'],
+    ['POST /games/api/roulette/history/clear', 'clear history + stats (GET works too)'],
+    ['GET /games/api/roulette/validate?bet=…', 'parse a bet string: <code>valid</code>, type, label, numbers, odds or <code>error</code>'],
+    ['GET /games/api/roulette/bets', 'bet-type reference: type, syntax examples, odds'],
+    ['GET|POST /games/api/roulette/show · hide', 'show the idle wheel / hide it (hide is 409 mid-spin)'],
+    ['GET|POST /games/api/stop', 'abort animations and hide everything (a started spin still counts)'],
+    ['GET /games/api/status', 'overlay count + live state per game'],
+    ['GET|POST /games/api/config', 'read / merge-save <code>{"roulette":{…}}</code>'],
+    ['GET /games/api', 'this reference as JSON'],
+    ['WS /games/ws/overlay · /games/ws/panel', 'live <code>config</code> / <code>state</code> / <code>stop</code> messages']
+  ];
+  $('api-table').innerHTML = rows.map(function(r){ return '<tr><td>' + esc(r[0]) + '</td><td>' + r[1] + '</td></tr>'; }).join('');
+  var bets = [
+    ['straight', '<code>17</code> · <code>0</code> · <code>00</code>', 35],
+    ['split', '<code>split:17-20</code> · <code>17/20</code> · zero splits <code>0/1</code> <code>0/2</code> <code>00/2</code> <code>00/3</code> <code>0/00</code>', 17],
+    ['street', '<code>street:13</code> · <code>street:13-14-15</code> · <code>13/14/15</code>', 11],
+    ['trio', '<code>0/1/2</code> · <code>0/00/2</code> · <code>00/2/3</code> (also <code>trio:</code>)', 11],
+    ['corner', '<code>corner:17</code> · <code>corner:17-18-20-21</code> · <code>17/18/20/21</code>', 8],
+    ['basket', '<code>basket</code> · <code>topline</code> · <code>five</code> · <code>0/00/1/2/3</code>', 6],
+    ['six_line', '<code>line:13</code> · <code>line:13-18</code> · <code>sixline:13</code>', 5],
+    ['dozen', '<code>dozen1</code> · <code>d2</code> · <code>3rd12</code> · <code>13-24</code>', 2],
+    ['column', '<code>col1</code> · <code>column2</code> · <code>c3</code>', 2],
+    ['red / black', '<code>red</code> · <code>r</code> · <code>black</code> · <code>b</code>', 1],
+    ['odd / even', '<code>odd</code> · <code>even</code>', 1],
+    ['low / high', '<code>low</code> · <code>1-18</code> · <code>manque</code> · <code>high</code> · <code>19-36</code> · <code>passe</code>', 1]
+  ];
+  $('bet-table').innerHTML = bets.map(function(b){
+    return '<tr><td>' + esc(b[0]) + '</td><td>' + b[1] + '</td><td style="white-space:nowrap">' + b[2] + ' to 1</td></tr>';
+  }).join('');
+  var base = location.protocol + '//' + location.host;
+  $('api-curl').textContent = [
+    'curl -X POST ' + base + '/games/api/roulette/spin',
+    'curl "' + base + '/games/api/roulette/spin?user=bob&bet=red&amount=100"',
+    'curl -X POST ' + base + '/games/api/roulette/spin -H "Content-Type: application/json" -d "{\\"user\\":\\"bob\\",\\"wait\\":true,\\"bets\\":[{\\"user\\":\\"bob\\",\\"bet\\":\\"split:17/20\\",\\"amount\\":50}]}"',
+    'curl "' + base + '/games/api/roulette/validate?bet=corner:17"',
+    'curl ' + base + '/games/api/roulette/last',
+    'curl "' + base + '/games/api/roulette/history?limit=5"',
+    'curl -X POST ' + base + '/games/api/roulette/show',
+    'curl -X POST ' + base + '/games/api/stop'
+  ].join('\n');
+}
+
+/* ---------- Edit Mode + placement editor (the soundboard's openEditor(), §9) ---------- */
+var editMode = false;
+var ED = null;   // open editor: { refresh() }
+function themeColor(theme, which){
+  var r = R(), t = r && r.THEMES && r.THEMES[theme];
+  if(t){
+    var cands = [t[which], t[which + '_color'], t[which + 'Color'], t.pockets && t.pockets[which], t.pocket && t.pocket[which]];
+    for(var i = 0; i < cands.length; i++){
+      if(typeof cands[i] === 'string' && /^#[0-9a-f]{6}$/i.test(cands[i])) return cands[i];
+    }
+  }
+  return CLASSIC[which];
+}
+function colorRow(k, label){
+  return '<div class="editor-row">' +
+    '<label>' + label + '</label>' +
+    '<input type="color" id="ed-' + k + '" title="' + label + ' pockets">' +
+    '<button class="pick" data-reset="' + k + '" title="Use the theme\'s own colour">theme default</button>' +
+    '<div class="value" id="ed-' + k + '-val" style="flex:1;text-align:left;">theme</div>' +
+  '</div>';
+}
+function openEditor(){
+  if(ED) return;
+  var base = cfgFull();
+  var w = pick(base, EDIT_KEYS);
+  w.x = clamp(num(w.x, 50), 0, 100);
+  w.y = clamp(num(w.y, 50), 0, 100);
+  w.scale = clamp(num(w.scale, 1.25), 0.2, 5);
+  w.history_count = clamp(Math.round(num(w.history_count, 10)), 1, 20);
+
+  var ov = document.createElement('div');
+  ov.className = 'modal-overlay';
+  ov.innerHTML = `
+    <div class="modal">
+      <div class="modal-header">
+        <span class="title">Roulette — placement &amp; look</span>
+        <button class="close" title="Close">×</button>
+      </div>
+      <div class="canvas-preview" id="ed-preview">
+        <div class="grid-overlay"></div>
+        <div class="gstage"><div class="gwheel" id="ed-wheel"></div></div>
+        <div class="pmsg" id="ed-msg" style="display:none"></div>
+      </div>
+      <div class="editor-controls">
+        <div class="editor-row">
+          <label>Scale</label>
+          <input type="range" id="scaleslider" min="0.2" max="5" step="0.05" value="${w.scale}">
+          <div class="value" id="scaleval">${w.scale.toFixed(2)}x</div>
+        </div>
+        <div class="editor-row">
+          <label>Position</label>
+          <div class="value" style="flex:1;text-align:left;">
+            x:<span id="xval">${w.x.toFixed(0)}</span>% y:<span id="yval">${w.y.toFixed(0)}</span>%
+          </div>
+          <div class="quick-positions">
+            <button data-pos="15,15" title="Top Left">↖</button>
+            <button data-pos="50,15" title="Top">↑</button>
+            <button data-pos="85,15" title="Top Right">↗</button>
+            <button data-pos="15,50" title="Left">←</button>
+            <button data-pos="50,50" title="Center">●</button>
+            <button data-pos="85,50" title="Right">→</button>
+            <button data-pos="15,85" title="Bottom Left">↙</button>
+            <button data-pos="50,85" title="Bottom">↓</button>
+            <button data-pos="85,85" title="Bottom Right">↘</button>
+          </div>
+        </div>
+        <div class="editor-row">
+          <label>Theme</label>
+          <select id="ed-theme">${THEMES.map(function(t){ return '<option value="' + t[0] + '">' + t[1] + '</option>'; }).join('')}</select>
+        </div>
+        ${colorRow('red_color', 'Red')}
+        ${colorRow('black_color', 'Black')}
+        ${colorRow('green_color', 'Green')}
+        <div class="editor-row wrap">
+          <label>Result</label>
+          <select id="ed-result_position">
+            <option value="center">Centre — over the turret</option>
+            <option value="below">Below the wheel</option>
+            <option value="above">Above the wheel</option>
+          </select>
+          <label class="tog"><input type="checkbox" id="ed-show_result"> show result</label>
+          <label class="tog"><input type="checkbox" id="ed-result_details"> details line</label>
+        </div>
+        <div class="editor-row wrap">
+          <label>History</label>
+          <label class="tog"><input type="checkbox" id="ed-show_history"> show strip</label>
+          <input type="number" id="ed-history_count" min="1" max="20" step="1" style="flex:0 0 80px">
+          <span class="value" style="min-width:0;text-align:left">results</span>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <div class="left">
+          <button class="reset">Reset</button>
+          <button class="preview">▶ Preview</button>
+          <button class="test">Test in OBS</button>
+        </div>
+        <div class="right">
+          <button class="cancel">Cancel</button>
+          <button class="save">Save</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+
+  var q = function(sel){ return ov.querySelector(sel); };
+  var preview = q('#ed-preview');
+  var view = makeView(preview, q('.gstage'), q('#ed-wheel'));
+  var slider = q('#scaleslider');
+  function full(){ return Object.assign({}, cfgFull(), w); }
+
+  // Real renderer, sound off.
+  var r = R();
+  if(r && typeof r.create === 'function'){
+    try{ view.inst = r.create(view.wheel, full(), { sound: false }); }
+    catch(e){ console.error('[games] renderer create failed:', e); view.inst = null; }
+  }
+  if(!view.inst){
+    view.wheel.classList.add('empty');
+    viewMsg(q('#ed-msg'), 'Wheel renderer not loaded — placement still works.');
+  } else if(STATE){
+    // Show the history strip + last result so the result/details/history options are visible right away.
+    var hist = STATE.history || [];
+    safe(function(){ view.inst.setHistory(hist); });
+    if(STATE.last && STATE.last.result){
+      var shown = Object.assign({}, STATE.last, { overrides: {}, elapsed_ms: +STATE.last.duration_ms || 0 });
+      safe(function(){ view.inst.showResult(shown); });
+    }
+  }
+
+  function update(){
+    placeView(view, w.x, w.y, w.scale);
+    q('#xval').textContent = w.x.toFixed(0);
+    q('#yval').textContent = w.y.toFixed(0);
+    q('#scaleval').textContent = w.scale.toFixed(2) + 'x';
+  }
+  update();
+
+  // Appearance -> renderer, coalesced to one setConfig per frame.
+  var _cfgPending = false;
+  function pushCfg(){
+    if(_cfgPending || !view.inst) return;
+    _cfgPending = true;
+    requestAnimationFrame(function(){
+      _cfgPending = false;
+      if(!view.inst) return;
+      safe(function(){ view.inst.setConfig(full()); });
+      requestResize(view);
+    });
+  }
+
+  // Drag-to-position (pointer capture), exactly like the soundboard.
+  var previewActive = false;
+  var dragging = false, startX, startY, startMx, startMy;
+  view.wheel.addEventListener('pointerdown', function(e){
+    if(previewActive) return;   // don't drag while previewing
+    dragging = true;
+    startX = w.x; startY = w.y;
+    startMx = e.clientX; startMy = e.clientY;
+    try{ view.wheel.setPointerCapture(e.pointerId); }catch(_){}
+    preview.classList.add('dragging');
+    e.preventDefault();
+  });
+  view.wheel.addEventListener('pointermove', function(e){
+    if(!dragging) return;
+    var rect = preview.getBoundingClientRect();
+    var dx = ((e.clientX - startMx) / rect.width) * 100;
+    var dy = ((e.clientY - startMy) / rect.height) * 100;
+    w.x = clamp(startX + dx, 0, 100);
+    w.y = clamp(startY + dy, 0, 100);
+    update();
+  });
+  function endDrag(e){
+    if(!dragging) return;
+    dragging = false;
+    preview.classList.remove('dragging');
+    try{ view.wheel.releasePointerCapture(e.pointerId); }catch(_){}
+  }
+  view.wheel.addEventListener('pointerup', endDrag);
+  view.wheel.addEventListener('pointercancel', endDrag);
+
+  // Scale slider
+  slider.oninput = function(){ w.scale = clamp(num(slider.value, 1.25), 0.2, 5); update(); };
+
+  // Quick positions
+  ov.querySelectorAll('.quick-positions button').forEach(function(b){
+    b.onclick = function(){
+      var p = b.dataset.pos.split(',').map(Number);
+      w.x = p[0]; w.y = p[1]; update();
+    };
+  });
+
+  // Appearance rows
+  var themeSel = q('#ed-theme'), posSel = q('#ed-result_position');
+  var cbs = ['show_result', 'result_details', 'show_history'];
+  var histNum = q('#ed-history_count');
+  function paintColors(){
+    ['red', 'black', 'green'].forEach(function(c){
+      var k = c + '_color', inp = q('#ed-' + k), v = w[k];
+      inp.value = (typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v)) ? v : themeColor(w.theme, c);
+      inp.classList.toggle('dflt', !v);
+      q('#ed-' + k + '-val').textContent = v ? v : 'theme';
+    });
+  }
+  function syncControls(){
+    slider.value = w.scale;
+    themeSel.value = w.theme;
+    if(themeSel.value !== w.theme){ themeSel.value = 'classic'; w.theme = 'classic'; }
+    posSel.value = w.result_position;
+    if(posSel.value !== w.result_position){ posSel.value = 'center'; w.result_position = 'center'; }
+    cbs.forEach(function(k){ q('#ed-' + k).checked = !!w[k]; });
+    histNum.value = w.history_count;
+    paintColors();
+  }
+  syncControls();
+  themeSel.onchange = function(){ w.theme = themeSel.value; paintColors(); pushCfg(); };
+  posSel.onchange = function(){ w.result_position = posSel.value; pushCfg(); };
+  cbs.forEach(function(k){ q('#ed-' + k).onchange = function(){ w[k] = this.checked; pushCfg(); }; });
+  histNum.oninput = function(){
+    var v = parseInt(histNum.value, 10);
+    if(!isFinite(v)) return;
+    w.history_count = clamp(v, 1, 20); pushCfg();
+  };
+  histNum.onchange = function(){ histNum.value = w.history_count; };
+  ['red', 'black', 'green'].forEach(function(c){
+    var k = c + '_color', inp = q('#ed-' + k);
+    inp.addEventListener('input', function(){ w[k] = inp.value; paintColors(); pushCfg(); });
+    q('[data-reset="' + k + '"]').onclick = function(){ w[k] = ''; paintColors(); pushCfg(); };
+  });
+
+  // ---- ▶ Preview: a local demo spin in the modal (random pocket + seed, configured duration; no server call) ----
+  var previewBtn = q('.preview');
+  var previewTok = 0, previewTimer = null;
+  function previewDone(tok){
+    if(tok !== previewTok) return;
+    clearTimeout(previewTimer);
+    previewActive = false;
+    previewBtn.classList.remove('playing');
+    previewBtn.textContent = '▶ Preview';
+  }
+  function stopPreview(){
+    if(!previewActive) return;
+    previewTok++;
+    clearTimeout(previewTimer);
+    previewActive = false;
+    previewBtn.classList.remove('playing');
+    previewBtn.textContent = '▶ Preview';
+    if(view.inst) safe(function(){ view.inst.reset(); });
+  }
+  if(!view.inst){ previewBtn.disabled = true; previewBtn.title = 'wheel renderer not loaded'; }
+  previewBtn.onclick = function(){
+    if(!view.inst) return;
+    if(previewActive){ stopPreview(); return; }
+    var rr = R(), cfg = full();
+    var list = (rr && rr.AMERICAN && rr.AMERICAN.length) ? rr.AMERICAN : AMERICAN;
+    var label = list[Math.floor(Math.random() * list.length)];
+    var result = safe(function(){ return rr.resultFor(label, 'american'); });
+    if(!result){ toast('Preview failed — see the browser console', 2400); return; }
+    var dur = Math.round(clamp(num(cfg.spin_seconds, 9), 4, 30) * 1000);
+    var spin = {
+      id: 'preview-' + Date.now().toString(36), game: 'roulette', result: result, user: '', test: true,
+      seed: Math.floor(Math.random() * 2147483647), wheel: 'american',
+      duration_ms: dur, result_ms: Math.round(num(cfg.result_seconds, 6) * 1000), elapsed_ms: 0,
+      bets: [], summary: null, overrides: {}
+    };
+    previewActive = true;
+    previewBtn.classList.add('playing');
+    previewBtn.textContent = '⏸ Stop';
+    var tok = ++previewTok;
+    var p = null;
+    try{ p = view.inst.play(spin); }
+    catch(e){ console.error('[games] preview failed:', e); previewDone(tok); return; }
+    if(p && typeof p.then === 'function') p.then(function(){ previewDone(tok); }, function(){ previewDone(tok); });
+    previewTimer = setTimeout(function(){ previewDone(tok); }, dur + 250);   // renderer without a promise
+  };
+
+  // ---- actions ----
+  function snapshot(){
+    var o = pick(w, EDIT_KEYS);
+    o.x = Math.round(w.x * 100) / 100;
+    o.y = Math.round(w.y * 100) / 100;
+    o.scale = Math.round(w.scale * 100) / 100;
+    return o;
+  }
+  function onKey(e){ if(e.key === 'Escape'){ e.preventDefault(); close(); } }
+  function onWinResize(){ fitView(view); }
+  if(!view.ro) window.addEventListener('resize', onWinResize);
+  function close(){
+    stopPreview();
+    document.removeEventListener('keydown', onKey);
+    window.removeEventListener('resize', onWinResize);
+    if(view.ro) view.ro.disconnect();
+    if(view.inst){ var inst = view.inst; view.inst = null; safe(function(){ inst.destroy(); }); }
+    ov.remove();
+    ED = null;
+  }
+  document.addEventListener('keydown', onKey);
+  q('.close').onclick = close;
+  q('.cancel').onclick = close;
+  ov.addEventListener('click', function(e){ if(e.target === ov) close(); });
+
+  q('.test').onclick = async function(){
+    var d = await api('POST', '/games/api/roulette/spin', { test: true, overrides: snapshot() }, "Can't test");
+    if(d) toast('fired to OBS — not saved yet');
+  };
+  q('.save').onclick = async function(){
+    var d = await api('POST', '/games/api/config', { roulette: snapshot() }, "Can't save");
+    if(!d) return;
+    var conf = d.config || (d.roulette ? { roulette: d.roulette } : null);
+    if(conf && conf.roulette) onConfig(conf);
+    else { CFG_RAW = Object.assign({}, CFG_RAW || {}, snapshot()); setPocketVars(cfgFull()); mirrorConfig(); }
+    toast('saved roulette placement');
+    // Modal stays open so you can keep fine-tuning. Close via × / Cancel / Esc / click-outside.
+  };
+  q('.reset').onclick = function(){
+    Object.assign(w, pick(DEFAULTS, EDIT_KEYS));
+    syncControls(); update(); pushCfg();
+    toast('defaults restored — not saved yet');
+  };
+
+  ED = { refresh: pushCfg };   // saved config changed elsewhere (e.g. Settings): re-render with our working look
+}
+
+$('editmode').onclick = function(){
+  editMode = !editMode;
+  document.body.classList.toggle('edit-mode', editMode);
+  this.textContent = editMode ? '✓ Edit Mode' : 'Edit Mode';
+};
+$('edit-place').addEventListener('click', function(e){ e.stopPropagation(); openEditor(); });
+$('card-roulette').addEventListener('click', function(e){
+  if(!editMode) return;
+  if(e.target.closest('button, a, input, select, textarea, label, .pill')) return;
+  openEditor();
+});
+
+/* ---------- panel WebSocket (spec §6) ---------- */
+function onState(st){
+  if(!st || typeof st !== 'object') return;
+  STATE = st; STATE_AT = performance.now();
+  mirrorState(st);
+  renderReadout();
+  renderLast(st);
+  renderHistory(st.history || []);
+  maybeFetchStats(st);
+  checkPending(st);
+}
+function setLink(on){
+  var p = $('ws-pill');
+  p.textContent = on ? 'live' : 'offline — reconnecting';
+  p.className = 'pill ' + (on ? 'on' : 'off');
+}
+function connect(){
+  var proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  var ws;
+  try{ ws = new WebSocket(proto + '://' + location.host + '/games/ws/panel'); }
+  catch(e){ setTimeout(connect, 1000); return; }
+  ws.onopen = function(){ setLink(true); };
+  ws.onmessage = function(e){
+    var m; try{ m = JSON.parse(e.data); }catch(err){ return; }
+    if(!m) return;
+    if(m.type === 'config') onConfig(m.config);
+    else if(m.type === 'state'){ if(!m.game || m.game === 'roulette') onState(m.state); }
+    else if(m.type === 'stop'){ if(!m.game || m.game === 'roulette') onStop(); }   // {"type":"stop"[,"game"]}
+  };
+  ws.onclose = function(){ setLink(false); setTimeout(connect, 1000); };
+  ws.onerror = function(){ try{ ws.close(); }catch(err){} };
+}
+
+/* ---------- wiring ---------- */
+(function init(){
+  var overlayUrl = location.protocol + '//' + location.host + '/games/overlay';
+  $('u-overlay').textContent = overlayUrl;
+  $('u-overlay').href = overlayUrl;
+  $('copy-overlay').addEventListener('click', function(){ copyText(overlayUrl); });
+
+  $('stopall').onclick = async function(){ if(await api('POST', '/games/api/stop')) toast('stopped'); };
+  $('g-spin').addEventListener('click', async function(){
+    var d = await api('POST', '/games/api/roulette/spin', {}, "Can't spin");
+    if(d) toast('Spinning — lands in ' + Math.round((+d.duration_ms || num(cfgFull().spin_seconds, 9) * 1000) / 1000) + 's');
+  });
+  $('g-show').addEventListener('click', async function(){ if(await api('POST', '/games/api/roulette/show', undefined, "Can't show")) toast('Wheel shown'); });
+  $('g-hide').addEventListener('click', async function(){ if(await api('POST', '/games/api/roulette/hide', undefined, "Can't hide")) toast('Wheel hidden'); });
+  $('h-clear').addEventListener('click', async function(){
+    if(!confirm('Clear the roulette history and stats?')) return;
+    if(await api('POST', '/games/api/roulette/history/clear')) toast('History cleared');
+  });
+
+  // bet tester
+  $('b-bet').addEventListener('input', function(){ clearTimeout(_vT); _vT = setTimeout(validateBet, 350); });
+  $('b-bet').addEventListener('keydown', function(e){ if(e.key === 'Enter'){ e.preventDefault(); validateBet(); } });
+  $('b-amount').addEventListener('input', function(){ if($('b-bet').value.trim()){ clearTimeout(_vT); _vT = setTimeout(validateBet, 250); } });
+  $('b-check').addEventListener('click', validateBet);
+  $('b-spin').addEventListener('click', spinWithBet);
+  $('b-examples').addEventListener('click', function(e){
+    var b = e.target.closest('button[data-bet]');
+    if(!b) return;
+    $('b-bet').value = b.dataset.bet;
+    validateBet();
+  });
+
+  // settings
+  SET.forEach(function(f){
+    var el = $('s-' + f.k); if(!el) return;
+    var mark = function(){ DIRTY[f.k] = true; paintDirty(); };
+    el.addEventListener('input', mark);
+    el.addEventListener('change', mark);
+    // A config update skipped this field while it was focused; if it was left untouched, catch it up now.
+    el.addEventListener('blur', function(){ if(!DIRTY[f.k]){ fillOne(f, cfgFull()); if(f.k === 'sfx_volume') paintVol(); } });
+  });
+  $('s-sfx_volume').addEventListener('input', paintVol);
+  $('s-save').addEventListener('click', saveSettings);
+  $('s-revert').addEventListener('click', function(){ DIRTY = {}; fillSettings(true); });
+
+  MIR = makeView($('mirror'), $('mirror-stage'), $('mirror-wheel'));
+  if(!window.ResizeObserver) window.addEventListener('resize', function(){ fitView(MIR); });
+
+  buildApiCard();
+  renderExamples();
+  fillSettings(true);
+  renderReadout();
+  loadClipList();
+  connect();
+})();
+</script></body></html>

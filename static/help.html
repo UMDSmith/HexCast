@@ -44,6 +44,7 @@
   <a href="#music">Music</a>
   <a href="#discord">Discord</a>
   <a href="#countdown">Countdown</a>
+  <a href="#games">Games</a>
   <a href="#notes">Browser notes</a>
 </div>
 
@@ -237,6 +238,65 @@ curl http://localhost:4747/clips/api/play/next</pre>
     are still migrated automatically.</p>
   <pre>curl -X POST http://localhost:4747/countdown/api/timer -H "Content-Type: application/json" -d "{\"action\":\"start\",\"seconds\":90}"
 curl -X POST http://localhost:4747/countdown/api/config -H "Content-Type: application/json" -d "{\"media_cues\":[{\"enabled\":true,\"kind\":\"audio\",\"name\":\"intro\",\"anchor\":\"end\",\"offset\":0}]}"</pre>
+</div>
+</section>
+
+<section id="games">
+<div class="card">
+  <h2>Games <span class="tag">/games</span></h2>
+  <p class="hint">A bot-driven <b>roulette</b> wheel overlay (<code>/games/overlay</code>, 1920×1080,
+    <b>Control audio via OBS</b> on for the built-in ball sounds). A spin pops the wheel in, launches the
+    ball, and it bounces and settles in the pocket the <b>server</b> picked with
+    <code>secrets.SystemRandom</code> — uniformly over the 38 pockets of an American double-zero wheel. The overlay
+    only animates that result; nothing can force one. Placement works like the soundboard's Edit Mode.
+    Optional <b>bets</b> come back resolved at standard odds for a bot to pay out; <b>launch/landing
+    clips</b> play on the soundboard overlay. <code>{game}</code> is <code>roulette</code> (the only game
+    so far). All endpoints return <code>{"ok": true/false, ...}</code>.</p>
+  <table class="api">
+    <tr><td>GET|POST /games/api/roulette/spin</td><td>start a spin (alias <code>/play</code>) — returns the result, resolved bets and <code>lands_at</code>; <b>409</b> <code>{"error": "busy", "retry_in_ms", "state"}</code> while a spin is spinning, showing its result, or in cooldown</td></tr>
+    <tr><td>GET /games/api/roulette/last</td><td>last committed spin and its result</td></tr>
+    <tr><td>GET /games/api/roulette/history?limit=20</td><td>recent spins (newest first) + stats: colour/odd-even/low-high counts, per-number counts, hot, cold, streak</td></tr>
+    <tr><td>POST /games/api/roulette/history/clear</td><td>clear history and stats (GET works too)</td></tr>
+    <tr><td>GET /games/api/roulette/validate?bet=...</td><td>parse a bet: <code>valid</code>, <code>type</code>, <code>label</code>, <code>numbers</code>, <code>odds</code> or <code>error</code></td></tr>
+    <tr><td>GET /games/api/roulette/bets</td><td>bet-type reference: syntax examples, odds</td></tr>
+    <tr><td>GET|POST /games/api/roulette/show · hide</td><td>put the idle wheel on / off screen (hide answers 409 while the ball is rolling)</td></tr>
+    <tr><td>GET|POST /games/api/stop</td><td>abort every animation and hide everything; a spin already started still goes into history</td></tr>
+    <tr><td>GET /games/api/status</td><td>connected overlay count + each game's state</td></tr>
+    <tr><td>GET · POST /games/api/config</td><td>full config as JSON · merge-and-save <code>{"roulette": {...}}</code></td></tr>
+    <tr><td>GET /games/api</td><td>this reference as JSON</td></tr>
+  </table>
+  <h3>Spin parameters (query or JSON body — body wins)</h3>
+  <table class="api">
+    <tr><td>?user=bob</td><td>up to 40 chars, shown as an <code>@user spins</code> caption</td></tr>
+    <tr><td>?duration=12</td><td>spin seconds, clamped 4–30 (default from Settings)</td></tr>
+    <tr><td>?wait=true</td><td>hold the response until the ball lands (adds <code>"landed": true</code>)</td></tr>
+    <tr><td>?test=true</td><td>kept out of history/stats, no soundboard clip cues</td></tr>
+    <tr><td>?bet=red&amp;amount=100</td><td>one bet (<code>user</code> becomes its user); POST <code>"bets": [{"user", "bet", "amount"}]</code> for up to 200</td></tr>
+    <tr><td>?x=80&amp;y=25&amp;scale=0.8</td><td>per-spin placement; POST <code>"overrides": {...}</code> takes any appearance key (theme, colours, result/history/bets display, sfx)</td></tr>
+  </table>
+  <h3>Bet syntax (case-insensitive, net odds "X to 1")</h3>
+  <table class="api">
+    <tr><td>17 · 0 · 00</td><td>straight — 35</td></tr>
+    <tr><td>split:17-20 · 17/20</td><td>split — 17; two numbers touching on the table, plus zero splits <code>0/1 0/2 00/2 00/3 0/00</code></td></tr>
+    <tr><td>street:13 · 13/14/15</td><td>street — 11</td></tr>
+    <tr><td>0/1/2 · 0/00/2 · 00/2/3</td><td>trio — 11 (also with a <code>trio:</code> prefix)</td></tr>
+    <tr><td>corner:17 · 17/18/20/21</td><td>corner — 8 (lowest number of a 2×2 block, not in column 3 or the last row)</td></tr>
+    <tr><td>basket · 0/00/1/2/3</td><td>basket — 6 (also <code>topline</code>, <code>five</code>); there is no first-four bet</td></tr>
+    <tr><td>line:13 · line:13-18</td><td>six line — 5 (also <code>sixline:13</code> or the six bare numbers)</td></tr>
+    <tr><td>d1 · 2nd12 · 25-36</td><td>dozen — 2 (also <code>dozen1</code>, <code>1st12</code>, <code>1-12</code>, …)</td></tr>
+    <tr><td>col1 · col2 · col3</td><td>column — 2 (also <code>column1</code>, <code>c1</code>)</td></tr>
+    <tr><td>red · black · odd · even · low · high</td><td>even money — 1 (lose on 0 and 00); also <code>r</code>, <code>b</code>, <code>1-18</code>, <code>19-36</code>, <code>manque</code>, <code>passe</code></td></tr>
+  </table>
+  <p class="hint">Each bet comes back with <code>valid</code>, <code>type</code>, <code>label</code>,
+    <code>numbers</code>, <code>odds</code>, <code>win</code>, <code>payout</code> (net: win
+    <code>amount × odds</code>, loss <code>-amount</code>) and <code>returned</code> (win
+    <code>amount × (odds + 1)</code>, loss 0). Invalid bets never block the spin: <code>valid: false</code>
+    with an <code>error</code> and the stake as <code>returned</code>. Hexcast keeps no balances — your bot
+    credits <code>returned</code>. Full guide, config keys and bot recipes: <code>docs/games.md</code>.</p>
+  <pre>curl "http://localhost:4747/games/api/roulette/spin?user=bob&amp;bet=red&amp;amount=100&amp;wait=true"
+curl "http://localhost:4747/games/api/roulette/validate?bet=split:17/20"
+curl -X POST http://localhost:4747/games/api/roulette/spin -H "Content-Type: application/json" -d "{\"wait\":true,\"bets\":[{\"user\":\"alice\",\"bet\":\"17\",\"amount\":10},{\"user\":\"bob\",\"bet\":\"odd\",\"amount\":50}]}"
+curl -X POST http://localhost:4747/games/api/config -H "Content-Type: application/json" -d "{\"roulette\":{\"spin_seconds\":12,\"cooldown_seconds\":30}}"</pre>
 </div>
 </section>
 

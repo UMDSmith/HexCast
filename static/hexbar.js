@@ -17,6 +17,7 @@
     { key: 'discord',    label: 'Discord',    href: '/discord', status: '/discord/api/status' },
     { key: 'clips',      label: 'Clips',      href: '/clips',   status: '/clips/api/status' },
     { key: 'countdown',  label: 'Countdown',  href: '/countdown', status: '/countdown/api/status' },
+    { key: 'games',      label: 'Games',      href: '/games',   status: '/games/api/status' },
     { key: 'help',       label: 'Help',       href: '/help',    nodot: true }
   ];
 
@@ -154,6 +155,28 @@
         setDot('clips', live, !live, title);
       })
       .catch(function () { setDot('clips', false, false, 'Clips module not installed'); });
+
+    fetch('/games/api/status')
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (s) {
+        if (!s) { setDot('games', false, false, 'Games module not installed'); return; }
+        var n = +s.overlays || 0;
+        var games = s.games || {};
+        var WORDS = { spinning: 'spinning', result: 'showing result', cooldown: 'cooling down' };
+        var busy = Object.keys(games).filter(function (k) {
+          return games[k] && games[k].state && games[k].state !== 'idle';
+        }).map(function (k) { return k + ' ' + (WORDS[games[k].state] || games[k].state); });
+        var title;
+        if (busy.length) {
+          title = 'Games — ' + busy.join(', ') + (n > 0 ? '' : ' (no overlay connected)');
+        } else if (n > 0) {
+          title = 'Games — ' + n + ' overlay' + (n === 1 ? '' : 's') + ' connected';
+        } else {
+          title = 'Games — no overlay connected';
+        }
+        setDot('games', n > 0, true, title);
+      })
+      .catch(function () { setDot('games', false, false, 'Games module not installed'); });
   }
 
   poll();
