@@ -161,22 +161,62 @@
       .then(function (s) {
         if (!s) { setDot('games', false, false, 'Games module not installed'); return; }
         var n = +s.overlays || 0;
-        var games = s.games || {};
-        var WORDS = { spinning: 'spinning', result: 'showing result', cooldown: 'cooling down' };
-        var busy = Object.keys(games).filter(function (k) {
-          return games[k] && games[k].state && games[k].state !== 'idle';
-        }).map(function (k) { return k + ' ' + (WORDS[games[k].state] || games[k].state); });
-        var title;
-        if (busy.length) {
-          title = 'Games — ' + busy.join(', ') + (n > 0 ? '' : ' (no overlay connected)');
-        } else if (n > 0) {
-          title = 'Games — ' + n + ' overlay' + (n === 1 ? '' : 's') + ' connected';
-        } else {
-          title = 'Games — no overlay connected';
-        }
-        setDot('games', n > 0, true, title);
+        setDot('games', n > 0, true, gamesTitle(s.games, n));
       })
       .catch(function () { setDot('games', false, false, 'Games module not installed'); });
+  }
+
+  // Games dot title, from /games/api/status alone: what each game is doing — a game
+  // with a table (craps) also says its point and what is down — else the overlays.
+  //   Games — roulette spinning
+  //   Games — craps rolling, point is 6, 5 bets down (300 hexcoins) · roulette idle
+  //   Games — craps: point is 6, 5 bets down (300 hexcoins) · 1 overlay connected
+  var GAME_WORDS = { spinning: 'spinning', result: 'showing result', cooldown: 'cooling down' };
+  var GAME_OWN_WORDS = { craps: { spinning: 'rolling' } };
+
+  function gameWord(key, state) {
+    var own = GAME_OWN_WORDS[key];
+    return (own && own[state]) || GAME_WORDS[state] || state;
+  }
+
+  function coins(v) {
+    return String(Math.round(+v || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  }
+
+  function tableNote(t) {
+    if (!t || typeof t !== 'object') return '';
+    var bits = [];
+    if (t.phase === 'point' && t.point != null) bits.push('point is ' + t.point);
+    var nb = Array.isArray(t.bets) ? t.bets.length : 0;
+    if (nb) {
+      bits.push(nb + (nb === 1 ? ' bet' : ' bets') + ' down' +
+        (+t.total_on_table > 0 ? ' (' + coins(t.total_on_table) + ' ' + (t.currency || 'hexcoins') + ')' : ''));
+    }
+    if (typeof t.auto_roll_in_ms === 'number' && isFinite(t.auto_roll_in_ms)) {
+      bits.push('auto-roll in ' + Math.max(0, Math.ceil(t.auto_roll_in_ms / 1000)) + 's');
+    }
+    return bits.join(', ');
+  }
+
+  function gamesTitle(games, n) {
+    games = games && typeof games === 'object' ? games : {};
+    var busy = [], idle = [], notes = [];
+    Object.keys(games).forEach(function (k) {
+      var g = games[k];
+      if (!g || typeof g !== 'object') return;
+      var note = tableNote(g.table);
+      if (g.state && g.state !== 'idle') {
+        busy.push(k + ' ' + gameWord(k, g.state) + (note ? ', ' + note : ''));
+      } else {
+        idle.push(k + ' idle' + (note ? ', ' + note : ''));
+        if (note) notes.push(k + ': ' + note);
+      }
+    });
+    var overlays = n > 0 ? n + ' overlay' + (n === 1 ? '' : 's') + ' connected' : 'no overlay connected';
+    if (busy.length) {
+      return 'Games — ' + busy.concat(idle).join(' · ') + (n > 0 ? '' : ' (no overlay connected)');
+    }
+    return 'Games — ' + notes.concat([overlays]).join(' · ');
   }
 
   poll();

@@ -21,6 +21,14 @@
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);
        font:15px/1.5 'Segoe UI',system-ui,-apple-system,sans-serif;}
+  /* game sub-tabs — same bar as the Twitch / Music / Discord panels */
+  #gtabs{display:flex;gap:4px;padding:4px 22px 0;flex-wrap:wrap}
+  #gtabs button{background:none;border:0;border-bottom:2px solid transparent;color:var(--dim);
+             font:600 13px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;
+             padding:10px 14px;cursor:pointer}
+  #gtabs button.sel{color:var(--ink);border-bottom-color:var(--accent)}
+  section.gtab{display:none} section.gtab.sel{display:block}
+
   main{padding:18px 22px 60px;max-width:1080px}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
   .card h2{margin:0 0 4px;font-size:14px;letter-spacing:.14em;text-transform:uppercase}
@@ -170,6 +178,15 @@
   .bres .u,.bres .e{color:var(--dim);font-size:12px}
   #b-result .landed{display:flex;align-items:center;gap:10px;margin-top:10px}
 
+  /* ---- Hex display ("Hex does the math": Hex's own cards; also used by the craps tab) ---- */
+  .dsp{grid-template-columns:minmax(0,1.2fr) minmax(0,1.4fr) minmax(0,.8fr) minmax(0,1fr)}
+  main textarea.dlines{font:13px/1.45 var(--mono);resize:vertical;min-height:92px}
+  .dnow{margin-top:10px;font-size:13px;color:var(--dim);overflow-wrap:anywhere}
+  .dnow b{color:var(--ink)}
+  .bout pre.dio{margin:8px 0 0;padding:8px 10px;font-size:12px;line-height:1.5;white-space:pre-wrap;
+                overflow-wrap:anywhere;max-height:220px;overflow:auto}
+  .bout pre.dio .q{color:#9ab}
+
   /* ---- settings ---- */
   .rng{display:flex;align-items:center;gap:10px}
   .rng b{font:600 12px var(--mono);color:var(--ink);min-width:40px;text-align:right}
@@ -178,11 +195,13 @@
   @media (max-width: 860px){
     .game,.two{grid-template-columns:1fr}
     .bt{grid-template-columns:1fr 1fr}
+    .dsp{grid-template-columns:1fr 1fr}
   }
   @media (max-width: 560px){
     main{padding:14px 12px 60px}
     .card{padding:14px}
     .bt{grid-template-columns:1fr}
+    .dsp{grid-template-columns:1fr}
     table.api tr{display:block;border-top:1px solid var(--line);padding:5px 0}
     table.api td{display:block;border-top:0;padding:2px 8px}
     table.api td:first-child{white-space:normal;word-break:break-word}
@@ -270,16 +289,24 @@
 <div id="hexbar" data-section="Games" data-key="games"></div>
 <div id="hexbar-actions">
   <a class="editmode-btn" id="openoverlay" href="/games/overlay" target="_blank" rel="noopener" title="Open the OBS browser-source overlay in a new tab (this is the URL to paste into OBS)">↗ Overlay</a>
-  <button class="editmode-btn" id="stopall" title="Abort any game animation and hide everything (a spin already started still counts)">⏹ Stop</button>
-  <button class="editmode-btn" id="editmode" title="Turn on, then click the Roulette card to place and style the wheel">Edit Mode</button>
+  <button class="editmode-btn" id="stopall" title="Abort any game animation and hide everything (a spin or roll already started still counts)">⏹ Stop</button>
+  <button class="editmode-btn" id="editmode" title="Turn on, then click a game's card to place and style it">Edit Mode</button>
 </div>
 <script src="/static/hexbar.js"></script>
 
+<!-- One tab per game. A new game adds a button here and a matching <section class="gtab" id="tab-KEY">. -->
+<nav id="gtabs">
+  <button data-tab="roulette" class="sel">Roulette</button>
+  <button data-tab="craps">Craps</button>
+</nav>
+
 <main>
+<section class="gtab sel" id="tab-roulette">
   <div class="card">
     <h2>OBS browser source</h2>
-    <p class="hint">Add this as a Browser source in OBS (1920×1080). It scales to whatever size you give it and stays transparent until a game runs. Append <code>?game=roulette</code> to limit a source to one game.</p>
+    <p class="hint">Add as a Browser source in OBS (1920×1080). It scales to whatever size you give it and stays transparent until a game runs. One source can show every game, or give each game its own source (so it sits on its own layer) with the game-only URL.</p>
     <div class="url"><a id="u-overlay" target="_blank" rel="noopener"></a><button class="sec" id="copy-overlay">Copy</button></div>
+    <div class="url"><a id="u-overlay-game" target="_blank" rel="noopener"></a><button class="sec" id="copy-overlay-game">Copy</button></div>
   </div>
 
   <div class="card" id="card-roulette">
@@ -334,6 +361,25 @@
     </div>
   </div>
 
+  <div class="card" id="card-display">
+    <h2>Hex display <span class="pill" id="d-pill">nothing up</span></h2>
+    <p class="hint">For when <b>Hex does the math</b>: Hex spins without bets, reads the result, pays from its own hexbank and posts its own winners card here. It replaces the wheel's winners list for that spin (the mirror above shows it too); posted while the ball is still rolling, it waits for the landing. A new spin clears it. One line per winner — <code>user amount text…</code>, e.g. <code>alice 200 Red</code>: the amount is optional, <code>-</code> as the user means none. No lines at all = a card with just the empty text (nobody won). Blank fields use the server's defaults.</p>
+    <div class="grid dsp">
+      <label class="f">Title<input id="d-title" maxlength="40" placeholder="WINNERS" autocomplete="off" spellcheck="false"></label>
+      <label class="f">Empty text<input id="d-empty" maxlength="60" placeholder="No winners" autocomplete="off"></label>
+      <label class="f">Seconds (1–120)<input type="number" id="d-seconds" min="1" max="120" step="1" placeholder="auto"></label>
+      <label class="f">Spin id<input id="d-spin" maxlength="40" placeholder="latest spin" autocomplete="off" spellcheck="false" title="Optional: only put the card up if this is the spin on screen (or the last one) — otherwise HTTP 409 stale"></label>
+    </div>
+    <label class="f" style="margin-top:14px">Lines — user amount text…<textarea id="d-lines" class="dlines" rows="4" spellcheck="false" placeholder="alice 200 Red&#10;@bob -50 Black&#10;carol 350 Straight up 17"></textarea></label>
+    <div class="row">
+      <button class="act" id="d-announce">Announce</button>
+      <button class="sec" id="d-clear" title="Take Hex's card down now">Clear</button>
+      <span class="note" id="d-count"></span>
+    </div>
+    <div class="dnow" id="d-now"></div>
+    <div class="bout" id="d-out"><span class="none">The request and the server's reply show here.</span></div>
+  </div>
+
   <div class="card" id="card-settings">
     <h2>Settings</h2>
     <p class="hint">Timing, captions and sounds for the American (double-zero) wheel. Placement and look live in <b>Edit Mode</b> (click the Roulette card). Soundboard clips fire server-side on the soundboard overlay at launch / landing — keep that browser source in the scene too.</p>
@@ -370,6 +416,9 @@
     <h3>Examples</h3>
     <pre id="api-curl"></pre>
   </div>
+</section>
+<!-- Craps: markup, styles and logic are built by /static/games/craps_panel.js -->
+<section class="gtab" id="tab-craps"></section>
 </main>
 
 <div id="toast">Saved</div>
@@ -538,7 +587,7 @@ function viewMsg(el, text){ el.textContent = text || ''; el.style.display = text
 /* ---------- live mirror (driven by WS state, like the overlay §8) ---------- */
 var STATE = null, STATE_AT = 0;
 var MIR = null;
-var MIRS = { id: null, cfgKey: '', hist: null, idled: false, failed: false };
+var MIRS = { id: null, cfgKey: '', hist: null, ann: null, idled: false, failed: false };
 function ensureMirror(){
   if(MIR && MIR.inst) return true;
   if(!MIR || MIRS.failed) return false;
@@ -590,9 +639,10 @@ function mirrorState(st){
   var inst = MIR.inst, sp = st.spin;
   var hk = histKey(st.history) + '|' + ((st.last && st.last.id) || '');
   if(hk !== MIRS.hist){ MIRS.hist = hk; safe(function(){ inst.setHistory(st.history || []); }); }
+  var acted = false;   // play / showResult / reset: each one clears the renderer's Hex card
   if(sp && sp.id){
     if(sp.id !== MIRS.id){
-      MIRS.id = sp.id; MIRS.idled = false;
+      MIRS.id = sp.id; MIRS.idled = false; acted = true;
       var landed = st.state !== 'spinning' || (+sp.elapsed_ms || 0) >= (+sp.duration_ms || 0);
       if(landed) safe(function(){ inst.showResult(sp); });
       else safe(function(){ var p = inst.play(sp); if(p && typeof p.catch === 'function') p.catch(noop); });
@@ -600,13 +650,29 @@ function mirrorState(st){
   } else if(MIRS.id !== null || !MIRS.idled){
     // No spin in the air or on screen (idle, or cooldown after the result phase):
     // back to the idle wheel, exactly when the overlay resets (§8 reconcile).
-    MIRS.id = null; MIRS.idled = true;
+    MIRS.id = null; MIRS.idled = true; acted = true;
     safe(function(){ inst.reset(); });
   }
+  mirrorAnnounce(inst, st.announce, acted);
+}
+// Hex's own winners card (STATE.announce), handed over like the overlay does: after
+// play/showResult/reset (the renderer holds it while the ball rolls), only when it changed
+// (expires_in_ms ticks don't count) or again after one of those cleared it. Optional method.
+function annKey(a){
+  if(!a || typeof a !== 'object' || Array.isArray(a)) return null;
+  var o = {};
+  Object.keys(a).sort().forEach(function(k){ if(k !== 'expires_in_ms') o[k] = a[k]; });
+  return JSON.stringify(o);
+}
+function mirrorAnnounce(inst, a, acted){
+  var k = annKey(a);
+  if(k === MIRS.ann && !(k && acted)) return;
+  MIRS.ann = k;
+  if(typeof inst.setAnnounce === 'function') safe(function(){ inst.setAnnounce(k ? a : null); });
 }
 function onStop(){
   setMirrorVisible(false);
-  MIRS.id = null; MIRS.idled = true;
+  MIRS.id = null; MIRS.idled = true; MIRS.ann = null;
   if(MIR && MIR.inst) safe(function(){ MIR.inst.reset(); });
 }
 
@@ -838,6 +904,185 @@ function revealPending(){
     '<span class="note">Landed on <b style="color:var(--ink)">' + esc(res.number) + '</b> · ' + esc(detailsOf(res)) + '</span></div>' + rows;
 }
 
+/* ---------- Hex display (DISPLAY_SPEC §1/§5 — "Hex does the math") ---------- */
+// The same helpers drive the craps tab's card (window.GamesPage.display).
+var ANNOUNCE_MAX = 50, DISPLAY_AMOUNT_MAX = 1e12;
+// "+200", "-50", "−50", "1,000", "12.5" -> number; anything else -> null (it's text).
+// Commas only as thousands separators: "1,5" is text, not 15.
+function parseAmount(tok){
+  var t = String(tok == null ? '' : tok).replace(/^−/, '-');
+  if(t.indexOf(',') >= 0){
+    if(!/^[+-]?\d{1,3}(,\d{3})+(\.\d*)?$/.test(t)) return null;
+    t = t.replace(/,/g, '');
+  }
+  if(!/^[+-]?(\d+\.?\d*|\.\d+)$/.test(t)) return null;
+  var v = Number(t);
+  return isFinite(v) ? v : null;
+}
+// One line each: "user amount text…" — the first word is the user (a leading @ is fine,
+// "-" = no user), then an optional amount, then the text. A line needs a user or a text
+// (else it is `skipped`); an amount the server would refuse — beyond ±1e12, or below 0
+// when opts.signed is false (the craps board) — drops the line too (`bad`), rather than
+// letting the server skip it without a word.
+function parseDisplayLines(src, opts){
+  var signed = !(opts && opts.signed === false);
+  var lines = [], skipped = 0, bad = 0;
+  String(src == null ? '' : src).split(/\r?\n/).forEach(function(raw){
+    var w = raw.trim().split(/\s+/).filter(Boolean);
+    if(!w.length) return;
+    var line = {}, user = w[0].replace(/^@+/, '');
+    if(user && user !== '-' && user !== '—') line.user = user;
+    var rest = w.slice(1);
+    if(rest.length){
+      var a = parseAmount(rest[0]);
+      if(a != null){
+        if(Math.abs(a) > DISPLAY_AMOUNT_MAX || (a < 0 && !signed)){ bad++; return; }
+        line.amount = a; rest = rest.slice(1);
+      }
+    }
+    if(rest.length) line.text = rest.join(' ');
+    if(line.user == null && line.text == null){ skipped++; return; }
+    lines.push(line);
+  });
+  return { lines: lines, skipped: skipped, bad: bad, signed: signed };
+}
+function badAmountText(p){
+  return p.signed === false ? 'amounts go from 0 to 1e12' : 'amounts go up to ±1e12';
+}
+function countText(p, max, what){
+  var n = p.lines.length, bits = [n + ' ' + (what || 'line') + (n === 1 ? '' : 's')];
+  if(n > max) bits.push('only the first ' + max + ' are sent');
+  if(p.skipped) bits.push(p.skipped + ' skipped — a line needs a user or a text');
+  if(p.bad) bits.push(p.bad + ' skipped — ' + badAmountText(p));
+  return bits.join(' · ');
+}
+// The box has text but not one usable line: sending it would put up a "No winners" card
+// (or an empty board) instead of what was typed — so nothing is sent. null = fine to send.
+function refuseText(p, what){
+  if(!p || p.lines.length || !(p.skipped || p.bad)) return null;
+  var why = [];
+  if(p.skipped) why.push('each line needs a user or a text');
+  if(p.bad) why.push(badAmountText(p));
+  return 'Nothing sent — no usable line (' + why.join('; ') + '). Empty the box to send ' +
+    (what === 'board' ? 'an empty board' : 'a card with just the empty text') + '.';
+}
+function displayRefuse(host, msg){
+  host.innerHTML = '<span class="bad">✕ ' + esc(msg) + '</span>';
+}
+// Raw POST for the display routes: never toasts. {net, status, ok, d}
+async function displayReq(path, body){
+  var opt = { method: 'POST' };
+  if(body !== undefined){ opt.headers = {'Content-Type':'application/json'}; opt.body = JSON.stringify(body); }
+  var r, d = {};
+  try{ r = await fetch(path, opt); }catch(e){ return { net: true, status: 0, ok: false, d: {} }; }
+  try{ d = (await r.json()) || {}; }catch(e){ d = {}; }
+  if(!d || typeof d !== 'object' || Array.isArray(d)) d = {};
+  return { net: false, status: r.status, ok: r.ok && d.ok !== false, d: d };
+}
+// noun: 'spin' (roulette) or 'roll' (craps) — what the id field is called.
+function displayError(res, noun){
+  var d = res.d || {};
+  noun = noun || 'spin';
+  if(res.net) return 'Network error — is Hexcast running?';
+  if(res.status === 409 && d.error === 'stale'){
+    return 'Stale ' + noun + ' id — that ' + noun + ' is over' + (d.spin_id ? '; the current (or last) one is ' + d.spin_id : '') +
+      '. Empty the ' + noun.charAt(0).toUpperCase() + noun.slice(1) + ' id field to use the latest ' + noun + '.';
+  }
+  if(res.status === 404 || res.status === 405 || d.error === 'unknown game') return "This Hexcast has no display API yet — restart it after updating.";
+  var e = (typeof d.error === 'string' && d.error) || (typeof d.detail === 'string' && d.detail) || '';
+  if(res.status === 400) return 'Not shown — ' + (e || 'the server rejected it');
+  return e || ('Request failed (HTTP ' + res.status + ')');
+}
+// The exchange, briefly: the big STATE / TABLE in replies are trimmed (the socket has them).
+function briefReply(d){
+  if(!d || typeof d !== 'object') return d;
+  var o = Object.assign({}, d);
+  if(o.state && typeof o.state === 'object') o.state = '…';
+  if(o.table && typeof o.table === 'object') o.table = { display_board: o.table.display_board, '…': '…' };
+  return o;
+}
+function exchangeHTML(path, body, res){
+  var q = 'POST ' + path + (body !== undefined ? '\n' + JSON.stringify(body) : '');
+  var a = res.net ? 'no reply (network error)' : ('HTTP ' + res.status + '\n' + JSON.stringify(briefReply(res.d)));
+  return '<pre class="dio"><span class="q">→ ' + esc(q) + '</span>\n← ' + esc(a) + '</pre>';
+}
+function displayOut(host, ok, msg, path, body, res){
+  host.innerHTML = '<span class="' + (ok ? 'ok' : 'bad') + '">' + (ok ? '✓ ' : '✕ ') + esc(msg) + '</span>' + exchangeHTML(path, body, res);
+}
+function annSummary(a, ms){
+  if(!a || typeof a !== 'object') return '';
+  var n = Array.isArray(a.lines) ? a.lines.length : 0;
+  return '“' + (a.title || 'WINNERS') + '” · ' + (n ? n + ' line' + (n === 1 ? '' : 's') : 'no lines — “' + (a.empty_text || 'No winners') + '”') +
+    (ms != null ? ' · ' + fmtSec(ms) + ' left' : '') + (a.spin_id ? ' · for ' + a.spin_id : '');
+}
+function annLeft(a, at){
+  if(!a || typeof a.expires_in_ms !== 'number' || !isFinite(a.expires_in_ms)) return null;
+  return Math.max(0, a.expires_in_ms - (performance.now() - at));
+}
+// STATE.announce as it stands now: null once its countdown has run out (the server's
+// clearing state is due any moment — or lost with the socket).
+function annLive(a, at){
+  if(!a || typeof a !== 'object' || Array.isArray(a)) return null;
+  return annLeft(a, at) === 0 ? null : a;
+}
+var DISPLAY = { parseAmount: parseAmount, parseLines: parseDisplayLines, countText: countText, req: displayReq,
+  error: displayError, out: displayOut, summary: annSummary, left: annLeft, live: annLive,
+  refuseText: refuseText, refuse: displayRefuse };
+
+function dBody(p){
+  p = p || parseDisplayLines($('d-lines').value);
+  var body = {};
+  var t = $('d-title').value.trim(); if(t) body.title = t;
+  body.lines = p.lines.slice(0, ANNOUNCE_MAX);
+  var e = $('d-empty').value.trim(); if(e) body.empty_text = e;
+  var s = parseFloat($('d-seconds').value); if(isFinite(s)) body.seconds = s;
+  var id = $('d-spin').value.trim(); if(id) body.spin_id = id;
+  return body;
+}
+function renderDCount(){
+  var p = parseDisplayLines($('d-lines').value);
+  $('d-count').textContent = (p.lines.length || p.skipped || p.bad) ? countText(p, ANNOUNCE_MAX) : '';
+}
+function renderDisplayNow(){
+  var a = STATE ? annLive(STATE.announce, STATE_AT) : null;
+  var held = !!(a && STATE.state === 'spinning' && STATE.spin && (!a.spin_id || a.spin_id === STATE.spin.id));
+  var hidden = !!(a && !held && !STATE.visible);      // /hide or /stop: still up, but not on stream
+  var pill = $('d-pill');
+  pill.textContent = !a ? 'nothing up' : held ? 'waiting' : hidden ? 'up · hidden' : 'on screen';
+  pill.className = 'pill' + (a ? (hidden ? ' off' : ' on') : '');
+  var el = $('d-now');
+  if(!STATE){ el.textContent = ''; return; }
+  if(!a){ el.textContent = 'Nothing up — after a spin with bets the wheel shows its own winners list.'; return; }
+  el.innerHTML = (hidden ? 'Up, but the wheel is hidden: ' : 'On screen: ') + '<b>' + esc(annSummary(a, annLeft(a, STATE_AT))) + '</b>' +
+    (held ? ' · waits for the ball to land' : hidden ? ' · Show puts it back on stream' : '');
+}
+async function dAnnounce(){
+  var path = '/games/api/roulette/announce', btn = $('d-announce');
+  var p = parseDisplayLines($('d-lines').value), no = refuseText(p, 'card');
+  if(no){ displayRefuse($('d-out'), no); toast('Nothing sent', 2400); return; }
+  var body = dBody(p);
+  btn.disabled = true;
+  var res = await displayReq(path, body);
+  btn.disabled = false;
+  if(res.ok){
+    var a = res.d.announce;
+    displayOut($('d-out'), true, 'Card up — ' + (annSummary(a, annLeft(a, performance.now())) || 'announced'), path, body, res);
+    toast('Hex card up');
+  } else {
+    var msg = displayError(res);
+    displayOut($('d-out'), false, msg, path, body, res);
+    toast(res.status === 409 && res.d.error === 'stale' ? 'Stale spin id' : "Can't announce", 2400);
+  }
+}
+async function dClear(){
+  var path = '/games/api/roulette/announce/clear', btn = $('d-clear');
+  btn.disabled = true;
+  var res = await displayReq(path);
+  btn.disabled = false;
+  displayOut($('d-out'), res.ok, res.ok ? 'Card cleared — the wheel is back to its own winners list' : displayError(res), path, undefined, res);
+  toast(res.ok ? 'Hex card cleared' : "Can't clear", res.ok ? 1600 : 2400);
+}
+
 /* ---------- settings (spec §9.4) ---------- */
 var SET = [
   { k:'spin_seconds', t:'num', min:4, max:30 },
@@ -922,6 +1167,8 @@ function buildApiCard(){
     ['POST /games/api/roulette/history/clear', 'clear history + stats (GET works too)'],
     ['GET /games/api/roulette/validate?bet=…', 'parse a bet string: <code>valid</code>, type, label, numbers, odds or <code>error</code>'],
     ['GET /games/api/roulette/bets', 'bet-type reference: type, syntax examples, odds'],
+    ['GET|POST /games/api/roulette/announce', 'Hex does the math: Hex\'s own winners card for the spin on screen (or the last one), in place of the computed winners list. <code>title</code>, <code>lines:[{user,amount,text}]</code> (≤50; one line as <code>?user=&amp;amount=&amp;text=</code>), <code>empty_text</code>, <code>seconds</code> (1–120, default: the rest of the result), <code>currency</code>, <code>spin_id</code> (not that spin → 409 <code>{"error":"stale"}</code>). Posted mid-spin it waits for the landing; a new spin clears it. Returns <code>announce</code> + <code>state</code>'],
+    ['GET|POST /games/api/roulette/announce/clear', 'take Hex\'s card down now'],
     ['GET|POST /games/api/roulette/show · hide', 'show the idle wheel / hide it (hide is 409 mid-spin)'],
     ['GET|POST /games/api/stop', 'abort animations and hide everything (a started spin still counts)'],
     ['GET /games/api/status', 'overlay count + live state per game'],
@@ -955,6 +1202,7 @@ function buildApiCard(){
     'curl "' + base + '/games/api/roulette/validate?bet=corner:17"',
     'curl ' + base + '/games/api/roulette/last',
     'curl "' + base + '/games/api/roulette/history?limit=5"',
+    'curl -X POST ' + base + '/games/api/roulette/announce -H "Content-Type: application/json" -d "{\\"title\\":\\"WINNERS\\",\\"lines\\":[{\\"user\\":\\"bob\\",\\"amount\\":100,\\"text\\":\\"Red\\"}]}"',
     'curl -X POST ' + base + '/games/api/roulette/show',
     'curl -X POST ' + base + '/games/api/stop'
   ].join('\n');
@@ -1294,6 +1542,22 @@ $('card-roulette').addEventListener('click', function(e){
   openEditor();
 });
 
+/* ---------- other games' tabs (e.g. /static/games/craps_panel.js) ---------- */
+// A game's panel script registers window.GamePanels[key] = { onConfig(config), onState(state),
+// onStop(game), onLedger(events), onLink(bool), onTab(key) } (all optional). This page's socket
+// dispatches to them; roulette stays inline above. The last config / state / link are kept in
+// GamesPage.last so a panel that registers after the socket connected can catch up;
+// GamesPage.display has the Hex display card helpers (line parser, request, error text).
+window.GamePanels = window.GamePanels || {};
+var GP_LAST = { config: null, states: {}, link: null };
+window.GamesPage = { last: GP_LAST, esc: esc, toast: toast, copyText: copyText, loadClipList: loadClipList, display: DISPLAY };
+function gpCall(p, fn, arg){
+  if(p && typeof p[fn] === 'function'){
+    try{ p[fn](arg); }catch(e){ console.error('[games] panel ' + fn + ' failed:', e); }
+  }
+}
+function gpEach(fn, arg){ Object.keys(window.GamePanels).forEach(function(k){ gpCall(window.GamePanels[k], fn, arg); }); }
+
 /* ---------- panel WebSocket (spec §6) ---------- */
 function onState(st){
   if(!st || typeof st !== 'object') return;
@@ -1304,6 +1568,7 @@ function onState(st){
   renderHistory(st.history || []);
   maybeFetchStats(st);
   checkPending(st);
+  renderDisplayNow();
 }
 function setLink(on){
   var p = $('ws-pill');
@@ -1315,16 +1580,32 @@ function connect(){
   var ws;
   try{ ws = new WebSocket(proto + '://' + location.host + '/games/ws/panel'); }
   catch(e){ setTimeout(connect, 1000); return; }
-  ws.onopen = function(){ setLink(true); };
+  ws.onopen = function(){ setLink(true); GP_LAST.link = true; gpEach('onLink', true); };
   ws.onmessage = function(e){
     var m; try{ m = JSON.parse(e.data); }catch(err){ return; }
     if(!m) return;
-    if(m.type === 'config') onConfig(m.config);
-    else if(m.type === 'state'){ if(!m.game || m.game === 'roulette') onState(m.state); }
-    else if(m.type === 'stop'){ if(!m.game || m.game === 'roulette') onStop(); }   // {"type":"stop"[,"game"]}
+    if(m.type === 'config'){ onConfig(m.config); GP_LAST.config = m.config; gpEach('onConfig', m.config); }
+    else if(m.type === 'state'){
+      if(!m.game || m.game === 'roulette') onState(m.state);
+      else { GP_LAST.states[m.game] = m.state; gpCall(window.GamePanels[m.game], 'onState', m.state); }
+    }
+    else if(m.type === 'stop'){ if(!m.game || m.game === 'roulette') onStop(); gpEach('onStop', m.game); }   // {"type":"stop"[,"game"]}
+    else if(m.type === 'ledger' && m.game){ gpCall(window.GamePanels[m.game], 'onLedger', m.events || []); }
   };
-  ws.onclose = function(){ setLink(false); setTimeout(connect, 1000); };
+  ws.onclose = function(){ setLink(false); GP_LAST.link = false; gpEach('onLink', false); setTimeout(connect, 1000); };
   ws.onerror = function(){ try{ ws.close(); }catch(err){} };
+}
+
+/* ---------- game sub-tabs ---------- */
+// One tab per game; /games#roulette opens straight to a game. Returns false for an unknown key.
+function showTab(key){
+  var btn = document.querySelector('#gtabs button[data-tab="' + String(key).replace(/[^\w-]/g, '') + '"]');
+  if(!btn) return false;
+  document.querySelectorAll('#gtabs button').forEach(function(b){ b.classList.toggle('sel', b === btn); });
+  document.querySelectorAll('section.gtab').forEach(function(s){ s.classList.toggle('sel', s.id === 'tab-' + key); });
+  if(MIR && !window.ResizeObserver) fitView(MIR);   // ResizeObserver refits the mirror on its own
+  gpEach('onTab', key);
+  return true;
 }
 
 /* ---------- wiring ---------- */
@@ -1333,6 +1614,18 @@ function connect(){
   $('u-overlay').textContent = overlayUrl;
   $('u-overlay').href = overlayUrl;
   $('copy-overlay').addEventListener('click', function(){ copyText(overlayUrl); });
+  var gameUrl = overlayUrl + '?game=roulette';
+  $('u-overlay-game').textContent = gameUrl;
+  $('u-overlay-game').href = gameUrl;
+  $('copy-overlay-game').addEventListener('click', function(){ copyText(gameUrl); });
+
+  document.querySelectorAll('#gtabs button').forEach(function(b){
+    b.addEventListener('click', function(){
+      if(showTab(b.dataset.tab)) history.replaceState(null, '', '#' + b.dataset.tab);
+    });
+  });
+  window.addEventListener('hashchange', function(){ showTab(location.hash.slice(1)); });
+  showTab(location.hash.slice(1)) || showTab('roulette');
 
   $('stopall').onclick = async function(){ if(await api('POST', '/games/api/stop')) toast('stopped'); };
   $('g-spin').addEventListener('click', async function(){
@@ -1359,6 +1652,15 @@ function connect(){
     validateBet();
   });
 
+  // Hex display
+  $('d-lines').addEventListener('input', renderDCount);
+  $('d-announce').addEventListener('click', dAnnounce);
+  $('d-clear').addEventListener('click', dClear);
+  renderDCount();   // a reload can restore the box's text
+  setInterval(function(){
+    if(STATE && STATE.announce && $('tab-roulette').classList.contains('sel')) renderDisplayNow();   // the countdown
+  }, 250);
+
   // settings
   SET.forEach(function(f){
     var el = $('s-' + f.k); if(!el) return;
@@ -1382,4 +1684,7 @@ function connect(){
   loadClipList();
   connect();
 })();
-</script></body></html>
+</script>
+<script src="/static/games/craps.js"></script>
+<script src="/static/games/craps_panel.js"></script>
+</body></html>

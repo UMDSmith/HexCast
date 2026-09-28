@@ -7,9 +7,11 @@
   #stage{ position:absolute; top:0; left:0; width:1920px; height:1080px; transform-origin:top left; pointer-events:none; }
 
   /* One full-stage layer per game. The layer carries show/hide — its
-     transform-origin is set to the game's anchor, so the pop-in grows out of the
-     wheel's centre. The box inside is the renderer's container and carries the
-     placement (left/top % + translate/scale), exactly like the soundboard's clips. */
+     transform-origin is set to the game's anchor (the box centre), so the pop-in
+     grows out of the wheel's / tray's centre. The box inside is the renderer's
+     container (BASE_W x BASE_H stage px, set by the host) and carries the placement
+     (left/top % + translate/scale), exactly like the soundboard's clips. Nothing
+     clips it: renderers may draw past the box (shadows, boards). */
   .gm-layer{ position:absolute; left:0; top:0; width:1920px; height:1080px; display:none; }
   .gm-layer.gm-shown{ display:block; }
   .gm-layer.gm-in{ animation:gm-pop 350ms cubic-bezier(.2,.9,.3,1.22) both; }
@@ -32,13 +34,16 @@
 var GamesLogic = (function () {
   'use strict';
 
-  // The only keys a spin's `overrides` may change (spec: APPEARANCE keys).
+  // The only keys a spin's `overrides` may change (spec: APPEARANCE keys). Each game
+  // has its own list (the registry's `appearance`); this is roulette's, and the default
+  // whenever a caller passes no list.
   var APPEARANCE = ['x', 'y', 'scale', 'theme', 'red_color', 'black_color', 'green_color',
     'result_position', 'result_details', 'show_result', 'show_history', 'history_count',
     'show_user', 'show_bets', 'bets_max', 'sfx', 'sfx_volume'];
 
   function isObj(o) { return !!o && typeof o === 'object' && !Array.isArray(o); }
   function has(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
+  function keysOr(keys) { return Array.isArray(keys) ? keys : APPEARANCE; }
 
   // Shallow copy of `base` with `extra` on top (only `keys` when given).
   // null/undefined in `extra` never clobber a base value.
@@ -58,18 +63,21 @@ var GamesLogic = (function () {
     return out;
   }
 
-  function hasOverrides(spin) {
+  // `keys` = the game's appearance keys (default: roulette's).
+  function hasOverrides(spin, keys) {
     if (!spin || !isObj(spin.overrides)) return false;
-    for (var i = 0; i < APPEARANCE.length; i++) {
-      if (spin.overrides[APPEARANCE[i]] != null) return true;
+    keys = keysOr(keys);
+    for (var i = 0; i < keys.length; i++) {
+      if (spin.overrides[keys[i]] != null) return true;
     }
     return false;
   }
 
   // Config the renderer + container should use right now: the saved config, or the
   // saved config with this spin's appearance overrides on top while the spin lasts.
-  function effectiveConfig(config, spin) {
-    return hasOverrides(spin) ? merge(config, spin.overrides, APPEARANCE) : merge(config);
+  function effectiveConfig(config, spin, keys) {
+    keys = keysOr(keys);
+    return hasOverrides(spin, keys) ? merge(config, spin.overrides, keys) : merge(config);
   }
 
   // Order-independent identity of a flat config (so "nothing changed" is detectable).
@@ -79,12 +87,29 @@ var GamesLogic = (function () {
     return '{' + parts.join(',') + '}';
   }
 
+  // A history entry's label: roulette RESULTs have `number`; other games may only
+  // have `label` / `total` (craps has all three: number = str(total)).
+  function resultLabel(r) {
+    if (!isObj(r)) return '?';
+    var v = r.number != null ? r.number : (r.label != null ? r.label : r.total);
+    return v != null ? String(v) : '?';
+  }
+
   function historyKey(state) {
     var h = state && Array.isArray(state.history) ? state.history : [];
     var last = state && isObj(state.last) && state.last.id != null ? String(state.last.id) : '';
     var labels = [];
-    for (var i = 0; i < h.length; i++) labels.push(h[i] && h[i].number != null ? String(h[i].number) : '?');
+    for (var i = 0; i < h.length; i++) labels.push(resultLabel(h[i]));
     return last + '|' + h.length + '|' + labels.join(',');
+  }
+
+  // Identity of Hex's announcement (STATE.announce, "Mode B" winners card), or null when
+  // there is none. expires_in_ms counts down in every message, so it is not part of it.
+  function announceKey(a) {
+    if (!isObj(a)) return null;
+    var o = {}, k;
+    for (k in a) if (has(a, k) && k !== 'expires_in_ms') o[k] = a[k];
+    return keyOf(o);
   }
 
   function newView() {
@@ -94,7 +119,9 @@ var GamesLogic = (function () {
       mode: 'idle',         // idle | playing | result
       overrideId: null,     // spin id whose overrides are applied (null = saved config)
       appearanceKey: null,  // keyOf(effective config) last handed to the renderer/container
-      historyKey: null      // historyKey(state) last handed to setHistory
+      historyKey: null,     // historyKey(state) last handed to setHistory
+      tableKey: null,       // keyOf(state.table) last handed to setTable (games with a table)
+      announceKey: null     // announceKey(state.announce) last handed to setAnnounce (null = none)
     };
   }
 
@@ -102,20 +129,32 @@ var GamesLogic = (function () {
   // it was showing so the next reconcile replays it on a fresh instance.
   function forget(view) {
     var v = merge(view || newView());
-    v.playingId = null; v.mode = 'idle'; v.historyKey = null;
+    v.playingId = null; v.mode = 'idle'; v.historyKey = null; v.tableKey = null; v.announceKey = null;
     return v;
   }
 
-  /* reconcile(view, state, config) -> {view, actions}
+  /* reconcile(view, state, config, keys) -> {view, actions}
      `state` is the server's STATE for this game (null = no state seen yet: only the
-     appearance can change). Actions, executed in order:
+     appearance can change). `keys` = the game's appearance keys (default roulette's).
+     Actions, executed in order:
        {type:'appearance', config, deferred}  placement + setConfig (deferred: we are
                                               fading out — apply once hidden)
        {type:'show'} | {type:'hide', immediate:false}
+       {type:'table', table}                  setTable (only games whose STATE has a
+                                              `table`, e.g. craps; sent when it changed)
        {type:'play', spin} | {type:'showResult', spin} | {type:'reset', deferred}
+       {type:'announce', announce}            setAnnounce (optional): Hex's own winners card,
+                                              STATE.announce, null = none; sent when it changed
        {type:'history', results}
-     When hiding, 'hide' comes first so the fade starts before anything changes. */
-  function reconcile(view, state, config) {
+     When hiding, 'hide' comes first so the fade starts before anything changes.
+     'table' comes BEFORE 'play'/'showResult' (the dice leave with the table they were
+     thrown on; a newer table that arrives mid-roll is held by the renderer until it
+     lands) and AFTER 'reset' (always re-sent then, whatever reset() clears).
+     'announce' comes AFTER 'play'/'showResult' (the renderer holds a card that arrives
+     while the ball / dice are in the air until they land) and before 'history'; a
+     play/showResult/reset clears the renderer's card, so one that is up is re-sent then. */
+  function reconcile(view, state, config, keys) {
+    keys = keysOr(keys);
     var v = merge(view || newView());
     var actions = [];
     var hasState = isObj(state);
@@ -127,22 +166,30 @@ var GamesLogic = (function () {
     if (hiding) actions.push({ type: 'hide', immediate: false });
 
     // 1. appearance — saved config, or config + overrides for this spin's duration
-    var eff = effectiveConfig(config, spin);
+    var eff = effectiveConfig(config, spin, keys);
     var ak = keyOf(eff);
     if (ak !== v.appearanceKey) {
       actions.push({ type: 'appearance', config: eff, deferred: hiding });
       v.appearanceKey = ak;
     }
-    v.overrideId = hasOverrides(spin) ? spin.id : null;
+    v.overrideId = hasOverrides(spin, keys) ? spin.id : null;
     if (!hasState) return { view: v, actions: actions };
 
     // 2. visibility (after appearance, so the pop-in starts at the right spot)
     if (showing) actions.push({ type: 'show' });
     v.visible = visible;
 
-    // 3. the spin
+    // 3. the table (persistent bets / point) — only when it changed; placed below
+    var table = isObj(state.table) ? state.table : null;
+    var tk = table ? keyOf(table) : null;
+    var tableAct = table && tk !== v.tableKey ? { type: 'table', table: table } : null;
+    v.tableKey = tk;
+
+    // 4. the spin
+    var spinAct = false;                                       // play / showResult / reset sent
     if (spin) {
       if (spin.id !== v.playingId) {
+        if (tableAct) { actions.push(tableAct); tableAct = null; }   // table BEFORE play
         if (state.state === 'spinning') {
           actions.push({ type: 'play', spin: spin });          // seeks by elapsed_ms
           v.mode = 'playing';
@@ -151,15 +198,28 @@ var GamesLogic = (function () {
           v.mode = 'result';
         }
         v.playingId = spin.id;
+        spinAct = true;
       } else if (state.state !== 'spinning') {
         v.mode = 'result';                                     // same spin, landed: nothing to do
       }
     } else if (v.playingId != null || v.mode !== 'idle') {
       actions.push({ type: 'reset', deferred: hiding });
       v.playingId = null; v.mode = 'idle';
+      spinAct = true;
+      if (table) tableAct = { type: 'table', table: table };      // re-apply after reset
+    }
+    if (tableAct) actions.push(tableAct);
+
+    // 5. Hex's announcement — only when it changed, or again after play/showResult/reset
+    //    (they clear the renderer's card) while one is up
+    var ann = isObj(state.announce) ? state.announce : null;
+    var ank = announceKey(ann);
+    if (ank !== v.announceKey || (ann && spinAct)) {
+      actions.push({ type: 'announce', announce: ann });
+      v.announceKey = ank;
     }
 
-    // 4. history strip (only landed spins, newest first) — only when it changed
+    // 6. history strip (only landed spins, newest first) — only when it changed
     var hk = historyKey(state);
     if (hk !== v.historyKey) {
       actions.push({ type: 'history', results: Array.isArray(state.history) ? state.history : [] });
@@ -169,11 +229,12 @@ var GamesLogic = (function () {
   }
 
   // {"type":"stop"}: hide immediately, reset, drop any spin overrides.
-  function stop(view, config) {
+  function stop(view, config, keys) {
     var v = merge(view || newView());
     var actions = [{ type: 'hide', immediate: true }, { type: 'reset', deferred: false }];
-    v.visible = false; v.playingId = null; v.mode = 'idle'; v.overrideId = null;
-    var eff = effectiveConfig(config, null), ak = keyOf(eff);
+    v.visible = false; v.playingId = null; v.mode = 'idle'; v.overrideId = null; v.tableKey = null;
+    v.announceKey = null;
+    var eff = effectiveConfig(config, null, keys), ak = keyOf(eff);
     if (ak !== v.appearanceKey) {
       actions.push({ type: 'appearance', config: eff, deferred: false });
       v.appearanceKey = ak;
@@ -183,8 +244,8 @@ var GamesLogic = (function () {
 
   return {
     APPEARANCE: APPEARANCE, merge: merge, isObj: isObj, hasOverrides: hasOverrides,
-    effectiveConfig: effectiveConfig, keyOf: keyOf, historyKey: historyKey,
-    newView: newView, forget: forget, reconcile: reconcile, stop: stop
+    effectiveConfig: effectiveConfig, keyOf: keyOf, historyKey: historyKey, resultLabel: resultLabel,
+    announceKey: announceKey, newView: newView, forget: forget, reconcile: reconcile, stop: stop
   };
 })();
 </script>
@@ -198,13 +259,16 @@ var FADE_MS = 350;
 /* ---- registry ------------------------------------------------------------
    One entry per game. The script must register window.HexGames[id] with the
    renderer interface (create/setConfig/resize/play/showResult/setHistory/reset/
-   destroy); `renderer` is filled in once it has loaded. `defaults` mirror the
-   backend's so missing config keys fall back to the same values (American
-   double-zero wheel only: there is no `wheel` key). */
+   destroy, + optional setTable / setAnnounce); `renderer` is filled in once it has loaded.
+   `defaults` mirror the backend's so missing config keys fall back to the same
+   values; `appearance` = the keys a spin's `overrides` may change for that game.
+   The box is the renderer's BASE_W x BASE_H (or BASE_SIZE square) in stage px.
+   Roulette: American double-zero wheel only — there is no `wheel` key. */
 var GAMES = {
   roulette: {
     script: '/static/games/roulette.js',
     renderer: null,
+    appearance: L.APPEARANCE,     // roulette's list (GamesLogic's default)
     defaults: {
       x: 50, y: 50, scale: 1.25, theme: 'classic',
       red_color: '', black_color: '', green_color: '',
@@ -213,6 +277,23 @@ var GAMES = {
       show_history: true, history_count: 10, show_user: true,
       show_bets: true, bets_max: 5, sfx: true, sfx_volume: 0.5,
       spin_clip: '', land_clip: '', cooldown_seconds: 0
+    }
+  },
+  craps: {
+    script: '/static/games/craps.js',
+    renderer: null,
+    appearance: ['x', 'y', 'scale', 'theme', 'dice_style', 'show_point', 'show_history',
+      'history_count', 'show_user', 'show_bets', 'bets_max', 'show_payouts', 'payouts_max',
+      'sfx', 'sfx_volume'],
+    defaults: {
+      x: 50, y: 50, scale: 1.0, theme: 'classic', dice_style: 'red',
+      roll_seconds: 4, result_seconds: 5, cooldown_seconds: 0,
+      hide_when_idle: true, show_when_bets: true, show_point: true,
+      show_history: true, history_count: 10, show_user: true,
+      show_bets: true, bets_max: 6, show_payouts: true, payouts_max: 5,
+      sfx: true, sfx_volume: 0.5, roll_clip: '', land_clip: '',
+      currency: 'hexcoins', min_bet: 1, max_bet: 100000, odds_rule: '345',
+      field_12_pays: 3, auto_roll: false, bet_window_seconds: 20
     }
   }
 };
@@ -262,7 +343,10 @@ window.addEventListener('resize', function () {
 });
 fitStage();
 
-function eachSlot(fn) { for (var id in slots) if (Object.prototype.hasOwnProperty.call(slots, id)) fn(slots[id]); }
+// Own keys only: a game name from the URL or a message ("constructor", "__proto__")
+// must never resolve to something inherited from Object.prototype.
+function own(o, k) { return typeof k === 'string' && Object.prototype.hasOwnProperty.call(o, k); }
+function eachSlot(fn) { for (var id in slots) if (own(slots, id)) fn(slots[id]); }
 function num(v, def, lo, hi) {
   var n = parseFloat(v);
   if (!isFinite(n)) n = def;
@@ -284,6 +368,7 @@ function makeSlot(id) {
     view: L.newView(),
     shown: false, fading: false, fadeTimer: 0, popUntil: 0, popTimer: 0,
     appearanceDirty: false, resetDirty: false,   // deferred until a fade-out finishes
+    announceDirty: false,
     gen: 0, landing: null, landTimer: 0, pendingHistory: null, history: [],
     sizeKey: '', loadFailed: false
   };
@@ -291,10 +376,19 @@ function makeSlot(id) {
   return slot;
 }
 
+// The container's size in stage px at scale 1: the renderer's BASE_W x BASE_H
+// (a wide craps tray), else a BASE_SIZE square (the roulette wheel), else 400.
 function baseSize(slot) {
   var R = slot.meta.renderer;
-  var b = R && +R.BASE_SIZE;
-  return b > 0 ? b : 400;
+  var s = R && +R.BASE_SIZE, w = R && +R.BASE_W, h = R && +R.BASE_H;
+  if (!(w > 0)) w = s > 0 ? s : 400;
+  if (!(h > 0)) h = s > 0 ? s : w;
+  return { w: w, h: h };
+}
+
+// The game's appearance keys (what a spin's `overrides` may change).
+function appearanceKeys(slot) {
+  return Array.isArray(slot.meta.appearance) ? slot.meta.appearance : L.APPEARANCE;
 }
 
 // Fresh container for a renderer instance (whatever an old one left behind goes with it).
@@ -310,13 +404,16 @@ function newBox(slot) {
 }
 
 function applyPlacement(slot) {
-  var c = slot.eff, size = baseSize(slot);
-  var x = num(c.x, 50, 0, 100), y = num(c.y, 50, 0, 100), s = num(c.scale, 1.25, 0.2, 5);
+  var c = slot.eff, d = slot.meta.defaults || {}, size = baseSize(slot);
+  var x = num(c.x, num(d.x, 50, 0, 100), 0, 100), y = num(c.y, num(d.y, 50, 0, 100), 0, 100);
+  var s = num(c.scale, num(d.scale, 1.25, 0.2, 5), 0.2, 5);
   var st = slot.box.style;
-  st.width = size + 'px'; st.height = size + 'px';
+  st.width = size.w + 'px'; st.height = size.h + 'px';
   st.left = x + '%'; st.top = y + '%';
   st.transform = 'translate(-50%,-50%) scale(' + s + ')';
-  slot.layer.style.transformOrigin = x + '% ' + y + '%';   // pop-in grows from the wheel centre
+  // The box is centred on (x%, y%) of the full-stage layer, so this origin is the
+  // box centre whatever its shape: the pop-in grows out of the wheel / tray centre.
+  slot.layer.style.transformOrigin = x + '% ' + y + '%';
 }
 
 // Guarded renderer call: optional methods are skipped, throws are reported.
@@ -412,20 +509,32 @@ function finishHide(slot) {
   slot.layer.classList.remove('gm-shown', 'gm-in', 'gm-out');
   sleep(slot);
   slot.resetDirty = false;                         // instance is gone anyway
+  slot.announceDirty = false;
   if (slot.appearanceDirty) { slot.appearanceDirty = false; applyPlacement(slot); }
   slot.view = L.forget(slot.view);
 }
 
 // A fade-out got interrupted (the game is shown again): apply what it deferred.
-// When the interrupting batch brings its own appearance, that one is newer — skip
-// the deferred one rather than re-rendering the renderer's caches twice.
-function interruptFade(slot, batchHasAppearance) {
+// When the interrupting batch brings its own appearance (or announcement), that one
+// is newer — skip the deferred one rather than re-rendering the renderer's caches twice.
+function interruptFade(slot, batchHasAppearance, batchHasAnnounce) {
   if (!slot.fading) return;
   clearTimeout(slot.fadeTimer);
   slot.fading = false;
   slot.shown = false;               // show() restarts the pop-in from here
   slot.layer.classList.remove('gm-out');
-  if (slot.resetDirty) { slot.resetDirty = false; doReset(slot); }
+  var ann = slot.state && L.isObj(slot.state.announce) ? slot.state.announce : null;
+  if (slot.resetDirty) {
+    slot.resetDirty = false;
+    doReset(slot);
+    // the batch only re-sends a table that changed: put the current one back after reset
+    if (slot.state && L.isObj(slot.state.table)) doTable(slot, slot.state.table);
+    if (ann) slot.announceDirty = true;             // reset() took Hex's card down too: put it back
+  }
+  if (slot.announceDirty) {                         // held back while fading (or cleared by reset)
+    slot.announceDirty = false;
+    if (!batchHasAnnounce) doAnnounce(slot, ann);
+  }
   if (slot.appearanceDirty) {
     slot.appearanceDirty = false;
     if (!batchHasAppearance) applyAppearance(slot);
@@ -488,6 +597,43 @@ function doShowResult(slot, spin) {
   call(slot, 'showResult', liveSpin(slot, spin));
 }
 
+// Games with a persistent table (craps): bets / point / auto-roll countdown. The
+// renderer itself holds a table that arrives while the dice are in the air until
+// they land. auto_roll_in_ms was measured when the server built the message: take
+// off the time the state sat here (renderer loading, re-sent after a reset).
+function liveTable(slot, table) {
+  var t = L.merge(table);
+  if (typeof t.auto_roll_in_ms === 'number' && isFinite(t.auto_roll_in_ms)) {
+    var waited = slot.stateAt ? Math.max(0, performance.now() - slot.stateAt) : 0;
+    t.auto_roll_in_ms = Math.max(0, Math.round(t.auto_roll_in_ms - waited));
+  }
+  return t;
+}
+
+function doTable(slot, table) {
+  if (!slot.inst || !L.isObj(table)) return;
+  call(slot, 'setTable', liveTable(slot, table));      // optional: skipped if the renderer has none
+}
+
+// Hex's own winners card (STATE.announce — "Hex does the math"); null takes it down.
+// The renderer holds a card that arrives while the ball / dice are in the air until
+// they land. expires_in_ms was measured when the server built the message: take off
+// the time the state sat here, like auto_roll_in_ms.
+function liveAnnounce(slot, a) {
+  if (!L.isObj(a)) return null;
+  var o = L.merge(a);
+  if (typeof o.expires_in_ms === 'number' && isFinite(o.expires_in_ms)) {
+    var waited = slot.stateAt ? Math.max(0, performance.now() - slot.stateAt) : 0;
+    o.expires_in_ms = Math.max(0, Math.round(o.expires_in_ms - waited));
+  }
+  return o;
+}
+
+function doAnnounce(slot, a) {
+  if (!slot.inst) return;
+  call(slot, 'setAnnounce', liveAnnounce(slot, a));    // optional: skipped if the renderer has none
+}
+
 function doHistory(slot, results) {
   slot.history = results || [];
   if (!slot.inst) return;
@@ -510,24 +656,30 @@ function exec(slot, a) {
       break;
     case 'show': show(slot); break;
     case 'hide': if (a.immediate) finishHide(slot); else fadeOut(slot); break;
+    case 'table': doTable(slot, a.table); break;
     case 'play': doPlay(slot, a.spin); break;
     case 'showResult': doShowResult(slot, a.spin); break;
     case 'reset':
       if (slot.fading) slot.resetDirty = true;         // keep the result up while it fades
       else doReset(slot);
       break;
+    case 'announce':
+      if (slot.fading) slot.announceDirty = true;      // keep the card up while it fades
+      else doAnnounce(slot, a.announce);
+      break;
     case 'history': doHistory(slot, a.results); break;
   }
 }
 
 function run(slot, actions) {
-  var i, interrupt = false, appearance = false;
+  var i, interrupt = false, appearance = false, announce = false;
   for (i = 0; i < actions.length; i++) {
     var t = actions[i].type;
     if (t === 'show' || (t === 'hide' && actions[i].immediate)) interrupt = true;
     if (t === 'appearance') appearance = true;
+    if (t === 'announce') announce = true;
   }
-  if (interrupt) interruptFade(slot, appearance);
+  if (interrupt) interruptFade(slot, appearance, announce);
   for (i = 0; i < actions.length; i++) {
     try { exec(slot, actions[i]); }
     catch (e) { report(slot.id + ' ' + actions[i].type + ': ' + errText(e)); }
@@ -541,7 +693,7 @@ function sync(slot) {
   if (slot.shown && !slot.fading && !slot.inst && slot.meta.renderer && wake(slot)) {
     slot.view = L.forget(slot.view);
   }
-  var r = L.reconcile(slot.view, slot.state, slot.config);
+  var r = L.reconcile(slot.view, slot.state, slot.config, appearanceKeys(slot));
   slot.view = r.view;
   run(slot, r.actions);
 }
@@ -549,7 +701,7 @@ function sync(slot) {
 /* ---- renderer loading ------------------------------------------------------ */
 function rendererReady(slot, R) {
   slot.meta.renderer = R;
-  applyPlacement(slot);                          // BASE_SIZE is known now
+  applyPlacement(slot);                          // BASE_W/BASE_H (or BASE_SIZE) are known now
   sync(slot);                                    // already shown → sync() wakes it + replays the spin
 }
 
@@ -574,6 +726,8 @@ function loadRenderer(slot) {
 }
 
 /* ---- messages -------------------------------------------------------------- */
+// config / state / stop only; anything else (e.g. craps' "ledger", which the server
+// sends to panel sockets) is ignored.
 function handle(m) {
   if (!m || typeof m !== 'object') return;
   if (m.type === 'config') {
@@ -583,7 +737,7 @@ function handle(m) {
       sync(slot);
     });
   } else if (m.type === 'state') {
-    var slot = slots[m.game];
+    var slot = own(slots, m.game) ? slots[m.game] : null;
     if (!slot || !L.isObj(m.state)) return;
     slot.state = m.state;
     slot.stateAt = performance.now();
@@ -593,11 +747,11 @@ function handle(m) {
     var only = typeof m.game === 'string' && m.game ? m.game : null;
     eachSlot(function (slot) {
       if (only && slot.id !== only) return;
-      var r = L.stop(slot.view, slot.config);
+      var r = L.stop(slot.view, slot.config, appearanceKeys(slot));
       slot.view = r.view;
-      if (slot.state) {                          // the aborted spin must not replay before
-        var st = L.merge(slot.state);            // the server's follow-up state arrives
-        st.spin = null; st.visible = false; st.state = 'idle';
+      if (slot.state) {                          // the aborted spin (and Hex's card) must not
+        var st = L.merge(slot.state);            // replay before the server's follow-up state
+        st.spin = null; st.visible = false; st.state = 'idle'; st.announce = null;
         slot.state = st;
       }
       run(slot, r.actions);
@@ -638,7 +792,7 @@ try {
   WANT = (new URLSearchParams(location.search).get('game') || '').toLowerCase()
     .split(',').map(function (s) { return s.trim(); }).filter(Boolean);
 } catch (e) { WANT = []; }
-WANT.forEach(function (w) { if (!GAMES[w]) report('unknown game "' + w + '" in ?game='); });
+WANT.forEach(function (w) { if (!own(GAMES, w)) report('unknown game "' + w + '" in ?game='); });
 Object.keys(GAMES).forEach(function (id) {
   if (!WANT.length || WANT.indexOf(id) >= 0) slots[id] = makeSlot(id);
 });

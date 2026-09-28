@@ -22,6 +22,9 @@
  *   instance.setConfig(cfg)   instance.resize()          instance.play(spin) -> Promise
  *   instance.showResult(spin) instance.setHistory(list)  instance.reset()
  *   instance.destroy()        instance.onLanded = fn(spin)
+ *   instance.setAnnounce(a)   Hex's own winners card (STATE.announce, null = none): replaces
+ *                             the computed winners card, held until the ball lands, cleared
+ *                             by reset() and by the next play()/showResult()
  *
  * Container contract: the HOST sizes the container to BASE_SIZE x BASE_SIZE stage
  * px and positions/scales it. The renderer fills it with a canvas (drawn 8% larger
@@ -513,6 +516,63 @@
     var parts = String(n).split('.');
     parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
     return (neg ? '-' : '') + parts.join('.');
+  }
+
+  // Hex's own winners card (setAnnounce) — STATE.announce, cleaned again here by the
+  // server's rules so any caller (overlay, panel mirror) gets the same card: <= 50 lines
+  // of {user, text, amount}, a line needs a user or a text, an unusable amount drops the
+  // line. Returns null for "no card" (none, or already expired).
+  var ANN_MAX_AMOUNT = 1e12, ANN_GRACE_MS = 2000;
+  // at most `max` characters counted like the server does (code points, so an emoji is
+  // never cut in half), control characters removed, trimmed
+  function annStr(v, max) {
+    if (v == null || typeof v === 'object' || typeof v === 'boolean') return '';
+    var s = String(v).replace(/[\u0000-\u001f\u007f]/g, '').trim(), out = '', n = 0, i = 0;
+    while (i < s.length && n < max) {
+      var c = s.charCodeAt(i), w = c >= 0xD800 && c <= 0xDBFF && i + 1 < s.length &&
+        s.charCodeAt(i + 1) >= 0xDC00 && s.charCodeAt(i + 1) <= 0xDFFF ? 2 : 1;
+      out += s.substr(i, w); i += w; n++;
+    }
+    return out.trim();
+  }
+  // null = no amount; undefined = unusable (not a finite number, |amount| > 1e12)
+  function annAmount(v) {
+    if (v == null || (typeof v === 'string' && !v.trim())) return null;
+    var n = typeof v === 'number' ? v : (typeof v === 'string' ? +v : NaN);
+    return isFinite(n) && Math.abs(n) <= ANN_MAX_AMOUNT ? n : undefined;
+  }
+  function normAnnounce(a, curDflt) {
+    if (!a || typeof a !== 'object' || Array.isArray(a)) return null;
+    // expires_in_ms as handed over (the host ages it): 0 or less = already gone
+    var ttl = typeof a.expires_in_ms === 'number' && !isNaN(a.expires_in_ms) ? a.expires_in_ms : null;
+    if (ttl !== null && ttl <= 0) return null;
+    var src = Array.isArray(a.lines) ? a.lines : [], lines = [];
+    for (var i = 0; i < src.length && lines.length < 50; i++) {
+      var l = src[i];
+      if (!l || typeof l !== 'object') continue;
+      var u = annStr(annStr(l.user, 1000).replace(/^@+/, ''), 40), t = annStr(l.text, 60), m = annAmount(l.amount);
+      if ((!u && !t) || m === undefined) continue;
+      lines.push({ user: u, text: t, amount: m });
+    }
+    var o = {
+      id: annStr(a.id, 64), spin_id: annStr(a.spin_id, 64),
+      title: annStr(a.title, 40) || 'WINNERS', lines: lines,
+      empty_text: annStr(a.empty_text, 60) || 'No winners',
+      currency: a.currency == null ? (curDflt || '') : annStr(a.currency, 24),
+      ttl: ttl
+    };
+    o.sig = JSON.stringify([o.id, o.spin_id, o.title, o.lines, o.empty_text, o.currency]);
+    return o;
+  }
+  // signed amount: "+200" / "\u221250" (a real minus sign) / "0", then the currency when there is one
+  function annAmountText(n, cur) {
+    var r = Math.round(n * 100) / 100;
+    var s = r > 0 ? '+' + fmtNum(r) : (r < 0 ? '\u2212' + fmtNum(-r) : '0');
+    return cur ? s + ' ' + cur : s;
+  }
+  function annAmountClass(n) {
+    var r = Math.round(n * 100) / 100;
+    return r > 0 ? '' : (r < 0 ? 'neg' : 'zero');
   }
 
   // Colour helpers
@@ -1106,6 +1166,13 @@
     '.hgr-row .hgr-p{font-weight:800;color:#3ddc84;font-variant-numeric:tabular-nums;white-space:nowrap;}',
     '.hgr-more,.hgr-none{font-size:12px;color:rgba(255,255,255,.55);padding-top:4px;}',
     '.hgr-none{font-size:14px;color:rgba(255,255,255,.78);padding:2px 0 3px;}',
+    /* Hex's own card (setAnnounce): same card, signed amounts, free-form title / text-only lines */
+    '.hgr-bh b.hgr-at{text-transform:uppercase;line-height:1.3;overflow-wrap:anywhere;}',
+    '.hgr-bets.hgr-ann{max-width:330px;}',
+    '.hgr-row .hgr-t{flex:1 1 auto;min-width:0;font-weight:700;color:#fff;line-height:1.3;overflow:hidden;',
+    'display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere;}',
+    '.hgr-row .hgr-p.hgr-neg{color:#ff6b5e;}',
+    '.hgr-row .hgr-p.hgr-zero{color:rgba(255,255,255,.45);}',
     /* keyframes */
     '@keyframes hgr-pop{0%{transform:scale(.25);opacity:0}55%{transform:scale(1.1);opacity:1}78%{transform:scale(.97)}100%{transform:scale(1);opacity:1}}',
     '@keyframes hgr-pulse{0%,100%{opacity:.45;transform:scale(.92)}50%{opacity:.95;transform:scale(1.05)}}',
@@ -1152,6 +1219,9 @@
     this.idleAngle = this.curAngle; this.idleSpeed = IDLE_SPEED;
     this.ball = { angle: 0, wheel: 0, rel: 0, radius: 0, height: 0, speed: 0, phase: -1, visible: false };
     this.history = []; this.pendingHistory = null; this.histSig = '';
+    // Hex's own card (setAnnounce): the cleaned announce, the one on screen, and the one a
+    // reset / new spin just took down (the host re-sends it at once: no second pop-in)
+    this.announce = null; this.annShown = ''; this.annGone = ''; this.annTimer = 0;
     this.S = 0; this.L = null; this.layersKey = ''; this.glow = null;
     this.rafId = 0; this.slowId = 0; this.lastNow = 0; this.frameN = 0; this.visible = true; this.lastPollW = 0;
     this.posSet = false;
@@ -1310,10 +1380,56 @@
     this._renderHistory();
   };
 
+  // Hex's own winners card (STATE.announce): replaces the computed winners card for the
+  // current result, same look. Held while the ball is in the air (shown with the card at
+  // landing); null brings the computed card back (if the spin had bets) or nothing.
+  // A new play()/showResult() and reset() clear it. A card for another spin than the one
+  // on screen is stale and never shown as its result. The server takes the card down when
+  // it expires; should that never arrive, it goes by itself a little after expires_in_ms.
+  RP.setAnnounce = function (announce) {
+    if (this.destroyed) return;
+    var a = normAnnounce(announce, '');
+    var sid = this.spin ? annStr(this.spin.id, 64) : '';
+    if (a && a.spin_id && sid && a.spin_id !== sid) a = null;
+    if ((a ? a.sig : '') === (this.announce ? this.announce.sig : '')) return;   // same card
+    this.announce = a;
+    this._annExpiry(a);
+    this._annApply();
+  };
+  RP._annApply = function () {
+    if (this.mode === 'spin') {
+      // in the air: held; landed but the card's reveal delay is still running: it shows then
+      if (!this.landed || !this.betsOn) return;
+      this._showBets(true);
+      return;
+    }
+    // idle (the result phase is over, or a fresh overlay): the card stands on its own
+    this.betsOn = !!this.announce;
+    this._showBets(true);
+  };
+  // safety net behind the server's own expiry (its clearing state normally comes first)
+  RP._annExpiry = function (a) {
+    if (this.annTimer) { clearTimeout(this.annTimer); this.annTimer = 0; }
+    if (!a || a.ttl === null) return;
+    var self = this;
+    this.annTimer = setTimeout(function () {
+      self.annTimer = 0;
+      if (self.destroyed || self.announce !== a) return;
+      self.announce = null;
+      self._annApply();
+    }, Math.min(a.ttl + ANN_GRACE_MS, 0x7fffffff));
+  };
+  RP._dropAnnounce = function () {
+    this.annGone = this.annShown;
+    this.announce = null;
+    this._annExpiry(null);
+  };
+
   RP.reset = function () {
     if (this.destroyed) return;
     this._settle(null);
     this._clearTimers();
+    this._dropAnnounce();
     if (this.sfx) this.sfx.stopRumble();
     this.idleAngle = mod(this.curAngle, TAU);
     this.idleSpeed = isFinite(this.curSpeed) ? this.curSpeed : IDLE_SPEED;
@@ -1338,11 +1454,13 @@
     if (this.root && this.root.parentNode) this.root.parentNode.removeChild(this.root);
     if (this.posSet) { try { this.container.style.position = ''; } catch (e) { } this.posSet = false; }
     this.L = null; this.glow = null; this.plan = null; this.spin = null; this.pendingHistory = null;
+    this._annExpiry(null); this.announce = null;
     this.onLanded = null;
   };
 
   // --- spin lifecycle -------------------------------------------------------
   RP._begin = function (spin, P, elMs) {
+    this._dropAnnounce();   // a new spin: Hex's card for the last one goes
     this.spin = spin; this.plan = P; this.mode = 'spin'; this.landed = false;
     this.startMs = perfNow() - elMs;
     this.t = elMs / 1000; this.prevT = -1; this.lastFret = -1;
@@ -1488,6 +1606,10 @@
 
   RP._showBets = function (anim) {
     var e = this.eff, s = this.spin, box = this.betsEl;
+    // Hex's own card replaces the computed one (never while the ball is in the air)
+    if (this.announce && !(this.mode === 'spin' && !this.landed)) { this._showAnnounce(anim); return; }
+    this.annShown = '';
+    box.classList.remove('hgr-ann');
     var bets = s && Array.isArray(s.bets) ? s.bets : [];
     if (!e.show_bets || !this.landed || !bets.length) { box.classList.add('hgr-hide'); return; }
     var wins = [], valid = 0, wagered = 0, i;
@@ -1517,6 +1639,45 @@
       var none = el('div', 'hgr-none', box);
       none.textContent = wagered > 0 ? 'House takes ' + fmtNum(wagered) : 'House wins this round';
     }
+    this._placeBets(anim);
+  };
+
+  // Hex's card, in the winners card's place and style: title, up to bets_max lines
+  // (@user, text, signed amount) + "+N more", or its empty_text. Text only (no HTML).
+  RP._showAnnounce = function (anim) {
+    var e = this.eff, a = this.announce, box = this.betsEl, i;
+    if (!e.show_bets) { box.classList.add('hgr-hide'); this.annShown = ''; return; }
+    // the same card again right after a reset / new spin took it down: no second pop-in
+    if (anim && a.sig === this.annGone) anim = false;
+    this.annGone = '';
+    this.annShown = a.sig;
+    box.textContent = '';
+    box.classList.add('hgr-ann');
+    var hd = el('div', 'hgr-bh', box);
+    el('b', 'hgr-at', hd).textContent = a.title;
+    var n = Math.min(a.lines.length, e.bets_max);
+    for (i = 0; i < n; i++) {
+      var ln = a.lines[i], row = el('div', 'hgr-row', box);
+      row.style.animationDelay = (0.08 + i * 0.07).toFixed(2) + 's';
+      if (ln.user) {
+        el('span', 'hgr-u', row).textContent = '@' + ln.user;
+        el('span', 'hgr-l', row).textContent = ln.text;
+      } else {
+        el('span', 'hgr-t', row).textContent = ln.text;
+      }
+      if (ln.amount != null) {
+        var cls = annAmountClass(ln.amount);
+        el('span', 'hgr-p' + (cls ? ' hgr-' + cls : ''), row).textContent = annAmountText(ln.amount, a.currency);
+      }
+    }
+    if (a.lines.length > n) el('div', 'hgr-more', box).textContent = '+' + (a.lines.length - n) + ' more';
+    if (!a.lines.length) el('div', 'hgr-none', box).textContent = a.empty_text;
+    this._placeBets(anim);
+  };
+
+  // side of the wheel for the card, then reveal it
+  RP._placeBets = function (anim) {
+    var box = this.betsEl;
     // flip to the left when the wheel sits on the right of its stage
     var right = true;
     try {
@@ -1533,6 +1694,7 @@
     this.badgeOn = false; this.betsOn = false;
     this.badgeEl.classList.add('hgr-hide'); this.badgeEl.classList.remove('hgr-in');
     this.betsEl.classList.add('hgr-hide');
+    this.annShown = '';
     if (!this.spin) this._hideCaption();
   };
 

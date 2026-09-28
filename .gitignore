@@ -38,3 +38,8 @@ desktop.ini
 .env
 /.serena
 games.json
+games_craps_table.json
+games_craps_table.json.bad
+games_craps_table.json.*.tmp
+games_ledger.jsonl
+games_ledger.jsonl.1
