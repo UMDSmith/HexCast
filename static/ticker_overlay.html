@@ -228,14 +228,25 @@ function fillSeg(el, s){
   el.classList.toggle('nosep', !sep);
 }
 
+function onTrack(id){
+  id = String(id);
+  for(var i = 0; i < track.children.length; i++){ if(track.children[i].dataset.id === id) return true; }
+  return false;
+}
+
 function nextSeg(){
   var s = null;
+  // a queue-jumper that's already in view has had its turn
+  while(priority.length && onTrack(priority[0].id)) priority.shift();
   if(priority.length){
     s = priority.shift();          // jumps the queue; the rotation carries on after it
   } else if(SEGS.length){
     if(cursor >= SEGS.length) cursor = 0;
     // a line that just jumped the queue shouldn't come straight round again
     if(SEGS[cursor].id === prevId && SEGS.length > 1) cursor = (cursor + 1) % SEGS.length;
+    // each line is on screen at most once: with only a few lines, wait for the
+    // last pass to scroll off instead of repeating them to fill the bar
+    if(onTrack(SEGS[cursor].id)) return null;
     s = SEGS[cursor];
     cursor = (cursor + 1) % SEGS.length;
     lastId = s.id;
@@ -246,6 +257,14 @@ function nextSeg(){
   el.className = 'seg ' + (s.kind === 'label' ? 'lb' : 'it');
   el.dataset.id = s.id;
   fillSeg(el, s);
+  return el;
+}
+
+// empty space, so a line that had to wait enters from the edge instead of popping in mid-bar
+function spacer(w){
+  var el = document.createElement('div');
+  el.className = 'seg gap';
+  el.style.width = Math.ceil(w) + 'px';
   return el;
 }
 
@@ -288,6 +307,8 @@ function frame(t){
     var guard = 0;
     while(x + track.scrollWidth < vw + 200 && guard++ < 50){
       var el = nextSeg(); if(!el) break;
+      var end = x + track.scrollWidth;
+      if(end < vw) track.appendChild(spacer(vw - end));
       track.appendChild(el);
     }
     track.style.transform = 'translateX(' + x + 'px)';
@@ -305,6 +326,8 @@ function frame(t){
     var g2 = 0;
     while(vw + x - track.scrollWidth > -200 && g2++ < 50){
       var el2 = nextSeg(); if(!el2) break;
+      var lead = vw + x - track.scrollWidth;
+      if(lead > 0) track.insertBefore(spacer(lead), track.firstChild);
       track.insertBefore(el2, track.firstChild);
     }
     track.style.transform = 'translateX(' + x + 'px)';

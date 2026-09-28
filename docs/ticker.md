@@ -23,6 +23,9 @@ the ticker restarting or jumping:
   Replacing a whole feed doesn't trigger this; its lines simply take their turn.
 - **A line already on screen whose text changes** (say a balance going up) is
   updated in place.
+- **Each line is on screen at most once.** With only a few short lines, the
+  ticker leaves empty space and brings them back in from the edge, rather than
+  repeating them to fill the bar.
 
 ### Lines
 
