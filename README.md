@@ -37,8 +37,8 @@ folder out of git and keep the port on your LAN.
 
 At its core, Hexcast is a **soundboard + media launcher** that drives a single
 set of OBS browser-source overlays from a web control panel. On top of that core
-sit six optional **integration tabs** — Twitch, Music, Discord, Clips,
-Countdown, and Games — each self-contained, each with its own overlay and
+sit seven optional **integration tabs** — Twitch, Music, Discord, Clips,
+Countdown, Games, and Ticker — each self-contained, each with its own overlay and
 settings panel, each reachable from a button in the control panel's top bar.
 Turn on as many or as few as you like; none of them changes how the soundboard
 behaves.
@@ -204,6 +204,23 @@ response until it lands. **Launch/landing clips play on the base soundboard
 overlay (`/overlay`)** — keep both browser sources in your scene. See
 [docs/games.md](docs/games.md) and [docs/craps.md](docs/craps.md).
 
+### 📰 Ticker
+
+**What it does.** A news-style scrolling ticker that you place anywhere on the
+1920×1080 stage by dragging a box over a live preview. You can style every part
+of it: font, size, colors, separator, feed label badges, a pinned title, a
+solid, gradient or glass bar, and bar and ticker transparency. What scrolls is
+a set of named **feeds** (for example `news`, `balances` or `announce`). You can
+edit the feeds in the panel, and a bot can write them over HTTP, one line or a
+whole feed at a time. Lines with a `key` update in place, so every viewer's
+hexcoin balance can scroll and stay current.
+
+**How it works.** The overlay takes the next line from the live list as each
+one scrolls off, so changes land mid-scroll without a restart. New lines jump
+the queue. Feeds can also come from `config/ticker_feeds.json`, which is
+watched and reloaded within a second, or from a polled JSON URL. See
+[docs/ticker.md](docs/ticker.md).
+
 ---
 
 ## Install, upgrade & uninstall
@@ -249,7 +266,7 @@ Leave the launcher window open while you stream; close it to stop Hexcast.
 4. Select the source and press **Ctrl+F** to fit.
 
 Each integration adds its own browser source (e.g. `/ytm/overlay`,
-`/twitch/chat`, `/countdown/overlay`, `/games/overlay`); its panel shows the
+`/twitch/chat`, `/countdown/overlay`, `/games/overlay`, `/ticker/overlay`); its panel shows the
 exact URL.
 
 ### Install — advanced / manual
@@ -263,7 +280,7 @@ pip install -r requirements.txt
 python hexcast.py
 ```
 
-All six integrations work from the main install — their dependencies are
+All seven integrations work from the main install — their dependencies are
 already included. The only separate optional extra is the **"react to real
 audio" visualiser**, which needs `numpy` + `soundcard`:
 `pip install -r requirements-ytm-audio.txt`.
@@ -271,7 +288,7 @@ audio" visualiser**, which needs `numpy` + `soundcard`:
 Each integration is just two lines in `hexcast.py` after the `/media` mount
 (e.g. `from twitch import attach_twitch` then `attach_twitch(app, PORT)`, and
 the same shape for `ytmusic`, `discord_reactive`, `clips`, `countdown`,
-`games`). Delete a pair to disable that module.
+`games`, `ticker`). Delete a pair to disable that module.
 
 ### Install — Docker
 
@@ -461,6 +478,17 @@ curl "http://localhost:4747/games/api/craps/roll?user=alice&wait=true"
 curl "http://localhost:4747/games/api/craps/ledger?since=0"
 ```
 
+**Ticker** (`/ticker/api/…`, GET with query parameters or POST with JSON; the full list is in [docs/ticker.md](docs/ticker.md#api)):
+
+```
+GET|POST /ticker/api/say?text=...&ttl=60             → one-off line, scrolls next, gone after ttl s
+GET|POST /ticker/api/feed/{name}/add?text=...        → add a line (feed created if new)
+GET|POST /ticker/api/feed/{name}/set?key=alice&value=1300 → keyed upsert: same key updates in place
+POST     /ticker/api/feed/{name}  {"values":{...}} | {"items":[...]} + label/template/sort/limit/source
+GET|POST /ticker/api/feed/{name}/remove?key=… · clear · enable?on=0 · refresh · delete
+GET      /ticker/api/items · feeds · status   ·   GET|POST /ticker/api/show · hide · config
+```
+
 ### Supported media formats
 
 - **Audio:** `.mp3`, `.wav`, `.ogg`, `.m4a`, `.flac`, `.opus`
@@ -507,10 +535,11 @@ hexcast/
 ├── clips.py                   # optional Twitch clip player integration
 ├── countdown.py               # optional countdown timer integration
 ├── games.py                   # optional games integration (roulette, craps)
+├── ticker.py                  # optional scrolling ticker integration
 ├── static/                    # control panel + every overlay/panel (HTML/CSS/JS)
 │   └── games/                 # game renderers shared by the games overlay + panel (roulette.js, craps.js)
 │                              #   + the Craps panel tab (craps_panel.js)
-├── docs/                      # per-integration docs: twitch, music, discord, clips, countdown, games, craps
+├── docs/                      # per-integration docs: twitch, music, discord, clips, countdown, games, craps, ticker
 ├── config/                    # tokens, playlists, integration settings, games tables + ledger (gitignored)
 ├── requirements*.txt          # core + per-integration dependency lists
 ├── start.sh / start.bat       # launchers
@@ -538,7 +567,7 @@ can hand-edit the JSON; the watcher ignores `.json` writes.
 ## Links
 
 - **Repository & downloads:** <https://github.com/UMDSmith/hexcast>
-- **Integration docs:** [Twitch](docs/twitch.md) · [Music](docs/music.md) · [Discord](docs/discord.md) · [Clips](docs/clips.md) · [Countdown](docs/countdown.md) · [Games](docs/games.md) · [Craps](docs/craps.md)
+- **Integration docs:** [Twitch](docs/twitch.md) · [Music](docs/music.md) · [Discord](docs/discord.md) · [Clips](docs/clips.md) · [Countdown](docs/countdown.md) · [Games](docs/games.md) · [Craps](docs/craps.md) · [Ticker](docs/ticker.md)
 - **License:** MIT — see [LICENSE](LICENSE)
 
 <p align="center">

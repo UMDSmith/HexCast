@@ -1,0 +1,332 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>HexCast ticker</title>
+<style>
+  html,body{margin:0;padding:0;background:transparent;overflow:hidden;height:100%;width:100%;}
+  /* Fixed 1920x1080 design stage, scaled to fill the browser source so px sizes
+     and % positions scale together at any size. */
+  #stage{ position:absolute; top:0; left:0; width:1920px; height:1080px; transform-origin:top left; }
+
+  #bar{
+    position:absolute; box-sizing:border-box; display:flex; align-items:stretch;
+    border-radius:var(--radius,12px); overflow:hidden;
+    opacity:0; transition:opacity .45s ease;
+    font-family:var(--font), 'Segoe UI', system-ui, sans-serif;
+    font-size:var(--size,40px); font-weight:var(--weight,700);
+    letter-spacing:var(--tracking,0px); color:var(--fg,#fff);
+    text-transform:var(--case,none);
+  }
+  #bar.show{ opacity:var(--opacity,1); }
+  #bar.bg-solid{ background:var(--panel-bg); }
+  #bar.bg-gradient{ background:linear-gradient(var(--bg-angle,90deg), var(--panel-bg), var(--bg2)); }
+  #bar.bg-glass{
+    background:var(--panel-bg);
+    backdrop-filter:blur(var(--bg-blur,8px)) saturate(1.35);
+    -webkit-backdrop-filter:blur(var(--bg-blur,8px)) saturate(1.35);
+  }
+  #bar.bordered{ border:var(--border-w,0px) solid var(--border,#ff3b30); }
+
+  .txt{
+    -webkit-text-stroke:var(--stroke,0px) var(--stroke-color,#000);
+    paint-order:stroke fill; text-shadow:var(--shadow,none);
+  }
+  #title{
+    flex:0 0 auto; display:none; align-items:center; padding:0 .6em;
+    background:var(--title-bg,#ff3b30); color:var(--title-fg,#fff); white-space:nowrap; z-index:2;
+  }
+  #title.on{ display:flex; }
+  #viewport{
+    position:relative; flex:1 1 auto; overflow:hidden; min-width:0;
+    margin:0 var(--pad-x,20px);
+    -webkit-mask-image:var(--mask,none); mask-image:var(--mask,none);
+  }
+  #track{
+    position:absolute; top:0; bottom:0; display:flex; align-items:center;
+    width:max-content; white-space:nowrap; will-change:transform;
+  }
+  #track.dir-left{ left:0; }
+  #track.dir-right{ right:0; }
+  .seg{ flex:0 0 auto; display:flex; align-items:center; }
+  .it .sep{ color:var(--sep-color,#ff3b30); padding:0 calc(var(--gap,60px) / 2); }
+  .it.nosep{ padding-right:var(--gap,60px); }
+  .lbl{
+    margin-right:calc(var(--gap,60px) / 2);
+    padding:.08em .45em; border-radius:.25em; font-size:.8em;
+    background:var(--label-bg,#ff3b30); color:var(--label-fg,#fff);
+  }
+</style></head>
+<body>
+<div id="stage">
+  <div id="bar">
+    <div id="title" class="txt"></div>
+    <div id="viewport"><div id="track" class="dir-left"></div></div>
+  </div>
+</div>
+<script>
+var stage = document.getElementById('stage');
+var bar = document.getElementById('bar');
+var titleEl = document.getElementById('title');
+var viewport = document.getElementById('viewport');
+var track = document.getElementById('track');
+var PREVIEW = /[?&]preview=1/.test(location.search);
+var CFG = null;
+var SEGS = [];          // flattened scroll list: {id, kind:'label'|'item', text, color}
+var cursor = 0;         // index of the next segment to append
+var lastId = null;      // id of the last segment appended (so live updates continue from it)
+var prevId = null;      // id of the segment appended last, rotation or queue-jump
+var priority = [];      // brand-new items jump the queue once
+var knownIds = null;    // item ids we've seen (null until the first feeds message)
+var x = null;           // track offset in stage px (null = not started)
+var dir = 'left';
+
+// Scale px sizes as if the source were 1920x1080, but stretch the stage itself to
+// cover the whole window, so % placement (e.g. a 100%-wide strip) reaches edge to
+// edge even when the source isn't exactly 16:9 (a browser tab, a cropped source).
+function fitStage(){
+  var s = Math.min(window.innerWidth/1920, window.innerHeight/1080) || 1;
+  stage.style.width = (window.innerWidth / s) + 'px';
+  stage.style.height = (window.innerHeight / s) + 'px';
+  stage.style.transform = 'scale(' + s + ')';
+}
+window.addEventListener('resize', fitStage);
+fitStage();
+
+function loadFont(name){
+  if(!name) return;
+  var id = 'font-' + name.replace(/[^a-z0-9]/gi,'');
+  if(document.getElementById(id)) return;
+  var l = document.createElement('link');
+  l.id = id; l.rel = 'stylesheet';
+  l.href = 'https://fonts.googleapis.com/css2?family=' +
+           encodeURIComponent(name).replace(/%20/g,'+') +
+           ':wght@400;500;600;700;800;900&display=swap';
+  document.head.appendChild(l);
+}
+function hexToRgba(hex, alpha){
+  var h = String(hex || '#000000').replace('#','');
+  if(h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+  var n = parseInt(h, 16);
+  if(isNaN(n)) return 'rgba(0,0,0,' + alpha + ')';
+  return 'rgba(' + ((n>>16)&255) + ',' + ((n>>8)&255) + ',' + (n&255) + ',' + alpha + ')';
+}
+
+function applyConfig(cfg){
+  var oldDir = dir;
+  CFG = cfg;
+  var r = document.documentElement.style;
+  loadFont(cfg.font_family);
+  r.setProperty('--font', '"' + cfg.font_family + '"');
+  r.setProperty('--size', cfg.font_size + 'px');
+  r.setProperty('--weight', cfg.font_weight);
+  r.setProperty('--tracking', (cfg.letter_spacing || 0) + 'px');
+  r.setProperty('--case', cfg.uppercase ? 'uppercase' : 'none');
+  r.setProperty('--fg', cfg.text_color);
+  r.setProperty('--stroke', cfg.outline ? (cfg.outline_width || 0) + 'px' : '0px');
+  r.setProperty('--stroke-color', cfg.outline_color || '#000');
+  r.setProperty('--shadow', cfg.shadow ? '0 2px 6px rgba(0,0,0,.85)' : 'none');
+  r.setProperty('--radius', (cfg.radius || 0) + 'px');
+  r.setProperty('--pad-x', (cfg.pad_x || 0) + 'px');
+  r.setProperty('--gap', (cfg.gap || 0) + 'px');
+  r.setProperty('--sep-color', cfg.separator_color || '#ff3b30');
+  r.setProperty('--label-bg', cfg.label_bg || '#ff3b30');
+  r.setProperty('--label-fg', cfg.label_color || '#fff');
+  r.setProperty('--title-bg', cfg.title_bg || '#ff3b30');
+  r.setProperty('--title-fg', cfg.title_color || '#fff');
+  r.setProperty('--panel-bg', hexToRgba(cfg.bg_color, cfg.bg_opacity));
+  r.setProperty('--bg2', hexToRgba(cfg.bg_color2 || cfg.bg_color, cfg.bg_opacity));
+  r.setProperty('--bg-angle', (cfg.bg_gradient_angle == null ? 90 : cfg.bg_gradient_angle) + 'deg');
+  r.setProperty('--bg-blur', (cfg.bg_blur || 0) + 'px');
+  r.setProperty('--border', cfg.border_color || '#ff3b30');
+  r.setProperty('--border-w', (cfg.border_width || 0) + 'px');
+  r.setProperty('--opacity', cfg.opacity == null ? 1 : cfg.opacity);
+  var f = +cfg.fade_edges || 0;
+  r.setProperty('--mask', f > 0
+    ? 'linear-gradient(90deg, transparent 0, #000 ' + f + 'px, #000 calc(100% - ' + f + 'px), transparent 100%)'
+    : 'none');
+
+  bar.style.left = cfg.box_x + '%'; bar.style.top = cfg.box_y + '%';
+  bar.style.width = cfg.box_w + '%'; bar.style.height = cfg.box_h + '%';
+  var cls = [];
+  if(cfg.bg_style && cfg.bg_style !== 'none') cls.push('bg-' + cfg.bg_style);
+  if((cfg.border_width || 0) > 0) cls.push('bordered');
+  bar.className = cls.join(' ');
+
+  titleEl.textContent = cfg.title || '';
+  titleEl.classList.toggle('on', !!cfg.title);
+
+  dir = cfg.direction === 'right' ? 'right' : 'left';
+  if(dir !== oldDir) restart();
+  else {
+    // separator text may have changed: refresh what's on screen in place
+    Array.prototype.forEach.call(track.children, function(el){ if(el._seg) fillSeg(el, el._seg); });
+  }
+  reflectVisible();
+}
+
+// ---- the scroll list ------------------------------------------------------
+function flatten(feeds){
+  var out = [];
+  (feeds || []).forEach(function(f){
+    if(CFG && CFG.show_labels && f.label){
+      out.push({id: 'label:' + f.name, kind: 'label', text: f.label});
+    }
+    (f.items || []).forEach(function(it){
+      out.push({id: it.id, kind: 'item', text: it.text, color: it.color});
+    });
+  });
+  return out;
+}
+var FEEDS = [];
+function onFeeds(feeds){
+  FEEDS = feeds || [];
+  var next = flatten(FEEDS);
+  // brand-new items (not a bulk replace, not the first load) scroll next
+  var ids = {};
+  next.forEach(function(s){ ids[s.id] = true; });
+  if(knownIds){
+    var fresh = next.filter(function(s){ return s.kind === 'item' && !knownIds[s.id]; });
+    if(fresh.length && fresh.length <= 5) priority = priority.concat(fresh);
+  }
+  knownIds = ids;
+  priority = priority.filter(function(s){ return ids[s.id]; });
+  // continue after the last segment we appended, wherever it is now
+  if(lastId != null){
+    var at = -1;
+    for(var i = 0; i < next.length; i++){ if(next[i].id === lastId){ at = i; break; } }
+    cursor = at >= 0 ? at + 1 : (next.length ? cursor % next.length : 0);
+  }
+  SEGS = next;
+  // keep what's already on screen current (e.g. a balance changed while in view)
+  var byId = {};
+  next.forEach(function(s){ byId[s.id] = s; });
+  Array.prototype.forEach.call(track.children, function(el){
+    var s = byId[el.dataset.id];
+    if(s && el._text !== s.text) fillSeg(el, s);
+  });
+  reflectVisible();
+}
+
+function fillSeg(el, s){
+  el._seg = s;
+  el._text = s.text;
+  el.innerHTML = '';
+  if(s.kind === 'label'){
+    var b = document.createElement('span');
+    b.className = 'lbl txt'; b.textContent = s.text;
+    el.appendChild(b);
+    return;
+  }
+  var t = document.createElement('span');
+  t.className = 'txt'; t.textContent = s.text;
+  if(s.color) t.style.color = s.color;
+  el.appendChild(t);
+  var sep = CFG && CFG.separator;
+  if(sep){
+    var p = document.createElement('span');
+    p.className = 'sep txt'; p.textContent = sep;
+    el.appendChild(p);
+  }
+  el.classList.toggle('nosep', !sep);
+}
+
+function nextSeg(){
+  var s = null;
+  if(priority.length){
+    s = priority.shift();          // jumps the queue; the rotation carries on after it
+  } else if(SEGS.length){
+    if(cursor >= SEGS.length) cursor = 0;
+    // a line that just jumped the queue shouldn't come straight round again
+    if(SEGS[cursor].id === prevId && SEGS.length > 1) cursor = (cursor + 1) % SEGS.length;
+    s = SEGS[cursor];
+    cursor = (cursor + 1) % SEGS.length;
+    lastId = s.id;
+  }
+  if(!s) return null;
+  prevId = s.id;
+  var el = document.createElement('div');
+  el.className = 'seg ' + (s.kind === 'label' ? 'lb' : 'it');
+  el.dataset.id = s.id;
+  fillSeg(el, s);
+  return el;
+}
+
+function restart(){
+  track.innerHTML = '';
+  x = null;
+}
+
+function hasContent(){ return SEGS.length > 0 || priority.length > 0; }
+
+function reflectVisible(){
+  if(!CFG){ bar.classList.remove('show'); return; }
+  var on = !!CFG.visible && (!CFG.hide_when_empty || hasContent() || track.children.length > 0);
+  bar.classList.toggle('show', on);
+}
+
+// ---- animation --------------------------------------------------------------
+var lastT = null;
+function frame(t){
+  requestAnimationFrame(frame);
+  var dt = lastT == null ? 0 : Math.min(0.1, (t - lastT) / 1000);
+  lastT = t;
+  if(!CFG) return;
+  var vw = viewport.offsetWidth;
+  if(!vw) return;
+  var speed = +CFG.speed || 120;
+  track.className = 'dir-' + dir;
+
+  if(dir === 'left'){
+    // track is left-anchored; x = its left edge, moving negative
+    if(x == null){ x = vw; }
+    x -= speed * dt;
+    var first = track.firstElementChild;
+    while(first && x + first.offsetWidth <= 0){
+      x += first.offsetWidth;
+      track.removeChild(first);
+      first = track.firstElementChild;
+    }
+    if(!track.firstElementChild && x < 0) x = vw;       // ran dry: next one enters from the edge
+    var guard = 0;
+    while(x + track.scrollWidth < vw + 200 && guard++ < 50){
+      var el = nextSeg(); if(!el) break;
+      track.appendChild(el);
+    }
+    track.style.transform = 'translateX(' + x + 'px)';
+  } else {
+    // mirror: track is right-anchored; x = its right edge's offset past the viewport's, moving positive
+    if(x == null){ x = -vw; }
+    x += speed * dt;
+    var last = track.lastElementChild;
+    while(last && x - last.offsetWidth >= 0){
+      x -= last.offsetWidth;
+      track.removeChild(last);
+      last = track.lastElementChild;
+    }
+    if(!track.lastElementChild && x > 0) x = -vw;
+    var g2 = 0;
+    while(vw + x - track.scrollWidth > -200 && g2++ < 50){
+      var el2 = nextSeg(); if(!el2) break;
+      track.insertBefore(el2, track.firstChild);
+    }
+    track.style.transform = 'translateX(' + x + 'px)';
+  }
+  reflectVisible();
+}
+requestAnimationFrame(frame);
+
+function connect(){
+  var proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  var ws = new WebSocket(proto + '://' + location.host + '/ticker/ws/overlay' + (PREVIEW ? '?preview=1' : ''));
+  ws.onmessage = function(e){
+    var m; try { m = JSON.parse(e.data); } catch(err){ return; }
+    if(m.type === 'config'){
+      var labelsChanged = CFG && (!!CFG.show_labels !== !!m.config.show_labels);
+      applyConfig(m.config);
+      if(labelsChanged) onFeeds(FEEDS);
+    }
+    else if(m.type === 'feeds') onFeeds(m.feeds);
+  };
+  ws.onclose = function(){ setTimeout(connect, 1500); };
+  ws.onerror = function(){ try { ws.close(); } catch(err){} };
+}
+connect();
+</script></body></html>

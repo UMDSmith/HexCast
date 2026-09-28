@@ -594,6 +594,14 @@ except ImportError as exc:
     if getattr(exc, "name", "") != "games":
         print(f"  Games module found but not loaded ({exc})", flush=True)
 
+# Ticker is optional too: skip quietly if the module file is gone.
+try:
+    from ticker import attach_ticker
+    attach_ticker(app, PORT)
+except ImportError as exc:
+    if getattr(exc, "name", "") != "ticker":
+        print(f"  Ticker module found but not loaded ({exc})", flush=True)
+
 
 # ---- HTML (inlined) --------------------------------------------------------
 

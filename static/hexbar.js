@@ -18,6 +18,7 @@
     { key: 'clips',      label: 'Clips',      href: '/clips',   status: '/clips/api/status' },
     { key: 'countdown',  label: 'Countdown',  href: '/countdown', status: '/countdown/api/status' },
     { key: 'games',      label: 'Games',      href: '/games',   status: '/games/api/status' },
+    { key: 'ticker',     label: 'Ticker',     href: '/ticker',  status: '/ticker/api/status' },
     { key: 'help',       label: 'Help',       href: '/help',    nodot: true }
   ];
 
@@ -164,6 +165,19 @@
         setDot('games', n > 0, true, gamesTitle(s.games, n));
       })
       .catch(function () { setDot('games', false, false, 'Games module not installed'); });
+
+    fetch('/ticker/api/status')
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (s) {
+        if (!s) { setDot('ticker', false, false, 'Ticker module not installed'); return; }
+        var n = +s.overlays || 0;
+        var what = !s.visible ? 'hidden'
+          : s.items + ' line' + (s.items === 1 ? '' : 's') + ' scrolling' +
+            (s.scrolling && s.scrolling.length ? ' (' + s.scrolling.join(', ') + ')' : '');
+        setDot('ticker', n > 0, true, 'Ticker — ' + what + ' · ' +
+          (n > 0 ? n + ' overlay' + (n === 1 ? '' : 's') + ' connected' : 'no overlay connected'));
+      })
+      .catch(function () { setDot('ticker', false, false, 'Ticker module not installed'); });
   }
 
   // Games dot title, from /games/api/status alone: what each game is doing — a game
