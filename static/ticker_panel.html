@@ -66,6 +66,8 @@
   .pl-box .h.sw{left:-7px;bottom:-7px;cursor:nesw-resize}
   .pl-box .h.se{right:-7px;bottom:-7px;cursor:nwse-resize}
   .presets{display:flex;gap:6px;flex-wrap:wrap}
+  .geo{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:12px}
+  @media (max-width:560px){ .geo{grid-template-columns:repeat(2,minmax(0,1fr))} }
 
   /* feeds */
   .feed{border:1px solid var(--line);border-radius:10px;background:#0c0c11;margin-bottom:14px}
@@ -114,12 +116,18 @@
 
   <div class="card">
     <h2>Placement &amp; live preview</h2>
-    <p class="hint">This is the real overlay, live. Drag the dashed box to move the ticker, or grab a corner to resize it. Every setting on this page applies as you change it; there's no Save button for the look.</p>
+    <p class="hint">This is the real overlay, live. Drag the dashed box to move the ticker, grab a corner to resize it, or type exact numbers below (bar height is in 1080p pixels). Every setting on this page applies as you change it; there's no Save button for the look.</p>
     <div class="presets">
       <button class="sec sm" data-preset="bottom">Bottom strip</button>
       <button class="sec sm" data-preset="top">Top strip</button>
       <button class="sec sm" data-preset="lower">Lower third</button>
       <button class="sec sm" data-preset="corner">Bottom-left box</button>
+    </div>
+    <div class="geo">
+      <label class="f">Left (%)<input type="number" id="g-x" min="0" max="100" step="0.1"></label>
+      <label class="f">Top (%)<input type="number" id="g-y" min="0" max="100" step="0.1"></label>
+      <label class="f">Width (%)<input type="number" id="g-w" min="1" max="100" step="0.1"></label>
+      <label class="f">Bar height (px)<input type="number" id="g-h" min="11" max="1080" step="1"></label>
     </div>
     <div id="pl-stage">
       <iframe id="preview" title="Ticker preview"></iframe>
@@ -326,6 +334,35 @@ function makeBox(el, cb, done){
   el.addEventListener('pointerup', up);
   el.addEventListener('pointercancel', up);
 }
+// exact-number inputs under the presets; height is shown in 1080p px
+var STAGE_H = 1080;
+function syncGeo(){
+  [['g-x', PLACE.box_x], ['g-y', PLACE.box_y], ['g-w', PLACE.box_w],
+   ['g-h', PLACE.box_h * STAGE_H / 100]].forEach(function(p){
+    var el = $(p[0]);
+    if(el && document.activeElement !== el && p[1] != null && !isNaN(p[1]))
+      el.value = p[0] === 'g-h' ? Math.round(p[1]) : +(+p[1]).toFixed(1);
+  });
+}
+function placeBox(){ _setGeo($('pl-box'), PLACE.box_x, PLACE.box_y, PLACE.box_w, PLACE.box_h); syncGeo(); }
+function geoInput(){
+  var x = parseFloat($('g-x').value), y = parseFloat($('g-y').value),
+      w = parseFloat($('g-w').value), hp = parseFloat($('g-h').value);
+  if(!isNaN(w)) PLACE.box_w = _clamp(w, 1, 100);
+  if(!isNaN(x)) PLACE.box_x = _clamp(x, 0, 100 - PLACE.box_w);
+  if(!isNaN(hp)){
+    var h = _clamp(hp / STAGE_H * 100, 1, 100);
+    // a bar sitting on the bottom edge grows upward so it stays on the edge
+    var onBottom = PLACE.box_y + PLACE.box_h >= 99.5 && this && this.id === 'g-h';
+    if(onBottom) PLACE.box_y = 100 - h;
+    PLACE.box_h = h;
+  }
+  if(!isNaN(y) && !(this && this.id === 'g-h')) PLACE.box_y = y;
+  PLACE.box_y = _clamp(PLACE.box_y, 0, 100 - PLACE.box_h);
+  _setGeo($('pl-box'), PLACE.box_x, PLACE.box_y, PLACE.box_w, PLACE.box_h);
+  if(this && this.id === 'g-h') $('g-y').value = +PLACE.box_y.toFixed(1);
+  applySoon();
+}
 var PRESETS = {
   bottom: {box_x:0, box_y:92, box_w:100, box_h:6, radius:0},
   top:    {box_x:0, box_y:0,  box_w:100, box_h:6, radius:0},
@@ -338,7 +375,7 @@ function loadConfig(cfg){
   CFG = cfg;
   ALL_FIELDS.forEach(function(f){ setField(f[0], f[2], cfg[f[0]]); });
   PLACE = {box_x:+cfg.box_x, box_y:+cfg.box_y, box_w:+cfg.box_w, box_h:+cfg.box_h};
-  _setGeo($('pl-box'), PLACE.box_x, PLACE.box_y, PLACE.box_w, PLACE.box_h);
+  placeBox();
   reflectVisible(cfg.visible);
 }
 function collectConfig(){
@@ -415,6 +452,7 @@ function feedCard(f){
           '<option value="value_asc">Value, low → high</option><option value="key">Key / text A → Z</option>' +
           '<option value="newest">Newest first</option></select></label>' +
         '<label class="f">Show at most (0 = all)<input type="number" class="k-limit" min="0" max="500" step="1"></label>' +
+        '<label class="f" title="Every line added to this feed scrolls for this long, then drops off. A bot can still send its own ttl per line.">Each new line lasts (min, 0 = forever)<input type="number" class="k-ttl" min="0" max="10080" step="any"></label>' +
         '<label class="f">Line color (blank = text color)<input class="k-color" placeholder="#ffd23f"></label>' +
       '</div>' +
       '<div class="items-wrap"><table class="items"><thead><tr><th>Text</th><th>Key</th><th>Value</th><th>Color</th><th></th><th></th></tr></thead><tbody></tbody></table></div>' +
@@ -517,6 +555,7 @@ function fillCard(card, f){
   q('.k-template').value = f.template || '';
   q('.k-sort').value = f.sort || 'none';
   q('.k-limit').value = f.limit || 0;
+  q('.k-ttl').value = f.ttl ? +(f.ttl / 60).toFixed(2) : 0;
   q('.k-color').value = f.color || '';
   var tb = q('tbody'); tb.innerHTML = '';
   f.items.forEach(function(it){ tb.appendChild(itemRow(it)); });
@@ -555,6 +594,7 @@ function collectFeed(card){
     template: q('.k-template').value || '{key}: {value}',
     sort: q('.k-sort').value,
     limit: parseInt(q('.k-limit').value, 10) || 0,
+    ttl: Math.max(0, Math.round((parseFloat(q('.k-ttl').value) || 0) * 60)),
     color: q('.k-color').value.trim(),
     enabled: q('.k-enabled').checked,
     source: src,
@@ -640,6 +680,10 @@ function renderApi(){
     '# replace with plain lines',
     'POST ' + b + '/feed/news   {"items":["Line one","Line two"]}',
     '',
+    '# every new line in a feed lasts 10 minutes (ttl in seconds, 0 = forever);',
+    '# a line can still send its own ttl, and ttl=0 on a line keeps just that one',
+    'POST ' + b + '/feed/news   {"ttl":600}',
+    '',
     '# remove a line (by id, key or exact text) · clear · delete · on/off',
     'GET  ' + b + '/feed/balances/remove?key=bob',
     'GET  ' + b + '/feed/news/clear        GET ' + b + '/feed/news/delete',
@@ -678,12 +722,16 @@ renderGrid($('g-bar'), BAR_FIELDS);
   });
   $(id).addEventListener('change', applySoon);
 });
-makeBox($('pl-box'), function(x,y,w,h){ PLACE.box_x=x; PLACE.box_y=y; PLACE.box_w=w; PLACE.box_h=h; }, applyNow);
+makeBox($('pl-box'), function(x,y,w,h){ PLACE.box_x=x; PLACE.box_y=y; PLACE.box_w=w; PLACE.box_h=h; syncGeo(); }, applyNow);
+['g-x','g-y','g-w','g-h'].forEach(function(id){
+  $(id).addEventListener('input', geoInput);
+  $(id).addEventListener('blur', function(){ setTimeout(syncGeo, 0); });
+});
 document.querySelectorAll('[data-preset]').forEach(function(b){
   b.onclick = function(){
     var p = PRESETS[b.dataset.preset];
     PLACE = {box_x:p.box_x, box_y:p.box_y, box_w:p.box_w, box_h:p.box_h};
-    _setGeo($('pl-box'), PLACE.box_x, PLACE.box_y, PLACE.box_w, PLACE.box_h);
+    placeBox();
     if(p.radius != null) setField('radius', {t:'num'}, p.radius);
     applyNow();
   };

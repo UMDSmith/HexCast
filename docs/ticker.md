@@ -34,7 +34,7 @@ Each line has:
 | `key` | Optional. Unique within the feed, so writing the same key again **updates** that line instead of adding a new one. |
 | `value` | Optional. Numbers keep their number type, so sorting works, and are shown with thousands separators (`1,300`). |
 | `color` | Optional text color for this line (for example `#ffd23f`). |
-| `ttl` | Optional number of seconds before the line removes itself. |
+| `ttl` | Optional number of seconds before the line removes itself. Leave it out to use the feed's `ttl`; send `0` to keep this line until it's removed. |
 
 ### Feed settings
 
@@ -44,6 +44,7 @@ Each line has:
 | `template` | Builds lines that have no text. `{key}`, `{value}`, `{text}` and `{label}` are filled in. Default `{key}: {value}`. |
 | `sort` | `none` (as added), `value_desc`, `value_asc`, `key` or `newest`. |
 | `limit` | Show at most N lines (0 means all), for example the top 20 balances. |
+| `ttl` | How long each **new** line in this feed lasts, in seconds (0 means forever). For example `600` makes every line scroll for 10 minutes and then drop off. Writing to a key again restarts its timer. Lines already in the feed when you set it keep their current expiry. In the panel it's set in minutes. |
 | `color` | Default color for this feed's lines. |
 | `enabled` | Whether the feed is on air. Turning it off keeps its lines. |
 | `source` | Optional JSON URL to pull the lines from. See [Pulling from a URL](#pulling-from-a-url). |
@@ -57,7 +58,8 @@ is created the first time something writes to it.
 ```
 GET|POST /ticker/api/say?text=...&ttl=60&color=#ffd23f
          One-off announcement in the "announce" feed. It scrolls next and is
-         removed after ttl seconds (default 60; ttl=0 keeps it).
+         removed after ttl seconds (default: the announce feed's ttl if it
+         has one, else 60; ttl=0 keeps it).
 
 GET|POST /ticker/api/feed/{name}/add?text=...           add a line
 GET|POST /ticker/api/feed/{name}/add?key=alice&value=1300
@@ -159,7 +161,9 @@ Everything on the panel applies live, with no Save button for the look:
   opacity** (how see-through the background is); border; corner radius;
   padding; soft **fade edges**; and **ticker opacity** (the whole ticker,
   text included).
-- **Placement:** drag or resize the box over the live preview, or use the
-  presets (bottom strip, top strip, lower third, corner box).
+- **Placement:** drag or resize the box over the live preview, type exact
+  numbers (left, top and width in %, **bar height** in 1080p pixels), or use
+  the presets (bottom strip, top strip, lower third, corner box). A bar sitting
+  on the bottom edge grows upward when you raise its height.
 
 The panel's preview doesn't count as a connected overlay.

@@ -22,7 +22,8 @@ What scrolls is a list of named **feeds**, each a list of items:
     follows within a second.
   * A feed can poll a JSON URL (list or {key: value} dict) on an interval.
 
-Items can expire (`ttl` seconds). The overlay pulls the next item from the live
+Items can expire (`ttl` seconds), and a feed can give every new line a default
+lifetime (its own `ttl`, e.g. 600 = each new line scrolls for 10 minutes). The overlay pulls the next item from the live
 list as each one scrolls off, so updates land mid-scroll without a jump.
 """
 
@@ -112,7 +113,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "opacity": 1.0,                # whole-ticker transparency
 
     # --- placement (percentages on the 1920x1080 stage) ---
-    "box_x": 0, "box_y": 91, "box_w": 100, "box_h": 7,
+    # floats, so small drags aren't truncated to whole percents on save
+    "box_x": 0.0, "box_y": 91.0, "box_w": 100.0, "box_h": 7.0,
 }
 
 _CHOICES = {
@@ -154,9 +156,9 @@ def _clean_config(cfg: dict) -> dict:
     out["opacity"] = max(0.0, min(1.0, out["opacity"]))
     out["bg_opacity"] = max(0.0, min(1.0, out["bg_opacity"]))
     for k in ("box_x", "box_y"):
-        out[k] = max(0, min(100, out[k]))
+        out[k] = round(max(0.0, min(100.0, out[k])), 2)
     for k in ("box_w", "box_h"):
-        out[k] = max(1, min(100, out[k]))
+        out[k] = round(max(1.0, min(100.0, out[k])), 2)
     return out
 
 
@@ -183,6 +185,7 @@ CONFIG = load_config()
 # feeds
 # --------------------------------------------------------------------------
 # A feed: {"name", "label", "enabled", "color", "template", "sort", "limit",
+#          "ttl" (seconds each new line lasts, 0 = forever),
 #          "source": {...}, "items": [item, ...]}
 # An item: {"id", "text", "key", "value", "color", "expires_at"}
 #   - explicit `text` is shown as-is; otherwise the feed's `template` is filled
@@ -208,6 +211,7 @@ DEFAULT_SOURCE: dict[str, Any] = {
 FEEDS: list[dict] = []
 _SOURCE_STATE: dict[str, dict] = {}   # feed name -> {"next_at", "last_ok", "last_error", "count"}
 _FILE_MTIME: float | None = None      # mtime of our own last write / read
+_LOADED = False                       # set after the first load_feeds()
 _LOCK = asyncio.Lock()
 
 
@@ -251,16 +255,19 @@ def _norm_item(raw: Any) -> dict | None:
     if not text and not key and value is None:
         return None
     exp = raw.get("expires_at")
-    if exp is None and raw.get("ttl") not in (None, "", 0, "0"):
+    ttl = raw.get("ttl")
+    forever = (exp is None and ttl is not None
+               and str(ttl).strip().lower() in ("0", "0.0", "none", "never", "forever"))
+    if exp is None and not forever and ttl not in (None, ""):
         try:
-            exp = _now() + max(1.0, float(raw.get("ttl")))
+            exp = _now() + max(1.0, float(ttl))
         except (TypeError, ValueError):
             exp = None
     try:
         exp = float(exp) if exp is not None else None
     except (TypeError, ValueError):
         exp = None
-    return {
+    out = {
         "id": str(raw.get("id") or _new_id())[:16],
         "text": text,
         "key": key,
@@ -269,6 +276,9 @@ def _norm_item(raw: Any) -> dict | None:
         "expires_at": exp,
         "added_at": float(raw.get("added_at") or _now()),
     }
+    if forever:
+        out["_forever"] = True   # explicit ttl=0: skip the feed's default lifetime (popped before saving)
+    return out
 
 
 def _norm_source(raw: Any) -> dict:
@@ -296,6 +306,10 @@ def _norm_feed(raw: dict, name: str | None = None) -> dict | None:
         limit = max(0, int(float(raw.get("limit") or 0)))
     except (TypeError, ValueError):
         limit = 0
+    try:
+        ttl = max(0, min(7 * 86400, int(float(raw.get("ttl") or 0))))
+    except (TypeError, ValueError):
+        ttl = 0
     items = []
     seen_keys: dict[str, int] = {}
     for it in (raw.get("items") or [])[:MAX_ITEMS]:
@@ -316,9 +330,34 @@ def _norm_feed(raw: dict, name: str | None = None) -> dict | None:
         "template": str(raw.get("template") or "{key}: {value}")[:200],
         "sort": sort if sort in SORTS else "none",
         "limit": limit,
+        "ttl": ttl,
         "source": _norm_source(raw.get("source")),
         "items": items,
     }
+
+
+def _stamp_lifetimes(new: dict, old: dict | None, stamp: bool = True) -> None:
+    """After a bulk write (panel save, items/values post, URL poll, file edit): lines
+    that were already in the feed keep their id and expiry; lines that are new get
+    the feed's default lifetime (`ttl` seconds, 0 = forever) unless they carry their own."""
+    prev_ids: dict[str, dict] = {}
+    prev_keys: dict[str, dict] = {}
+    for it in (old or {}).get("items") or []:
+        prev_ids[it["id"]] = it
+        if it["key"]:
+            prev_keys[it["key"]] = it
+    now = _now()
+    used: set[str] = set()
+    for it in new["items"]:
+        forever = it.pop("_forever", False)
+        prev = prev_ids.get(it["id"]) or (prev_keys.get(it["key"]) if it["key"] else None)
+        if prev is not None and prev["id"] not in used:
+            it["id"] = prev["id"]            # same line, so the overlay doesn't treat it as brand new
+            if it["expires_at"] is None and not forever:
+                it["expires_at"] = prev["expires_at"]
+        elif stamp and it["expires_at"] is None and not forever and new.get("ttl"):
+            it["expires_at"] = now + new["ttl"]
+        used.add(it["id"])
 
 
 def _feed(name: str) -> dict | None:
@@ -397,7 +436,7 @@ def _public_feed(f: dict) -> dict:
 
 def load_feeds() -> bool:
     """(Re)read the feeds file. Returns False (keeping the current feeds) if it's unreadable."""
-    global FEEDS, _FILE_MTIME
+    global FEEDS, _FILE_MTIME, _LOADED
     raw: Any = {}
     if FEEDS_PATH.exists():
         try:
@@ -423,8 +462,12 @@ def load_feeds() -> bool:
         n = _norm_feed(f)
         if n and n["name"] not in seen:
             seen.add(n["name"])
+            # on an external edit, lines the bot just wrote into the file get the
+            # feed's lifetime; on startup nothing is new, so nothing is stamped
+            _stamp_lifetimes(n, _feed(n["name"]), stamp=_LOADED)
             feeds.append(n)
     FEEDS = feeds
+    _LOADED = True
     return True
 
 
@@ -573,7 +616,9 @@ async def poll_source(feed: dict) -> None:
         f = _feed(name)
         if not f or f["source"]["url"] != src["url"]:
             return
-        f["items"] = _norm_feed({"name": name, "items": raw})["items"]
+        fresh = _norm_feed({"name": name, "ttl": f["ttl"], "items": raw})
+        _stamp_lifetimes(fresh, f)
+        f["items"] = fresh["items"]
         st.update(last_ok=_now(), last_error=None, count=len(f["items"]))
         await _changed()
 
@@ -680,7 +725,7 @@ def _bad_name(name: str) -> JSONResponse:
                 detail="feed names are 1-40 chars of a-z, 0-9, _ or -", name=name)
 
 
-FEED_FIELDS = ("label", "enabled", "color", "template", "sort", "limit", "source")
+FEED_FIELDS = ("label", "enabled", "color", "template", "sort", "limit", "ttl", "source")
 
 
 # --------------------------------------------------------------------------
@@ -789,6 +834,8 @@ async def api_replace_feeds(request: Request):
         seen.add(n["name"])
         out.append(n)
     async with _LOCK:
+        for n in out:
+            _stamp_lifetimes(n, _feed(n["name"]))
         FEEDS = out
         for name in list(_SOURCE_STATE):
             if not _feed(name):
@@ -854,6 +901,7 @@ async def api_put_feed(name: str, request: Request):
         elif "text" in p and "items" not in base:
             base["items"] = [p["text"]]
         new = _norm_feed(base, n)
+        _stamp_lifetimes(new, f)
         if f:
             FEEDS[FEEDS.index(f)] = new
         else:
@@ -872,13 +920,10 @@ async def _add(name: str, p: dict, default_ttl: float | None = None,
     n = _norm_name(name)
     if not n:
         return _bad_name(name)
-    if default_ttl is not None and p.get("ttl") in (None, ""):
-        p["ttl"] = default_ttl
-    if str(p.get("ttl")) in ("0", "none", "never"):
-        p["ttl"] = None
     item = _norm_item(p)
     if not item:
         return _err("empty_item", detail="send text, or key and/or value")
+    forever = item.pop("_forever", False)
     async with _LOCK:
         f = _feed(n)
         created = f is None
@@ -888,6 +933,10 @@ async def _add(name: str, p: dict, default_ttl: float | None = None,
                 FEEDS.insert(0, f)
             else:
                 FEEDS.append(f)
+        # no ttl given: use the feed's line lifetime (then the route's default)
+        life = f["ttl"] or default_ttl
+        if item["expires_at"] is None and not forever and life:
+            item["expires_at"] = _now() + life
         updated = False
         if item["key"]:
             for i, old in enumerate(f["items"]):
@@ -918,7 +967,8 @@ async def _add(name: str, p: dict, default_ttl: float | None = None,
 @router.api_route("/api/feed/{name}/add", methods=["GET", "POST"])
 async def api_add(name: str, request: Request):
     """Add one item - or, with `key`, upsert it (same key updates in place).
-    Params: text, key, value, color, ttl (seconds), first (1 = put at the front)."""
+    Params: text, key, value, color, ttl (seconds; default = the feed's line
+    lifetime, 0 = keep forever), first (1 = put at the front)."""
     ensure_started()
     return await _add(name, await _params(request))
 
@@ -1018,7 +1068,8 @@ async def api_delete(name: str):
 @router.api_route("/api/say", methods=["GET", "POST"])
 async def api_say(request: Request):
     """One-off announcement: adds to the `announce` feed (first in line) and expires
-    after `ttl` seconds (default 60; ttl=0 keeps it until removed)."""
+    after `ttl` seconds (default: the announce feed's line lifetime, else 60;
+    ttl=0 keeps it until removed)."""
     ensure_started()
     p = await _params(request)
     if not str(p.get("text") or "").strip():
