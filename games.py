@@ -12,24 +12,27 @@ Adds:
     http://localhost:4747/games/overlay              -> OBS browser source (?game=roulette to filter)
     http://localhost:4747/games/api                  -> bot API index
     http://localhost:4747/games/api/roulette/spin    -> spin the wheel (GET or POST, alias /play)
+    http://localhost:4747/games/api/roulette/bet     -> put chat bets on the roulette table (the next spin)
     http://localhost:4747/games/api/craps/bet        -> put chat bets on the craps table (hexcoins)
     http://localhost:4747/games/api/craps/roll       -> throw the dice (GET or POST, alias /spin, /play)
-    http://localhost:4747/games/api/craps/ledger     -> every coin movement, by seq (for the bank bot)
+    http://localhost:4747/games/api/{game}/timer     -> start the countdown now (spins / rolls at zero)
+    http://localhost:4747/games/api/ledger           -> every coin movement, by seq (for the bank bot)
     http://localhost:4747/games/api/roulette/announce -> show the bot's own winners card (it did the math)
     http://localhost:4747/games/api/craps/board      -> show the bot's own "on the table" board
     ws://localhost:4747/games/ws/overlay             -> overlay feed
-    ws://localhost:4747/games/ws/panel               -> panel feed (+ craps "ledger" pushes)
+    ws://localhost:4747/games/ws/panel               -> panel feed (+ "ledger" pushes, one per game)
 
 A small framework for programmatic, bot-driven stream games. Every game is a
 subclass of `Game` registered in `GAMES`; the generic /games/api/{game}/...
 routes, the spin lifecycle (spinning -> result -> cooldown -> idle), history,
-visibility and the websocket feed are shared. Roulette is the first game
-(an American double-zero wheel, with the full standard bet table resolved
-server-side so a chat bot can run a points casino). Craps is the second: a
-persistent bank-craps table (bets stay down across rolls), every bet settled
-by standard casino rules, and a sequenced, persisted ledger that tells the
-external bank (the bot holding everyone's hexcoins) exactly what to debit and
-credit - Hexcast itself never holds a balance.
+visibility, the countdown and the websocket feed are shared. Roulette is the
+first game (an American double-zero wheel, with the full standard bet table
+resolved server-side so a chat bot can run a points casino). Craps is the
+second: a persistent bank-craps table (bets stay down across rolls), every bet
+settled by standard casino rules. Both keep a table (`TableGame`: bets placed
+ahead of the spin / roll, persisted) and share one sequenced, persisted ledger
+that tells the external bank (the bot holding everyone's hexcoins) exactly
+what to debit and credit - Hexcast itself never holds a balance.
 
 Fairness: the SERVER picks the outcome with secrets.SystemRandom(), uniformly
 over the wheel's pockets / the dice faces. The overlay only animates the
@@ -74,7 +77,8 @@ CONFIG_DIR = Path(os.environ.get("HEXCAST_CONFIG_DIR", BASE_DIR / "config"))
 CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 CONFIG_PATH = CONFIG_DIR / "games.json"
 CRAPS_TABLE_PATH = CONFIG_DIR / "games_craps_table.json"   # the craps table (bets survive restarts)
-LEDGER_PATH = CONFIG_DIR / "games_ledger.jsonl"             # every coin movement, one JSON per line
+ROULETTE_TABLE_PATH = CONFIG_DIR / "games_roulette_table.json"   # roulette bets waiting for the next spin
+LEDGER_PATH = CONFIG_DIR / "games_ledger.jsonl"             # every coin movement (every game), one JSON per line
 
 
 def _read_static(name: str) -> str:
@@ -108,9 +112,12 @@ COINS_MAX = 10 ** 12            # craps: largest single amount (whole coins)
 LEDGER_MEMORY = 10_000          # ledger events kept in memory for /ledger
 LEDGER_ROTATE_BYTES = 10 * 1024 * 1024   # games_ledger.jsonl -> .1 at this size
 LEDGER_LIMIT_MAX = 5000         # /ledger?limit= cap
+ROULETTE_TABLE_MAX = 1000       # roulette: bet lines on the table (the next spin)
+TIMER_SECONDS_MIN = 5.0         # /timer: countdown length clamp (config bet_window_seconds too)
+TIMER_SECONDS_MAX = 300.0
 
 ANNOUNCE_LINES_MAX = 50         # display: lines kept on a winners card (/announce)
-BOARD_LINES_MAX = 100           # display: lines kept on the craps "on the table" board (/craps/board)
+BOARD_LINES_MAX = 100           # display: lines kept on an "on the table" board (/craps/board, /roulette/board)
 DISPLAY_TEXT_MAX_CHARS = 60     # display: line text / empty_text length
 DISPLAY_TITLE_MAX_CHARS = 40    # display: card / board title length
 DISPLAY_CURRENCY_MAX_CHARS = 24
@@ -693,9 +700,9 @@ def _soon(coro) -> None:
 # --------------------------------------------------------------------------
 # In mode B the bot keeps the bets and pays from its own bank. Hexcast still
 # picks every outcome and animates it; the bot only tells the overlay what to
-# SHOW: a winners card after a result (/announce, every game) and, for craps,
-# the "on the table" board (/craps/board). Display calls never touch a table's
-# bets, the ledger, history or stats.
+# SHOW: a winners card after a result (/announce, every game) and, for the
+# table games, the "on the table" board (/craps/board, /roulette/board).
+# Display calls never touch a table's bets, the ledger, history or stats.
 
 def _display_text(v: Any, limit: int) -> str | None:
     """A display string: control chars removed, trimmed, at most `limit` chars.
@@ -781,21 +788,35 @@ def _display_lines(entries: list, limit: int, signed: bool) -> list[dict]:
 #   +result_s  -> state "cooldown" (or "idle"); /show flag cleared
 #   +cooldown  -> state "idle"
 #
-# Hooks a game may override (the defaults are exactly roulette's behaviour):
+# Hooks a game may override (TableGame below fills most of them in for the
+# games with a table - roulette and craps):
 #   duration_range()        clamp for a spin's `duration` (+ duration_key: config default)
-#   spin_outcome()          game-specific SPIN fields computed at spin time (roulette: bets, summary)
-#   state_extra()           merged into STATE (craps: {"table": TABLE})
-#   extra_visible()         OR'ed into visible() unless hidden (craps: bets on the table)
+#   spin_outcome()          game-specific SPIN fields computed at spin time (default: the spin's own bets)
+#   state_extra()           merged into STATE (table games: {"table": TABLE})
+#   table_view()            the TABLE object (table games), else None
+#   extra_visible()         OR'ed into visible() unless hidden (table games: bets on the table)
 #   on_commit(spin)         after a non-test spin is committed (land / stop / heal / crash)
-#   on_idle()               after a run fully ends on its own (result/cooldown over, or healed)
-#   on_config()             after a config save
+#   on_idle()               after a run fully ends on its own (result/cooldown over, or healed):
+#                           default = arm the auto countdown
+#   on_config()             after a config save: default = arm / cancel the auto countdown
 #   before_spin(params)     sync, between the busy check and the start (craps: place `bets`)
 #   spin_response(...)      extra fields for the spin HTTP response
 #   validate(params)        /validate body;  bets_payload()  /bets body
+#   auto_key, has_table_bets(), auto_params()   the countdown (see below)
 #
 # Every game also carries the bot's winners card (/announce, STATE.announce):
 # display only, it keeps the game visible while it is up, expires on its own
 # (server clears it + broadcasts) and a new spin takes it down.
+#
+# The countdown (craps' auto-roll, roulette's auto-spin, /timer) is shared too.
+# Two kinds: "auto" - the bet window, armed when the config flag `auto_key` is
+# on, bets are down and the game is idle (first bet, back to idle with bets
+# still down, flag switched on); "manual" - /timer, one-shot, runs even with no
+# bets and the flag off. At zero the game spins exactly like /spin (an "auto"
+# one only if the flag is still on and bets are still down). Any spin (test ones
+# too), /stop, /timer/cancel and /clear cancel either kind; the table emptying
+# and the flag switching off cancel only an "auto" one. A running countdown
+# keeps the game visible (unless hidden).
 
 
 class _Run:
@@ -823,6 +844,7 @@ class Game:
     has_bets: bool = False
     duration_key: str = "spin_seconds"    # config key holding the default spin length
     launch_clip_key: str = "spin_clip"    # config key of the soundboard clip fired at launch
+    auto_key: str | None = None           # config flag of the automatic countdown (craps auto_roll ...)
 
     def __init__(self) -> None:
         self.state = "idle"             # idle | spinning | result | cooldown
@@ -834,6 +856,10 @@ class Game:
         self._announce_until: float | None = None   # epoch it expires at
         self._announce_task: asyncio.Task | None = None
         self._announce_token: object | None = None
+        self.auto_at: float | None = None           # the countdown: epoch it fires at (None = not counting)
+        self.auto_kind: str | None = None           # "auto" (bet window) | "manual" (/timer)
+        self.auto_task: asyncio.Task | None = None
+        self._auto_token: object | None = None
         self.reset_stats()
 
     # ---- config ----------------------------------------------------------
@@ -917,6 +943,9 @@ class Game:
     def state_extra(self) -> dict:
         return {}
 
+    def table_view(self) -> dict | None:
+        return None
+
     def extra_visible(self) -> bool:
         return False
 
@@ -924,10 +953,13 @@ class Game:
         pass
 
     def on_idle(self) -> None:
-        pass
+        self.arm_auto()                   # bets still down after a spin -> next countdown
 
     def on_config(self) -> None:
-        pass
+        if self.auto_on():
+            self.arm_auto()
+        else:
+            self.cancel_auto("auto")      # a /timer countdown keeps running
 
     def before_spin(self, params: dict) -> Any:
         return None
@@ -1015,7 +1047,7 @@ class Game:
         if self.hidden:
             return False
         return (self.state == "result" or self.shown or not self.cfg.get("hide_when_idle", True)
-                or self.extra_visible() or self.announce_active())
+                or self.auto_at is not None or self.extra_visible() or self.announce_active())
 
     def last(self) -> dict | None:
         return self.history[0] if self.history else None
@@ -1138,6 +1170,85 @@ class Game:
         except Exception:
             pass
 
+    # ---- the countdown: auto-spin / auto-roll and /timer (see the top) ---------
+
+    def auto_on(self) -> bool:
+        """The automatic countdown's config flag is on."""
+        return bool(self.auto_key and self.cfg.get(self.auto_key))
+
+    def has_table_bets(self) -> bool:
+        return False
+
+    def auto_params(self) -> dict:
+        """The params a spin started by the countdown is built with (craps: the shooter)."""
+        return {}
+
+    def auto_in_ms(self) -> int | None:
+        if self.auto_at is None:
+            return None
+        return max(0, int(round((self.auto_at - time.time()) * 1000)))
+
+    def arm_auto(self) -> bool:
+        """Start the bet-window countdown if the flag is on, bets are down, the game
+        is idle and no countdown is running."""
+        if not self.auto_on() or not self.has_table_bets() or self.state != "idle" or self.auto_at is not None:
+            return False
+        return self._arm_countdown(float(self.cfg.get("bet_window_seconds", 20)), "auto")
+
+    def start_timer(self, seconds: float) -> bool:
+        """/timer: (re)start a one-shot countdown now, with or without bets, flag on or
+        off. Callers check busy first. Like a spin, it takes a /hide down."""
+        self.cancel_auto()
+        self.hidden = False
+        return self._arm_countdown(seconds, "manual")
+
+    def _arm_countdown(self, seconds: float, kind: str) -> bool:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return False
+        self.auto_at, self.auto_kind = time.time() + seconds, kind
+        token = self._auto_token = object()
+        self.auto_task = loop.create_task(self._auto_fire(token, self.auto_at))
+        return True
+
+    def cancel_auto(self, kind: str | None = None) -> bool:
+        """Cancel the countdown - only if it is a `kind` one, when given. True if one was running."""
+        if kind is not None and self.auto_kind != kind:
+            return False
+        was = self.auto_at is not None
+        self.auto_at, self.auto_kind, self._auto_token = None, None, None
+        task, self.auto_task = self.auto_task, None
+        if task is not None and not task.done():
+            try:
+                current = asyncio.current_task()
+            except RuntimeError:
+                current = None
+            if task is not current:
+                task.cancel()
+        return was
+
+    async def _auto_fire(self, token: object, at: float) -> None:
+        try:
+            await asyncio.sleep(max(0.0, at - time.time()))
+        except asyncio.CancelledError:
+            return
+        if self._auto_token is not token:
+            return
+        kind = self.auto_kind
+        self.auto_at, self.auto_kind, self.auto_task, self._auto_token = None, None, None, None
+        try:
+            self._heal()
+            if self.state == "idle" and (kind == "manual" or (self.has_table_bets() and self.auto_on())):
+                spin = self.build_spin(self.auto_params())
+                self.start(spin)          # exactly like /spin (no await since the idle check)
+        except Exception:
+            log.exception("[games] %s countdown spin failed", self.key)
+        try:
+            await HUB.broadcast_state(self)
+        except Exception:
+            pass
+
     def state_view(self) -> dict:
         """The STATE object (spec §5): spin carries elapsed_ms, history only landed spins."""
         self._heal()
@@ -1216,6 +1327,7 @@ class Game:
         """Enter the spinning state and arm the timeline. Synchronous on purpose:
         the busy check and this must not be separated by an await."""
         cfg = self.cfg
+        self.cancel_auto()                  # any spin / roll (test ones too) cancels the countdown
         self.clear_announce()               # a new spin / roll takes any winners card down
         result_end = spin["lands_at"] + spin["result_ms"] / 1000.0
         idle_at = result_end + float(cfg.get("cooldown_seconds", 0) or 0)
@@ -1284,8 +1396,9 @@ class Game:
         await HUB.broadcast_state(self)
 
     def stop(self) -> bool:
-        """Abort: cancel timers, commit an in-flight spin, go idle + hidden.
-        Returns True if something was active."""
+        """Abort: cancel timers (the countdown too), commit an in-flight spin, go idle
+        + hidden. Returns True if something was active."""
+        self.cancel_auto()
         run = self.run
         active = self.state != "idle"
         if run is not None:
@@ -1311,17 +1424,265 @@ class Game:
 
 
 # --------------------------------------------------------------------------
+# table games (roulette + craps)
+# --------------------------------------------------------------------------
+# A table game keeps the bets placed ahead of the spin / roll on a table that is
+# persisted (bets survive restarts) and moves coins only through the shared
+# LEDGER. The table is frozen while a real spin / roll is in flight (409
+# bets_closed); its SETTLEMENTs are computed from it when the spin is built and
+# committed at landing (on_commit, via Game._commit: land / stop / heal / crash).
+#
+# What a subclass provides: DEFAULTS/SCHEMA with currency, min_bet, max_bet,
+# show_when_bets, bet_window_seconds (+ its auto_key flag); load_state(path) ->
+# (table, last_seq, journal); fresh_table(); table_data() (what save_table
+# writes); table_view(); _stake(b) / _label(b) (a bet's coins on the table / its
+# ledger label); apply_spin(table, spin) -> credit events; place_bets / remove /
+# user_view. Every table dict holds its bets in table["bets"].
+
+class TableGame(Game):
+    bet_id_prefix: str = "b"              # bet ids look like "<prefix>-1a2b3c4d"
+
+    def __init__(self, table_path: Path | None = None, ledger: Ledger | None = None,
+                 recover: bool = True) -> None:
+        super().__init__()
+        self.table_path = Path(table_path) if table_path else self.default_table_path()
+        self.ledger = ledger if ledger is not None else LEDGER
+        self.table, seq, journal = self.load_state(self.table_path)
+        # for the start-up repair (Ledger.recover): the module repairs every table at once
+        self._recovery = (self.key, self.table_path.name, journal, seq)
+        if recover:
+            self.ledger.recover([self._recovery])    # replay a half-written change; seq never goes backwards
+        self._last_commit: tuple[str | None, list[dict]] = (None, [])
+        # the bot's own "on the table" board (money mode B): memory only, never persisted;
+        # replaced (never mutated) so views may share it
+        self.display_board: dict | None = None
+
+    # ---- per-game pieces ----------------------------------------------------
+
+    def default_table_path(self) -> Path:
+        raise NotImplementedError
+
+    def load_state(self, path: Path) -> tuple[dict, int, list[dict]]:
+        raise NotImplementedError
+
+    def fresh_table(self) -> dict:
+        return {"bets": []}
+
+    def table_data(self) -> dict:
+        return {"bets": self.table["bets"]}
+
+    def _stake(self, b: dict) -> int:
+        return b["amount"]
+
+    def _label(self, b: dict) -> str:
+        return b["label"]
+
+    def apply_spin(self, table: dict, spin: dict) -> list[dict]:
+        raise NotImplementedError
+
+    # ---- config ----------------------------------------------------------
+
+    def validate_config(self, raw: Any) -> dict:
+        out = super().validate_config(raw)
+        if out["max_bet"] and out["max_bet"] < out["min_bet"]:        # must be >= min_bet, else reset
+            d = self.DEFAULTS["max_bet"]
+            out["max_bet"] = d if d >= out["min_bet"] else 0
+        return out
+
+    # ---- table -----------------------------------------------------------
+
+    def in_flight(self) -> bool:
+        """A real (non-test) spin / roll is in the air: the table is frozen."""
+        run = self.run
+        return self.state == "spinning" and run is not None and not run.spin.get("test")
+
+    def bets_closed_response(self) -> JSONResponse | None:
+        self._heal()
+        if not self.in_flight():
+            return None
+        ms = max(0, int(round((self.run.spin["lands_at"] - time.time()) * 1000)))
+        return JSONResponse({"ok": False, "error": "bets_closed", "retry_in_ms": ms}, status_code=409)
+
+    def exposure(self) -> dict[str, int]:
+        out: dict[str, int] = {}
+        for b in self.table["bets"]:
+            out[b["user"]] = out.get(b["user"], 0) + self._stake(b)
+        return out
+
+    def has_table_bets(self) -> bool:
+        return bool(self.table["bets"])
+
+    def set_board(self, params: dict) -> tuple[int, dict]:
+        """/{game}/board: the bot's own "on the table" board, shown INSTEAD of the one
+        computed from Hexcast's table bets. {"bets": []} = an empty board; clear:true
+        = back to the computed board. Allowed any time (the overlay holds table
+        updates while the ball / dice fly). Returns (status, body)."""
+        if _flag(params.get("clear")):
+            return 200, {"cleared": self.clear_board()}
+        entries, err = _display_entries(params, "bets")
+        if err:
+            return 400, {"error": err}
+        if entries is None:
+            return 400, {"error": "board needs bets:[{user, text, amount}] ([] = an empty board) or clear:true"}
+        lines = _display_lines(entries, BOARD_LINES_MAX, signed=False)
+        if entries and not lines:
+            return 400, {"error": "no valid bets: each line needs a user or a text; amount must be a finite "
+                                  "number, 0..1e12"}
+        title = _display_text(params.get("title"), DISPLAY_TITLE_MAX_CHARS) or "ON THE TABLE"
+        self.display_board = {"title": title, "bets": lines,
+                              "total": _num(sum(ln["amount"] or 0 for ln in lines))}
+        return 200, {}
+
+    def clear_board(self) -> bool:
+        was = self.display_board is not None
+        self.display_board = None
+        return was
+
+    def save_table(self, journal: list[dict] | None = None) -> bool:
+        """Atomically write the table. `journal`: the ledger events of this change
+        (stamped, not yet in the ledger file) - see _persist()."""
+        data = {"version": 1, **self.table_data(), "last_seq": self.ledger.last_seq,
+                "saved_at": round(time.time(), 3), "journal": journal or []}
+        return _atomic_write_text(self.table_path, json.dumps(data, indent=1))
+
+    def _persist(self, events: list[dict]) -> list[dict]:
+        """Persist a table change + its ledger events, crash-safe: stamp the seqs ->
+        save the table WITH the events as its journal -> append them to the ledger.
+        A crash between the two writes is repaired at start-up (Ledger.recover
+        replays the journals), so the table and the ledger never disagree - a settled
+        bet can't be paid twice, a debit can't vanish. The journal also carries any
+        earlier events (of either game) whose ledger write failed. Returns the logged events."""
+        stamped = self.ledger.stamp([{"game": self.key, **e} for e in events])     # each event names its game
+        self.save_table(journal=self.ledger.unwritten + stamped)
+        return self.ledger.write(stamped)
+
+    def _bet_by_id(self, bet_id: str) -> dict | None:
+        for b in self.table["bets"]:
+            if b["id"] == bet_id:
+                return b
+        return None
+
+    def _new_bet_id(self) -> str:
+        ids = {b["id"] for b in self.table["bets"]}
+        while True:
+            bid = f"{self.bet_id_prefix}-{secrets.token_hex(4)}"
+            if bid not in ids:
+                return bid
+
+    def clear_table(self) -> dict:
+        """Refund every bet; the table starts over. Cancels any countdown."""
+        events = [_ev("credit", b["user"], self._stake(b), "refund", b["id"], self._label(b), None)
+                  for b in self.table["bets"]]
+        self.table = self.fresh_table()
+        logged = self._persist(events)
+        self.cancel_auto()
+        return {"credits": _aggregate_credits(logged, "amount"), "ledger": logged, "refunded": len(logged)}
+
+    # ---- spins -----------------------------------------------------------
+
+    def start(self, spin: dict) -> _Run:
+        run = super().start(spin)
+        run.extra["table_before"] = self.table_view()   # ball / dice in the air: bets_open false
+        return run
+
+    def spin_response(self, run: _Run, pre: Any, waited: bool) -> dict:
+        out: dict[str, Any] = {}
+        if pre is not None:
+            out["placed"] = pre
+        if waited:
+            out["table"] = self.table_view()
+            sid, events = self._last_commit
+            if run.committed and not run.spin.get("test"):
+                out["ledger"] = events if sid == run.spin["id"] else []
+        else:
+            out["table"] = run.extra.get("table_before") or self.table_view()
+        return out
+
+    def on_commit(self, spin: dict) -> None:
+        table = copy.deepcopy(self.table)
+        events = self.apply_spin(table, spin)
+        self.table = table
+        logged = self._persist(events)
+        self._last_commit = (spin["id"], logged)
+        _soon(_flush_ledger())
+
+    # ---- STATE / visibility ----------------------------------------------
+
+    def state_extra(self) -> dict:
+        return {"table": self.table_view()}
+
+    def extra_visible(self) -> bool:
+        board = self.display_board           # the bot's board counts too (mode B)
+        return bool(self.cfg.get("show_when_bets", True)
+                    and (self.table["bets"] or (board is not None and board["bets"])))
+
+
+# --------------------------------------------------------------------------
 # roulette
 # --------------------------------------------------------------------------
 
 _THEMES = ("classic", "neon", "midnight", "royal")
+_ROULETTE_BET_HINT = ("try red, black, odd, even, low, high, dozen2, col3, 17, 0, 00, split:17/20, street:13, "
+                      "corner:17, line:13 or basket - GET /games/api/roulette/bets lists every form")
 
 
-class Roulette(Game):
+def roulette_bet_view(b: dict) -> dict:
+    """Public BET object (BETVIEW) of a roulette table bet."""
+    return {"id": b["id"], "user": b["user"], "bet": b["bet"], "label": b["label"], "type": b["type"],
+            "numbers": list(b["numbers"]), "odds": b["odds"], "amount": b["amount"],
+            "pays": b["amount"] * (b["odds"] + 1), "placed_at": b["placed_at"], "removable": True}
+
+
+def roulette_settle(bets: list[dict], result: dict) -> list[dict]:
+    """Every SETTLEMENT of a spin: one per table bet (all roulette bets are one-spin
+    bets), resolved like resolve_bet: payout = win ? amount*odds : -amount (net),
+    credit = win ? amount*(odds+1) : 0 (coins to pay back at landing)."""
+    out = []
+    for b in bets:
+        a, o = b["amount"], b["odds"]
+        win = result.get("number") in b["numbers"]
+        out.append({"bet_id": b["id"], "user": b["user"], "bet": b["bet"], "label": b["label"], "type": b["type"],
+                    "amount": a, "odds": o, "win": win, "payout": a * o if win else -a,
+                    "credit": a * (o + 1) if win else 0})
+    return out
+
+
+def roulette_table_summary(settlements: list[dict]) -> dict:
+    """The house's view of a spin's table bets: wagered - paid = net."""
+    wagered = sum(s["amount"] for s in settlements)
+    paid = sum(s["credit"] for s in settlements)
+    return {"bets": len(settlements), "wagered": wagered, "paid": paid, "net": wagered - paid}
+
+
+def roulette_apply(table: dict, spin: dict) -> list[dict]:
+    """Commit a (non-test) spin to `table` in place: every settled bet comes down,
+    winners get one credit (stake + winnings; a losing stake was debited at /bet).
+    Returns the credit events (no seq yet)."""
+    spin_id = spin.get("id")
+    live = {b["id"]: b for b in table["bets"]}
+    gone: set[str] = set()
+    events: list[dict] = []
+    for s in spin.get("settlements") or []:
+        b = live.get(s["bet_id"])
+        if (b is None or b["user"] != s["user"] or b["amount"] != s["amount"] or b["type"] != s["type"]
+                or b["label"] != s["label"]):
+            log.warning("[games] roulette spin %s: bet %s changed while the ball flew - not settled", spin_id,
+                        s["bet_id"])
+            continue
+        gone.add(b["id"])
+        if s["credit"] > 0:
+            events.append(_ev("credit", b["user"], s["credit"], "win", b["id"], b["label"], spin_id))
+    table["bets"] = [b for b in table["bets"] if b["id"] not in gone]
+    return events
+
+
+class Roulette(TableGame):
     key = "roulette"
     title = "Roulette"
     id_prefix = "r"
-    has_bets = True
+    has_bets = True                    # bets on the spin call (direct) - besides the table
+    auto_key = "auto_spin"
+    bet_id_prefix = "rb"
 
     # No `wheel` key: the wheel is always American double-zero. A legacy
     # "wheel" in a saved config is an unknown key and is dropped on load.
@@ -1341,6 +1702,12 @@ class Roulette(Game):
         "sfx": True, "sfx_volume": 0.5, # overlay's synthesized ball sounds
         "spin_clip": "", "land_clip": "",                        # soundboard clips
         "cooldown_seconds": 0,          # extra lockout after the result phase
+        "currency": "hexcoins",
+        "min_bet": 1, "max_bet": 100000,                        # table bets only; max_bet 0 = no max
+        "auto_spin": False, "bet_window_seconds": 20,
+        "show_when_bets": True,         # stay visible while bets (or the bot's board) are down
+        "show_table": True, "table_max": 6,                     # the "on the table" board before the spin
+        "table_position": "right",      # right | left | below | above (of the wheel box)
     }
     SCHEMA: dict[str, tuple] = {
         "x": ("num", 0, 100), "y": ("num", 0, 100), "scale": ("num", 0.2, 5),
@@ -1357,10 +1724,190 @@ class Roulette(Game):
         "sfx": ("bool",), "sfx_volume": ("num", 0, 1),
         "spin_clip": ("str", 200), "land_clip": ("str", 200),
         "cooldown_seconds": ("num", 0, 3600),
+        "currency": ("name", 24),
+        "min_bet": ("int", 1, 1e9), "max_bet": ("int", 0, 1e12),
+        "auto_spin": ("bool",), "bet_window_seconds": ("num", TIMER_SECONDS_MIN, TIMER_SECONDS_MAX),
+        "show_when_bets": ("bool",),
+        "show_table": ("bool",), "table_max": ("int", 1, 20),
+        "table_position": ("enum", ("right", "left", "below", "above")),
     }
     APPEARANCE = ("x", "y", "scale", "theme", "red_color", "black_color", "green_color",
                   "result_position", "result_details", "show_result", "show_history",
-                  "history_count", "show_user", "show_bets", "bets_max", "sfx", "sfx_volume")
+                  "history_count", "show_user", "show_bets", "bets_max", "sfx", "sfx_volume",
+                  "show_table", "table_max", "table_position")
+
+    # ---- table -----------------------------------------------------------
+    # BET (internal, persisted): {id, user, bet (the text as placed), type, numbers,
+    # label, odds, amount, placed_at}. One-spin bets: every bet on the table rides on
+    # the next real spin and comes down when it lands. Always removable.
+
+    def default_table_path(self) -> Path:
+        return ROULETTE_TABLE_PATH
+
+    def load_state(self, path: Path) -> tuple[dict, int, list[dict]]:
+        return load_roulette_state(path)
+
+    def apply_spin(self, table: dict, spin: dict) -> list[dict]:
+        return roulette_apply(table, spin)
+
+    def table_view(self) -> dict:
+        """The roulette TABLE object, built fresh (auto_spin_in_ms is 'now')."""
+        cfg = self.cfg
+        exposure = self.exposure()
+        return {"bets": [roulette_bet_view(b) for b in self.table["bets"]],
+                "exposure": exposure, "total_on_table": sum(exposure.values()),
+                "bets_open": not self.in_flight(), "auto_spin_in_ms": self.auto_in_ms(),
+                "last_seq": self.ledger.last_seq, "currency": cfg["currency"],
+                "min_bet": cfg["min_bet"], "max_bet": cfg["max_bet"], "display_board": self.display_board}
+
+    def _find(self, user: str | None, btype: str, numbers: list[str]) -> dict | None:
+        for b in self.table["bets"]:
+            if b["user"] == user and b["type"] == btype and b["numbers"] == numbers:
+                return b
+        return None
+
+    def plan_bet(self, entry: Any, default_user: Any = None) -> dict:
+        """Check one bet {user, bet, amount} against the current table. ok -> the plan
+        to apply (action new | add: the same user + the same bet adds to that line);
+        else error (+ hint for bet text that doesn't parse)."""
+        cfg = self.cfg
+        cur = cfg["currency"]
+        if isinstance(entry, str):
+            entry = {"bet": entry}
+        plan: dict[str, Any] = {"ok": False, "user": None, "bet": "", "amount_in": None, "amount": None}
+        if not isinstance(entry, dict):
+            plan["error"] = "bet entry must be an object"
+            return plan
+        user = _clean_user(entry.get("user")) or _clean_user(default_user)
+        raw = entry.get("bet")
+        text = "" if raw is None or isinstance(raw, (dict, list)) else str(raw).strip()[:BET_TEXT_MAX_CHARS]
+        plan.update(user=user, bet=text, amount_in=entry.get("amount"))
+
+        def fail(msg: str, **kw) -> dict:
+            plan.update(kw)
+            plan["error"] = msg
+            return plan
+
+        p = parse_bet(text)
+        if not p["valid"]:
+            return fail(p["error"], hint=_ROULETTE_BET_HINT)
+        if not user:
+            return fail("user required")
+        amt, err = _parse_coins(entry.get("amount"))
+        if err:
+            return fail(err)
+        if amt < cfg["min_bet"]:
+            return fail(f"minimum bet is {cfg['min_bet']} {cur}")
+        existing = self._find(user, p["type"], p["numbers"])
+        total = (existing["amount"] if existing else 0) + amt
+        if cfg["max_bet"] and total > cfg["max_bet"]:
+            extra = f" ({existing['amount']} already on {p['label']})" if existing else ""
+            return fail(f"max bet is {cfg['max_bet']} {cur}{extra}")
+        if total > COINS_MAX:
+            return fail("amount too large")
+        if existing is None and len(self.table["bets"]) >= ROULETTE_TABLE_MAX:
+            return fail(f"the table is full ({ROULETTE_TABLE_MAX} bets) - add to a bet already down, "
+                        f"or wait for the next spin")
+        plan.update(ok=True, amount=amt, parsed=p, action="add" if existing else "new", _bet=existing)
+        plan.pop("error", None)
+        return plan
+
+    def _apply_plan(self, plan: dict) -> tuple[dict, dict]:
+        """Mutate the table for an ok plan. Returns (bet, debit event)."""
+        amt = plan["amount"]
+        if plan["action"] == "new":
+            p = plan["parsed"]
+            b = {"id": self._new_bet_id(), "user": plan["user"], "bet": plan["bet"], "type": p["type"],
+                 "numbers": list(p["numbers"]), "label": p["label"], "odds": p["odds"], "amount": amt,
+                 "placed_at": round(time.time(), 3)}
+            self.table["bets"].append(b)
+            return b, _ev("debit", b["user"], amt, "bet", b["id"], b["label"], None)
+        b = plan["_bet"]
+        b["amount"] += amt
+        return b, _ev("debit", b["user"], amt, "add", b["id"], b["label"], None)
+
+    def place_bets(self, entries: list, default_user: Any = None) -> dict:
+        """Place bets on the table (in order: later entries see earlier ones). Every
+        accepted bet is one debit ledger event. Callers must check bets_closed first."""
+        accepted, rejected, pending = [], [], []
+        for entry in entries:
+            plan = self.plan_bet(entry, default_user)
+            if not plan["ok"]:
+                rej = {"user": plan["user"], "bet": plan["bet"], "amount": _echo(plan["amount_in"]),
+                       "error": plan["error"]}
+                if plan.get("hint"):
+                    rej["hint"] = plan["hint"]
+                rejected.append(rej)
+                continue
+            bet, ev = self._apply_plan(plan)
+            view = roulette_bet_view(bet)
+            view.update(action=plan["action"], added=plan["amount"])
+            accepted.append(view)
+            pending.append(ev)
+        debits = []
+        if pending:
+            logged = self._persist(pending)
+            debits = [{"user": e["user"], "amount": e["amount"], "bet_id": e["bet_id"], "seq": e["seq"],
+                       "reason": e["reason"]} for e in logged]
+        return {"accepted": accepted, "rejected": rejected, "debits": debits}
+
+    def remove(self, params: dict) -> tuple[int, dict]:
+        """Take bets down: {bet_id} | {user, bet} | {user, all:true}. Returns (status, body)."""
+        user = _clean_user(params.get("user"))
+        bid = params.get("bet_id", params.get("id"))
+        bid = str(bid).strip() if bid is not None and not isinstance(bid, (dict, list, bool)) else ""
+        text = params.get("bet")
+        text = "" if text is None or isinstance(text, (dict, list)) else str(text).strip()[:BET_TEXT_MAX_CHARS]
+        if bid:
+            b = self._bet_by_id(bid)
+            if b is None:
+                return 400, {"error": f"no bet with id {bid} on the table"}
+            if user and user != b["user"]:
+                return 400, {"error": f"bet {bid} belongs to @{b['user']}"}
+            take = [b]
+        elif user and _flag(params.get("all")):
+            take = [b for b in self.table["bets"] if b["user"] == user]
+            if not take:
+                return 400, {"error": f"@{user} has no bets on the table"}
+        elif user and text:
+            p = parse_bet(text)
+            if not p["valid"]:
+                return 400, {"error": p["error"]}
+            b = self._find(user, p["type"], p["numbers"])
+            if b is None:
+                return 400, {"error": f"@{user} has no {p['label']} bet on the table"}
+            take = [b]
+        else:
+            return 400, {"error": "remove needs bet_id, or user + bet, or user + all=true"}
+
+        events, removed = [], []
+        for b in take:
+            view = roulette_bet_view(b)
+            view["refund"] = b["amount"]
+            removed.append(view)
+            events.append(_ev("credit", b["user"], b["amount"], "remove", b["id"], b["label"], None))
+        gone = {b["id"] for b in take}
+        self.table["bets"] = [b for b in self.table["bets"] if b["id"] not in gone]
+        logged = self._persist(events)
+        if not self.table["bets"]:
+            self.cancel_auto("auto")                  # the table emptied (a /timer countdown keeps running)
+        return 200, {"removed": removed, "credits": _aggregate_credits(logged, "amount"), "ledger": logged}
+
+    def user_view(self, name: Any) -> dict:
+        user = _clean_user(name)
+        bets = [roulette_bet_view(b) for b in self.table["bets"] if b["user"] == user]
+        return {"user": user, "bets": bets, "exposure": sum(b["amount"] for b in bets),
+                "session": self.ledger.session(user, self.key)}
+
+    # ---- spins -----------------------------------------------------------
+
+    def spin_outcome(self, params: dict, result: dict, user: str | None, test: bool) -> dict:
+        out = super().spin_outcome(params, result, user, test)     # the spin's own bets (direct, unchanged)
+        # the table, frozen now; committed at landing (on_commit). Test spins leave it alone.
+        settlements = [] if test else roulette_settle(self.table["bets"], result)
+        out.update(settlements=settlements, credits=_aggregate_credits(settlements),
+                   table_summary=roulette_table_summary(settlements))
+        return out
 
     def pick(self, cfg: dict) -> dict:
         # uniform over the 38 pockets, OS entropy - nothing can steer this
@@ -1948,7 +2495,7 @@ def craps_apply(table: dict, spin: dict) -> list[dict]:
 
 
 # --------------------------------------------------------------------------
-# craps: persistence (table file + ledger)
+# persistence: the table files (craps, roulette) + the shared ledger
 # --------------------------------------------------------------------------
 
 _FSYNC = True           # fsync the table file before the atomic replace (tests may turn it off)
@@ -2062,12 +2609,13 @@ def _clean_event(raw: Any) -> dict | None:
     return {k: raw.get(k) for k in keys}
 
 
-def load_craps_state(path: Path) -> tuple[dict, int, list[dict]]:
-    """(table, last_seq, journal) from games_craps_table.json. The journal holds the
-    ledger events of the table's last change (written BEFORE they're appended to
-    the ledger, so a crash between the two writes can be repaired at start-up)."""
+def _load_table_file(path: Path, clean, fresh) -> tuple[dict, int, list[dict]]:
+    """(table, last_seq, journal) from a table file (tolerant): `clean(raw)` ->
+    (table, last_seq), `fresh()` -> an empty table. The journal holds the ledger
+    events of the table's last change (written BEFORE they're appended to the
+    ledger, so a crash between the two writes can be repaired at start-up)."""
     if not path.exists():
-        return _fresh_table(), 0, []
+        return fresh(), 0, []
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
@@ -2077,17 +2625,68 @@ def load_craps_state(path: Path) -> tuple[dict, int, list[dict]]:
             bad.write_bytes(path.read_bytes())
         except OSError:
             pass
-        return _fresh_table(), 0, []
-    table, last_seq = clean_table(raw)
+        return fresh(), 0, []
+    table, last_seq = clean(raw)
     journal = raw.get("journal") if isinstance(raw, dict) else None
     events = [e for e in map(_clean_event, journal if isinstance(journal, list) else []) if e is not None]
     return table, last_seq, sorted(events, key=lambda e: e["seq"])
+
+
+def load_craps_state(path: Path) -> tuple[dict, int, list[dict]]:
+    """(table, last_seq, journal) from games_craps_table.json."""
+    return _load_table_file(path, clean_table, _fresh_table)
 
 
 def load_craps_table(path: Path) -> tuple[dict, int]:
     """Restore the table (a restart mid-roll simply loses that roll: bets stay)."""
     table, last_seq, _ = load_craps_state(path)
     return table, last_seq
+
+
+def _clean_roulette_bet(raw: Any) -> dict | None:
+    """A persisted roulette table bet, validated (None = unusable): its bet text is
+    parsed again and must give the stored type and numbers; label and odds come
+    from that parse."""
+    if not isinstance(raw, dict):
+        return None
+    user = _clean_user(raw.get("user"))
+    bid = raw.get("id")
+    amount = _strict_int(raw.get("amount"))
+    text = raw.get("bet")
+    if (not user or not isinstance(bid, str) or not bid.strip() or amount is None or amount < 1
+            or not isinstance(text, str)):
+        return None
+    text = text.strip()[:BET_TEXT_MAX_CHARS]
+    p = parse_bet(text)
+    if not p["valid"] or p["type"] != raw.get("type") or p["numbers"] != raw.get("numbers"):
+        return None
+    placed = _as_float(raw.get("placed_at")) or 0.0
+    return {"id": bid.strip()[:64], "user": user, "bet": text, "type": p["type"], "numbers": p["numbers"],
+            "label": p["label"], "odds": p["odds"], "amount": amount, "placed_at": round(placed, 3)}
+
+
+def clean_roulette_table(raw: Any) -> tuple[dict, int]:
+    """(table, last_seq) from a parsed games_roulette_table.json (tolerant)."""
+    t: dict[str, Any] = {"bets": []}
+    if not isinstance(raw, dict):
+        return t, 0
+    seen: set[str] = set()
+    bets = raw.get("bets")
+    for rb in bets if isinstance(bets, list) else []:
+        b = _clean_roulette_bet(rb)
+        if b is None or b["id"] in seen:
+            log.error("[games] roulette table: dropped an unreadable bet %r", rb)
+            continue
+        seen.add(b["id"])
+        t["bets"].append(b)
+    last_seq = _strict_int(raw.get("last_seq"))
+    return t, (last_seq if last_seq and last_seq > 0 else 0)
+
+
+def load_roulette_state(path: Path) -> tuple[dict, int, list[dict]]:
+    """(table, last_seq, journal) from games_roulette_table.json (a restart mid-spin
+    loses that spin: the bets stay and ride on the next one)."""
+    return _load_table_file(path, clean_roulette_table, lambda: {"bets": []})
 
 
 def _tail_jsonl(path: Path, n: int) -> list[dict]:
@@ -2126,8 +2725,14 @@ def _tail_jsonl(path: Path, n: int) -> list[dict]:
     return out[-n:]
 
 
+def _event_game(ev: dict) -> str:
+    """The game a ledger event belongs to (events from before roulette had a table are craps')."""
+    return ev.get("game") or "craps"
+
+
 class Ledger:
-    """Every coin movement of the craps table (craps spec §4): sequenced, appended
+    """Every coin movement of every table game (craps spec §4) - craps and roulette
+    share it: one seq space, each event carries its own `game`. Sequenced, appended
     to games_ledger.jsonl (flushed per write, rotated to .1 at 10 MB), the last
     LEDGER_MEMORY events kept in memory. `seq` continues across restarts."""
 
@@ -2173,13 +2778,14 @@ class Ledger:
                 time.sleep(0.004 * (attempt + 1))
         log.error("[games] could not rotate %s (file locked?)", self.path)
 
-    def stamp(self, events: list[dict]) -> list[dict]:
-        """Give each event its seq/ts/game (memory only - write() persists them)."""
+    def stamp(self, events: list[dict], game: str = "craps") -> list[dict]:
+        """Give each event its seq/ts/game (memory only - write() persists them).
+        An event that already names its own `game` keeps it."""
         ts = round(time.time(), 3)
         out = []
         for e in events:
             self.last_seq += 1
-            out.append({"seq": self.last_seq, "ts": ts, "game": "craps", **e})
+            out.append({"seq": self.last_seq, "ts": ts, "game": game, **e})
         return out
 
     def _cut_back(self, size: int | None) -> bool:
@@ -2226,50 +2832,67 @@ class Ledger:
         del self.pending[:-self.memory]
         return out
 
-    def append(self, events: list[dict]) -> list[dict]:
+    def append(self, events: list[dict], game: str = "craps") -> list[dict]:
         """Stamp seq/ts/game on each event, persist them, return the stamped events."""
-        return self.write(self.stamp(events)) if events else []
+        return self.write(self.stamp(events, game)) if events else []
 
-    def recover(self, journal: list[dict], table_seq: int) -> int:
-        """Start-up repair from the craps table file: its journal events that never
-        reached the ledger (a crash between the two writes) are appended now. Then
-        seq continues from whichever file is further ahead. Returns events replayed."""
-        missing = [e for e in journal if e["seq"] > self.last_seq]
+    def recover(self, tables: list[tuple[str, str, list[dict], int]]) -> int:
+        """Start-up repair from the table files: journal events that never reached the
+        ledger (a crash between a table save and the ledger append) are appended now.
+        `tables`: one (game, file name, journal, the table's last_seq) per table file -
+        pass them ALL at once: a journal may also hold the other game's events (the ones
+        still unwritten when it was saved), so every missing seq is replayed exactly once,
+        in seq order, whichever journal has it. Then seq continues from whichever file is
+        furthest ahead. Returns events replayed."""
+        found: dict[int, dict] = {}
+        for _game, _name, journal, _seq in tables:
+            for e in journal:
+                if e["seq"] > self.last_seq:
+                    found.setdefault(e["seq"], e)
+        missing = [found[s] for s in sorted(found)]
         if missing:
-            if missing[0]["seq"] != self.last_seq + 1:
-                log.error("[games] ledger gap: seq %s..%s are missing (neither the ledger nor the table "
-                          "journal has them)", self.last_seq + 1, missing[0]["seq"] - 1)
-            log.warning("[games] replaying %d ledger event(s) (seq %s..%s) from the craps table journal",
+            expect = self.last_seq + 1
+            for e in missing:
+                if e["seq"] != expect:
+                    log.error("[games] ledger gap: seq %s..%s are missing (neither the ledger nor a table "
+                              "journal has them)", expect, e["seq"] - 1)
+                expect = e["seq"] + 1
+            log.warning("[games] replaying %d ledger event(s) (seq %s..%s) from the table journals",
                         len(missing), missing[0]["seq"], missing[-1]["seq"])
             self.last_seq = missing[-1]["seq"]
             self.write(missing)
-        if table_seq and self.last_seq > table_seq:
+        for game, name, _journal, table_seq in tables:
             # the table is always saved BEFORE its events are appended, so this only happens when a
-            # table save failed (disk full / file locked) and Hexcast stopped before the next one
-            log.error("[games] games_craps_table.json is older than the ledger (table at seq %s, ledger at %s): "
-                      "the bets moved by seq %s..%s may be missing from - or still on - the table. Check them "
-                      "against the ledger before the next roll.", table_seq, self.last_seq, table_seq + 1,
-                      self.last_seq)
-        self.last_seq = max(self.last_seq, table_seq)       # seq never goes backwards
+            # table save failed (disk full / file locked) and Hexcast stopped before the next one.
+            # Only THAT game's events count: the other game moves seq on without touching this table.
+            newer = [e["seq"] for e in self.events if e["seq"] > table_seq and _event_game(e) == game]
+            if table_seq and newer:
+                log.error("[games] %s is older than the ledger (table at seq %s, ledger at %s): the bets moved "
+                          "by seq %s..%s may be missing from - or still on - the table. Check them against the "
+                          "ledger before the next %s round.", name, table_seq, self.last_seq, newer[0], newer[-1],
+                          game)
+        self.last_seq = max([self.last_seq] + [t[3] for t in tables])      # seq never goes backwards
         return len(missing)
 
     def oldest_seq(self) -> int | None:
+        """The oldest seq still in memory (any game): older events are only in the files."""
         return self.events[0]["seq"] if self.events else None
 
-    def query(self, since: int, limit: int) -> tuple[list[dict], bool]:
-        """Events with seq > since, oldest first, at most `limit`. truncated = some
-        such events are not in this response (the limit cut it, or they are older
-        than the in-memory window - read games_ledger.jsonl for those)."""
+    def query(self, since: int, limit: int, game: str | None = None) -> tuple[list[dict], bool]:
+        """Events with seq > since (of one `game`, or every game), oldest first, at most
+        `limit`. truncated = some such events may not be in this response (the limit cut
+        it, or seqs after `since` are older than the in-memory window - read
+        games_ledger.jsonl for those)."""
         if not self.events:
             return [], self.last_seq > since
         gap = since + 1 < self.events[0]["seq"]
-        out = [e for e in self.events if e["seq"] > since]
+        out = [e for e in self.events if e["seq"] > since and (game is None or _event_game(e) == game)]
         return out[:limit], gap or len(out) > limit
 
-    def session(self, user: str | None) -> dict:
+    def session(self, user: str | None, game: str | None = None) -> dict:
         d = c = n = 0
         for e in self.events:
-            if e.get("user") == user:
+            if e.get("user") == user and (game is None or _event_game(e) == game):
                 n += 1
                 if e.get("type") == "debit":
                     d += e.get("amount", 0)
@@ -2288,13 +2911,14 @@ LEDGER = Ledger(LEDGER_PATH)
 _DICE_STYLES = ("red", "white", "black", "gold")
 
 
-class Craps(Game):
+class Craps(TableGame):
     key = "craps"
     title = "Craps"
     id_prefix = "c"
     has_bets = False                   # bets live on the table, not on a roll
     duration_key = "roll_seconds"
     launch_clip_key = "roll_clip"
+    auto_key = "auto_roll"
 
     DEFAULTS: dict[str, Any] = {
         # placement: tray centre in % of the 1920x1080 stage; scale x the 720x405 tray
@@ -2341,51 +2965,33 @@ class Craps(Game):
     APPEARANCE = ("x", "y", "scale", "theme", "dice_style", "show_point", "show_history", "history_count",
                   "show_user", "show_bets", "bets_max", "show_payouts", "payouts_max", "sfx", "sfx_volume")
 
-    def __init__(self, table_path: Path | None = None, ledger: Ledger | None = None) -> None:
-        super().__init__()
-        self.table_path = Path(table_path) if table_path else CRAPS_TABLE_PATH
-        self.ledger = ledger if ledger is not None else LEDGER
-        self.table, seq, journal = load_craps_state(self.table_path)
-        self.ledger.recover(journal, seq)     # replay a half-written change; seq never goes backwards
-        self.auto_at: float | None = None
-        self.auto_task: asyncio.Task | None = None
-        self._auto_token: object | None = None
-        self._last_commit: tuple[str | None, list[dict]] = (None, [])
-        # the bot's own "on the table" board (money mode B): memory only, never persisted;
-        # replaced (never mutated) so views may share it
-        self.display_board: dict | None = None
-
-    # ---- config ----------------------------------------------------------
-
-    def validate_config(self, raw: Any) -> dict:
-        out = super().validate_config(raw)
-        if out["max_bet"] and out["max_bet"] < out["min_bet"]:        # must be >= min_bet, else reset
-            d = self.DEFAULTS["max_bet"]
-            out["max_bet"] = d if d >= out["min_bet"] else 0
-        return out
-
     def duration_range(self) -> tuple[float, float]:
         return ROLL_SECONDS_MIN, ROLL_SECONDS_MAX
 
     # ---- table -----------------------------------------------------------
 
-    def dice_in_air(self) -> bool:
-        """A real (non-test) roll is in flight: the table is frozen."""
-        run = self.run
-        return self.state == "spinning" and run is not None and not run.spin.get("test")
+    def default_table_path(self) -> Path:
+        return CRAPS_TABLE_PATH
 
-    def bets_closed_response(self) -> JSONResponse | None:
-        self._heal()
-        if not self.dice_in_air():
-            return None
-        ms = max(0, int(round((self.run.spin["lands_at"] - time.time()) * 1000)))
-        return JSONResponse({"ok": False, "error": "bets_closed", "retry_in_ms": ms}, status_code=409)
+    def load_state(self, path: Path) -> tuple[dict, int, list[dict]]:
+        return load_craps_state(path)
 
-    def exposure(self) -> dict[str, int]:
-        out: dict[str, int] = {}
-        for b in self.table["bets"]:
-            out[b["user"]] = out.get(b["user"], 0) + b["amount"] + b["odds"]
-        return out
+    def fresh_table(self) -> dict:
+        return _fresh_table()
+
+    def table_data(self) -> dict:
+        t = self.table
+        return {"phase": t["phase"], "point": t["point"], "shooter": t["shooter"], "hand_rolls": t["hand_rolls"],
+                "bets": t["bets"]}
+
+    def _stake(self, b: dict) -> int:
+        return b["amount"] + b["odds"]
+
+    def _label(self, b: dict) -> str:
+        return bet_label(b["type"], b["number"])
+
+    def apply_spin(self, table: dict, spin: dict) -> list[dict]:
+        return craps_apply(table, spin)
 
     def table_view(self) -> dict:
         """The TABLE object (craps spec §3), built fresh (auto_roll_in_ms is 'now')."""
@@ -2394,74 +3000,16 @@ class Craps(Game):
         return {"phase": t["phase"], "point": t["point"], "shooter": t["shooter"], "hand_rolls": t["hand_rolls"],
                 "bets": [bet_view(b, t["phase"]) for b in t["bets"]],
                 "exposure": exposure, "total_on_table": sum(exposure.values()),
-                "bets_open": not self.dice_in_air(), "auto_roll_in_ms": self.auto_roll_in_ms(),
+                "bets_open": not self.in_flight(), "auto_roll_in_ms": self.auto_roll_in_ms(),
                 "last_seq": self.ledger.last_seq, "currency": cfg["currency"],
                 "min_bet": cfg["min_bet"], "max_bet": cfg["max_bet"], "odds_rule": cfg["odds_rule"],
                 "field_12_pays": cfg["field_12_pays"], "display_board": self.display_board}
-
-    def set_board(self, params: dict) -> tuple[int, dict]:
-        """/craps/board: the bot's own "on the table" board, shown INSTEAD of the one
-        computed from Hexcast's table bets. {"bets": []} = an empty board; clear:true
-        = back to the computed board. Allowed any time (the overlay holds table
-        updates while the dice fly). Returns (status, body)."""
-        if _flag(params.get("clear")):
-            return 200, {"cleared": self.clear_board()}
-        entries, err = _display_entries(params, "bets")
-        if err:
-            return 400, {"error": err}
-        if entries is None:
-            return 400, {"error": "board needs bets:[{user, text, amount}] ([] = an empty board) or clear:true"}
-        lines = _display_lines(entries, BOARD_LINES_MAX, signed=False)
-        if entries and not lines:
-            return 400, {"error": "no valid bets: each line needs a user or a text; amount must be a finite "
-                                  "number, 0..1e12"}
-        title = _display_text(params.get("title"), DISPLAY_TITLE_MAX_CHARS) or "ON THE TABLE"
-        self.display_board = {"title": title, "bets": lines,
-                              "total": _num(sum(ln["amount"] or 0 for ln in lines))}
-        return 200, {}
-
-    def clear_board(self) -> bool:
-        was = self.display_board is not None
-        self.display_board = None
-        return was
-
-    def save_table(self, journal: list[dict] | None = None) -> bool:
-        """Atomically write the table. `journal`: the ledger events of this change
-        (stamped, not yet in the ledger file) - see _persist()."""
-        t = self.table
-        data = {"version": 1, "phase": t["phase"], "point": t["point"], "shooter": t["shooter"],
-                "hand_rolls": t["hand_rolls"], "bets": t["bets"], "last_seq": self.ledger.last_seq,
-                "saved_at": round(time.time(), 3), "journal": journal or []}
-        return _atomic_write_text(self.table_path, json.dumps(data, indent=1))
-
-    def _persist(self, events: list[dict]) -> list[dict]:
-        """Persist a table change + its ledger events, crash-safe: stamp the seqs ->
-        save the table WITH the events as its journal -> append them to the ledger.
-        A crash between the two writes is repaired at start-up (Ledger.recover
-        replays the journal), so the table and the ledger never disagree - a settled
-        bet can't be paid twice, a debit can't vanish. Returns the logged events."""
-        stamped = self.ledger.stamp(events)
-        self.save_table(journal=self.ledger.unwritten + stamped)
-        return self.ledger.write(stamped)
 
     def _find(self, user: str | None, btype: str, number: int | None) -> dict | None:
         for b in self.table["bets"]:
             if b["user"] == user and b["type"] == btype and b["number"] == number:
                 return b
         return None
-
-    def _bet_by_id(self, bet_id: str) -> dict | None:
-        for b in self.table["bets"]:
-            if b["id"] == bet_id:
-                return b
-        return None
-
-    def _new_bet_id(self) -> str:
-        ids = {b["id"] for b in self.table["bets"]}
-        while True:
-            bid = f"b-{secrets.token_hex(4)}"
-            if bid not in ids:
-                return bid
 
     def _removable(self, b: dict) -> bool:
         return bet_view(b, self.table["phase"])["removable"]
@@ -2719,24 +3267,15 @@ class Craps(Game):
         self.table["bets"] = [b for b in self.table["bets"] if b["id"] not in gone]
         logged = self._persist(events)
         if not self.table["bets"]:
-            self.cancel_auto()                        # the table emptied
+            self.cancel_auto("auto")                  # the table emptied (a /timer countdown keeps running)
         return 200, {"removed": removed, "credits": _aggregate_credits(logged, "amount"), "ledger": logged}
-
-    def clear_table(self) -> dict:
-        """Refund every bet, back to the come-out, no shooter."""
-        events = [_ev("credit", b["user"], b["amount"] + b["odds"], "refund", b["id"],
-                      bet_label(b["type"], b["number"]), None) for b in self.table["bets"]]
-        self.table = _fresh_table()
-        logged = self._persist(events)
-        self.cancel_auto()
-        return {"credits": _aggregate_credits(logged, "amount"), "ledger": logged, "refunded": len(logged)}
 
     def user_view(self, name: Any) -> dict:
         user = _clean_user(name)
         phase = self.table["phase"]
         bets = [bet_view(b, phase) for b in self.table["bets"] if b["user"] == user]
         return {"user": user, "bets": bets, "exposure": sum(b["amount"] + b["odds"] for b in bets),
-                "session": self.ledger.session(user)}
+                "session": self.ledger.session(user, self.key)}
 
     # ---- rolls -----------------------------------------------------------
 
@@ -2768,110 +3307,13 @@ class Craps(Game):
         _soon(_flush_ledger())
         return placed
 
-    def start(self, spin: dict) -> _Run:
-        self.cancel_auto()
-        run = super().start(spin)
-        run.extra["table_before"] = self.table_view()   # dice in the air: bets_open false
-        return run
+    # ---- auto-roll (the countdown itself lives in Game) --------------------------
 
-    def spin_response(self, run: _Run, pre: Any, waited: bool) -> dict:
-        out: dict[str, Any] = {}
-        if pre is not None:
-            out["placed"] = pre
-        if waited:
-            out["table"] = self.table_view()
-            sid, events = self._last_commit
-            if run.committed and not run.spin.get("test"):
-                out["ledger"] = events if sid == run.spin["id"] else []
-        else:
-            out["table"] = run.extra.get("table_before") or self.table_view()
-        return out
-
-    def on_commit(self, spin: dict) -> None:
-        table = copy.deepcopy(self.table)
-        events = craps_apply(table, spin)
-        self.table = table
-        logged = self._persist(events)
-        self._last_commit = (spin["id"], logged)
-        _soon(_flush_ledger())
-
-    def stop(self) -> bool:
-        self.cancel_auto()
-        return super().stop()
-
-    # ---- STATE / visibility ----------------------------------------------
-
-    def state_extra(self) -> dict:
-        return {"table": self.table_view()}
-
-    def extra_visible(self) -> bool:
-        board = self.display_board           # the bot's board counts too (mode B)
-        return bool(self.cfg.get("show_when_bets", True)
-                    and (self.table["bets"] or (board is not None and board["bets"])))
-
-    # ---- auto-roll ---------------------------------------------------------
+    def auto_params(self) -> dict:
+        return {"user": self.table["shooter"]}        # the current shooter throws
 
     def auto_roll_in_ms(self) -> int | None:
-        if self.auto_at is None:
-            return None
-        return max(0, int(round((self.auto_at - time.time()) * 1000)))
-
-    def arm_auto(self) -> bool:
-        """Start the bet-window countdown if auto_roll is on, bets are down, the game
-        is idle and no countdown is running."""
-        if (not self.cfg.get("auto_roll") or not self.table["bets"] or self.state != "idle"
-                or self.auto_at is not None):
-            return False
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return False
-        self.auto_at = time.time() + float(self.cfg.get("bet_window_seconds", 20))
-        token = self._auto_token = object()
-        self.auto_task = loop.create_task(self._auto_fire(token, self.auto_at))
-        return True
-
-    def cancel_auto(self) -> bool:
-        was = self.auto_at is not None
-        self.auto_at, self._auto_token = None, None
-        task, self.auto_task = self.auto_task, None
-        if task is not None and not task.done():
-            try:
-                current = asyncio.current_task()
-            except RuntimeError:
-                current = None
-            if task is not current:
-                task.cancel()
-        return was
-
-    async def _auto_fire(self, token: object, at: float) -> None:
-        try:
-            await asyncio.sleep(max(0.0, at - time.time()))
-        except asyncio.CancelledError:
-            return
-        if self._auto_token is not token:
-            return
-        self.auto_at, self.auto_task, self._auto_token = None, None, None
-        try:
-            self._heal()
-            if self.state == "idle" and self.table["bets"] and self.cfg.get("auto_roll"):
-                spin = self.build_spin({"user": self.table["shooter"]})
-                self.start(spin)          # exactly like /roll (no await since the idle check)
-        except Exception:
-            log.exception("[games] craps auto-roll failed")
-        try:
-            await HUB.broadcast_state(self)
-        except Exception:
-            pass
-
-    def on_idle(self) -> None:
-        self.arm_auto()                   # bets still down after a roll -> next countdown
-
-    def on_config(self) -> None:
-        if self.cfg.get("auto_roll"):
-            self.arm_auto()
-        else:
-            self.cancel_auto()
+        return self.auto_in_ms()
 
     # ---- reference / validate / stats --------------------------------------
 
@@ -3048,8 +3490,10 @@ def _bet_entries(params: dict) -> list:
 # registry + config
 # --------------------------------------------------------------------------
 
-ROULETTE = Roulette()
-CRAPS = Craps()          # restores the table from games_craps_table.json
+ROULETTE = Roulette(recover=False)   # restores the table from games_roulette_table.json
+CRAPS = Craps(recover=False)         # restores the table from games_craps_table.json
+# start-up repair of BOTH tables at once (a journal may hold the other game's events)
+LEDGER.recover([ROULETTE._recovery, CRAPS._recovery])
 GAMES: dict[str, Game] = {}
 
 
@@ -3125,7 +3569,7 @@ class Hub:
         await self._send(self.panel, payload)
 
     async def broadcast_panel(self, payload: dict) -> None:
-        """Panel sockets only (craps "ledger" pushes - overlays never get money data)."""
+        """Panel sockets only ("ledger" pushes - overlays never get money data)."""
         await self._send(self.panel, payload)
 
     async def broadcast_config(self) -> None:
@@ -3148,11 +3592,16 @@ HUB = Hub()
 
 
 async def _flush_ledger() -> None:
-    """Push ledger events not yet sent to the panel sockets, as one message."""
+    """Push ledger events not yet sent to the panel sockets: one message per game
+    (so a game's panel tab only ever gets its own events), each in seq order."""
     if not LEDGER.pending:
         return
     events, LEDGER.pending = LEDGER.pending, []
-    await HUB.broadcast_panel({"type": "ledger", "game": "craps", "events": events})
+    by_game: dict[str, list[dict]] = {}
+    for e in events:
+        by_game.setdefault(_event_game(e), []).append(e)
+    for game, evs in by_game.items():
+        await HUB.broadcast_panel({"type": "ledger", "game": game, "events": evs})
 
 
 # --------------------------------------------------------------------------
@@ -3223,6 +3672,15 @@ async def api_root():
                           "currency} | user=&amount=&text= shorthand -> {announce, state}; a new spin clears it; "
                           '409 {"error":"stale","spin_id"} when spin_id is not the current / last spin',
         "announce_clear": "GET|POST /games/api/{game}/announce/clear",
+        "timer":          "GET|POST /games/api/{game}/timer   seconds (5-300, default bet_window_seconds): start (or "
+                          "restart) the countdown now, with or without bets, auto_spin / auto_roll on or off; at zero "
+                          "the game spins / rolls by itself (even with no bets) -> {auto_in_ms, table, state}; "
+                          "409 busy unless idle",
+        "timer_cancel":   "GET|POST /games/api/{game}/timer/cancel   cancel any countdown -> {cancelled, table, state}",
+        "ledger":         "GET /games/api/ledger?since=0&limit=500&game=   every game's coin movements (each event "
+                          "carries its game; game= for one) -> {events, last_seq, truncated, oldest_seq} (limit <= 5000)",
+        "ledger_ws":      'panel sockets get {"type":"ledger","game":"craps"|"roulette","events":[...]} '
+                          "(one message per game)",
         "busy":           '409 {"ok":false,"error":"busy","retry_in_ms":n,"state":"spinning|result|cooldown"}',
         "websockets":     "WS /games/ws/overlay, WS /games/ws/panel",
         "appearance_keys": {key: list(g.APPEARANCE) for key, g in GAMES.items()},
@@ -3236,6 +3694,38 @@ async def api_root():
             "curl 'http://host:4747/games/api/roulette/validate?bet=corner:17'",
             "curl http://host:4747/games/api/stop",
         ],
+        "roulette": {
+            "spin_reply": "SPIN + bets, summary (the spin's own bets: not on the table, not in the ledger) + "
+                          "settlements, credits [{user,amount}], table_summary (the table's bets, settled at "
+                          "landing), table (after landing when wait=true, else the pre-spin table), ledger (wait=true)",
+            "bet":        "GET|POST /games/api/roulette/bet   {user, bet, amount} | {bets:[...]} (<=200) -> "
+                          "{accepted, rejected, debits:[{user,amount,bet_id,seq,reason}], table}; the same user + "
+                          "bet adds to that line; bets ride on the next spin; 400 if all rejected, 409 bets_closed "
+                          "while the ball is in the air",
+            "remove":     "GET|POST /games/api/roulette/remove   {bet_id} | {user, bet} | {user, all:true} -> "
+                          "{removed, credits, ledger, table}",
+            "table":      "GET /games/api/roulette/table   bets, exposure, bets_open, auto_spin_in_ms, last_seq",
+            "user":       "GET /games/api/roulette/user/{name}   bets, exposure, session {debits, credits, net, "
+                          "events} (roulette only)",
+            "clear":      "GET|POST /games/api/roulette/clear   refund every bet on the table",
+            "board":      "GET|POST /games/api/roulette/board   the bot's own board {title, bets:[{user, text, "
+                          "amount}] (<=100)} shown instead of the computed one ({bets:[]} = empty board, clear:true "
+                          "= computed again) -> {table} (table.display_board)",
+            "board_clear": "GET|POST /games/api/roulette/board/clear",
+            "ledger":     "GET /games/api/roulette/ledger?since=0&limit=500   roulette events only (last_seq is the "
+                          "ledger's own: seq gaps are other games' events)",
+            "timer":      "GET|POST /games/api/roulette/timer?seconds=20   (+ /timer/cancel) the countdown to the "
+                          "next spin; with auto_spin on it starts by itself on the first bet",
+            "examples": [
+                "curl 'http://host:4747/games/api/roulette/bet?user=alice&bet=red&amount=100'",
+                "curl -X POST http://host:4747/games/api/roulette/bet -H 'Content-Type: application/json' "
+                "-d '{\"bets\":[{\"user\":\"alice\",\"bet\":\"17\",\"amount\":10},"
+                "{\"user\":\"bob\",\"bet\":\"split:17/20\",\"amount\":25}]}'",
+                "curl 'http://host:4747/games/api/roulette/timer?seconds=30'",
+                "curl 'http://host:4747/games/api/roulette/ledger?since=0'",
+                "curl 'http://host:4747/games/api/roulette/remove?user=bob&bet=split:17/20'",
+            ],
+        },
         "craps": {
             "roll":       "GET|POST /games/api/craps/roll   (alias /spin, /play)  user (shooter if none), "
                           "duration (2.5-10 s), wait, test, bets:[...] placed first, overrides | x=&y=&scale=",
@@ -3248,9 +3738,11 @@ async def api_root():
             "remove":     "GET|POST /games/api/craps/remove   {bet_id} | {user, bet} | {user, all:true} -> "
                           "{removed, credits, table}; contract bets 400",
             "table":      "GET /games/api/craps/table",
-            "user":       "GET /games/api/craps/user/{name}   bets, exposure, session {debits, credits, net}",
+            "user":       "GET /games/api/craps/user/{name}   bets, exposure, session {debits, credits, net} "
+                          "(craps only)",
             "ledger":     "GET /games/api/craps/ledger?since=0&limit=500   {events, last_seq, truncated} "
-                          "(limit <= 5000)",
+                          "(limit <= 5000) - craps events only (last_seq is the ledger's own: seq gaps are other "
+                          "games' events)",
             "clear":      "GET|POST /games/api/craps/clear   refund every bet, reset to the come-out",
             "validate":   "GET /games/api/craps/validate?bet=&user=&amount=&target=   dry run: valid, type, label, "
                           "odds_text, error, hint, max_odds",
@@ -3259,6 +3751,8 @@ async def api_root():
                           "(<=100)} shown instead of the computed one ({bets:[]} = empty board, clear:true = computed "
                           "again) -> {table} (table.display_board); allowed while the dice fly",
             "board_clear": "GET|POST /games/api/craps/board/clear",
+            "timer":      "GET|POST /games/api/craps/timer?seconds=20   (+ /timer/cancel) the countdown to the "
+                          "next roll; with auto_roll on it starts by itself on the first bet",
             "ledger_ws":  'panel sockets also get {"type":"ledger","game":"craps","events":[...]}',
             "examples": [
                 "curl 'http://host:4747/games/api/craps/bet?user=alice&bet=pass&amount=100'",
@@ -3298,7 +3792,7 @@ async def api_set_config(request: Request):
     parts = {key: incoming[key] for key in GAMES if isinstance(incoming.get(key), dict)}
     CONFIG = save_config(_deep_merge(CONFIG, parts))
     for g in GAMES.values():
-        g.on_config()                   # craps: auto_roll switched on/off
+        g.on_config()                   # auto_roll / auto_spin switched on/off
     await HUB.broadcast_config()
     # hide_when_idle may have changed what "visible" means right now
     for g in GAMES.values():
@@ -3345,14 +3839,90 @@ async def _spin_request(g: Game, request: Request):
     return resp
 
 
-# ---- craps-only routes (registered before the generic /api/{game}/... ones;
-#      /spin, /play, /validate, /bets, /last, /history, /show, /hide, /stop for
-#      craps are the generic routes, dispatched through the Game hooks) ----------
+# ---- table routes (shared by the craps-only and roulette-only routes below) -----
 
 async def _table_changed(g: Game) -> None:
     await _flush_ledger()
     await HUB.broadcast_state(g)
 
+
+async def _bet_request(g: TableGame, request: Request):
+    """/bet: put bets on the table (every accepted bet = one ledger debit)."""
+    params, err = await _params(request)
+    if err is not None:
+        return err
+    closed = g.bets_closed_response()
+    if closed is not None:
+        return closed
+    entries = _bet_entries(params)
+    if len(entries) > MAX_BETS:
+        return _err(f"too many bets in one request (max {MAX_BETS})")
+    res = g.place_bets(entries, default_user=params.get("user"))
+    if res["accepted"]:
+        g.arm_auto()                    # first bet while idle starts the auto countdown
+        await _table_changed(g)
+    ok = bool(res["accepted"]) or not entries
+    body: dict[str, Any] = {"ok": ok, **res, "table": g.table_view()}
+    if not ok:
+        body["error"] = res["rejected"][0]["error"] if len(res["rejected"]) == 1 else "every bet was rejected"
+    return JSONResponse(body, status_code=200 if ok else 400)
+
+
+async def _remove_request(g: TableGame, request: Request):
+    params, err = await _params(request)
+    if err is not None:
+        return err
+    closed = g.bets_closed_response()
+    if closed is not None:
+        return closed
+    status, body = g.remove(params)
+    if status != 200:
+        return _err(body["error"], status)
+    await _table_changed(g)
+    return {"ok": True, **body, "table": g.table_view()}
+
+
+async def _clear_request(g: TableGame):
+    closed = g.bets_closed_response()
+    if closed is not None:
+        return closed
+    res = g.clear_table()
+    await _table_changed(g)
+    return {"ok": True, **res, "table": g.table_view()}
+
+
+async def _board_request(g: TableGame, request: Request):
+    params, err = await _params(request)
+    if err is not None:
+        return err
+    status, body = g.set_board(params)
+    if status != 200:
+        return _err(body["error"], status)
+    await HUB.broadcast_state(g)
+    return {"ok": True, **body, "table": g.table_view()}
+
+
+async def _board_clear_request(g: TableGame):
+    cleared = g.clear_board()
+    await HUB.broadcast_state(g)
+    return {"ok": True, "cleared": cleared, "table": g.table_view()}
+
+
+def _ledger_reply(since: str | None, limit: str | None, game: str | None = None) -> dict:
+    """/ledger body: events with seq > since (of one game, or all), oldest first. last_seq
+    is always the ledger's own (every game): seq gaps in one game's events are normal."""
+    s = _as_float(since)
+    s = int(s) if s is not None and s > 0 else 0
+    n = _as_float(limit)
+    n = 500 if n is None else int(min(LEDGER_LIMIT_MAX, max(1, n)))
+    events, truncated = LEDGER.query(s, n, game)
+    return {"ok": True, "events": events, "last_seq": LEDGER.last_seq, "truncated": truncated,
+            "oldest_seq": LEDGER.oldest_seq()}
+
+
+# ---- craps-only routes (registered before the generic /api/{game}/... ones;
+#      /spin, /play, /validate, /bets, /last, /history, /show, /hide, /stop,
+#      /timer for craps are the generic routes, dispatched through the Game hooks) --
 
 @router.api_route("/api/craps/roll", methods=["GET", "POST"])
 async def api_craps_roll(request: Request):
@@ -3361,39 +3931,12 @@ async def api_craps_roll(request: Request):
 
 @router.api_route("/api/craps/bet", methods=["GET", "POST"])
 async def api_craps_bet(request: Request):
-    params, err = await _params(request)
-    if err is not None:
-        return err
-    closed = CRAPS.bets_closed_response()
-    if closed is not None:
-        return closed
-    entries = _bet_entries(params)
-    if len(entries) > MAX_BETS:
-        return _err(f"too many bets in one request (max {MAX_BETS})")
-    res = CRAPS.place_bets(entries, default_user=params.get("user"))
-    if res["accepted"]:
-        CRAPS.arm_auto()                # first bet while idle starts the auto-roll countdown
-        await _table_changed(CRAPS)
-    ok = bool(res["accepted"]) or not entries
-    body: dict[str, Any] = {"ok": ok, **res, "table": CRAPS.table_view()}
-    if not ok:
-        body["error"] = res["rejected"][0]["error"] if len(res["rejected"]) == 1 else "every bet was rejected"
-    return JSONResponse(body, status_code=200 if ok else 400)
+    return await _bet_request(CRAPS, request)
 
 
 @router.api_route("/api/craps/remove", methods=["GET", "POST"])
 async def api_craps_remove(request: Request):
-    params, err = await _params(request)
-    if err is not None:
-        return err
-    closed = CRAPS.bets_closed_response()
-    if closed is not None:
-        return closed
-    status, body = CRAPS.remove(params)
-    if status != 200:
-        return _err(body["error"], status)
-    await _table_changed(CRAPS)
-    return {"ok": True, **body, "table": CRAPS.table_view()}
+    return await _remove_request(CRAPS, request)
 
 
 @router.get("/api/craps/table")
@@ -3409,43 +3952,80 @@ async def api_craps_user(name: str):
 
 @router.get("/api/craps/ledger")
 async def api_craps_ledger(since: str | None = None, limit: str | None = None):
-    s = _as_float(since)
-    s = int(s) if s is not None and s > 0 else 0
-    n = _as_float(limit)
-    n = 500 if n is None else int(min(LEDGER_LIMIT_MAX, max(1, n)))
-    events, truncated = LEDGER.query(s, n)
-    return {"ok": True, "events": events, "last_seq": LEDGER.last_seq, "truncated": truncated,
-            "oldest_seq": LEDGER.oldest_seq()}
+    return _ledger_reply(since, limit, "craps")
 
 
 @router.api_route("/api/craps/clear", methods=["GET", "POST"])
 async def api_craps_clear():
-    closed = CRAPS.bets_closed_response()
-    if closed is not None:
-        return closed
-    res = CRAPS.clear_table()
-    await _table_changed(CRAPS)
-    return {"ok": True, **res, "table": CRAPS.table_view()}
+    return await _clear_request(CRAPS)
 
 
 # /board/clear before /board (display only: never touches bets, ledger, history)
 @router.api_route("/api/craps/board/clear", methods=["GET", "POST"])
 async def api_craps_board_clear():
-    cleared = CRAPS.clear_board()
-    await HUB.broadcast_state(CRAPS)
-    return {"ok": True, "cleared": cleared, "table": CRAPS.table_view()}
+    return await _board_clear_request(CRAPS)
 
 
 @router.api_route("/api/craps/board", methods=["GET", "POST"])
 async def api_craps_board(request: Request):
-    params, err = await _params(request)
-    if err is not None:
-        return err
-    status, body = CRAPS.set_board(params)
-    if status != 200:
-        return _err(body["error"], status)
-    await HUB.broadcast_state(CRAPS)
-    return {"ok": True, **body, "table": CRAPS.table_view()}
+    return await _board_request(CRAPS, request)
+
+
+# ---- roulette-only routes: the table (bets for the next spin). /spin with `bets`
+#      (direct bets: on the spin, not on the table or in the ledger) is unchanged --
+
+@router.api_route("/api/roulette/bet", methods=["GET", "POST"])
+async def api_roulette_bet(request: Request):
+    return await _bet_request(ROULETTE, request)
+
+
+@router.api_route("/api/roulette/remove", methods=["GET", "POST"])
+async def api_roulette_remove(request: Request):
+    return await _remove_request(ROULETTE, request)
+
+
+@router.get("/api/roulette/table")
+async def api_roulette_table():
+    ROULETTE._heal()
+    return {"ok": True, "table": ROULETTE.table_view()}
+
+
+@router.get("/api/roulette/user/{name}")
+async def api_roulette_user(name: str):
+    return {"ok": True, **ROULETTE.user_view(name)}
+
+
+@router.get("/api/roulette/ledger")
+async def api_roulette_ledger(since: str | None = None, limit: str | None = None):
+    return _ledger_reply(since, limit, "roulette")
+
+
+@router.api_route("/api/roulette/clear", methods=["GET", "POST"])
+async def api_roulette_clear():
+    return await _clear_request(ROULETTE)
+
+
+# /board/clear before /board (display only: never touches bets, ledger, history)
+@router.api_route("/api/roulette/board/clear", methods=["GET", "POST"])
+async def api_roulette_board_clear():
+    return await _board_clear_request(ROULETTE)
+
+
+@router.api_route("/api/roulette/board", methods=["GET", "POST"])
+async def api_roulette_board(request: Request):
+    return await _board_request(ROULETTE, request)
+
+
+# ---- the shared ledger (every game) ----------------------------------------------
+
+@router.get("/api/ledger")
+async def api_ledger(since: str | None = None, limit: str | None = None, game: str | None = None):
+    g = None
+    if game not in (None, ""):
+        g = get_game(game)
+        if g is None:
+            return _unknown_game()
+    return _ledger_reply(since, limit, g.key if g else None)
 
 
 # ---- generic per-game routes ---------------------------------------------------
@@ -3537,6 +4117,38 @@ async def api_game_stop(game: str):
     for other in GAMES.values():
         await HUB.broadcast_state(other)
     return {"ok": True, "stopped": [g.key] if stopped else [], "state": g.state_view()}
+
+
+# /timer/cancel before /timer
+@router.api_route("/api/{game}/timer/cancel", methods=["GET", "POST"])
+async def api_timer_cancel(game: str):
+    g = get_game(game)
+    if g is None:
+        return _unknown_game()
+    cancelled = g.cancel_auto()
+    await HUB.broadcast_state(g)
+    return {"ok": True, "cancelled": cancelled, "table": g.table_view(), "state": g.state_view()}
+
+
+@router.api_route("/api/{game}/timer", methods=["GET", "POST"])
+async def api_timer(game: str, request: Request):
+    """Start (or restart) the countdown now, with or without bets, auto flag on or off.
+    At zero the game spins / rolls exactly like an automatic one."""
+    g = get_game(game)
+    if g is None:
+        return _unknown_game()
+    params, err = await _params(request)
+    if err is not None:
+        return err
+    busy = g.busy_response()
+    if busy is not None:
+        return busy
+    secs = _as_float(params.get("seconds"))
+    if secs is None:
+        secs = float(g.cfg.get("bet_window_seconds", 20))
+    g.start_timer(min(TIMER_SECONDS_MAX, max(TIMER_SECONDS_MIN, secs)))
+    await HUB.broadcast_state(g)
+    return {"ok": True, "auto_in_ms": g.auto_in_ms(), "table": g.table_view(), "state": g.state_view()}
 
 
 # /announce/clear before /announce (display only: never touches bets, ledger, history)

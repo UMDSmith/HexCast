@@ -4,13 +4,15 @@
  * Builds the whole Craps tab of the Games panel (/games -> section#tab-craps):
  *   1. OBS browser source      both overlay URLs + Copy
  *   2. Craps table             live mirror (real renderer, sound off), Roll / Show / Hide,
- *                              state + countdown, phase / point / shooter / hand / auto-roll,
+ *                              Start / Cancel timer, state + countdown, phase / point /
+ *                              shooter / hand / auto-roll,
  *                              last roll; Edit Mode -> click -> placement & look editor
  *   3. On the table            every bet riding, take-down (confirm), refund all & clear
  *   4. Place a bet             validate (dry run) + place (REAL: writes ledger debits)
  *   5. Hex display             "Hex does the math": Hex's payouts card (/announce) and board
  *                              (/board) — display only, never bets / ledger / history
  *   6. Ledger                  live tail (panel socket) + GET /ledger, per-user + house net
+ *                              (craps events only: the games ledger is shared with roulette)
  *   7. History & stats         last 20 rolls, totals vs expected, points / sevens / hands
  *   8. Settings                every non-appearance key of config.craps
  *   9. API                     endpoints, bet syntax, curl examples, hooking up the bank
@@ -406,7 +408,7 @@
 
   <div class="card">
     <h2>OBS browser source</h2>
-    <p class="hint">Add as a Browser source in OBS (1920×1080). The first URL shows every game in one source; the second shows only the craps table, so it can sit on its own layer. It stays transparent until the dice roll — or while bets are on the table, if <b>Keep it on screen while bets are down</b> is on.</p>
+    <p class="hint">Add as a Browser source in OBS (1920×1080). The first URL shows every game in one source; the second shows only the craps table, so it can sit on its own layer. It stays transparent until the dice roll — or while a countdown runs, or bets are on the table if <b>Keep it on screen while bets are down</b> is on.</p>
     <div class="url"><a id="cr-u-all" target="_blank" rel="noopener"></a><button class="sec" id="cr-copy-all">Copy</button></div>
     <div class="url"><a id="cr-u-game" target="_blank" rel="noopener"></a><button class="sec" id="cr-copy-game">Copy</button></div>
   </div>
@@ -441,6 +443,8 @@
         <div class="row" style="margin-top:9px">
           <button class="sec" id="cr-show" title="Show the idle table on stream">Show</button>
           <button class="sec" id="cr-hide" title="Hide the table (not possible while the dice are in the air)">Hide</button>
+          <button class="sec" id="cr-timer" title="Start the bet-window countdown now, with or without bets: the dice go by themselves at 0">Start timer</button>
+          <button class="sec" id="cr-timer-cancel" title="Stop the countdown (auto-roll or started here); nothing is thrown">Cancel timer</button>
           <button class="sec edit-only" id="cr-edit-place">✎ Edit placement</button>
         </div>
       </div>
@@ -779,7 +783,7 @@
       sub = s === 'cooldown' ? 'cooling down — next roll when this hits 0' : 'result on screen';
     } else {
       var left = autoLeft();
-      if (left != null) { phase = left; label = 'betting'; sub = 'auto-roll — the dice go when this hits 0'; }
+      if (left != null) { phase = left; label = 'betting'; sub = 'bet window — the dice go by themselves when this hits 0'; }
       else sub = st.visible ? 'ready — the table is showing' : 'ready to roll';
     }
     elR.textContent = (phase == null) ? '—' : (label === 'betting' ? fmtClock(phase) : fmtSec(phase));
@@ -817,10 +821,31 @@
   }
   function renderAuto() {
     var left = autoLeft(), c = cfgFull();
-    if (left != null) fact('cr-f-auto', 'in ' + fmtClock(left), 'good', 'Auto-roll countdown (bet window ' + c.bet_window_seconds + 's)');
+    if (left != null) fact('cr-f-auto', 'in ' + fmtClock(left), 'good', 'Countdown — auto-roll or Start timer: the dice go by themselves at 0');
     else if (c.auto_roll) fact('cr-f-auto', (TABLE && (TABLE.bets || []).length) ? 'armed' : 'waiting', 'dim',
       'Auto-roll is on: a ' + c.bet_window_seconds + 's countdown starts when bets are down and the table is idle');
-    else fact('cr-f-auto', 'off', 'dim', 'Auto-roll is off — roll from here, a bot or chat');
+    else fact('cr-f-auto', 'off', 'dim', 'Auto-roll is off — Start timer, or roll from here, a bot or chat');
+  }
+  // Start / cancel the countdown (/timer, /timer/cancel). A 404 here is a Hexcast from before
+  // the timer — not one without craps, so no banner (unlike api()).
+  async function timerReq(path, verb) {
+    var res = await req('POST', path);
+    if (res.net) { toast('Network error — is Hexcast running?', 2400); return null; }
+    if (isBusy(res)) { toast(busyText(res.d, verb), 3000); return null; }
+    if (res.status === 404 || res.status === 405) { toast('This Hexcast has no timer yet — restart it after updating', 2600); return null; }
+    if (!res.ok) { toast(errText(res), 2600); return null; }
+    if (isObj(res.d.table)) applyTable(res.d.table);
+    return res.d;
+  }
+  async function startTimer() {
+    var d = await timerReq(API + '/timer', "Can't start the timer");
+    if (!d) return;
+    var ms = typeof d.auto_in_ms === 'number' ? d.auto_in_ms : autoLeft();
+    toast('Timer started — the dice go' + (ms != null ? ' in ' + fmtClock(ms) : ' when it runs out'), 2400);
+  }
+  async function cancelTimer() {
+    var d = await timerReq(API + '/timer/cancel', "Can't cancel the timer");
+    if (d) toast(d.cancelled === false ? 'No timer was running' : 'Timer cancelled — nothing is thrown');
   }
   function eventClass(r) {
     if (!r) return '';
@@ -1273,7 +1298,7 @@
   function addEvents(evts, live) {
     var added = 0, unsorted = false;
     (evts || []).forEach(function (e) {
-      if (!isObj(e)) return;
+      if (!isObj(e) || (e.game != null && e.game !== 'craps')) return;   // the ledger is shared: craps only here
       var s = +e.seq;
       if (!isFinite(s) || SEEN[s]) return;
       SEEN[s] = 1;
@@ -1284,7 +1309,10 @@
     });
     if (!added) return 0;
     if (unsorted) LEDGER.sort(function (a, b) { return a.seq - b.seq; });
-    if (LEDGER.length > LEDGER_MAX) LEDGER.splice(0, LEDGER.length - LEDGER_MAX).forEach(function (e) { delete SEEN[e.seq]; });
+    if (LEDGER.length > LEDGER_MAX) {
+      LEDGER.splice(0, LEDGER.length - LEDGER_MAX).forEach(function (e) { delete SEEN[e.seq]; });
+      LTRUNC = true;
+    }
     LAST_SEQ = LEDGER[LEDGER.length - 1].seq;
     renderLedgerSoon();
     return added;
@@ -1310,10 +1338,11 @@
           s = 0; got = 0; page = -1;
           continue;
         }
-        // `truncated` is also true when only the page limit cut the reply; older events are gone
-        // from the server's memory only when its oldest one isn't #1
-        if (s === 0 && page === 0 && +res.d.oldest_seq > 1) LTRUNC = true;
         var ev = res.d.events;
+        // `truncated` is also true when only the page limit cut the reply; older events are gone
+        // from the server's memory when a read from 0 is truncated short of the limit (or its
+        // oldest one isn't #1). The first craps seq says nothing: roulette shares the seqs.
+        if (s === 0 && page === 0 && res.d.truncated && (ev.length < LEDGER_PAGE || +res.d.oldest_seq > 1)) LTRUNC = true;
         addEvents(ev, false);
         got += ev.length;
         if (ev.length < LEDGER_PAGE || got >= LEDGER_MAX) break;
@@ -1419,7 +1448,7 @@
       note = plural(LEDGER.length, 'event') + ' loaded (#' + LEDGER[0].seq + '–#' + LAST_SEQ + ')';
       if (filt) note += ' · ' + matched + ' for “' + filt + '”';
       if (matched > LEDGER_ROWS) note += ' · showing the newest ' + LEDGER_ROWS;
-      if (LTRUNC || LEDGER[0].seq > 1) note += ' · older events aren\'t in memory, so the nets cover this window (the full ledger is config/games_ledger.jsonl)';
+      if (LTRUNC) note += ' · older events aren\'t in memory, so the nets cover this window (the full ledger is config/games_ledger.jsonl)';
     }
     $('cr-l-note').textContent = note;
   }
@@ -1631,7 +1660,10 @@
       ['GET|POST /games/api/craps/clear', 'refund every bet (credits, reason <code>refund</code>), back to the come-out, no shooter'],
       ['GET /games/api/craps/table', 'the table: phase, point, shooter, hand_rolls, bets, exposure, total_on_table, bets_open, auto_roll_in_ms, last_seq'],
       ['GET /games/api/craps/user/{name}', 'that user\'s bets, exposure and session debits / credits / net'],
-      ['GET /games/api/craps/ledger?since=0&limit=500', 'coin movements with <code>seq</code> &gt; since, oldest first (limit ≤ 5000): <code>events</code>, <code>last_seq</code>, <code>truncated</code>'],
+      ['GET /games/api/craps/ledger?since=0&limit=500', 'the craps coin movements with <code>seq</code> &gt; since, oldest first (limit ≤ 5000): <code>events</code>, <code>last_seq</code>, <code>truncated</code>. The ledger is shared with roulette (one seq space, each event carries <code>game</code>), so gaps in the craps seqs are normal'],
+      ['GET /games/api/ledger?since=0&game=', 'every game\'s events in one stream; <code>game=craps</code> or <code>roulette</code> for one — a bank running both games tails this once'],
+      ['GET|POST /games/api/craps/timer', 'start (or restart) the countdown now — <code>seconds</code> (5–300, default the bet window), with or without bets, auto-roll on or off. At 0 the dice go by themselves (the shooter throws). 409 busy unless idle → <code>auto_in_ms</code>, <code>table</code>, <code>state</code>. A running countdown keeps the table on screen'],
+      ['GET|POST /games/api/craps/timer/cancel', 'stop the countdown (auto-roll or started with /timer) → <code>cancelled</code>, <code>table</code>, <code>state</code>'],
       ['GET /games/api/craps/validate', '<code>?bet=&amp;user=&amp;amount=&amp;target=</code> — a dry run against the table now: <code>valid</code>, type, label, <code>odds_text</code>, <code>hint</code> (amounts that pay exactly), <code>max_odds</code> or <code>error</code>'],
       ['GET /games/api/craps/bets', 'bet reference: type, label, syntax, pays, when, one_roll + the rules'],
       ['GET /games/api/craps/last · history?limit=20', 'last committed roll / landed rolls newest first'],
@@ -1643,7 +1675,7 @@
       ['GET|POST /games/api/craps/show · hide · stop', 'show the idle table / hide it (409 while the dice fly) / abort (a roll in the air still settles)'],
       ['GET /games/api/status', 'overlay count + live state per game (craps state carries the <code>table</code>)'],
       ['GET|POST /games/api/config', 'read / merge-save <code>{"craps":{…}}</code>'],
-      ['WS /games/ws/panel', '<code>config</code> / <code>state</code> (with <code>table</code>) / <code>stop</code> and <code>{"type":"ledger","game":"craps","events":[…]}</code> — a bank bot can listen here instead of polling']
+      ['WS /games/ws/panel', '<code>config</code> / <code>state</code> (with <code>table</code>) / <code>stop</code> and <code>{"type":"ledger","game":"craps","events":[…]}</code> (one message per game) — a bank bot can listen here instead of polling']
     ];
     $('cr-api-table').innerHTML = rows.map(function (r) { return '<tr><td>' + esc(r[0]) + '</td><td>' + r[1] + '</td></tr>'; }).join('');
     var c = function (s) { return s.split(' ').map(function (x) { return '<code>' + esc(x) + '</code>'; }).join(' '); };
@@ -2109,6 +2141,8 @@
     $('cr-shooter').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); $('cr-roll').click(); } });
     $('cr-show').addEventListener('click', async function () { if (await api('POST', API + '/show', undefined, "Can't show")) toast('Table shown'); });
     $('cr-hide').addEventListener('click', async function () { if (await api('POST', API + '/hide', undefined, "Can't hide")) toast('Table hidden'); });
+    $('cr-timer').addEventListener('click', startTimer);
+    $('cr-timer-cancel').addEventListener('click', cancelTimer);
     $('cr-edit-place').addEventListener('click', function (e) { e.stopPropagation(); openEditor(); });
     $('cr-card-table').addEventListener('click', function (e) {
       if (!editMode()) return;

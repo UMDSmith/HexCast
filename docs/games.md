@@ -6,9 +6,12 @@ wheel pops onto the stream. The wheel spins, the ball is launched the other
 way, slows, drops off the track, bounces off the deflectors and frets, and
 settles in a pocket; then the result pops up. Bets are optional: send them
 with the spin and every one comes back resolved at standard roulette odds,
-ready for your bot to pay out — or keep the bets in your bot, do the math
-there, and tell the overlay who won with one more call (see
-[Two ways to run the money](#two-ways-to-run-the-money)).
+ready for your bot to pay out. Or put chat's bets on the **table** ahead of
+the spin, like craps: a **spin timer** counts down, the wheel spins by itself
+at zero, and every coin movement goes into the numbered **ledger** your
+bot's bank reads (see [Table & spin timer](#table--spin-timer)). Or keep the
+bets in your bot, do the math there, and tell the overlay who won with one
+more call (see [Two ways to run the money](#two-ways-to-run-the-money)).
 
 The **server** picks the pocket; the overlay only animates it. Everything
 lives under `/games/*`.
@@ -19,15 +22,16 @@ lives under `/games/*`.
 
 | Game | What it is | Docs |
 | --- | --- | --- |
-| **Roulette** | an American double-zero wheel; bets sent with a spin come back resolved for your bot to pay | this page |
+| **Roulette** | an American double-zero wheel; bets sent with a spin come back resolved for your bot to pay, or chat's bets wait on a table for the next spin, with a spin timer and a ledger that Hex pays from | this page |
 | **Craps** | a bank-craps table: chat bets hexcoins that stay on the table across rolls, with a ledger that Hex, the channel's bot, pays from | [docs/craps.md](craps.md) |
 
 They share one panel at `/games` — **one tab per game** under the top bar
 (`/games#roulette`, `/games#craps` open straight to one) — one OBS browser
 source (`/games/overlay` shows every game; `?game=roulette` or `?game=craps`
-limits a source to one), the same Edit Mode, and the same
-`/games/api/{game}/...` API shape. The rest of this page is about Roulette
-and the parts every game shares.
+limits a source to one), the same Edit Mode, the same
+`/games/api/{game}/...` API shape (the [timer](#timer) included), and one
+[ledger](#the-shared-ledger). The rest of this page is about Roulette and the
+parts every game shares.
 
 ---
 
@@ -134,14 +138,29 @@ this game only) for the machine you're on, each with a **Copy** button.
    a disc in the pocket's colour, with a details line like `ODD · LOW · 2ND 12`
    underneath (when **result details** is on). The badge sits over the centre
    turret, or above/below the wheel (**result position**).
-4. If the spin carried bets and **show bets** is on, a **winners list**
-   appears (up to **bets max** entries). When a bot that does its own math
-   posts a winners card with [`/announce`](#announce), that card shows here
-   instead, in the same style.
+4. If the spin carried bets, or bets were riding on the
+   [table](#table--spin-timer), and **show bets** is on, a **winners list**
+   appears: both kinds together, biggest win first (up to **bets max**
+   entries). When a bot that does its own math posts a winners card with
+   [`/announce`](#announce), that card shows here instead, in the same style.
 5. The **history strip** under the wheel (last **history count** results)
    updates only *after* the ball lands — it never gives away the current spin.
 6. After **result seconds** the wheel fades out (with **hide when idle** on);
    with it off, the wheel stays on screen, idling.
+
+**Before the spin**, while bets are on the [table](#table--spin-timer) and
+**show table** is on, an **ON THE TABLE** board sits beside the wheel: one
+line per bet (`@alice  Red  150 hexcoins`), biggest first, up to **table
+lines** then `+N more`, and the total. **Table position** puts it right,
+left, above or below the wheel (it moves to the other side if it would run
+off the canvas). When a bot posts its own [board](#board), that shows
+instead. While a [countdown](#the-countdown-auto-spin-and-the-spin-timer)
+runs, a **NEXT SPIN 0:12** pill with a draining ring sits above the wheel
+(even with the board off) and the board's title reads **PLACE YOUR BETS** (a
+bot's board keeps its own title); in the last five seconds the pill turns
+red and throbs, and at zero it says **NO MORE BETS** until the ball is
+thrown. The board and the countdown only show between spins, never while the
+ball is in the air or the result is up, so they never give a spin away.
 
 Every overlay and the panel's live preview render the **identical** spin: the
 animation is seeded, and the server tells each one how far into the spin it
@@ -171,27 +190,56 @@ to it.
   `?game=roulette` one for this host, each with **Copy**.
 - **Roulette** — a live mirror: a 16:9 preview holding a scaled 1920×1080
   stage with the real wheel (sound off), playing the same spins as the
-  overlay. **Spin** starts a spin, **Show** / **Hide** put the idle wheel on
-  or off screen. A readout shows the state (`idle`, `spinning`, `result`,
-  `cooldown`) with a countdown, plus a chip with the last result.
+  overlay, with the board and the countdown before a spin. **Spin** starts a
+  spin, **Show** / **Hide** put the idle wheel on or off screen. A readout
+  shows the state (`idle`, `betting` while a countdown runs, `spinning`,
+  `result`, `cooldown`) with a countdown, then three facts — **On the table**
+  (the coins riding on the next spin), **Spin timer** (`in 0:12`; `armed` or
+  `waiting` with auto-spin on and no countdown yet; `off`) and **Bets**
+  (`open`, or `closed` while the ball is in the air) — and a chip with the
+  last result. **Start timer** (the seconds box is optional; blank uses the
+  bet window) and **Cancel timer** run the
+  [spin timer](#the-countdown-auto-spin-and-the-spin-timer).
+- **On the table** — every bet riding on the next spin, grouped by viewer:
+  bet, amount and what it pays. **Take down** on a bet (with a confirm)
+  refunds it; a viewer with two or more bets also gets **Take down all**.
+  **Refund all & clear table** (with a confirm) refunds every bet. The
+  buttons are greyed out while the ball is in the air.
+- **Place a bet** — type a bet string, an amount and a user. **Check** is a
+  dry run: how the bet parses (type, odds and covered numbers, or the error).
+  **Place bet** is **real**: the bet goes on the table and a debit goes in the
+  ledger, so Hex's ledger tail takes those coins from that viewer. **Spin
+  with this bet** sends it along with a spin instead (a
+  [bet on the spin call](#bets): not on the table, not in the ledger).
+- **Hex display** — try the [Mode B display calls](#two-ways-to-run-the-money)
+  by hand. For the [announce](#announce) card: a title, the lines (one per
+  line, `user amount text…`, e.g. `alice 200 Split 17/20`; the amount is
+  optional, and `-` as the user means none), the empty text, seconds and an
+  optional spin id, then **Announce** or **Clear**. For the [board](#board):
+  a title and a box of bets (`user amount text…` per line) with **Set board**
+  and **Clear board**. Blank fields use the server's defaults. It shows the
+  request and the reply; the mirror above shows the card and the board,
+  exactly like the overlay.
+- **Ledger** — a live tail of roulette's coin movements (the
+  [table](#table--spin-timer)'s bets, wins, take-downs and refunds): seq,
+  time, user, debit/credit, amount, reason and bet, with coins in, coins out,
+  what's on the table and the house net, per-user nets, **Filter by user**
+  (**Everyone** resets it) and **Reload**. Seq gaps are craps events — the
+  ledger is shared.
 - **History & stats** — the last 20 results as coloured chips (newest
   first), red/black/green, odd/even and low/high counts, hot and cold numbers,
   the current streak, and **Clear history**.
-- **Bet tester** — type a bet string (and an amount) to see how it parses:
-  type, odds and covered numbers, or the error. **Spin with this bet** sends
-  it along with a real spin.
-- **Hex display** — try the [announce](#announce) card by hand: a title, the
-  lines (one per line, `user amount text…`, e.g. `alice 200 Split 17/20`; the
-  amount is optional, and `-` as the user means none), the empty text,
-  seconds and an optional spin id, then **Announce** or **Clear**. Blank
-  fields use the server's defaults. It shows the request and the reply; the
-  mirror above shows the card, exactly like the overlay.
-- **Settings** — spin seconds, result seconds, hide when idle, cooldown,
-  show user caption, show bets, bets max, the soundboard clips for launch and
-  landing (suggestions come from your soundboard library), and built-in sounds
-  with their volume. **Save settings** stores them.
-- **API** — a compact endpoint table with curl examples built for this host,
-  including the announce endpoints.
+- **Settings** — spin seconds, result seconds, cooldown, the bet window,
+  currency name, min and max bet, the soundboard clips for launch and
+  landing (suggestions come from your soundboard library), bets shown, table
+  lines and the table board's position, the built-in sounds with their
+  volume, and the switches: hide the wheel when idle, keep it on screen while
+  bets are down, auto-spin, the "on the table" board, the `@user spins`
+  caption and the winners list. **Save settings** stores them; **Revert**
+  drops your changes.
+- **API** — a compact endpoint table with curl examples built for this host
+  (the table, timer, ledger, board and announce endpoints included), and the
+  table route's steps for the bank.
 
 ### Edit Mode — placement and appearance
 
@@ -208,16 +256,23 @@ open the editor:
   (15 / 50 / 85 %).
 - **Appearance**, live in the preview: theme, the three pocket colours (each
   with a *theme default* reset), result position (center / below / above),
-  result details, show result, show history, and history count.
+  result details, show result, show history, and history count; and the
+  **Board**: the "on the table" board on or off, its position (right / left /
+  below / above the wheel) and how many lines it lists. The preview holds a
+  sample table — a few bets and a countdown standing still, greyed out — so
+  the board and the countdown can be placed before any real bet is down.
 
 The buttons along the bottom:
 
 - **▶ Preview** — a local demo spin inside the editor (random pocket, your
-  configured spin time). Nothing is sent to the server or the stream.
+  configured spin time), with the sample bets settled on it. Nothing is sent
+  to the server or the stream.
 - **Test in OBS** — a real `test` spin on the overlay using the editor's
   *unsaved* placement and appearance, so you can see it on stream before
-  committing. Test spins stay out of history and stats and don't fire clip
-  cues. If the wheel is busy you'll get a toast instead.
+  committing. Test spins stay out of history and stats, don't fire clip
+  cues and never touch the table's bets — but like any spin they stop a
+  running [countdown](#the-countdown-auto-spin-and-the-spin-timer). If the
+  wheel is busy you'll get a toast instead.
 - **Reset** — back to the defaults: `x` 50, `y` 50, scale 1.25, and the
   default look (the `classic` theme with its own pocket colours). Not saved
   until you press Save.
@@ -248,20 +303,30 @@ lands (`land_clip`). Leave either empty for none.
 
 ```
 launch ──── spin seconds ────► landing ──── result seconds ────► result ends ── cooldown ──► ready
-  │                              │                                │
-  spin_clip fires                land_clip fires                  wheel hides
-                                 spin committed to history        (if hide when idle)
+  │                              │                                │                            │
+  spin_clip fires                land_clip fires                  wheel hides                  auto-spin countdown
+  table bets close               spin committed to history        (if hide when idle           restarts (if bets
+                                 table bets settle, winners       and nothing keeps it up)     are still down)
+                                 credited in the ledger,
+                                 bets open again
 ```
 
 - At **launch** the server has already picked the pocket; the API response
-  (unless `wait=true`) comes back immediately with the result in it.
+  (unless `wait=true`) comes back immediately with the result in it. The
+  [table](#table--spin-timer) is frozen until the landing: new table bets,
+  take-downs and clears get **409** `bets_closed`. (A `test` spin doesn't
+  freeze anything.)
 - At **landing** the spin is committed to history and stats (unless it's a
-  test), `land_clip` fires, and the overlay shows the result.
+  test), `land_clip` fires, and the overlay shows the result. The table's
+  bets are settled and come down, and the winners' credits go into the
+  ledger. Table bets are accepted again straight away — during the result
+  and cooldown too; they ride on the next spin.
 - **Result seconds** later the result phase ends — the wheel hides if **hide
   when idle** is on — then the optional **cooldown** runs.
 - While any of that is going on (`spinning`, `result` or `cooldown`) new spins
-  are refused with **409 busy**. With the defaults (9 s spin, 6 s result, no
-  cooldown) that's one spin every 15 seconds at most.
+  are refused with **409 busy**, and so is a new [timer](#timer). With the
+  defaults (9 s spin, 6 s result, no cooldown) that's one spin every 15
+  seconds at most.
 
 ---
 
@@ -273,35 +338,55 @@ channel that's **Hex**, a bot whose own code keeps everyone's hexcoins in its
 
 | | **Mode A — Hexcast does the math** | **Mode B — Hex does the math** |
 | --- | --- | --- |
-| The bets live in | the spin call (`bets`) | Hex's own code |
-| Payouts are worked out by | Hexcast, at standard odds (`win`, `payout`, `returned`) | Hex's own code, from the spin's `result` |
-| Coins are moved by | Hex's hexbank, crediting each bet's `returned` | Hex's hexbank |
+| The bets live in | the spin call (`bets`), **or** Hexcast's [table](#table--spin-timer) (`/bet`) until the next spin | Hex's own code |
+| Payouts are worked out by | Hexcast, at standard odds (`win`, `payout`, `returned`; `settlements` for the table) | Hex's own code, from the spin's `result` |
+| Coins are moved by | Hex's hexbank: each bet's `returned` (spin call), or the `/bet` reply's `debits` and then the [ledger](#the-shared-ledger)'s credits (table) | Hex's hexbank |
+| The wheel spins on | a `/spin` call, or at the end of the [spin timer](#the-countdown-auto-spin-and-the-spin-timer) | a `/spin` call, or at the end of the spin timer |
+| The board before the spin | the table's bets | the board Hex posts with [`/board`](#board) |
 | The winners on screen | the winners list Hexcast builds from the bets | the card Hex posts with [`/announce`](#announce) |
 | The pocket is picked by | **Hexcast's fair spin** | **Hexcast's fair spin** |
 
 The last row is the same either way. Hex can't send a result — there's no
 parameter for one — so in Mode B Hex only tells the overlay what to
-**show**. The display call never touches the result, the history or the
-stats.
+**show**. The display calls never touch the result, the table's bets, the
+ledger, the history or the stats.
 
-**Pick Mode A** when standard roulette is what you want. Hex sends the bets
-with the spin and credits each bet's `returned` — no odds tables in Hex,
-and the overlay's winners list comes for free. See [Bets](#bets),
-[A chat betting round](#a-chat-betting-round) and, for Hex's hexbank,
-[Hooking up the bank](#hooking-up-the-bank-hexcoins).
+**Pick Mode A** when standard roulette is what you want — no odds tables in
+Hex, and the overlay's winners list comes for free. Mode A has two routes:
+
+- **Bets on the spin call.** Hex collects a round, sends every bet with the
+  spin and credits each bet's `returned` from the reply. Nothing is stored
+  and nothing goes in the ledger. See [Bets](#bets),
+  [A chat betting round](#a-chat-betting-round) and, for Hex's hexbank,
+  [Hooking up the bank](#hooking-up-the-bank-hexcoins).
+- **The table and the spin timer.** Chat's bets go on Hexcast's table with
+  `/bet` (Hex takes the coins in the reply's `debits`), a countdown spins the
+  wheel, and every payout comes through the ledger — saved to disk, paid
+  exactly once, whoever spun and whichever side restarts. This is craps' way,
+  and the durable one. See [Table & spin timer](#table--spin-timer).
+
+The two routes can share a spin — bets on the table and bets on the spin
+call are settled side by side — but pay each bet from its own route only:
+`returned` for a bet sent with the spin, the ledger for a bet on the table.
+Never also send a table bet in a spin's `bets`, and never pay one bet from
+both.
 
 **Pick Mode B** when Hex already has betting code of its own, or wants rules
 Hexcast doesn't have — house odds, side bets, a jackpot, limits per viewer.
-Hex keeps the bets, spins **without** `bets`, works out
-the payouts from `result`, pays from its hexbank and posts the winners with
-`/announce`. See [Hex does the math (Mode B)](#hex-does-the-math-mode-b).
+Hex keeps the bets, spins **without** `bets` (or lets the spin timer spin),
+works out the payouts from `result`, pays from its hexbank and posts the
+winners with `/announce`, and can mirror its bets on the board before the
+spin with `/board`. See [Hex does the math (Mode B)](#hex-does-the-math-mode-b)
+and, with the timer, [Hex's side: the spin timer only](#hexs-side-the-spin-timer-only-mode-b).
 
-Use one mode per spin. If a spin carries `bets` **and** Hex posts an
-`/announce`, the card replaces the winners list on screen, but the spin's
-resolved bets are still in the response — pay from one or the other, never
-both.
+Use one mode per spin. If a spin settles bets — sent with it or on the
+table — **and** Hex posts an `/announce`, the card replaces the winners list
+on screen, but those bets are still settled: the reply's `returned` and the
+ledger's credits still stand. Pay each bet once, by Hexcast's math or by
+Hex's, never both.
 
-Craps has the same two modes, plus a board for the bets that are down — see
+Craps has the same two modes, the same kind of table, ledger and timer, and
+the same board — see
 [Craps → Two ways to run the money](craps.md#two-ways-to-run-the-money).
 
 ---
@@ -348,13 +433,17 @@ three (`1 2 3`, `4 5 6`, … `34 35 36`), so column 1 is 1, 4, 7 … 34. `17/20`
 is a split (one above the other), `17/18` is a split (side by side), `18/19`
 is not (18 ends one row, 19 starts the next).
 
-Test any string with the panel's **Bet tester** or
+Test any string with **Check** on the panel's **Place a bet** card or
 `GET /games/api/roulette/validate?bet=...` before you trust it — see
 [Validate](#validate-and-the-bet-reference).
 
+The same bet strings work on the [table](#bet).
+
 ### How bets are resolved
 
-Every bet you send comes back with extra fields:
+Every bet you send **with a spin** comes back with extra fields (bets on the
+table are checked when they're placed and come back as
+[`settlements`](#settling-a-spin)):
 
 | Field | Meaning |
 | --- | --- |
@@ -380,6 +469,725 @@ Every bet you send comes back with extra fields:
   the bet is placed, crediting every bet's `returned` after the spin is all it
   needs: winners get stake + winnings, invalid bets get a refund, losers get
   nothing.
+
+---
+
+## Table & spin timer
+
+The other Mode A route, and the way [craps](craps.md) works: chat's bets go
+on Hexcast's **table** ahead of the spin, a **countdown** runs, and at zero
+the wheel spins by itself with every bet on the table riding on it. Hexcast
+settles them at standard odds and writes every coin movement to the
+numbered, persisted [ledger](#the-shared-ledger) — the same ledger craps
+uses — so Hex, the bank, pays each win exactly once, whoever spun and
+whichever side restarts.
+
+- **Placing a bet** — [`/bet`](#bet) checks it (the bet text, whole coins,
+  `min_bet`, `max_bet`) and answers with the exact coins to take, in
+  `debits[]`. A rejected bet moves nothing.
+- **Spinning** — the [countdown](#the-countdown-auto-spin-and-the-spin-timer)
+  starts on its own with the first bet when **auto-spin** is on, or when Hex
+  (or the panel's **Start timer**) calls [`/timer`](#timer). A `/spin` from
+  anywhere spins the table's bets too.
+- **Paying out** — at the landing each winning bet gets one ledger credit:
+  stake + winnings. Hex applies credits by tailing the ledger; the spin reply
+  and the winners list on screen are for announcing.
+- **Taking bets down** — every roulette bet is a one-spin bet, and any of
+  them can come down (a refund) until the ball is thrown.
+
+Table bets are closed only while the ball is in the air (**409**
+`bets_closed`); during the result and cooldown they're open and ride on the
+next spin. The pocket is still [Hexcast's fair spin](#fairness), and `/spin`
+works exactly as before, bets on the spin call and all.
+
+### Settings
+
+The table's keys in the `"roulette"` section of the config (they're also in
+[Config keys](#config-keys)):
+
+| Key | Default | Values |
+| --- | --- | --- |
+| `currency` | `"hexcoins"` | 1–24 characters — the name on the board, the winners list and in the table; also the [announce](#announce) card's default |
+| `min_bet` | `1` | whole number, 1–1 000 000 000 — the least one `/bet` entry may put down |
+| `max_bet` | `100000` | whole number, 0–1 000 000 000 000; `0` = no maximum — the most one bet line may hold, after adding to it. A value below `min_bet` is reset to the default (or to `0` if `min_bet` is above that) |
+| `auto_spin` | `false` | spin by itself when the bet window runs out (see [the countdown](#the-countdown-auto-spin-and-the-spin-timer)) |
+| `bet_window_seconds` | `20` | 5–300 — the auto-spin countdown, and `/timer`'s default |
+| `show_when_bets` | `true` | keep the wheel on screen while bets are on the table, or Hex's [board](#board) has lines (even with hide when idle) |
+| `show_table` | `true` | the "on the table" board before the spin |
+| `table_max` | `6` | 1–20 — board lines before `+N more` |
+| `table_position` | `"right"` | `right` \| `left` \| `below` \| `above` — where the board sits next to the wheel |
+
+`currency`, `min_bet` and `max_bet` only apply to the table — bets sent with
+a spin call are unchanged. `show_table`, `table_max` and `table_position` are
+appearance keys: per spin in `overrides`, and in the Edit Mode editor.
+
+```
+curl -X POST http://localhost:4747/games/api/config -H "Content-Type: application/json" -d "{\"roulette\":{\"auto_spin\":true,\"bet_window_seconds\":30,\"min_bet\":10}}"
+```
+
+### Bet
+
+`GET` or `POST /games/api/roulette/bet`. One bet as `user`, `bet`, `amount`,
+or a list as `{"bets": [...]}` (up to 200 — more is a **400** and nothing is
+placed); a top-level `user` is the default for entries without one.
+Parameters go in the query string, a JSON body (POST), or both — the body
+wins.
+
+```
+curl "http://localhost:4747/games/api/roulette/bet?user=alice&bet=red&amount=100"
+curl -X POST http://localhost:4747/games/api/roulette/bet -H "Content-Type: application/json" -d "{\"bets\":[{\"user\":\"bob\",\"bet\":\"split:17/20\",\"amount\":25},{\"user\":\"carol\",\"bet\":\"17\",\"amount\":10}]}"
+```
+
+The same [bet strings](#bet-reference) as a spin's; URL-encode them in a
+query string if your bot's HTTP tool doesn't. The second call answers:
+
+```json
+{
+  "ok": true,
+  "accepted": [
+    {"id": "rb-5e6f7a8b", "user": "bob", "bet": "split:17/20", "label": "Split 17/20", "type": "split",
+     "numbers": ["17", "20"], "odds": 17, "amount": 25, "pays": 450, "placed_at": 1790000000.1,
+     "removable": true, "action": "new", "added": 25},
+    {"id": "rb-9c0d1e2f", "user": "carol", "bet": "17", "label": "Straight 17", "type": "straight",
+     "numbers": ["17"], "odds": 35, "amount": 10, "pays": 360, "placed_at": 1790000000.1,
+     "removable": true, "action": "new", "added": 10}
+  ],
+  "rejected": [],
+  "debits": [{"user": "bob", "amount": 25, "bet_id": "rb-5e6f7a8b", "seq": 43, "reason": "bet"},
+             {"user": "carol", "amount": 10, "bet_id": "rb-9c0d1e2f", "seq": 44, "reason": "bet"}],
+  "table": {"...": "..."}
+}
+```
+
+- `accepted` — each accepted bet as it now is on the table (a [BET](#table)),
+  plus `action` and `added`. `action` is `new`, or `add` when that user
+  already had the same bet down — the same type and numbers, however it was
+  written (`20/17` adds to `split:17/20`) — and this amount went on top of
+  it; `added` is what this entry added. `amount` and `pays` are the line's
+  new totals.
+- `rejected` — `{user, bet, amount, error}` for each bet that wasn't taken.
+  `error` is written for chat: `minimum bet is 10 hexcoins`, `max bet is
+  100000 hexcoins (60000 already on Red)`, `amounts are whole coins`,
+  `amount must be positive`, `user required`, or what's wrong with the bet
+  text (`18 and 19 are not next to each other on the table`). Bet text that
+  didn't parse also gets a `hint` with the forms to try. **Nothing is debited
+  for a rejected bet.**
+- `debits` — one per accepted entry: the coins Hex takes now, with the
+  ledger `seq` and `reason` (`bet` for a new line, `add` for more on one).
+- HTTP **200** when anything was accepted (or nothing was sent), **400** when
+  every bet was rejected. The body's `error` then holds the reason (or
+  `every bet was rejected` when there were several).
+- HTTP **409** `{"ok": false, "error": "bets_closed", "retry_in_ms": N}` while
+  the ball is in the air — nothing was placed; try again after `retry_in_ms`.
+
+Amounts are whole coins: at least `min_bet`, and a bet line — after adding
+to it — at most `max_bet`. The odds are whole numbers, so every payout is
+whole too; nothing is rounded. The table holds up to 1000 bet lines; past
+that a new line is rejected (`the table is full (1000 bets) - …`), while
+adding to a line already down still works. The `user` is cleaned as
+everywhere (a leading `@` dropped, up to 40 characters) but keeps its case,
+so always send the same form of a name — the viewer's lowercase login is a
+good choice — or one viewer's bets won't group together and a ledger event's
+`user` won't match the hexbank's.
+
+### Table
+
+`GET /games/api/roulette/table` → `{"ok": true, "table": TABLE}`. The same
+`table` rides along in the `/bet`, `/remove`, `/clear`, `/board`, `/timer`
+and `/spin` replies and in every roulette [STATE](#websocket-protocol).
+
+```json
+{
+  "bets": [
+    {"id": "rb-5e6f7a8b", "user": "bob", "bet": "split:17/20", "label": "Split 17/20", "type": "split",
+     "numbers": ["17", "20"], "odds": 17, "amount": 25, "pays": 450, "placed_at": 1790000000.1,
+     "removable": true}
+  ],
+  "exposure": {"bob": 25}, "total_on_table": 25,
+  "bets_open": true, "auto_spin_in_ms": 12340, "last_seq": 43, "currency": "hexcoins",
+  "min_bet": 1, "max_bet": 100000, "display_board": null
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `bets` | every bet riding on the next spin, oldest first |
+| `exposure` | coins each user has on the table |
+| `total_on_table` | all of it added up |
+| `bets_open` | `false` only while the ball is in the air |
+| `auto_spin_in_ms` | time left on the [countdown](#the-countdown-auto-spin-and-the-spin-timer) (auto-spin or `/timer`), measured when the reply was built; `null` when none is running |
+| `last_seq` | the newest ledger `seq` — of any game, since the [ledger](#the-shared-ledger) is shared |
+| `currency`, `min_bet`, `max_bet` | from the config |
+| `display_board` | Mode B: the board Hex posted with [`/board`](#board), `{"title", "bets", "total"}`. `null` when there isn't one — the overlay's board then shows `bets` |
+
+A **BET** on the table:
+
+| Field | Meaning |
+| --- | --- |
+| `id` | `rb-…`, stable while the bet is on the table |
+| `user` | whose it is |
+| `bet` | the bet text as it was first placed |
+| `label` | readable name for chat (`Split 17/20`) |
+| `type`, `numbers`, `odds` | as in [How bets are resolved](#how-bets-are-resolved) — match on these in code |
+| `amount` | the stake, whole coins |
+| `pays` | what a win brings back: `amount × (odds + 1)`, stake included |
+| `placed_at` | server epoch seconds, when the line was first placed |
+| `removable` | always `true`: any roulette bet can come down until the ball is thrown |
+
+The table is saved to disk after every change and restored when Hexcast
+starts, so bets survive a restart. `display_board` isn't saved: it's `null`
+again after a restart.
+
+### Remove and clear
+
+`GET` or `POST /games/api/roulette/remove` — take bets down. The coins come
+back as credits (reason `remove`).
+
+| Body / query | Takes down |
+| --- | --- |
+| `{"bet_id": "rb-5e6f7a8b"}` | that bet (with a `user` too, only if it's theirs) |
+| `{"user": "bob", "bet": "split:17/20"}` | that user's bet, named with any spelling of its bet text |
+| `{"user": "bob", "all": true}` | everything that user has on the table |
+
+```
+curl "http://localhost:4747/games/api/roulette/remove?user=bob&bet=split:17/20"
+```
+
+Response: `{"ok": true, "removed": [BET, ...], "credits": [{"user", "amount"}], "ledger": [...], "table": {...}}`
+— each removed entry also has `refund` (the coins back). When nothing
+matches it's **400** with an `error` saying why (`@bob has no Split 17/20
+bet on the table`, `no bet with id rb-5e6f7a8b on the table`,
+`bet rb-5e6f7a8b belongs to @bob`); while the ball is in the air it's
+**409** `bets_closed`. Taking the last bet down stops an auto-spin
+countdown (not a [`/timer`](#timer) one).
+
+`GET` or `POST /games/api/roulette/clear` refunds every bet on the table
+(credits, reason `refund`) and stops any countdown. It returns
+`{"ok": true, "credits": [...], "ledger": [...], "refunded": N, "table": {...}}`,
+or **409** `bets_closed` while the ball is in the air. The panel's **Refund
+all & clear table** does the same.
+
+```
+curl http://localhost:4747/games/api/roulette/clear
+```
+
+### User
+
+`GET /games/api/roulette/user/{name}` →
+
+```
+{"ok": true, "user": "alice", "bets": [BET], "exposure": 100,
+ "session": {"debits": 250, "credits": 300, "net": 50, "events": 4}}
+```
+
+(alice put 100 on red and 50 more, which won 300; then 100 on red again.)
+`bets` and `exposure` are what that user has on the table now. `session`
+adds up their roulette events in the ledger Hexcast keeps in memory (the
+latest 10 000, of every game): `debits`, `credits`, `net` = credits − debits
+(coins on the table count as spent until they come back), and the event
+count. Handy for a `!mybets` reply. It isn't a balance; Hex's hexbank owns
+balances.
+
+### The countdown: auto-spin and the spin timer
+
+Two kinds of countdown lead up to a spin. Either way, at zero the server
+spins exactly like a `/spin` with no parameters — no `user`, the configured
+**spin seconds** — and every bet on the table rides on it.
+
+| | **Auto-spin** (`auto_spin: true`) | **Spin timer** ([`/timer`](#timer), the panel's **Start timer**) |
+| --- | --- | --- |
+| Starts | on its own while bets are on the table and the wheel is idle: with the first bet, again once a spin's result (and cooldown) is over if bets are still down, and when auto-spin is switched on with bets down | when it's called — with or without bets, auto-spin on or off. Called while a countdown runs, it starts over |
+| Length | `bet_window_seconds` (default 20) | `seconds` (5–300), default `bet_window_seconds` |
+| At zero | spins, if auto-spin is still on and bets are still down | always spins, even with nothing on the table |
+| Stopped by | any spin (a test spin too), `/stop`, `/timer/cancel`, `/clear`, taking the last bet down, switching auto-spin off | any spin (a test spin too), `/stop`, `/timer/cancel`, `/clear` |
+
+- `table.auto_spin_in_ms` is the time left on either kind, measured when the
+  reply or message was built, and `null` when nothing is counting. The
+  overlay shows it as **NEXT SPIN 0:12**, the panel as **Spin timer**.
+- Nobody's HTTP call waits on a spin the countdown starts. Hex learns about
+  it from the ledger (the winners' credits) and from
+  `GET /games/api/roulette/last`, the latest landed spin (or the websocket's
+  `state` messages).
+- A `test` spin (the editor's **Test in OBS**) stops the countdown too.
+  Auto-spin starts over from the full bet window once the test spin is over,
+  if bets are still down; a spin timer is simply gone — start it again.
+- A countdown doesn't survive a Hexcast restart. The bets do; auto-spin
+  counts again from the next bet placed, or start the timer.
+- **On screen.** While a countdown runs, the wheel stays on screen — even
+  with **hide when idle** on and nothing on the table — unless `/hide` or
+  **⏹ Stop** took it off (after a `/hide` the countdown keeps running, and
+  the spin at zero brings the wheel back). `/timer` brings a hidden wheel
+  back, the way a spin does. With **show when bets** on, the wheel also stays
+  up while bets are on the table or Hex's [board](#board) has lines.
+- Auto-spin only counts bets on Hexcast's table, not a board Hex posted — in
+  [Mode B](#hexs-side-the-spin-timer-only-mode-b) it never starts, and Hex
+  starts each countdown with `/timer`.
+
+### Timer
+
+`GET` or `POST /games/api/roulette/timer` starts the spin timer now, or
+starts it over. `seconds` goes in the query string or the JSON body; left
+out or not a number, it's the **bet window** (`bet_window_seconds`), and
+it's clamped to 5–300.
+
+```
+curl "http://localhost:4747/games/api/roulette/timer?seconds=30"
+curl -X POST http://localhost:4747/games/api/roulette/timer -H "Content-Type: application/json" -d "{\"seconds\":45}"
+curl http://localhost:4747/games/api/roulette/timer/cancel
+```
+
+```json
+{"ok": true, "auto_in_ms": 30000, "table": {"auto_spin_in_ms": 30000, "...": "..."},
+ "state": {"state": "idle", "visible": true, "...": "..."}}
+```
+
+- `auto_in_ms` — the countdown's length as it started (the table's
+  `auto_spin_in_ms` from then on).
+- While a spin is spinning, showing its result or in cooldown, it's **409**
+  busy — the same body as a busy [`/spin`](#busy). Nothing started; try
+  again after `retry_in_ms`.
+- `GET|POST /games/api/roulette/timer/cancel` stops any countdown, auto-spin's
+  or the timer's — nothing spins — and answers
+  `{"ok": true, "cancelled": true, "table": {...}, "state": {...}}`
+  (`cancelled` is `false` when none was running). With auto-spin on, the
+  next bet placed starts a fresh one.
+- Both are generic routes: `/games/api/craps/timer` and `/timer/cancel` do
+  the same for craps (see [Craps → Roll timer](craps.md#roll-timer)).
+
+### Settling a spin
+
+When the ball is thrown — by `/spin`, the panel or a countdown — the pocket
+is already picked, and every bet on the table is worked out against it.
+Next to the bets sent with the spin (`bets` and `summary`, unchanged), the
+spin object carries the table's side. Here it's the reply to a `/spin` with
+`wait=true` and no bets of its own; a countdown's spin carries the same
+fields in `/last`, `/history` and the [STATE](#websocket-protocol):
+
+```json
+{
+  "ok": true,
+  "id": "r-8ca506f5",
+  "game": "roulette",
+  "result": {"number": "3", "color": "red", "...": "..."},
+  "user": "hexmod",
+  "test": false,
+  "lands_at": 1790000009.123,
+  "...": "...",
+  "bets": [],
+  "summary": {"bets": 0, "winners": 0, "invalid": 0, "total_wagered": 0, "total_payout": 0},
+  "settlements": [
+    {"bet_id": "rb-1a2b3c4d", "user": "alice", "bet": "red", "label": "Red", "type": "red",
+     "amount": 150, "odds": 1, "win": true, "payout": 150, "credit": 300},
+    {"bet_id": "rb-9c0d1e2f", "user": "carol", "bet": "17", "label": "Straight 17", "type": "straight",
+     "amount": 10, "odds": 35, "win": false, "payout": -10, "credit": 0}
+  ],
+  "credits": [{"user": "alice", "amount": 300}],
+  "table_summary": {"bets": 2, "wagered": 160, "paid": 300, "net": -140},
+  "landed": true,
+  "table": {"bets": [], "...": "..."},
+  "ledger": [{"seq": 47, "game": "roulette", "type": "credit", "user": "alice", "amount": 300,
+              "reason": "win", "bet_id": "rb-1a2b3c4d", "bet": "Red", "roll_id": "r-8ca506f5", "...": "..."}]
+}
+```
+
+- `settlements` — one per bet on the table, in table order: `win`,
+  `payout` (the net: `amount × odds` for a win, `-amount` for a loss) and
+  `credit` (the coins paid back at the landing: `amount × (odds + 1)` for a
+  win — stake + winnings — else `0`).
+- `credits` — the same coins added up per user, winners only, for the chat
+  announcement.
+- `table_summary` — the house's view: `bets`, `wagered`, `paid` and `net` =
+  wagered − paid (negative when the players are up).
+- `table` — with `wait=true`, the table after the landing (the settled bets
+  gone). Without `wait`, the table as the ball was thrown
+  (`bets_open: false`).
+- `ledger` — with `wait=true`, the ledger events this spin wrote (its `win`
+  credits).
+
+**Settlements are worked out at the throw but committed at the landing.**
+Then every settled bet comes down, and each winning bet gets one ledger
+credit — reason `win`, the full `credit`, with `roll_id` set to the spin's
+`id`. A losing bet gets no event: its stake was taken when it was placed. A
+**⏹ Stop** while the ball is in the air commits the spin just the same. A
+Hexcast **restart** while it's in the air cancels the spin: nothing is
+settled, and the bets ride on the next one. A `test` spin never touches the
+table (`settlements: []`; the bets stay for the next real spin). So don't
+pay from a spin's reply — pay from the ledger.
+
+### The shared ledger
+
+Craps and roulette share one ledger: one file, `config/games_ledger.jsonl`,
+one `seq` numbering, and every event names its game in `game`.
+
+| Endpoint | Events |
+| --- | --- |
+| `GET /games/api/roulette/ledger?since=0&limit=500` | roulette's |
+| `GET /games/api/craps/ledger?since=0&limit=500` | craps' (see [Craps → Ledger](craps.md#ledger)) |
+| `GET /games/api/ledger?since=0&limit=500` | every game's; add `&game=roulette` (or `craps`) for one — an unknown name is a 404 `unknown game` |
+
+```
+curl "http://localhost:4747/games/api/roulette/ledger?since=0"
+curl "http://localhost:4747/games/api/ledger?since=0&limit=1000"
+```
+
+```json
+{"ok": true, "events": [
+  {"seq": 51, "ts": 1790000000.123, "game": "roulette", "type": "debit", "user": "alice", "amount": 100,
+   "reason": "bet", "bet_id": "rb-1a2b3c4d", "bet": "Red", "roll_id": null},
+  {"seq": 54, "ts": 1790000031.402, "game": "roulette", "type": "credit", "user": "alice", "amount": 200,
+   "reason": "win", "bet_id": "rb-1a2b3c4d", "bet": "Red", "roll_id": "r-5f6e7d8c"}
+ ], "last_seq": 55, "truncated": false, "oldest_seq": 1}
+```
+
+(alice's 100 on red won: 100 stake + 100 won. Seqs 52, 53 and 55 are craps
+events.)
+
+- Each returns the events with `seq` **greater than** `since`, oldest first,
+  at most `limit` of them (default 500, up to 5000).
+- `seq` is unique across the games and only ever goes up — it keeps counting
+  across restarts — so one game's events have gaps where the other's are.
+  That's normal. `last_seq` is always the ledger's newest seq, of any game.
+- `truncated` is `true` when you didn't get everything after `since`: either
+  `limit` cut it short (call again from the last seq you processed), or some
+  of those events are older than the 10 000 (of every game) kept in memory —
+  `oldest_seq` is the oldest one still held; the rest are in
+  `games_ledger.jsonl` (and `games_ledger.jsonl.1`).
+- `type` is `debit` (coins Hex takes) or `credit` (coins Hex pays); `bet` is
+  a readable label, `bet_id` the table bet, and `roll_id` the spin's `id` on
+  a win (`null` otherwise). Roulette's reasons:
+
+| `type` | `reason` | When |
+| --- | --- | --- |
+| debit | `bet` | a new bet went on the table |
+| debit | `add` | more was added to a bet already down |
+| credit | `win` | a bet won at the landing: stake + winnings |
+| credit | `remove` | a bet was taken down |
+| credit | `refund` | the table was cleared |
+
+- Panel websockets (`/games/ws/panel`) get every new batch pushed, one
+  message per game: `{"type": "ledger", "game": "roulette", "events": [...]}`.
+- Only table bets are in it. Bets sent with a spin call never are.
+
+### Board
+
+`GET` or `POST /games/api/roulette/board` puts Hex's own lines up as the
+"on the table" board — the display call for [Mode B](#two-ways-to-run-the-money),
+where Hex keeps the bets. It's the same call as
+[craps' board](craps.md#board--the-bets-that-are-down): `{"title", "bets": [{"user", "text", "amount"}]}`,
+up to 100 lines, `user` up to 40 characters, `text` up to 60, `amount`
+optional (a finite number from 0 to 1 000 000 000 000), each line with a
+`user` or a `text`; `title` up to 40 characters (default `ON THE TABLE`);
+`?user=&amount=&text=` as the one-line shorthand.
+
+```
+curl -X POST http://localhost:4747/games/api/roulette/board -H "Content-Type: application/json" -d "{\"title\":\"PLACE YOUR BETS\",\"bets\":[{\"user\":\"alice\",\"text\":\"Red, Split 17/20\",\"amount\":125},{\"user\":\"bob\",\"text\":\"Straight 17\",\"amount\":10}]}"
+curl -X POST http://localhost:4747/games/api/roulette/board -H "Content-Type: application/json" -d "{\"bets\":[]}"
+curl http://localhost:4747/games/api/roulette/board/clear
+```
+
+- It answers `{"ok": true, "table": TABLE}`, with the board in the table as
+  `display_board`: the title, the cleaned lines (all three keys, `null` for
+  what wasn't sent) and `total`, the sum of the amounts.
+- While `display_board` isn't `null`, the overlay's board shows it
+  **instead of** the table's bets, before the spin, in the same style:
+  the title, up to **table lines** lines, the total. **show table** applies,
+  and **show when bets** counts its lines. `{"bets": []}` is an empty board —
+  Hex has nothing down — so no board is shown.
+- `GET|POST /games/api/roulette/board/clear` (or `{"clear": true}`) sets it
+  back to `null` — the board built from the table's bets again. It answers
+  `{"ok": true, "cleared": true|false, "table": TABLE}`.
+- Post it any time, even while the ball is in the air — the overlay holds
+  table updates until the landing, so it never gives the spin away.
+- Display only: it never touches the result, the table's bets, the ledger or
+  the history. It lives in memory only — after a Hexcast restart
+  `display_board` is `null` again, so post it again.
+- **HTTP 400** when the body isn't valid JSON, when `bets` isn't a list of
+  lines, when there's no `bets` (nor the one-line shorthand) and no `clear`,
+  or when every line sent was unusable. Nothing changes then.
+
+### Hex's side: the table (Mode A)
+
+The table route with **Hex**, the channel's bot, as the bank: Hex's own code
+keeps everyone's hexcoins in its **hexbank**, and Hexcast keeps none. It
+works exactly like [craps' bank](craps.md#hooking-up-the-bank-hexcoins) —
+the same `debits`, the same ledger, the same record on Hex's side — so a Hex
+that already runs craps needs little more than a new command. In the steps
+and the code, `hexbank.balance(user)`, `hexbank.debit(user, amount)` and
+`hexbank.credit(user, amount)` are **placeholder names** — use whatever
+Hex's hexbank really calls them.
+
+Next to the hexbank Hex saves `last_seq` (the last ledger event it has
+processed) and `done` (seqs it already handled straight from a reply), in
+the same transaction as the hexbank change they go with — see
+[What Hex saves](craps.md#what-hex-saves).
+
+1. **Placing a bet.** Check `hexbank.balance(user)` covers the amount (sync
+   the ledger first, so winnings that just landed count), then
+   `POST /games/api/roulette/bet` with `{"user", "bet", "amount"}`. For each
+   `debits[]` entry `{user, amount, bet_id, seq}`, call
+   `hexbank.debit(user, amount)` and add `seq` to `done`, in one
+   transaction. A **rejected** bet moved nothing — reply with its `error`. A
+   **409** `bets_closed` placed nothing (the ball is in the air) — try again
+   after `retry_in_ms`. If a debit **fails** (the viewer spent the coins
+   somewhere else in Hex since the check), take the bet back down with
+   `POST /remove {"bet_id"}`, and add the failed debit's `seq` and the
+   refund's `seq` to `done`. Craps' [Step 1](craps.md#step-1--placing-a-bet)
+   has the details, and the other safe ordering — debit first, credit back
+   whatever wasn't accepted.
+2. **Spinning.** `POST /games/api/roulette/timer` — say, for a mod's
+   `!openbets` — or turn **auto-spin** on and let the first bet start the
+   countdown. At zero the wheel spins with every bet on the table. A `!spin`
+   that calls `/spin` works too.
+3. **Paying out: tail the ledger.** `GET /games/api/ledger?since=<last_seq>&limit=1000`
+   covers every game in one tail (or `/games/api/roulette/ledger` for
+   roulette only). For each event, oldest first: a `seq` in `done` → skip it
+   and drop it from `done`; a `credit` (`win`, `remove`, `refund`) →
+   `hexbank.credit(user, amount)`; a `debit` Hex didn't take itself (a bet
+   placed with the panel's **Place bet**, a curl, a `/bet` whose reply never
+   reached Hex) → `hexbank.debit(user, amount)`. Then save that `seq` as
+   `last_seq`, together with the hexbank change. Repeat until a call returns
+   no events; then poll every second or two, or sync whenever a `ledger`
+   message arrives on `ws://<host>:4747/games/ws/panel` (and once on every
+   connect).
+4. **Announcing.** A countdown's spin has no reply to wait for. Watch
+   `GET /games/api/roulette/last` and announce each new spin `id` once:
+   `spin.result` for the pocket, `spin.credits` for who won what (stake +
+   winnings). A `/spin?wait=true` reply carries the same. Either way the
+   coins move in the ledger tail, never from these.
+
+**Where to start.** On a brand-new ledger, `last_seq` starts at 0. If Hex
+already tails craps' ledger, keep its `last_seq` and point the tail at
+`/games/api/ledger` — it's one seq space — but switch while nothing is on
+the roulette table (press **Refund all & clear table** first if testing
+left bets there): roulette events a craps-only tail has already passed are
+never picked up again. Never skip events while bets are on a table — their
+payouts would be for coins Hex never took.
+
+**Restarts.** Hex restarting loses nothing: the tail picks up from the saved
+`last_seq`. Hexcast restarting keeps every bet on the table (every one of
+them already debited), and `seq` carries on where it stopped; a countdown
+that was running is gone, so start the timer again (auto-spin counts again
+from the next bet). A restart while the ball is in the air cancels that
+spin — nothing settled, no credits written, the bets ride on the next spin —
+so tell chat and start the timer again.
+
+A sketch — any HTTP library works (`pip install requests` for this one):
+
+```python
+import threading, time, requests
+
+API = "http://localhost:4747/games/api"   # Hexcast, as Hex's machine sees it
+LOCK = threading.RLock()   # one money action at a time: bets, take-downs, the ledger tail
+
+# Placeholders - the names are made up, use what Hex really has:
+#   hexbank.balance(user) -> int
+#   hexbank.debit(user, amount) -> bool     False when the viewer can't cover it
+#   hexbank.credit(user, amount)
+#   chat(text)                              a message in chat
+#   state.last_seq, state.done (a set), state.last_spin   Hex's record, next to the hexbank
+#   state.save()   commits that record TOGETHER with the hexbank changes made since the last save
+
+
+def sync_ledger():
+    """Apply every ledger event Hex hasn't handled yet (craps and roulette), oldest first, exactly once."""
+    with LOCK:
+        while True:
+            r = requests.get(f"{API}/ledger", params={"since": state.last_seq, "limit": 1000}, timeout=10)
+            fresh = [ev for ev in r.json().get("events") or [] if ev["seq"] > state.last_seq]
+            if not fresh:
+                return                                       # caught up
+            for ev in fresh:                                 # oldest first
+                if ev["seq"] in state.done:
+                    state.done.discard(ev["seq"])            # handled from a /bet or /remove reply
+                elif ev["type"] == "credit":
+                    hexbank.credit(ev["user"], ev["amount"]) # win, remove, refund
+                else:                                        # a bet Hex didn't take the coins for
+                    hexbank.debit(ev["user"], ev["amount"])  # (panel, curl, a lost reply)
+                state.last_seq = ev["seq"]
+                state.save()
+
+
+def on_bet(user, bet, amount):
+    """!bet red 100 -> on the table for the next spin"""
+    with LOCK:
+        sync_ledger()                                        # winnings that just landed count
+        if hexbank.balance(user) < amount:
+            return f"@{user} you have {hexbank.balance(user)} hexcoins"
+        r = requests.post(f"{API}/roulette/bet", json={"user": user, "bet": bet, "amount": amount}, timeout=10)
+        data = r.json()
+        if r.status_code == 409:
+            return f"@{user} the ball is rolling - bet again in a moment"
+        for d in data.get("debits") or []:
+            if hexbank.debit(d["user"], d["amount"]):
+                state.done.add(d["seq"])                     # the tail mustn't take it again
+                state.save()
+            else:                                            # spent elsewhere since the check
+                take_back(d)
+                return f"@{user} you don't have {amount} hexcoins any more"
+    if not data.get("accepted"):
+        return f"@{user} {data.get('error') or 'bet refused'}"
+    b = data["accepted"][0]
+    return f"@{user} {b['amount']} on {b['label']}, pays {b['odds']} to 1"
+
+
+def take_back(d):
+    """A debit failed: take that bet back down - nothing moves for coins Hex never took"""
+    r = requests.post(f"{API}/roulette/remove", json={"bet_id": d["bet_id"]}, timeout=10)
+    if r.status_code != 200:
+        return                          # the ball is in the air: the tail takes the debit
+    rm = r.json()
+    state.done.add(d["seq"])                                 # never taken...
+    state.done.update(ev["seq"] for ev in rm["ledger"])      # ...so its refund isn't paid either
+    extra = rm["removed"][0]["refund"] - d["amount"]
+    if extra > 0:
+        hexbank.credit(d["user"], extra)                     # an add: the rest of the line was Hex's already
+    state.save()
+
+
+def on_open(seconds=30):
+    """!openbets - the spin timer: at 0 the wheel spins with everything on the table"""
+    r = requests.post(f"{API}/roulette/timer", json={"seconds": seconds}, timeout=10)
+    data = r.json()
+    if r.status_code == 409:
+        return f"The wheel is busy - try again in {data['retry_in_ms'] // 1000 + 1}s"
+    return f"Place your bets! The wheel spins in {data['auto_in_ms'] // 1000}s"
+
+
+def watch():
+    """Pays everything (countdown spins, panel spins, take-downs) and announces each landed spin once."""
+    while True:
+        try:
+            sync_ledger()
+            spin = requests.get(f"{API}/roulette/last", timeout=10).json()["spin"]
+            if spin and spin["id"] != state.last_spin:
+                state.last_spin = spin["id"]
+                state.save()
+                res = spin["result"]
+                won = ", ".join(f"@{c['user']} +{c['amount']}" for c in spin["credits"]) or "no winners"
+                chat(f"{res['number']} {res['color'].upper()}! {won}")
+        except requests.RequestException:
+            pass                                             # Hexcast restarting - try again
+        time.sleep(2)
+```
+
+Run `watch()` on its own thread when Hex starts. The only places coins move
+are `on_bet` (the debits Hex took for its own bets, and a give-back) and
+`sync_ledger` (everything else); each `seq` is either marked `done` or
+applied by the tail, never both.
+
+### Hex's side: the spin timer only (Mode B)
+
+Here Hex keeps the bets and does the math, as in
+[Hex does the math](#hex-does-the-math-mode-b), and Hexcast adds the
+countdown and the board. Hexcast's table stays empty — so nothing goes in
+the ledger, and auto-spin never starts: Hex starts every countdown with
+`/timer`.
+
+1. **Open the round.** `POST /games/api/roulette/timer` with
+   `{"seconds": 30}`. The reply's `auto_in_ms` says when the wheel spins;
+   tell chat. A **409** busy means the last spin is still up: try again after
+   `retry_in_ms`.
+2. **Take bets in Hex** — Hex's rules, the stake from the hexbank — and
+   mirror them after every change with `POST /games/api/roulette/board`, one
+   line per viewer (`{"user": "alice", "text": "Red, Split 17/20", "amount": 125}`).
+   The board sits beside the wheel under the countdown; send
+   `"title": "PLACE YOUR BETS"` if you like, since a board Hex posts keeps
+   its own title.
+3. **Close bets** when the countdown runs out (at `auto_in_ms` after the
+   reply — a second early is safer, since Hex's clock started a moment after
+   Hexcast's), or as soon as any spin starts: `GET /games/api/status` shows
+   roulette's `state` leaving `idle`. The pocket is picked the moment the
+   ball is thrown, so no bet may come in after that.
+4. **Wait for the landing.** Poll `GET /games/api/roulette/last` until its
+   `spin.id` is new. Hexcast commits a spin when the ball lands — or at a
+   **⏹ Stop** in mid-air; its result stands either way. That spin is the
+   round's, even if someone spun early from the panel (any spin stops the
+   countdown).
+5. **Settle from `spin.result`** — at standard odds a bet wins when
+   `result.number` is one of its `numbers` — and pay each winner from the
+   hexbank.
+6. **Show it.** `POST /games/api/roulette/announce` with `spin_id` set to
+   the spin's `id` and one line per winner (or `"lines": []` and an
+   `empty_text`), then post the board again: `{"bets": []}` until the next
+   round's bets come in.
+
+If the countdown is cancelled (the panel's **Cancel timer**,
+`/timer/cancel`, **⏹ Stop**), nothing spins: `GET /games/api/status` shows
+roulette `idle` with `table.auto_spin_in_ms` `null`, and `/last` hasn't
+changed. The bets are still Hex's — start the timer again. A Hexcast
+restart while the ball is in the air cancels the spin too (it never reaches
+`/last`): settle nothing, and post the board again, since it's memory only.
+Never also `/bet` Hex's bets — Hexcast would settle them and put the payouts
+in the ledger as well.
+
+The waiting part as a sketch, with `on_bet` taking bets into `pending` as in
+the [Mode B sketch](#hex-does-the-math-mode-b) (and calling `post_board()`
+after each one). `hexbank.credit` is a placeholder name again.
+
+```python
+import time, requests
+
+API = "http://localhost:4747/games/api"
+pending = []   # this round's bets - Hex's own list: {"user", "amount", "label", "numbers", "odds"}
+
+
+def post_board():
+    """Hex's bets on the overlay's board, one line per viewer (display only)"""
+    per = {}
+    for b in pending:
+        per.setdefault(b["user"], []).append(b)
+    requests.post(f"{API}/roulette/board", timeout=10, json={"title": "PLACE YOUR BETS", "bets": [
+        {"user": u, "amount": sum(b["amount"] for b in bs), "text": ", ".join(b["label"] for b in bs)}
+        for u, bs in per.items()]})
+
+
+def roulette_state():
+    return requests.get(f"{API}/status", timeout=10).json()["games"]["roulette"]
+
+
+def run_round(seconds=30):
+    """!openbets - one round on the spin timer (run it on its own thread): bets until 0, then settle"""
+    global pending
+    last = requests.get(f"{API}/roulette/last", timeout=10).json()["spin"]
+    before = last["id"] if last else None
+    r = requests.post(f"{API}/roulette/timer", json={"seconds": seconds}, timeout=10)
+    if r.status_code == 409:
+        return f"The wheel is busy - try again in {r.json()['retry_in_ms'] // 1000 + 1}s"
+    close_at = time.monotonic() + r.json()["auto_in_ms"] / 1000 - 1     # a second early
+    while time.monotonic() < close_at:
+        time.sleep(0.5)
+        try:
+            if roulette_state()["state"] != "idle":
+                break                                         # someone spun early
+        except (requests.RequestException, ValueError):
+            pass
+    bets, pending = pending, []                               # bets from now on are for the next round
+    while True:
+        time.sleep(1)
+        try:
+            spin = requests.get(f"{API}/roulette/last", timeout=10).json()["spin"]
+            if spin and spin["id"] != before:
+                break                                         # landed (or stopped in mid-air): it stands
+            st = roulette_state()
+        except (requests.RequestException, ValueError):
+            continue                                          # Hexcast restarting - ask again
+        if st["state"] == "idle" and st["table"]["auto_spin_in_ms"] is None:
+            pending = bets + pending                          # cancelled, or lost to a restart
+            return "No spin this time - your bets are still on"
+    res, lines = spin["result"], []                           # Hexcast's fair pocket; "number" is a string
+    for b in bets:
+        if res["number"] in b["numbers"]:
+            hexbank.credit(b["user"], b["amount"] * (b["odds"] + 1))    # stake + winnings
+            lines.append({"user": b["user"], "amount": b["amount"] * b["odds"], "text": b["label"]})
+    try:
+        requests.post(f"{API}/roulette/announce", timeout=10, json={
+            "spin_id": spin["id"], "lines": lines, "empty_text": "House wins"})
+        post_board()                                          # empty until the next round's bets
+    except requests.RequestException:
+        pass                                                  # display only - the payouts are done
+    names = ", ".join(f"@{l['user']} +{l['amount']}" for l in lines) or "nobody"
+    return f"{res['number']} {res['color'].upper()}! Winners: {names}"
+```
 
 ---
 
@@ -409,6 +1217,15 @@ like the rest of Hexcast).
 | `GET /games/api/{game}/validate?bet=...` | parse one bet string without spinning |
 | `GET\|POST /games/api/{game}/show` | put the idle wheel on screen |
 | `GET\|POST /games/api/{game}/hide` | take it off screen |
+| `GET\|POST /games/api/{game}/timer` · `timer/cancel` | start the countdown to the next spin now · stop it (see [Timer](#timer)) |
+| `GET\|POST /games/api/roulette/bet` | put bets on the [table](#table--spin-timer) for the next spin (see [Bet](#bet)) |
+| `GET\|POST /games/api/roulette/remove` | take table bets down: a refund (see [Remove and clear](#remove-and-clear)) |
+| `GET /games/api/roulette/table` | the table: every bet, exposure, the countdown (see [Table](#table)) |
+| `GET /games/api/roulette/user/{name}` | one viewer's table bets and session totals (see [User](#user)) |
+| `GET\|POST /games/api/roulette/clear` | refund every table bet |
+| `GET\|POST /games/api/roulette/board` · `board/clear` | Mode B: Hex's own board before the spin · back to the table's (see [Board](#board)) |
+| `GET /games/api/roulette/ledger?since=0&limit=500` | roulette's ledger events after a seq (see [The shared ledger](#the-shared-ledger)) |
+| `GET /games/api/ledger?since=0&limit=500&game=` | every game's ledger events, or one game's |
 | `GET\|POST /games/api/stop` | abort every animation and hide everything |
 | `GET\|POST /games/api/{game}/stop` | the same, for one game only |
 | `WS /games/ws/overlay`, `WS /games/ws/panel` | live updates (see [WebSocket protocol](#websocket-protocol)) |
@@ -423,7 +1240,7 @@ query string, a JSON body (POST), or both — the body wins where they overlap.
 | `user` | who's spinning, up to 40 characters — shown as an `@user spins` caption |
 | `duration` | spin time in seconds, clamped to 4–30 (default: **spin seconds** from the config) |
 | `wait` | `true` holds the HTTP response until the ball has landed (default `false`) |
-| `test` | `true` for a test spin: kept out of history and stats, no clip cues |
+| `test` | `true` for a test spin: kept out of history and stats, no clip cues, the table's bets untouched |
 | `bets` | JSON body: a list of up to 200 bets, `[{"user": ..., "bet": ..., "amount": ...}]` |
 | `bet`, `amount` | query shorthand for a single bet; the `user` param becomes the bet's user |
 | `overrides` | JSON body: appearance keys for this spin only (see [Config keys](#config-keys)) |
@@ -490,8 +1307,13 @@ Response (HTTP 200) — the **spin object**:
      "odds": 8, "win": false, "payout": -100, "returned": 0}
   ],
   "summary": {"bets": 2, "winners": 1, "invalid": 0, "total_wagered": 150, "total_payout": 750},
+  "settlements": [],
+  "credits": [],
+  "table_summary": {"bets": 0, "wagered": 0, "paid": 0, "net": 0},
   "overrides": {"theme": "neon", "result_position": "below"},
-  "landed": true
+  "landed": true,
+  "table": {"bets": [], "bets_open": true, "auto_spin_in_ms": null, "...": "..."},
+  "ledger": []
 }
 ```
 
@@ -510,6 +1332,10 @@ Response (HTTP 200) — the **spin object**:
 - `summary` — how many bets, how many won, how many were invalid, and the
   total staked and total net `payout` (both counted over the valid bets only)
   — for a one-line chat recap.
+- `settlements`, `credits`, `table_summary`, `table` and `ledger` — the
+  bets on the [table](#table--spin-timer), settled on this spin (see
+  [Settling a spin](#settling-a-spin)). Empty here: nothing was on the table,
+  and bets sent with a spin never go in the ledger.
 - `landed: true` — only present with `wait=true`, where the response is sent
   the moment the ball lands. If the spin is stopped (`/games/api/stop`) before
   it lands, the waiting response comes back right then with
@@ -531,7 +1357,8 @@ in cooldown, a new spin gets **HTTP 409**:
 
 `state` is `spinning`, `result` or `cooldown`; `retry_in_ms` is how long until
 a spin will be accepted. Nothing is queued — try again after `retry_in_ms`, or
-tell chat to wait.
+tell chat to wait. A [`/timer`](#timer) gets the same 409 — and table bets
+don't: they're only refused (`bets_closed`) while the ball is in the air.
 
 ### Announce
 
@@ -579,7 +1406,7 @@ of the spin it's announcing — see below.)
 | `user`, `amount`, `text` | — | query shorthand for one line: `?user=alice&amount=200&text=Red` (added after any `lines`) |
 | `title` | `"WINNERS"` | the card's title, up to 40 characters |
 | `empty_text` | `"No winners"` | shown instead of lines when there are none, up to 60 characters |
-| `currency` | the game's `currency` setting if it has one (craps: `hexcoins`), else `""` | shown after each amount, up to 24 characters; `""` for none. Roulette has no currency setting, so its default is `""` — send `"currency": "hexcoins"` to show one |
+| `currency` | the game's `currency` setting (`"hexcoins"` unless you changed it) | shown after each amount, up to 24 characters; `""` for none |
 | `seconds` | the rest of the result phase (all of it while the ball is in the air), else the game's **result seconds** | 1–120 — how long the card stays up. Posted while the ball is in the air, it counts from the landing |
 | `spin_id` | the current spin (in the air or showing its result), else the last committed one | which spin the card is about — it has to be that same spin (see below) |
 
@@ -622,7 +1449,7 @@ Response (HTTP 200):
   `{"ok": true, "cleared": true, "announce": null, "state": STATE}`
   (`cleared` is `false` if there was no card up). Cleared while the result
   is still up, the winners list Hexcast built comes back (if the spin
-  carried bets).
+  settled any bets, sent with it or on the table).
 - **`spin_id`** stops a late card from landing on the wrong spin. It must be
   the id of the current spin (in the air or showing its result) or, when
   there isn't one, of the last committed spin. Anything else gets **HTTP
@@ -703,17 +1530,24 @@ curl http://localhost:4747/games/api/stop
 ```
 
 - **show** — put the wheel on screen, idling, until you hide it or the next
-  spin's result phase ends. Useful for "place your bets" before a spin.
+  spin's result phase ends. Useful for "place your bets" before a spin (the
+  [spin timer](#timer) does that too, with a countdown).
 - **hide** — take it off screen. It won't cut a spin off mid-air: while the
   ball is rolling it answers 409 busy.
 - **stop** — the panic button (the panel's **⏹ Stop**): aborts every
-  animation and hides everything immediately. A spin that had already started
-  still counts — it's committed to history (unless it was a `test` spin),
-  since its result was already handed to whoever asked for it — and the game
-  goes back to idle, ready for the next spin.
+  animation, stops any [countdown](#the-countdown-auto-spin-and-the-spin-timer)
+  and hides everything immediately. A spin that had already started still
+  counts — it's committed to history (unless it was a `test` spin), and the
+  table's bets are settled and paid, since its result was already handed to
+  whoever asked for it — and the game goes back to idle, ready for the next
+  spin.
 
-With **hide when idle** off, the wheel stays on screen between spins; a
-`/hide` (or a stop) still takes it off until the next `/show` or spin.
+With **hide when idle** off, the wheel stays on screen between spins. With
+**show when bets** on, it also stays up while bets are on the
+[table](#table--spin-timer) (or Hex's [board](#board) has lines), and a
+running countdown keeps it up too. A `/hide` (or a stop) still takes it off
+until the next `/show`, `/timer` or spin; a countdown that's running after a
+`/hide` keeps going, and its spin brings the wheel back.
 
 ### Config
 
@@ -750,12 +1584,21 @@ a spin's `overrides`, and what the Edit Mode editor edits.
 | `show_history` | `true` | the strip of recent results under the wheel | ✓ |
 | `history_count` | `10` | 1–20 — how many results the strip shows | ✓ |
 | `show_user` | `true` | the `@user spins` caption when a spin has a user | ✓ |
-| `show_bets` | `true` | the winners list after landing (only when bets were sent), and a bot's [announce](#announce) card | ✓ |
+| `show_bets` | `true` | the winners list after landing (only when the spin settled bets — sent with it or on the table), and a bot's [announce](#announce) card | ✓ |
 | `bets_max` | `5` | 1–20 — winners listed (lines, on an announce card) | ✓ |
+| `show_table` | `true` | the "on the table" board before the spin (the [table](#table--spin-timer)'s bets, or Hex's [board](#board)) | ✓ |
+| `table_max` | `6` | 1–20 — board lines before `+N more` | ✓ |
+| `table_position` | `"right"` | `right` \| `left` \| `below` \| `above` — where the board sits next to the wheel | ✓ |
 | `sfx` | `true` | built-in synthesized ball sounds in the overlay | ✓ |
 | `sfx_volume` | `0.5` | 0–1 | ✓ |
 | `spin_clip`, `land_clip` | `""` | soundboard clip names fired at launch / landing (`""` = none) | |
 | `cooldown_seconds` | `0` | 0–3600 — extra lockout after the result phase ends (`0` = none) | |
+| `currency` | `"hexcoins"` | 1–24 characters — the name on the board, the winners list and in the table; the [announce](#announce) card's default | |
+| `min_bet` | `1` | whole number, 1–1 000 000 000 — the least a table bet may put down | |
+| `max_bet` | `100000` | whole number, 0–1 000 000 000 000; `0` = no maximum — the most one table bet line may hold; a value below `min_bet` is reset to the default (or to `0` if `min_bet` is above that) | |
+| `auto_spin` | `false` | spin by itself when the bet window runs out, while bets are on the table (see [the countdown](#the-countdown-auto-spin-and-the-spin-timer)) | |
+| `bet_window_seconds` | `20` | 5–300 — the auto-spin countdown, and [`/timer`](#timer)'s default | |
+| `show_when_bets` | `true` | keep the wheel on screen while bets are on the table, or Hex's `/board` has lines (even with hide when idle) | |
 
 ---
 
@@ -772,8 +1615,9 @@ Server → client (JSON text frames):
 - `{"type": "state", "game": "roulette", "state": STATE}` — on connect (one
   per game) and on
   every transition: spin start, landing, result end, cooldown end, show,
-  hide, stop, history clear, and when an [announce](#announce) card is
-  posted, cleared or runs out.
+  hide, stop, history clear, when an [announce](#announce) card is
+  posted, cleared or runs out, and whenever the [table](#table) changes (a
+  bet, a take-down, a clear, Hex's board, a countdown started or stopped).
 - `{"type": "stop"}` — hide and abort everything now (a `state` message
   follows). `/games/api/{game}/stop` sends `{"type": "stop", "game": "roulette"}`
   instead, which only concerns that game.
@@ -789,15 +1633,18 @@ Server → client (JSON text frames):
   "last": {...spin object...},
   "history": [{"number": "32", "color": "red", ...}, ...],
   "busy_ms": 12860,
-  "announce": null
+  "announce": null,
+  "table": {"bets": [...], "bets_open": false, "auto_spin_in_ms": null, ...}
 }
 ```
 
 - `state` — `idle`, `spinning`, `result` or `cooldown`.
 - `visible` — whether the wheel should be on screen: during a spin and its
-  result, after `/show`, while an [announce](#announce) card is up, or
+  result, after `/show`, while an [announce](#announce) card is up, while a
+  [countdown](#the-countdown-auto-spin-and-the-spin-timer) runs, while bets
+  are on the table or Hex's board has lines (with **show when bets** on), or
   always when `hide_when_idle` is off. After `/hide` or a stop it's `false`
-  until the next `/show` or spin.
+  until the next `/show`, `/timer` or spin.
 - `spin` — the spin in the air or in its result phase (`null` when idle),
   with `elapsed_ms`: milliseconds since it started, measured on the server
   when the message was built. Clients seek by `elapsed_ms` and never compare
@@ -809,9 +1656,18 @@ Server → client (JSON text frames):
 - `announce` — the winners card a bot posted with [`/announce`](#announce)
   (the ANNOUNCE object, with `expires_in_ms` measured when the message was
   built), or `null` when there isn't one.
+- `table` — the roulette [TABLE](#table): the bets waiting for the next
+  spin, the countdown's `auto_spin_in_ms` (measured when the message was
+  built) and Hex's `display_board`. The overlay holds a table that arrives
+  while the ball is in the air until it lands, so it never gives the spin
+  away.
 
-Craps uses the same messages; its `STATE` also carries the table, and panel
-sockets get one more type, `ledger` — see [Craps → WebSocket](craps.md#websocket).
+**Panel** sockets (`/games/ws/panel`) also get
+`{"type": "ledger", "game": "roulette", "events": [...]}` for every new batch
+of [ledger](#the-shared-ledger) events — one message per game, so a game's
+events never mix with the other's. Overlays never get it (and ignore message
+types they don't know). Craps uses the same messages, with its own table in
+its `STATE` — see [Craps → WebSocket](craps.md#websocket).
 
 Client → server: `{"type": "hello", "game": "roulette"}` (optional) and
 `{"type": "error", "message": "..."}` — overlays report script errors this
@@ -864,7 +1720,9 @@ GET http://localhost:4747/games/api/roulette/spin?user={user}&bet={bet}&amount={
 ### A chat betting round
 
 Collect bets from chat, then spin once for everyone — the classic chat-casino
-command flow:
+command flow, with the bets kept in the bot until the spin call (to let
+Hexcast hold them on its table instead, with a countdown and the ledger, see
+[Table & spin timer](#table--spin-timer)):
 
 1. **Open the table.** A mod types `!openbets`; the bot calls
    `GET /games/api/roulette/show` so the wheel sits on screen, and starts an
@@ -940,15 +1798,17 @@ resolved bet), and post the announcement at `lands_at` — or simply after
 Here Hex keeps the bets and works out the payouts in its own code, and
 Hexcast spins the wheel and shows the winners card Hex posts (see
 [Two ways to run the money](#two-ways-to-run-the-money)). The pocket is still
-Hexcast's fair spin; Hex only reads it. Roulette has no board of bets before
-the spin — the wheel just spins, and the card comes after.
+Hexcast's fair spin; Hex only reads it. This recipe spins on Hex's command;
+to count down to the spin with Hex's bets on the board meanwhile, see
+[Hex's side: the spin timer only](#hexs-side-the-spin-timer-only-mode-b).
 
 1. **Take bets in Hex.** For each `!bet <bet> <amount>`, Hex checks the bet
    against its own rules, takes the stake from its hexbank, and adds the bet
    to its own list for this round. To understand roulette bet text, Hex can
    still call `GET /games/api/roulette/validate?bet=<bet>`: it returns the
    `numbers` the bet covers and its `odds`, and changes nothing. `/show` puts
-   the wheel on screen while bets are open.
+   the wheel on screen while bets are open, and [`/board`](#board) can show
+   Hex's bets beside it.
 2. **Spin without bets.** Take this round's bets out of the list (bets that
    arrive from now on are for the next spin), then
    `POST /games/api/roulette/spin` with `{"user": ..., "wait": true}` and
@@ -1028,7 +1888,11 @@ together with the hexbank changes, like the rest of Hex's state.
 ## Hooking up the bank (hexcoins)
 
 This is **Mode A** — Hexcast does the bet math (for Mode B, see
-[Hex does the math](#hex-does-the-math-mode-b)).
+[Hex does the math](#hex-does-the-math-mode-b)) — with the bets sent on the
+spin call. The other Mode A route, the [table and the spin timer](#table--spin-timer),
+is the durable one: its bets and payouts are in the ledger, and Hex's side
+is [its own short guide](#hexs-side-the-table-mode-a), the same as craps'.
+Pick one route per bet.
 
 The bank is **Hex**, the channel's bot. Hex's own code keeps everyone's
 hexcoins in its **hexbank**; Hexcast keeps none. Hex takes the chat commands,
@@ -1048,9 +1912,11 @@ The short version:
 - **Paying out** — Hex credits every bet's `returned` from the reply: stake +
   winnings for a win, `0` for a loss, the stake back for a bet Hexcast
   couldn't read.
-- **There's no ledger.** Unlike [craps](craps.md#hooking-up-the-bank-hexcoins),
-  roulette keeps no record of what was paid. Hex pays from the reply straight
-  away and keeps its own note of which bets it has paid.
+- **No ledger on this route.** Bets sent with a spin never go in the
+  ledger, so Hexcast keeps no record of what was paid. Hex pays from the
+  reply straight away and keeps its own note of which bets it has paid. (The
+  [table route](#table--spin-timer) has the ledger, like
+  [craps](craps.md#hooking-up-the-bank-hexcoins).)
 
 ### Who does what
 
@@ -1139,9 +2005,10 @@ same transaction as its credit**. Then use `result` (`number`, `color`) and
 
 ### Restarts and paying exactly once
 
-Roulette has **no ledger**. Hexcast remembers committed spins only in memory:
-the last 200, newest first, emptied when Hexcast restarts (and by **Clear
-history** / `/history/clear`). So Hex keeps its own record of each round:
+Bets on the spin call have **no ledger**. Hexcast remembers committed spins
+only in memory: the last 200, newest first, emptied when Hexcast restarts
+(and by **Clear history** / `/history/clear`). So Hex keeps its own record of
+each round:
 
 1. Before calling `/spin`, save the round — its bets (stakes already taken)
    and that it's been **sent**.
@@ -1169,7 +2036,10 @@ On restart Hex finishes what it had started:
 History is a same-session safety net, not a durable record: if Hexcast
 restarts after a spin landed but before Hex saved the reply, that spin is gone
 from history and Hex can't tell it happened. Pay from the `wait=true` reply
-promptly. (Craps' [ledger](craps.md#ledger) is the durable one.)
+promptly. For a durable record, put the bets on the
+[table](#table--spin-timer) instead: there the [ledger](#the-shared-ledger)
+replaces this history check — it's saved to disk, and tailing it pays every
+win exactly once, whichever side restarts, with no rounds to match up.
 
 ### Hex's side in code (Python sketch)
 
@@ -1261,11 +2131,19 @@ posts the winners with `/announce` — see
 
 ## Storage
 
-Settings persist in `config/games.json` (the folder follows
-`HEXCAST_CONFIG_DIR` if you've set it). Spin history and stats are in-memory
-only — up to 200 spins, reset on restart. (Craps also keeps its table and its
-ledger in that folder — see [Craps → Storage](craps.md#storage).) No tokens, no secrets — same
-security posture as the rest of Hexcast: no auth, keep it on the LAN.
+| File (in `config/`, or `HEXCAST_CONFIG_DIR`) | What |
+| --- | --- |
+| `games.json` | settings (the `"roulette"` and `"craps"` sections) |
+| `games_roulette_table.json` | roulette's [table](#table--spin-timer): every bet waiting for the next spin — saved after every change |
+| `games_craps_table.json` | craps' table (see [Craps → Storage](craps.md#storage)) |
+| `games_ledger.jsonl` | the [shared ledger](#the-shared-ledger), every game's events, one JSON event per line (`.1` is the previous 10 MB) |
+
+Spin history and stats are in-memory only — up to 200 spins, reset on
+restart — and so are Hex's [board](#board) and [announce](#announce) card.
+Don't delete `games_roulette_table.json` while bets are on it — those coins
+were debited; use **Refund all & clear table** so the refunds go through the
+ledger. No tokens, no secrets — same security posture as the rest of
+Hexcast: no auth, keep it on the LAN.
 
 ---
 
@@ -1300,7 +2178,36 @@ clip that's still in its own cooldown is suppressed.
 
 **A spin returns 409 "busy".** The previous spin is still going — spinning,
 showing its result, or in cooldown. The response tells you which and how long
-(`retry_in_ms`). **⏹ Stop** (or `/games/api/stop`) ends it at once.
+(`retry_in_ms`). **⏹ Stop** (or `/games/api/stop`) ends it at once. A
+`/timer` gets the same answer: start the next countdown after `retry_in_ms`.
+
+**A table bet, take-down or clear returns 409 `bets_closed`.** The ball is in
+the air. The table reopens the moment it lands — retry after `retry_in_ms`.
+
+**The countdown doesn't start on its own.** Auto-spin needs **Auto-spin
+after the bet window** on, bets on Hexcast's table (a board Hex posted
+doesn't count) and an idle wheel; it starts with the next bet placed, or
+when the last spin's result and cooldown are over. Or start one with **Start
+timer** / `/timer`, which needs neither bets nor auto-spin.
+
+**The countdown vanished before zero.** Any spin stops it (a test spin
+from the editor too), and so do **⏹ Stop**, **Cancel timer** and **Refund
+all**; an auto-spin countdown also stops when the last bet is taken down or
+auto-spin is switched off.
+
+**The wheel stays on screen between spins.** That's **show when bets** —
+it stays up while bets are on the table or Hex's [board](#board) has lines
+(Mode B: post `{"bets": []}` when nothing is riding) — or a countdown
+running. Turn **Keep it on screen while bets are down** off in Settings, or
+`/hide` it.
+
+**`hexcast.log` says "games_roulette_table.json is older than the ledger
+(table at seq X, ledger at Y)".** A save of the table failed (disk full, or
+the file locked by antivirus / a sync tool) and Hexcast stopped before the
+next save. The bets moved by the roulette seqs the line names may be missing
+from — or still on — the table. Before the next spin, compare the **On the
+table** card with those ledger events, and take down or re-place bets by
+hand to match.
 
 **A bet comes back `valid: false`.** Read its `error`. The usual suspects:
 split numbers have to touch on the table (`18/19` don't); a corner has to be
@@ -1325,7 +2232,8 @@ is shown at all. The next spin and `/announce/clear` take the card down;
 there's no card.
 
 **History is empty after a restart.** By design — history and stats live in
-memory. Settings persist.
+memory. Settings, the table's bets and the ledger persist.
 
 **Test spins aren't in the history.** Also by design: `test` spins are shown
-on stream but never counted, and never fire clip cues.
+on stream but never counted, never fire clip cues and never settle the
+table's bets (those ride on the next real spin).

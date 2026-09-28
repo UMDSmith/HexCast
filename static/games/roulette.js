@@ -12,12 +12,16 @@
  *   THEMES                    { classic, neon, midnight, royal } — each has .red/.black/.green
  *                             (the theme's default pocket colours) and .accent
  *   DEFAULTS                  roulette config defaults (same values as the backend)
+ *   APPEARANCE                the keys a spin's `overrides` may change
+ *   DEMO_TABLE                sample TABLE (bets + a countdown) for editors: setTable(DEMO_TABLE)
+ *                             shows it greyed out with the countdown standing still
  *   resultFor(label, wheel)   -> RESULT (same shape as the server's) or null.
  *                             `wheel` is accepted for API compatibility and ignored:
  *                             the result is always on the American wheel.
  *   create(container, config, opts) -> instance      opts: {sound: true, demo: false}
  *   motion                    the pure, DOM-free spin math (plan / wheelAngle /
  *                             ballState / GEOM ...) — used by the node tests
+ *   table                     the pure table helpers (config / rows / countdown / overflow)
  *
  *   instance.setConfig(cfg)   instance.resize()          instance.play(spin) -> Promise
  *   instance.showResult(spin) instance.setHistory(list)  instance.reset()
@@ -25,11 +29,26 @@
  *   instance.setAnnounce(a)   Hex's own winners card (STATE.announce, null = none): replaces
  *                             the computed winners card, held until the ball lands, cleared
  *                             by reset() and by the next play()/showResult()
+ *   instance.setTable(table)  STATE.table (null = none): the "NEXT SPIN" countdown
+ *                             (table.auto_spin_in_ms, ticking locally) and the "on the table"
+ *                             board (table.bets, or Hex's table.display_board instead). Both
+ *                             only show before a spin (idle); a table that arrives while the
+ *                             ball is in the air is held until it lands (never spoils)
+ *   opts.demo                 editor preview: DEMO_HISTORY / DEMO_TABLE stand in while the
+ *                             instance has no history / table of its own
+ *
+ * The winners card after landing lists the spin's direct `bets` and the table's
+ * `settlements` together (winners, biggest payout first; bets_max rows; currency).
  *
  * Container contract: the HOST sizes the container to BASE_SIZE x BASE_SIZE stage
  * px and positions/scales it. The renderer fills it with a canvas (drawn 8% larger
  * on each side so the drop shadow / neon glow are not clipped) and its own DOM
- * overlays (result badge, caption, history strip, bets list), class prefix hgr-.
+ * overlays (result badge, caption, countdown, history strip, bets list, table
+ * board), class prefix hgr-. Above the wheel: the caption, or the countdown when no
+ * spin is up (below the history strip instead when there is no room above). The
+ * board goes where table_position says (right / left / above / below), to the other
+ * side when it would run off the stage there; the result card and the winners card
+ * never share the screen with it.
  *
  * Motion model — everything is a pure function of (plan, t), t = seconds since
  * launch, so any overlay can seek to elapsed_ms and every client draws the same
@@ -73,11 +92,14 @@
     show_result: true, result_position: 'center', result_details: true,
     show_history: true, history_count: 10, show_user: true,
     show_bets: true, bets_max: 5, sfx: true, sfx_volume: 0.5,
-    spin_clip: '', land_clip: '', cooldown_seconds: 0
+    spin_clip: '', land_clip: '', cooldown_seconds: 0,
+    currency: 'hexcoins', min_bet: 1, max_bet: 100000, auto_spin: false, bet_window_seconds: 20,
+    show_when_bets: true, show_table: true, table_max: 6, table_position: 'right'
   };
   var APPEARANCE = ['x', 'y', 'scale', 'theme', 'red_color', 'black_color', 'green_color', 'result_position',
     'result_details', 'show_result', 'show_history', 'history_count', 'show_user', 'show_bets',
-    'bets_max', 'sfx', 'sfx_volume'];
+    'bets_max', 'sfx', 'sfx_volume', 'show_table', 'table_max', 'table_position'];
+  var TABLE_POS = { right: 1, left: 1, above: 1, below: 1 };
 
   var THEMES = {
     classic: {
@@ -481,7 +503,13 @@
     o.bets_max = Math.round(toNum(o.bets_max, 5, 1, 20));
     o.spin_seconds = toNum(o.spin_seconds, 9, 4, 30);
     o.result_seconds = toNum(o.result_seconds, 6, 1, 120);
-    var bk = ['hide_when_idle', 'show_result', 'result_details', 'show_history', 'show_user', 'show_bets', 'sfx'];
+    // the table (countdown + board)
+    if (!TABLE_POS[o.table_position]) o.table_position = 'right';
+    o.table_max = Math.round(toNum(o.table_max, 6, 1, 20));
+    o.bet_window_seconds = toNum(o.bet_window_seconds, 20, 5, 300);
+    o.currency = typeof o.currency === 'string' || typeof o.currency === 'number' ? annStr(o.currency, 24) : DEFAULTS.currency;
+    var bk = ['hide_when_idle', 'show_result', 'result_details', 'show_history', 'show_user', 'show_bets', 'sfx',
+      'show_table', 'show_when_bets', 'auto_spin'];
     for (i = 0; i < bk.length; i++) o[bk[i]] = toBool(o[bk[i]], DEFAULTS[bk[i]]);
     return o;
   }
@@ -573,6 +601,57 @@
   function annAmountClass(n) {
     var r = Math.round(n * 100) / 100;
     return r > 0 ? '' : (r < 0 ? 'neg' : 'zero');
+  }
+
+  // The "on the table" board (setTable), as rows of {key, user, text, amount}: Hex's own
+  // board (TABLE.display_board, cleaned by the server's rules like the craps board: <= 100
+  // lines, a line needs a user or a text, a negative / unusable amount drops the line) or,
+  // when that is null, the table's bets (BETVIEW: @user, bet label, stake), biggest first.
+  // -> null (nothing to show) or {title (null = the renderer's), rows, total, showTotal, hex}
+  function boardRows(tb) {
+    if (!tb || typeof tb !== 'object') return null;
+    var db = tb.display_board, rows = [], i, sum = 0, amt = false;
+    if (db && typeof db === 'object' && !Array.isArray(db)) {
+      var src = Array.isArray(db.bets) ? db.bets : [], seen = Object.create(null);
+      for (i = 0; i < src.length && rows.length < 100; i++) {
+        var l = src[i];
+        if (!l || typeof l !== 'object') continue;
+        var u = annStr(annStr(l.user, 1000).replace(/^@+/, ''), 40), t = annStr(l.text, 60), m = annAmount(l.amount);
+        if ((!u && !t) || m === undefined || (m != null && m < 0)) continue;
+        var k = 'h|' + u + '|' + t;
+        seen[k] = (seen[k] || 0) + 1;                 // (the same line twice keeps two keys)
+        rows.push({ key: k + '|' + seen[k], user: u, text: t, amount: m });
+        if (m != null) { sum += m; amt = true; }
+      }
+      var dt = typeof db.total === 'number' && isFinite(db.total) ? db.total : sum;
+      return { title: annStr(db.title, 40) || 'ON THE TABLE', rows: rows, total: dt, showTotal: amt || dt !== 0, hex: true };
+    }
+    var bets = Array.isArray(tb.bets) ? tb.bets : [];
+    for (i = 0; i < bets.length; i++) {
+      var b = bets[i];
+      if (!b || typeof b !== 'object') continue;
+      var a = +b.amount;
+      a = isFinite(a) && a > 0 ? a : 0;
+      var bu = annStr(annStr(b.user, 1000).replace(/^@+/, ''), 40) || 'anon', bt = annStr(b.label || b.bet, 60);
+      rows.push({ key: b.id != null ? 'b' + b.id : 'b' + i + '|' + bu + '|' + bt, user: bu, text: bt, amount: a, i: i });
+      sum += a;
+    }
+    rows.sort(function (x, y) { return (y.amount - x.amount) || (x.i - y.i); });
+    var tot = typeof tb.total_on_table === 'number' && isFinite(tb.total_on_table) ? tb.total_on_table : sum;
+    return { title: null, rows: rows, total: tot, showTotal: rows.length > 0, hex: false };
+  }
+  // the countdown pill for `left` ms to go: "NEXT SPIN" + m:ss (urgent in the last 5 s),
+  // at zero "NO MORE BETS" until the spin starts
+  function countdownParts(left) {
+    left = Math.max(0, +left || 0);
+    var s = Math.ceil(left / 1000);
+    if (left <= 0) return { label: 'RIEN NE VA PLUS', text: 'NO MORE BETS', urgent: false, zero: true };
+    return { label: 'NEXT SPIN', text: Math.floor(s / 60) + ':' + ('0' + (s % 60)).slice(-2), urgent: left <= 5000, zero: false };
+  }
+  // how far (px, summed over the four edges) rect `r` runs outside rect `st`
+  function overflowPx(r, st) {
+    return Math.max(0, st.left - r.left) + Math.max(0, r.right - st.right) +
+      Math.max(0, st.top - r.top) + Math.max(0, r.bottom - st.bottom);
   }
 
   // Colour helpers
@@ -1151,7 +1230,7 @@
     '.hgr-hist .hgr-chip:nth-child(n+7){opacity:.85;}.hgr-hist .hgr-chip:nth-child(n+11){opacity:.7;}',
     '.hgr-hist.hgr-anim .hgr-new{animation:hgr-chip .55s cubic-bezier(.2,.9,.3,1.35) both;}',
     /* bets */
-    '.hgr-bets{min-width:220px;max-width:290px;padding:11px 14px 9px;border-radius:16px;',
+    '.hgr-bets{min-width:220px;max-width:310px;padding:11px 14px 9px;border-radius:16px;',
     'background:linear-gradient(180deg,rgba(28,28,38,.92),rgba(8,8,12,.92));border:1px solid rgba(255,255,255,.11);',
     'box-shadow:0 14px 34px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.06);}',
     '.hgr-bets.hgr-in{animation:hgr-rise .5s cubic-bezier(.2,.9,.3,1.1) both;}',
@@ -1173,13 +1252,51 @@
     'display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere;}',
     '.hgr-row .hgr-p.hgr-neg{color:#ff6b5e;}',
     '.hgr-row .hgr-p.hgr-zero{color:rgba(255,255,255,.45);}',
+    /* countdown (setTable: table.auto_spin_in_ms). The ring is a little wheel: 38 pocket
+       segments under a sweep in the theme's fret colour that drains to zero */
+    '.hgr-cd{display:flex;align-items:center;gap:10px;white-space:nowrap;padding:6px 18px 6px 7px;border-radius:999px;',
+    'background:linear-gradient(180deg,rgba(30,30,40,.92),rgba(10,10,14,.92));border:1px solid var(--hgr-edge);',
+    'box-shadow:0 10px 26px rgba(0,0,0,.5),0 0 16px var(--hgr-edge-glow),inset 0 1px 0 rgba(255,255,255,.07);}',
+    '.hgr-cd svg{width:36px;height:36px;transform:rotate(-90deg);flex:0 0 auto;overflow:visible;filter:var(--hgr-cd-f);}',
+    '.hgr-cd circle{fill:none;stroke-width:4;}',
+    '.hgr-cd .hgr-ring0{stroke:rgba(255,255,255,.16);stroke-dasharray:1.98 .5;}',
+    '.hgr-cd .hgr-ring1{stroke:var(--hgr-cd);stroke-linecap:round;}',
+    '.hgr-cd small{display:block;font-size:10.5px;letter-spacing:.2em;font-weight:800;color:var(--hgr-accent);line-height:1.1;}',
+    '.hgr-cd b{display:block;font-size:21px;font-weight:800;color:#fff;font-variant-numeric:tabular-nums;line-height:1.05;}',
+    '.hgr-cd.hgr-in{animation:hgr-rise .45s cubic-bezier(.2,.9,.3,1.2) both;}',
+    '.hgr-cd.hgr-urgent b{color:#ff6b5e;}.hgr-cd.hgr-urgent .hgr-ring1{stroke:#ff3b30;}',
+    '.hgr-cd.hgr-urgent svg{filter:var(--hgr-cd-uf);}',
+    '.hgr-cd.hgr-urgent{animation:hgr-throb 1s ease-in-out infinite;}',
+    /* editor sample, greyed like the sample history (a filter: the pop-ins animate opacity) */
+    '.hgr-cd.hgr-demo,.hgr-board.hgr-demo{filter:opacity(.55);}',
+    /* the "on the table" board (setTable): the winners card's look, stakes in white; a
+       live dot and the theme's edge while the countdown runs */
+    '.hgr-board{min-width:230px;max-width:330px;padding:11px 14px 9px;border-radius:16px;',
+    'background:linear-gradient(180deg,rgba(28,28,38,.92),rgba(8,8,12,.92));border:1px solid rgba(255,255,255,.11);',
+    'box-shadow:0 14px 34px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.06);}',
+    '.hgr-board.hgr-open{border-color:var(--hgr-edge);',
+    'box-shadow:0 14px 34px rgba(0,0,0,.55),0 0 18px var(--hgr-edge-glow),inset 0 1px 0 rgba(255,255,255,.06);}',
+    '.hgr-board.hgr-in{animation:hgr-rise .5s cubic-bezier(.2,.9,.3,1.1) both;}',
+    '.hgr-board.hgr-in .hgr-row,.hgr-board .hgr-row.hgr-fresh{animation:hgr-rise .4s cubic-bezier(.2,.9,.3,1.1) both;}',
+    '.hgr-dot{display:inline-block;width:7px;height:7px;margin:0 8px 1px 0;border-radius:50%;vertical-align:middle;',
+    'background:var(--hgr-accent);box-shadow:0 0 8px var(--hgr-accent);animation:hgr-blink 1.1s ease-in-out infinite;}',
+    '.hgr-board .hgr-row .hgr-u{flex:0 0 auto;}',
+    '.hgr-row .hgr-a{font-weight:800;color:#fff;font-variant-numeric:tabular-nums;white-space:nowrap;}',
+    '.hgr-row .hgr-a small{margin-left:4px;font-size:11.5px;font-weight:700;color:rgba(255,255,255,.5);}',
+    /* above / below the wheel: about as wide as the wheel, two columns */
+    '.hgr-board.hgr-wide{width:440px;min-width:0;max-width:none;box-sizing:border-box;}',
+    '.hgr-wide .hgr-rows{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:22px;}',
+    '.hgr-wide .hgr-rows.hgr-one{grid-template-columns:minmax(0,1fr);}',
+    '.hgr-wide .hgr-row{gap:7px;font-size:14.5px;}',
+    '.hgr-wide .hgr-row .hgr-u{max-width:112px;}.hgr-wide .hgr-row .hgr-l{font-size:12px;}',
     /* keyframes */
     '@keyframes hgr-pop{0%{transform:scale(.25);opacity:0}55%{transform:scale(1.1);opacity:1}78%{transform:scale(.97)}100%{transform:scale(1);opacity:1}}',
     '@keyframes hgr-pulse{0%,100%{opacity:.45;transform:scale(.92)}50%{opacity:.95;transform:scale(1.05)}}',
     '@keyframes hgr-rise{0%{opacity:0;transform:translateY(10px) scale(.96)}100%{opacity:1;transform:none}}',
     '@keyframes hgr-chip{0%{transform:scale(.2);opacity:0}70%{transform:scale(1.15);opacity:1}100%{transform:scale(1);opacity:1}}',
     '@keyframes hgr-shine{0%{transform:skewX(-18deg) translateX(-120%)}100%{transform:skewX(-18deg) translateX(520%)}}',
-    '@keyframes hgr-blink{0%,100%{opacity:1}50%{opacity:.35}}'
+    '@keyframes hgr-blink{0%,100%{opacity:1}50%{opacity:.35}}',
+    '@keyframes hgr-throb{0%,100%{box-shadow:0 10px 26px rgba(0,0,0,.5)}50%{box-shadow:0 10px 26px rgba(0,0,0,.5),0 0 18px rgba(255,59,48,.55)}}'
   ].join('\n');
 
   function injectStyle() {
@@ -1195,11 +1312,35 @@
     return e;
   }
   function perfNow() { return (root.performance && root.performance.now) ? root.performance.now() : Date.now(); }
+  // An element re-inserted into the DOM replays its CSS animations: before moving one,
+  // take the pop-in classes off unless it has only just been revealed (same frame).
+  function calmAnim(e, freshAt) {
+    if (perfNow() - (freshAt || 0) < 60) return;
+    e.classList.remove('hgr-in');
+    var n = e.querySelectorAll('.hgr-fresh');
+    for (var i = 0; i < n.length; i++) n[i].classList.remove('hgr-fresh');
+  }
   var raf = root.requestAnimationFrame ? function (f) { return root.requestAnimationFrame(f); } : function (f) { return setTimeout(function () { f(perfNow()); }, 16); };
   var caf = root.cancelAnimationFrame ? function (id) { root.cancelAnimationFrame(id); } : function (id) { clearTimeout(id); };
 
   var IDLE_SPEED = 0.26;   // rad/s idle drift of the head
   var DEMO_HISTORY = ['17', '32', '0', '21', '8', '29', '14', '3', '26', '11'];
+  // editor sample (greyed out, the countdown stands still): a TABLE as the server sends it
+  var DEMO_TABLE = {
+    demo: true, auto_spin_in_ms: 14000, bets_open: true, total_on_table: 1110, display_board: null,
+    bets: [
+      { id: 'rb-demo0001', user: 'alice', bet: 'red', label: 'Red', type: 'red', odds: 1, amount: 250 },
+      { id: 'rb-demo0002', user: 'hexcaster', bet: '17', label: 'Straight 17', type: 'straight', odds: 35, amount: 100 },
+      { id: 'rb-demo0003', user: 'bob', bet: 'dozen2', label: '2nd 12', type: 'dozen', odds: 2, amount: 200 },
+      { id: 'rb-demo0004', user: 'viewer_42', bet: 'split:17/20', label: 'Split 17/20', type: 'split', odds: 17, amount: 50 },
+      { id: 'rb-demo0005', user: 'dicey', bet: 'odd', label: 'Odd', type: 'odd', odds: 1, amount: 150 },
+      { id: 'rb-demo0006', user: 'night_owl', bet: '00', label: 'Straight 00', type: 'straight', odds: 35, amount: 25 },
+      { id: 'rb-demo0007', user: 'alice', bet: 'col3', label: 'Column 3', type: 'column', odds: 2, amount: 100 },
+      { id: 'rb-demo0008', user: 'lucky7', bet: 'corner:25', label: 'Corner 25/26/28/29', type: 'corner', odds: 8, amount: 235 }
+    ]
+  };
+  var OPPOSITE = { right: 'left', left: 'right', above: 'below', below: 'above' };
+  var RING_C = 94.25;      // countdown ring circumference (r = 15)
 
   // ======================================================================
   // Instance
@@ -1222,6 +1363,11 @@
     // Hex's own card (setAnnounce): the cleaned announce, the one on screen, and the one a
     // reset / new spin just took down (the host re-sends it at once: no second pop-in)
     this.announce = null; this.annShown = ''; this.annGone = ''; this.annTimer = 0;
+    // the table (setTable): countdown end (perfNow ms) + board rows on screen, by key
+    this.table = null; this.pendingTable = null; this.tableSig = null;
+    this.cdEnd = 0; this.cdStart = 0; this.cdMs = null; this.cdTimer = 0; this.cdOn = false; this.cdRingEnd = -1;
+    this.cdZero = false; this.cdDemo = false; this.cdFreshAt = 0; this.cdMoved = false;
+    this.boardOn = false; this.boardKeys = null; this.boardData = null; this.boardPos = ''; this.boardFreshAt = 0;
     this.S = 0; this.L = null; this.layersKey = ''; this.glow = null;
     this.rafId = 0; this.slowId = 0; this.lastNow = 0; this.frameN = 0; this.visible = true; this.lastPollW = 0;
     this.posSet = false;
@@ -1249,9 +1395,26 @@
     this.topBox = el('div', 'hgr-top', r);
     this.bottomBox = el('div', 'hgr-bottom', r);
     this.sideBox = el('div', 'hgr-side hgr-r', r);
+    this.tableSide = el('div', 'hgr-side hgr-r', r);
     this.capEl = el('div', 'hgr-cap hgr-hide', this.topBox);
     this.histEl = el('div', 'hgr-hist hgr-hide', this.bottomBox);
     this.betsEl = el('div', 'hgr-bets hgr-hide', this.sideBox);
+    // countdown: same slot as the caption (they are never up together)
+    var cd = this.cdEl = el('div', 'hgr-cd hgr-hide', this.topBox);
+    var NS = 'http://www.w3.org/2000/svg', svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 36 36');
+    var c1 = document.createElementNS(NS, 'circle'), c2 = document.createElementNS(NS, 'circle');
+    c1.setAttribute('cx', '18'); c1.setAttribute('cy', '18'); c1.setAttribute('r', '15'); c1.setAttribute('class', 'hgr-ring0');
+    c2.setAttribute('cx', '18'); c2.setAttribute('cy', '18'); c2.setAttribute('r', '15'); c2.setAttribute('class', 'hgr-ring1');
+    c2.setAttribute('stroke-dasharray', String(RING_C)); c2.setAttribute('stroke-dashoffset', '0');
+    svg.appendChild(c1); svg.appendChild(c2); cd.appendChild(svg);
+    this.cdRing = c2;
+    var tx = el('div', '', cd);
+    this.cdLab = el('small', '', tx); this.cdLab.textContent = 'NEXT SPIN';
+    this.cdTxt = el('b', '', tx);
+    // the "on the table" board (moved to its table_position by _fitTable)
+    this.boardEl = el('div', 'hgr-board hgr-hide', this.tableSide);
+    this.boardTitleEl = null;
     // badge
     var b = this.badgeEl = el('div', 'hgr-badge hgr-hide');
     var m = this.medalEl = el('div', 'hgr-medal', b);
@@ -1282,12 +1445,19 @@
     }
     s.setProperty('--hgr-ringbg', 'linear-gradient(145deg,' + th.trimHi + ' 0%,' + th.trim + ' 28%,' + th.trimLo + ' 55%,' +
       th.trim + ' 78%,' + th.trimHi + ' 100%)');
+    // countdown + board: the ring in the wheel's fret colour (neon: glowing), accent edges
+    s.setProperty('--hgr-cd', th.fret);
+    s.setProperty('--hgr-cd-f', th.fretGlow ? 'drop-shadow(0 0 3px ' + th.fretGlow + ')' : 'none');
+    s.setProperty('--hgr-cd-uf', th.fretGlow ? 'drop-shadow(0 0 4px rgba(255,59,48,.9))' : 'none');
+    s.setProperty('--hgr-edge', rgba(acc, 0.34));
+    s.setProperty('--hgr-edge-glow', th.edgeGlow ? rgba(hexRgb(th.edgeGlow), 0.32) : 'rgba(0,0,0,0)');
     this._ensureLayers(false);
     this._renderHistory();
     // re-render only what has already been revealed (not during the landing delays)
     if (this.badgeOn) this._showBadge(false);
     if (this.spin) this._showCaption(false); else this._hideCaption();
     if (this.betsOn) this._showBets(false);
+    this._renderTable(true);
     if (this.sfx) {
       if (!e.sfx) this.sfx.stopRumble();
       else if (this.mode === 'spin' && !this.landed && this.plan && this.t < this.plan.tHit &&
@@ -1336,6 +1506,7 @@
     }
     this.visible = true;
     this._draw();
+    this._fitTable();   // moved / resized: the countdown and the board may need the other side
     this._kick();   // back on RAF at once if the loop was parked while hidden
   };
 
@@ -1378,6 +1549,19 @@
     if (this.mode === 'spin' && !this.landed) { this.pendingHistory = list; return; }
     this.history = list; this.pendingHistory = null;
     this._renderHistory();
+    this._fitTable();   // the strip's width decides where a side board may sit
+  };
+
+  // STATE.table: the countdown (auto_spin_in_ms, remaining ms when the message was built;
+  // the host takes off the time it sat there) and the "on the table" board. While the ball
+  // is in the air it is held and applied at landing, so nothing about the next round ever
+  // shows before this one has landed; both only show once no spin is up (reset()).
+  RP.setTable = function (table) {
+    if (this.destroyed) return;
+    var tb = table && typeof table === 'object' && !Array.isArray(table) ? table : null;
+    if (this.mode === 'spin' && !this.landed) { this.pendingTable = { t: tb, at: perfNow() }; return; }
+    this.pendingTable = null;
+    this._applyTable(tb, perfNow(), false);
   };
 
   // Hex's own winners card (STATE.announce): replaces the computed winners card for the
@@ -1406,6 +1590,8 @@
     // idle (the result phase is over, or a fresh overlay): the card stands on its own
     this.betsOn = !!this.announce;
     this._showBets(true);
+    this._renderBoard(true);   // the board waits while a winners card is up
+    this._fitTable();
   };
   // safety net behind the server's own expiry (its clearing state normally comes first)
   RP._annExpiry = function (a) {
@@ -1437,7 +1623,9 @@
     this.ball.visible = false;
     if (this.pendingHistory) { this.history = this.pendingHistory; this.pendingHistory = null; }
     this._hideResult();
-    this._applyEff();
+    var pt = this.pendingTable; this.pendingTable = null;
+    if (pt) this._applyTable(pt.t, pt.at, true);
+    this._applyEff();   // (shows the countdown / board of the next round, if any)
     this.frameN = 0;
     this._kick();
   };
@@ -1446,6 +1634,7 @@
     if (this.destroyed) return;
     this._settle(null);
     this._clearTimers();
+    this._stopCountdown();
     this.destroyed = true;
     if (this.rafId) { caf(this.rafId); this.rafId = 0; }
     if (this.slowId) { clearTimeout(this.slowId); this.slowId = 0; }
@@ -1454,6 +1643,7 @@
     if (this.root && this.root.parentNode) this.root.parentNode.removeChild(this.root);
     if (this.posSet) { try { this.container.style.position = ''; } catch (e) { } this.posSet = false; }
     this.L = null; this.glow = null; this.plan = null; this.spin = null; this.pendingHistory = null;
+    this.pendingTable = null; this.table = null;
     this._annExpiry(null); this.announce = null;
     this.onLanded = null;
   };
@@ -1461,13 +1651,16 @@
   // --- spin lifecycle -------------------------------------------------------
   RP._begin = function (spin, P, elMs) {
     this._dropAnnounce();   // a new spin: Hex's card for the last one goes
+    // the new spin starts from what is on screen now: flush a table held back
+    var pt = this.pendingTable; this.pendingTable = null;
     this.spin = spin; this.plan = P; this.mode = 'spin'; this.landed = false;
     this.startMs = perfNow() - elMs;
     this.t = elMs / 1000; this.prevT = -1; this.lastFret = -1;
     this.evIdx = 0;
     while (this.evIdx < P.events.length && P.events[this.evIdx].t <= this.t) this.evIdx++;
     this._hideResult();
-    this._applyEff();
+    if (pt) this._applyTable(pt.t, pt.at, true);
+    this._applyEff();   // (the countdown and the board go: the ball is in play)
     this.curAngle = wheelAngle(P, this.t); this.curSpeed = wheelSpeed(P, this.t);
     ballState(P, this.t, this.ball);
     this._showCaption(true);
@@ -1497,6 +1690,9 @@
     if (this.sfx) this.sfx.stopRumble();
     if (this.pendingHistory) { this.history = this.pendingHistory; this.pendingHistory = null; }
     this._renderHistory();
+    // a table that came in mid-air: taken now, shown once the result phase is over
+    var pt = this.pendingTable; this.pendingTable = null;
+    if (pt) this._applyTable(pt.t, pt.at, true);
     if (instant) {
       this.badgeOn = true; this.betsOn = true;
       this._showBadge(false); this._showBets(false);
@@ -1610,11 +1806,13 @@
     if (this.announce && !(this.mode === 'spin' && !this.landed)) { this._showAnnounce(anim); return; }
     this.annShown = '';
     box.classList.remove('hgr-ann');
+    // the spin's direct bets (resolved on /spin) and the table's settlements, one list
     var bets = s && Array.isArray(s.bets) ? s.bets : [];
-    if (!e.show_bets || !this.landed || !bets.length) { box.classList.add('hgr-hide'); return; }
-    var wins = [], valid = 0, wagered = 0, i;
-    for (i = 0; i < bets.length; i++) {
-      var bt = bets[i] || {};
+    var sts = s && Array.isArray(s.settlements) ? s.settlements : [];
+    if (!e.show_bets || !this.landed || !(bets.length || sts.length)) { box.classList.add('hgr-hide'); return; }
+    var all = bets.concat(sts), wins = [], valid = 0, wagered = 0, i;
+    for (i = 0; i < all.length; i++) {
+      var bt = all[i] || {};
       if (bt.valid === false) continue;
       valid++; wagered += +bt.amount || 0;
       if (bt.win) wins.push(bt);
@@ -1622,6 +1820,7 @@
     // only invalid bets (all refunded): nothing won or lost, so no card
     if (!valid) { box.classList.add('hgr-hide'); return; }
     wins.sort(function (a, b) { return (+b.payout || 0) - (+a.payout || 0); });
+    var cur = e.currency ? ' ' + e.currency : '';
     box.textContent = '';
     var hd = el('div', 'hgr-bh', box);
     var hb = el('b', '', hd); hb.textContent = wins.length ? (wins.length === 1 ? 'WINNER' : 'WINNERS') : 'NO WINNERS';
@@ -1632,12 +1831,12 @@
       row.style.animationDelay = (0.08 + i * 0.07).toFixed(2) + 's';
       var uu = el('span', 'hgr-u', row); uu.textContent = w.user ? '@' + String(w.user).replace(/^@+/, '') : 'anon';
       var ll = el('span', 'hgr-l', row); ll.textContent = w.label || w.bet || '';
-      var pp = el('span', 'hgr-p', row); pp.textContent = (+w.payout > 0) ? '+' + fmtNum(w.payout) : 'WIN';
+      var pp = el('span', 'hgr-p', row); pp.textContent = (+w.payout > 0) ? '+' + fmtNum(w.payout) + cur : 'WIN';
     }
     if (wins.length > n) { var more = el('div', 'hgr-more', box); more.textContent = '+' + (wins.length - n) + ' more'; }
     if (!wins.length) {
       var none = el('div', 'hgr-none', box);
-      none.textContent = wagered > 0 ? 'House takes ' + fmtNum(wagered) : 'House wins this round';
+      none.textContent = wagered > 0 ? 'House takes ' + fmtNum(wagered) + cur : 'House wins this round';
     }
     this._placeBets(anim);
   };
@@ -1729,6 +1928,224 @@
     }
     h.classList.remove('hgr-anim');
     if (animate) { void h.offsetWidth; h.classList.add('hgr-anim'); }
+  };
+
+  // --- the table: countdown + "on the table" board ------------------------------
+  // Both only show while no spin is up (idle): never with the ball in the air, the result
+  // badge or a winners card. `quiet`: a table held back mid-air, applied without pop-ins.
+  RP._applyTable = function (tb, at, quiet) {
+    this.table = tb;
+    // countdown: remaining ms measured when the message was built, ticking locally
+    var ms = tb && typeof tb.auto_spin_in_ms === 'number' && isFinite(tb.auto_spin_in_ms) ? Math.max(0, tb.auto_spin_in_ms) : null;
+    if (ms == null) this.cdMs = null;
+    else {
+      var end = at + ms;
+      if (this.cdMs == null || Math.abs(end - this.cdEnd) > 600) { this.cdEnd = end; this.cdStart = at; }
+      this.cdMs = ms;
+    }
+    this._countdown();
+    var sig = tb ? JSON.stringify([tb.bets, tb.total_on_table, tb.display_board, !!tb.demo]) : '';
+    if (sig !== this.tableSig) { this.tableSig = sig; this._renderBoard(!quiet); }
+    else this._boardHead();   // the countdown may have started / stopped: title + live dot
+    this._fitTable();
+  };
+
+  RP._tableShown = function () {
+    if (this.table) return this.table;
+    return this.demo ? DEMO_TABLE : null;
+  };
+
+  RP._renderTable = function (anim) {
+    this._countdown();
+    this._renderBoard(anim);
+    this._fitTable();
+  };
+
+  // bets are still being taken: a countdown is up and has not reached zero
+  RP._betsOpen = function () { return this.cdOn ? !this.cdZero : !!(this.cdDemo); };
+
+  RP._countdown = function () {
+    var c = this.cdEl, tb = this._tableShown(), demo = !!(tb && tb.demo);
+    var dms = demo && typeof tb.auto_spin_in_ms === 'number' && isFinite(tb.auto_spin_in_ms) ? Math.max(0, tb.auto_spin_in_ms) : null;
+    var on = this.mode === 'idle' && (demo ? dms != null : this.cdMs != null);
+    var was = !c.classList.contains('hgr-hide');
+    this.cdDemo = false;
+    if (!on) {
+      c.classList.add('hgr-hide'); this._stopCountdown(); this.cdOn = false;
+      if (was) this._boardHead();
+      return;
+    }
+    c.classList.toggle('hgr-demo', demo);
+    c.classList.remove('hgr-hide');
+    if (!was) { c.classList.remove('hgr-in'); void c.offsetWidth; c.classList.add('hgr-in'); this.cdFreshAt = perfNow(); }
+    if (demo) {
+      // editor sample: stands still (a ticking sample would sit on NO MORE BETS for good)
+      this._stopCountdown(); this.cdOn = false; this.cdDemo = true; this.cdRingEnd = -1;
+      var ring = this.cdRing, total = Math.max(this.eff.bet_window_seconds * 1000, dms);
+      ring.style.transition = 'none';
+      ring.style.strokeDashoffset = String(RING_C * (1 - clamp(dms / total, 0, 1)));
+      this._cdText(dms);
+      return;
+    }
+    if (!this.cdOn || this.cdRingEnd !== this.cdEnd) this._ring();
+    this.cdOn = true;
+    this._tickCountdown();
+  };
+  // (re)start the ring: jump to the current fraction, then run down linearly on the
+  // compositor. Also after the pill moved in the DOM (a re-inserted element loses its
+  // running transition).
+  RP._ring = function () {
+    var ring = this.cdRing, left = Math.max(0, this.cdEnd - perfNow());
+    var total = Math.max(this.eff.bet_window_seconds * 1000, this.cdEnd - (this.cdStart || this.cdEnd));
+    ring.style.transition = 'none';
+    ring.style.strokeDashoffset = String(RING_C * (1 - clamp(left / total, 0, 1)));
+    void ring.getBoundingClientRect();
+    ring.style.transition = 'stroke-dashoffset ' + Math.round(left) + 'ms linear';
+    ring.style.strokeDashoffset = String(RING_C);
+    this.cdRingEnd = this.cdEnd;
+  };
+  RP._tickCountdown = function () {
+    var self = this;
+    if (this.cdTimer) { clearTimeout(this.cdTimer); this.cdTimer = 0; }
+    if (!this.cdOn || this.destroyed) return;
+    var left = Math.max(0, this.cdEnd - perfNow());
+    this._cdText(left);
+    if (left > 0) this.cdTimer = setTimeout(function () { self.cdTimer = 0; self._tickCountdown(); }, (left % 1000) + 15);
+  };
+  RP._cdText = function (left) {
+    var p = countdownParts(left);
+    this.cdLab.textContent = p.label; this.cdTxt.textContent = p.text;
+    this.cdEl.classList.toggle('hgr-urgent', p.urgent && !this.cdDemo);
+    if (p.zero !== this.cdZero) { this.cdZero = p.zero; this._boardHead(); }
+  };
+  RP._stopCountdown = function () { if (this.cdTimer) { clearTimeout(this.cdTimer); this.cdTimer = 0; } };
+
+  // The board: Hex's display_board, or the table's bets (biggest first) as
+  // "@user  label  amount currency"; table_max rows + "+N more"; the total. Rows that
+  // were not on the board before pop in (a bet just placed); the rest stays still.
+  RP._renderBoard = function (anim) {
+    var e = this.eff, box = this.boardEl, tb = this._tableShown(), d = boardRows(tb), i;
+    var cardUp = !this.betsEl.classList.contains('hgr-hide');
+    if (this.mode !== 'idle' || !e.show_table || !d || !d.rows.length || cardUp) { this._hideBoard(); return; }
+    var wide = e.table_position === 'above' || e.table_position === 'below';
+    var cur = e.currency, n = Math.min(d.rows.length, e.table_max), was = this.boardOn, prev = this.boardKeys, keys = {};
+    box.textContent = '';
+    box.className = 'hgr-board' + (wide ? ' hgr-wide' : '') + (tb.demo ? ' hgr-demo' : '');
+    var hd = el('div', 'hgr-bh', box);
+    this.boardTitleEl = el('b', d.hex ? 'hgr-at' : '', hd);
+    if (d.showTotal) el('span', '', hd).textContent = fmtNum(d.total) + (cur ? ' ' + cur : '');
+    var list = el('div', 'hgr-rows' + (n < 2 ? ' hgr-one' : ''), box);
+    for (i = 0; i < n; i++) {
+      var r = d.rows[i], row = el('div', 'hgr-row', list);
+      keys[r.key] = 1;
+      if (!was) row.style.animationDelay = (0.05 + i * 0.05).toFixed(2) + 's';
+      else if (anim && prev && !prev[r.key]) { row.classList.add('hgr-fresh'); this.boardFreshAt = perfNow(); }
+      if (r.user) {
+        el('span', 'hgr-u', row).textContent = '@' + r.user;
+        el('span', 'hgr-l', row).textContent = r.text;
+      } else el('span', 'hgr-t', row).textContent = r.text;
+      if (r.amount != null) {
+        var a = el('span', 'hgr-a', row);
+        a.textContent = fmtNum(r.amount);
+        if (cur && !wide) el('small', '', a).textContent = cur;   // wide: the total carries it
+      }
+    }
+    if (d.rows.length > n) el('div', 'hgr-more', box).textContent = '+' + (d.rows.length - n) + ' more';
+    this.boardKeys = keys; this.boardData = d; this.boardOn = true;
+    this._boardHead();
+    if (anim && !was) { void box.offsetWidth; box.classList.add('hgr-in'); this.boardFreshAt = perfNow(); }
+  };
+  // title: Hex's, or PLACE YOUR BETS while the countdown runs (ON THE TABLE otherwise and
+  // from NO MORE BETS on), with a live dot + the theme's edge while bets are open
+  RP._boardHead = function () {
+    var t = this.boardTitleEl, d = this.boardData;
+    if (!this.boardOn || !t || !d) return;
+    var open = this._betsOpen();
+    t.textContent = '';
+    if (open) el('i', 'hgr-dot', t);
+    t.appendChild(document.createTextNode(d.title || (open ? 'PLACE YOUR BETS' : 'ON THE TABLE')));
+    this.boardEl.classList.toggle('hgr-open', open);
+  };
+  RP._hideBoard = function () {
+    this.boardEl.classList.add('hgr-hide');
+    this.boardEl.classList.remove('hgr-in');
+    this.boardOn = false; this.boardKeys = null; this.boardData = null; this.boardTitleEl = null;
+  };
+
+  // Where the countdown and the board go. The countdown sits above the wheel (the
+  // caption's slot), or under the history strip when that would leave the stage. The
+  // board goes to its table_position; when it would run off the stage there, to the
+  // opposite side if that is better. A side board is nudged up clear of a history strip
+  // that is wider than the wheel. (Layout reads: only on changes, never per frame.)
+  RP._fitTable = function () {
+    if (this.destroyed) return;
+    var cdOn = !this.cdEl.classList.contains('hgr-hide');
+    if (!cdOn && !this.boardOn) return;
+    var st = this._stageRect();
+    this.cdMoved = false;
+    this._putCd(true);
+    if (cdOn && st) {
+      var r = this.cdEl.getBoundingClientRect();
+      if (r.height > 0 && r.top < st.top - 1) this._putCd(false);
+    }
+    if (this.cdMoved && this.cdOn) this._ring();
+    if (!this.boardOn) return;
+    var pos = this.eff.table_position;
+    this._putBoard(pos);
+    if (st) {
+      var over = overflowPx(this.boardEl.getBoundingClientRect(), st);
+      if (over > 0.5) {
+        this._putBoard(OPPOSITE[pos]);
+        if (!(overflowPx(this.boardEl.getBoundingClientRect(), st) < over)) this._putBoard(pos);
+      }
+    }
+    this._nudgeBoard();
+  };
+  RP._putCd = function (top) {
+    var c = this.cdEl, box = top ? this.topBox : this.bottomBox, after = top ? this.capEl : this.histEl;
+    if (c.parentNode === box && c.previousSibling === after) return;
+    calmAnim(c, this.cdFreshAt);
+    box.insertBefore(c, after.nextSibling);
+    this.cdMoved = true;
+  };
+  RP._putBoard = function (pos) {
+    var b = this.boardEl, side = this.tableSide, box = null;
+    side.style.top = '';
+    this.boardPos = pos;
+    if (pos === 'above' || pos === 'below') {
+      box = pos === 'above' ? this.topBox : this.bottomBox;   // after the countdown / history strip
+      if (b.parentNode === box && box.lastChild === b) return;
+    } else {
+      side.className = 'hgr-side ' + (pos === 'left' ? 'hgr-l' : 'hgr-r');
+      if (b.parentNode === side) return;
+      box = side;
+    }
+    calmAnim(b, this.boardFreshAt);
+    box.appendChild(b);
+  };
+  RP._nudgeBoard = function () {
+    if (this.boardPos !== 'left' && this.boardPos !== 'right') return;
+    if (this.histEl.classList.contains('hgr-hide')) return;
+    var br = this.boardEl.getBoundingClientRect(), hr = this.histEl.getBoundingClientRect();
+    if (!(br.width > 0) || !(hr.width > 0)) return;
+    if (Math.min(br.right, hr.right) - Math.max(br.left, hr.left) <= 0) return;   // no horizontal overlap
+    var k = br.width / (this.boardEl.offsetWidth || br.width);                     // screen px per box px
+    var dy = (br.bottom - hr.top) / (k || 1) + 12;
+    if (dy > 12) this.tableSide.style.top = 'calc(50% - ' + dy.toFixed(1) + 'px)';
+  };
+  // the stage the container is placed on (the host's 1920x1080 layer), in screen px;
+  // null while nothing can be measured (hidden)
+  RP._stageRect = function () {
+    try {
+      var cr = this.container.getBoundingClientRect();
+      if (!(cr.width > 1)) return null;
+      var par = this.container.offsetParent;
+      if (!par || par === document.body || par === document.documentElement) {
+        return { left: 0, top: 0, right: root.innerWidth || 0, bottom: root.innerHeight || 0 };
+      }
+      var pr = par.getBoundingClientRect();
+      return pr.width > 0 && pr.height > 0 ? pr : null;
+    } catch (e) { return null; }
   };
 
   // --- frame loop -------------------------------------------------------------
@@ -1862,10 +2279,13 @@
     THEMES: THEMES,
     DEFAULTS: copyObj(DEFAULTS),       // copies: a host mutating them can't change the renderer
     APPEARANCE: APPEARANCE.slice(),
+    DEMO_TABLE: JSON.parse(JSON.stringify(DEMO_TABLE)),
     resultFor: resultFor,
     details: detailsFor,
     create: function (container, config, opts) { return new Roulette(container, config, opts); },
-    motion: motion
+    motion: motion,
+    // the pure, DOM-free table helpers (config clean-up, board rows, countdown text) — node tests
+    table: { config: normConfig, rows: boardRows, countdown: countdownParts, overflow: overflowPx }
   };
   HG.roulette = API;
   if (typeof module === 'object' && module && module.exports) module.exports = API;

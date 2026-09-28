@@ -39,7 +39,8 @@ var GamesLogic = (function () {
   // whenever a caller passes no list.
   var APPEARANCE = ['x', 'y', 'scale', 'theme', 'red_color', 'black_color', 'green_color',
     'result_position', 'result_details', 'show_result', 'show_history', 'history_count',
-    'show_user', 'show_bets', 'bets_max', 'sfx', 'sfx_volume'];
+    'show_user', 'show_bets', 'bets_max', 'sfx', 'sfx_volume',
+    'show_table', 'table_max', 'table_position'];
 
   function isObj(o) { return !!o && typeof o === 'object' && !Array.isArray(o); }
   function has(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
@@ -120,7 +121,7 @@ var GamesLogic = (function () {
       overrideId: null,     // spin id whose overrides are applied (null = saved config)
       appearanceKey: null,  // keyOf(effective config) last handed to the renderer/container
       historyKey: null,     // historyKey(state) last handed to setHistory
-      tableKey: null,       // keyOf(state.table) last handed to setTable (games with a table)
+      tableKey: null,       // keyOf(state.table) last handed to setTable (craps, roulette)
       announceKey: null     // announceKey(state.announce) last handed to setAnnounce (null = none)
     };
   }
@@ -141,15 +142,15 @@ var GamesLogic = (function () {
                                               fading out — apply once hidden)
        {type:'show'} | {type:'hide', immediate:false}
        {type:'table', table}                  setTable (only games whose STATE has a
-                                              `table`, e.g. craps; sent when it changed)
+                                              `table`: craps, roulette; sent when it changed)
        {type:'play', spin} | {type:'showResult', spin} | {type:'reset', deferred}
        {type:'announce', announce}            setAnnounce (optional): Hex's own winners card,
                                               STATE.announce, null = none; sent when it changed
        {type:'history', results}
      When hiding, 'hide' comes first so the fade starts before anything changes.
-     'table' comes BEFORE 'play'/'showResult' (the dice leave with the table they were
-     thrown on; a newer table that arrives mid-roll is held by the renderer until it
-     lands) and AFTER 'reset' (always re-sent then, whatever reset() clears).
+     'table' comes BEFORE 'play'/'showResult' (the dice / ball leave with the table they
+     were thrown on; a newer table that arrives mid-roll / mid-spin is held by the renderer
+     until it lands) and AFTER 'reset' (always re-sent then, whatever reset() clears).
      'announce' comes AFTER 'play'/'showResult' (the renderer holds a card that arrives
      while the ball / dice are in the air until they land) and before 'history'; a
      play/showResult/reset clears the renderer's card, so one that is up is re-sent then. */
@@ -179,7 +180,7 @@ var GamesLogic = (function () {
     if (showing) actions.push({ type: 'show' });
     v.visible = visible;
 
-    // 3. the table (persistent bets / point) — only when it changed; placed below
+    // 3. the table (bets / point / countdown) — only when it changed; placed below
     var table = isObj(state.table) ? state.table : null;
     var tk = table ? keyOf(table) : null;
     var tableAct = table && tk !== v.tableKey ? { type: 'table', table: table } : null;
@@ -263,7 +264,8 @@ var FADE_MS = 350;
    `defaults` mirror the backend's so missing config keys fall back to the same
    values; `appearance` = the keys a spin's `overrides` may change for that game.
    The box is the renderer's BASE_W x BASE_H (or BASE_SIZE square) in stage px.
-   Roulette: American double-zero wheel only — there is no `wheel` key. */
+   Roulette: American double-zero wheel only — there is no `wheel` key. Both games
+   have a table (bets for the next spin / roll + the auto countdown). */
 var GAMES = {
   roulette: {
     script: '/static/games/roulette.js',
@@ -276,7 +278,9 @@ var GAMES = {
       show_result: true, result_position: 'center', result_details: true,
       show_history: true, history_count: 10, show_user: true,
       show_bets: true, bets_max: 5, sfx: true, sfx_volume: 0.5,
-      spin_clip: '', land_clip: '', cooldown_seconds: 0
+      spin_clip: '', land_clip: '', cooldown_seconds: 0,
+      currency: 'hexcoins', min_bet: 1, max_bet: 100000, auto_spin: false, bet_window_seconds: 20,
+      show_when_bets: true, show_table: true, table_max: 6, table_position: 'right'
     }
   },
   craps: {
@@ -597,15 +601,18 @@ function doShowResult(slot, spin) {
   call(slot, 'showResult', liveSpin(slot, spin));
 }
 
-// Games with a persistent table (craps): bets / point / auto-roll countdown. The
-// renderer itself holds a table that arrives while the dice are in the air until
-// they land. auto_roll_in_ms was measured when the server built the message: take
-// off the time the state sat here (renderer loading, re-sent after a reset).
+// Games with a table (craps: bets / point / auto-roll countdown; roulette: bets for the
+// next spin / spin countdown). The renderer itself holds a table that arrives while the
+// dice / ball are in the air until they land. auto_roll_in_ms / auto_spin_in_ms were
+// measured when the server built the message: take off the time the state sat here
+// (renderer loading, re-sent after a reset).
+var TABLE_TIMERS = ['auto_roll_in_ms', 'auto_spin_in_ms'];
 function liveTable(slot, table) {
   var t = L.merge(table);
-  if (typeof t.auto_roll_in_ms === 'number' && isFinite(t.auto_roll_in_ms)) {
-    var waited = slot.stateAt ? Math.max(0, performance.now() - slot.stateAt) : 0;
-    t.auto_roll_in_ms = Math.max(0, Math.round(t.auto_roll_in_ms - waited));
+  var waited = slot.stateAt ? Math.max(0, performance.now() - slot.stateAt) : 0;
+  for (var i = 0; i < TABLE_TIMERS.length; i++) {
+    var k = TABLE_TIMERS[i];
+    if (typeof t[k] === 'number' && isFinite(t[k])) t[k] = Math.max(0, Math.round(t[k] - waited));
   }
   return t;
 }
@@ -726,8 +733,8 @@ function loadRenderer(slot) {
 }
 
 /* ---- messages -------------------------------------------------------------- */
-// config / state / stop only; anything else (e.g. craps' "ledger", which the server
-// sends to panel sockets) is ignored.
+// config / state / stop only; anything else (e.g. the games' "ledger" messages, which
+// the server sends to panel sockets) is ignored.
 function handle(m) {
   if (!m || typeof m !== 'object') return;
   if (m.type === 'config') {

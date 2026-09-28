@@ -176,17 +176,20 @@ the Games panel and placed with the same **Edit Mode** as the soundboard:
   numbers. It's a standard **American double-zero** wheel (38 pockets) in one
   of four themes. Chat bots can send **bets** with a spin (straight, split,
   street, corner, dozens, columns, red/black and the rest) and get every one
-  back resolved at standard odds, ready to pay out.
+  back resolved at standard odds, ready to pay out — or put chat's bets on
+  a **table** for the next spin, like craps: the bets show on an "on the
+  table" board while a **spin timer** counts down, the wheel spins by itself
+  at zero, and the winnings go through the same **ledger** as craps.
 - **Craps** — a bank-craps tray where chat bets the channel currency
   (**hexcoins**) on a table that persists across rolls: pass / don't pass,
   come / don't come, free odds, place bets, hard ways, the field and the
   one-roll props, all at standard casino odds. The dice are thrown in, bounce
   off the diamond back wall and land on the server's faces; the stickman calls
-  the roll, the puck moves, bets settle, and an optional **auto-roll** keeps
-  the game going on its own. Hexcast holds no balances — the channel's bot
-  (**Hex**, with its hexbank) is the **bank**, and a numbered, persisted
-  **ledger** tells it exactly what to take and pay, even across restarts. See
-  [docs/craps.md](docs/craps.md).
+  the roll, the puck moves, bets settle, and an optional **auto-roll** (or a
+  **roll timer** started on demand) keeps the game going on its own. Hexcast
+  holds no balances — the channel's bot (**Hex**, with its hexbank) is the
+  **bank**, and a numbered, persisted **ledger** tells it exactly what to
+  take and pay, even across restarts. See [docs/craps.md](docs/craps.md).
 
 Soundboard clips can fire when the ball or dice are thrown and when they land.
 
@@ -360,7 +363,7 @@ GET  /games/api                                → games endpoint reference
 GET|POST /games/api/roulette/spin              → spin (alias /play); result + resolved bets
      ?user=&duration=                          → caption name (≤ 40 chars) · spin seconds 4–30
      ?wait=true                                → respond when the ball lands
-     ?test=true                                → not recorded, no clip cues
+     ?test=true                                → not recorded, no clip cues, the table untouched
      ?bet=red&amount=100                       → one bet (POST {"bets": [...]} for up to 200)
      ?x=&y=&scale=                             → per-spin placement (POST "overrides" for more)
 GET  /games/api/roulette/last                  → last committed spin
@@ -373,27 +376,48 @@ GET|POST /games/api/roulette/announce          → winners card when the bot did
      {title, lines:[{user,amount,text}], ...}  → ≤ 50 lines · empty_text · seconds 1–120 · spin_id · currency
      ?user=&amount=&text=                      → one line (query shorthand)
 GET|POST /games/api/roulette/announce/clear    → take the card down now (the next spin clears it too)
+GET|POST /games/api/roulette/bet               → {user, bet, amount} or {"bets": [...]} (≤ 200) on the table
+                                               → accepted, rejected, debits [{user, amount, bet_id, seq, reason}]
+GET|POST /games/api/roulette/remove            → {bet_id} | {user, bet} | {user, all: true} → credits (refund)
+GET  /games/api/roulette/table                 → bets, exposure, auto_spin_in_ms (the countdown), last_seq
+GET  /games/api/roulette/user/{name}           → one viewer's table bets, exposure, session totals
+GET|POST /games/api/roulette/clear             → refund every table bet, stop the countdown
+GET|POST /games/api/roulette/board · board/clear → Hex's own "on the table" board (≤ 100 lines) · the table's again
+GET  /games/api/roulette/ledger?since=0&limit=500 → roulette's debits/credits after a seq
+GET|POST /games/api/{game}/timer?seconds=30    → start the countdown now (5–300 s, default the bet window);
+                                                 at 0 the wheel spins / the dice roll by themselves
+GET|POST /games/api/{game}/timer/cancel        → stop the countdown (auto-spin / auto-roll or /timer)
+GET  /games/api/ledger?since=0&game=           → every game's debits/credits in one stream (or one game's)
 GET|POST /games/api/stop                       → abort + hide everything (games only)
 GET  /games/api/status · GET|POST /games/api/config
 ```
 
-A spin while another is still spinning, showing its result or in cooldown
-returns HTTP 409 `{"ok": false, "error": "busy", "retry_in_ms": N, "state": "..."}`.
+A spin (or a `/timer`) while another spin is still spinning, showing its
+result or in cooldown returns HTTP 409
+`{"ok": false, "error": "busy", "retry_in_ms": N, "state": "..."}`; a table
+bet, take-down or clear while the ball is in the air returns 409
+`{"ok": false, "error": "bets_closed", "retry_in_ms": N}`.
 Bet syntax, odds and bot recipes: [docs/games.md](docs/games.md). Hooking
-Hex's hexbank up to roulette (take stakes, pay each bet's `returned` once):
-[Hooking up the bank](docs/games.md#hooking-up-the-bank-hexcoins).
+Hex's hexbank up to roulette: with bets on the spin call (take stakes, pay
+each bet's `returned` once), [Hooking up the bank](docs/games.md#hooking-up-the-bank-hexcoins);
+with the table and the spin timer (take each bet's `debits`, pay from the
+ledger), [Table & spin timer](docs/games.md#table--spin-timer).
 
-**Two ways to run the money.** Either Hexcast does the bet math (bets sent
-with the spin; craps' table and ledger) or the bot does it in its own code —
-here that's Hex, with its hexbank — and only tells the overlay what to show
-with `/announce` (plus `/board` for craps). The outcome is always Hexcast's
-fair spin or roll; a bot can't send one. An announce for an old spin gets
+**Two ways to run the money.** Either Hexcast does the bet math (roulette:
+bets sent with the spin, or the table and its ledger; craps' table and
+ledger) or the bot does it in its own code — here that's Hex, with its
+hexbank — and only tells the overlay what to show with `/announce` and
+`/board`. The outcome is always Hexcast's fair spin or roll; a bot can't send
+one. An announce for an old spin gets
 409 `{"ok": false, "error": "stale", "spin_id": "..."}`. See
 [docs/games.md](docs/games.md#two-ways-to-run-the-money).
 
 ```bash
 curl "http://localhost:4747/games/api/roulette/spin?user=bob&bet=red&amount=100&wait=true"
 curl "http://localhost:4747/games/api/roulette/validate?bet=split:17/20"
+curl "http://localhost:4747/games/api/roulette/bet?user=alice&bet=red&amount=100"
+curl "http://localhost:4747/games/api/roulette/timer?seconds=30"
+curl "http://localhost:4747/games/api/ledger?since=0"
 ```
 
 **Games (craps)** — bets stay on the table across rolls; the bot (Hex) is the
@@ -408,7 +432,7 @@ GET|POST /games/api/craps/bet                  → {user, bet, amount, target?} 
 GET|POST /games/api/craps/remove               → {bet_id} | {user, bet} | {user, all: true} → credits (refund)
 GET  /games/api/craps/table                    → phase, point, shooter, bets, exposure, last_seq
 GET  /games/api/craps/user/{name}              → one viewer's bets, exposure, session totals
-GET  /games/api/craps/ledger?since=0&limit=500 → every debit/credit after a seq (tail it by seq)
+GET  /games/api/craps/ledger?since=0&limit=500 → craps' debits/credits after a seq (tail it by seq)
 GET|POST /games/api/craps/clear                → refund every bet, reset to come-out
 GET  /games/api/craps/validate?bet=&user=&amount=&target=
                                                → dry-run a bet: odds, max odds, hint, or error
@@ -417,12 +441,16 @@ GET|POST /games/api/craps/announce             → payouts card when Hex did the
 GET|POST /games/api/craps/board                → {title, bets:[{user,text,amount}]} (≤ 100) replaces the bets board
      {"bets": []} · {"clear": true}            → nothing down (no board) · back to the table's own board
 GET|POST /games/api/craps/announce/clear · board/clear
+GET|POST /games/api/craps/timer · timer/cancel → start the countdown to the next roll now · stop it
 GET  /games/api/craps/last | history · GET|POST show | hide | stop
 ```
 
 A bet, take-down or clear while the dice are in the air returns HTTP 409
-`{"ok": false, "error": "bets_closed", "retry_in_ms": N}`; a roll during the previous roll,
-its result or cooldown returns 409 `busy` like roulette.
+`{"ok": false, "error": "bets_closed", "retry_in_ms": N}`; a roll (or a
+`/timer`) during the previous roll, its result or cooldown returns 409 `busy`
+like roulette. The ledger is shared with roulette's table — one `seq`
+numbering, each event names its `game` — so a bank running both tails
+`/games/api/ledger` once.
 Rules, every bet, and the step-by-step guide for hooking up Hex's hexbank:
 [docs/craps.md](docs/craps.md#hooking-up-the-bank-hexcoins) — or, when Hex does
 the math: [Hex does the math (Mode B)](docs/craps.md#hex-does-the-math-mode-b).
@@ -483,7 +511,7 @@ hexcast/
 │   └── games/                 # game renderers shared by the games overlay + panel (roulette.js, craps.js)
 │                              #   + the Craps panel tab (craps_panel.js)
 ├── docs/                      # per-integration docs: twitch, music, discord, clips, countdown, games, craps
-├── config/                    # tokens, playlists, integration settings, craps table + ledger (gitignored)
+├── config/                    # tokens, playlists, integration settings, games tables + ledger (gitignored)
 ├── requirements*.txt          # core + per-integration dependency lists
 ├── start.sh / start.bat       # launchers
 └── media/                     # auto-created: audio/ and video/

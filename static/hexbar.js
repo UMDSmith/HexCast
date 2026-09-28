@@ -167,10 +167,12 @@
   }
 
   // Games dot title, from /games/api/status alone: what each game is doing — a game
-  // with a table (craps) also says its point and what is down — else the overlays.
+  // with a table (craps, roulette) also says its point, what is down and its countdown —
+  // else the overlays.
   //   Games — roulette spinning
   //   Games — craps rolling, point is 6, 5 bets down (300 hexcoins) · roulette idle
   //   Games — craps: point is 6, 5 bets down (300 hexcoins) · 1 overlay connected
+  //   Games — roulette: 3 bets down (150 hexcoins), spins in 12s · 1 overlay connected
   var GAME_WORDS = { spinning: 'spinning', result: 'showing result', cooldown: 'cooling down' };
   var GAME_OWN_WORDS = { craps: { spinning: 'rolling' } };
 
@@ -194,6 +196,10 @@
     }
     if (typeof t.auto_roll_in_ms === 'number' && isFinite(t.auto_roll_in_ms)) {
       bits.push('auto-roll in ' + Math.max(0, Math.ceil(t.auto_roll_in_ms / 1000)) + 's');
+    }
+    // roulette's spin timer (auto-spin or started with /timer)
+    if (typeof t.auto_spin_in_ms === 'number' && isFinite(t.auto_spin_in_ms)) {
+      bits.push('spins in ' + Math.max(0, Math.ceil(t.auto_spin_in_ms / 1000)) + 's');
     }
     return bits.join(', ');
   }

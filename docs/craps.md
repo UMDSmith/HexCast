@@ -12,7 +12,8 @@ Bets are made with the channel currency, **hexcoins**. Hexcast doesn't hold
 anyone's balance. The channel's bot, **Hex**, is **the bank**: its own
 **hexbank** holds everyone's coins. Hexcast tells Hex exactly what to take
 and what to pay, and keeps a numbered, persisted **ledger** of every coin
-movement, so Hex can stay exactly in step, even across restarts. Or, if
+movement (one ledger for every game — roulette's table writes to it too), so
+Hex can stay exactly in step, even across restarts. Or, if
 Hex would rather do the math itself, it keeps the bets in its own code,
 settles them from each roll, and just tells the overlay what to show.
 
@@ -123,8 +124,9 @@ bets that are off marked `(off)`), up to **bets max** viewers then `+N more`,
 and the total on the table. In Mode B it shows the board Hex posts with
 [`/board`](#announce-and-board) instead. With **show user** on, a caption shows the
 shooter (`@bob is shooting · roll 4`, or `@bob rolls the dice` while they're
-in the air). With
-[auto-roll](#auto-roll) counting down, a **NEXT ROLL 0:12** timer ticks.
+in the air). With a countdown running — [auto-roll](#auto-roll) or the
+[roll timer](#roll-timer) — a **NEXT ROLL 0:12** timer ticks, and the tray
+stays on screen while it does.
 
 Every overlay and the panel's live preview render the **identical** throw:
 the animation is seeded, and the server tells each one how far into the roll
@@ -152,10 +154,12 @@ with Roulette.
 2. **Craps** — a live mirror: a 16:9 preview holding a scaled 1920×1080
    stage with the real tray (sound off), playing the same rolls as the
    overlay. **Roll dice** throws them (with an optional shooter name),
-   **Show** / **Hide** put the idle table on or off screen. Readouts show the
-   state (idle, rolling, result, cooldown) with its countdown, the phase and
-   point, shooter, hand rolls, what's on the table, the auto-roll countdown,
-   whether bets are open, and the last roll.
+   **Show** / **Hide** put the idle table on or off screen, and **Start
+   timer** / **Cancel timer** run the [roll timer](#roll-timer) (a countdown
+   of the bet window). Readouts show the state (idle, rolling, result,
+   cooldown) with its countdown, the phase and point, shooter, hand rolls,
+   what's on the table, the countdown (auto-roll's or the timer's), whether
+   bets are open, and the last roll.
 3. **On the table** — every bet riding right now: user, bet, amount, odds,
    working/off. Bets that can come down have a **Take down** button (with a
    confirm). **Odds down** takes down only the odds: on a contract bet (pass
@@ -181,9 +185,11 @@ with Roulette.
    **Clear board**. It shows each request and reply; the mirror shows the
    result, exactly like the overlay. Nothing here touches the table's bets or
    the ledger.
-6. **Ledger** — a live tail of every coin movement: seq, time, user,
+6. **Ledger** — a live tail of every craps coin movement: seq, time, user,
    debit/credit, amount, reason and bet. Per-user session net, house net, a
-   **Filter by user** (**Everyone** resets it) and **Reload**.
+   **Filter by user** (**Everyone** resets it) and **Reload**. The ledger is
+   shared with roulette's table, so gaps in the seqs here are roulette
+   events.
 7. **History & stats** — the last 20 rolls as dice, a histogram of totals
    2–12 against what fair dice give, points set and made, seven-outs,
    naturals, craps, hands (played out, plus the rolls in the current one), the
@@ -196,9 +202,9 @@ with Roulette.
    sounds on/off and their **volume** (also in the Edit Mode editor), hide the
    table when idle, keep it on screen while bets are down, and auto-roll. **Save
    settings** stores them; **Revert** drops your changes.
-9. **API** — the endpoint table (the announce and board calls included), the
-   bet syntax, curl examples built for this host, and the "Hooking up the
-   bank" steps.
+9. **API** — the endpoint table (the announce, board, timer and shared
+   ledger calls included), the bet syntax, curl examples built for this
+   host, and the "Hooking up the bank" steps.
 
 ### Edit Mode — placement and appearance
 
@@ -475,8 +481,10 @@ No authentication (LAN tool, like the rest of Hexcast).
 | `GET\|POST /games/api/craps/remove` | take bets down (refund) |
 | `GET /games/api/craps/table` | the table: phase, point, shooter, every bet, exposure |
 | `GET /games/api/craps/user/{name}` | one viewer's bets, exposure and session totals |
-| `GET /games/api/craps/ledger?since=0&limit=500` | ledger events after a seq |
+| `GET /games/api/craps/ledger?since=0&limit=500` | craps' ledger events after a seq |
+| `GET /games/api/ledger?since=0&limit=500&game=` | every game's ledger events (craps and roulette), or one game's |
 | `GET\|POST /games/api/craps/clear` | refund every bet and reset the table |
+| `GET\|POST /games/api/craps/timer` · `timer/cancel` | start the countdown to the next roll now · stop it (see [Roll timer](#roll-timer)) |
 | `GET /games/api/craps/validate?bet=&user=&amount=&target=` | dry-run one bet against the current table |
 | `GET /games/api/craps/bets` | bet reference: types, syntax, pays, when, notes + rules |
 | `GET /games/api/craps/last` | the last committed roll |
@@ -700,8 +708,8 @@ in every websocket `state` message.
 | `exposure` | coins each user has on the table (amount + odds) |
 | `total_on_table` | all of it added up |
 | `bets_open` | `false` only while the dice are in the air |
-| `auto_roll_in_ms` | time until the auto-roll when it's counting, else `null` |
-| `last_seq` | the newest ledger `seq` |
+| `auto_roll_in_ms` | time until the countdown rolls — [auto-roll](#auto-roll)'s or the [roll timer](#roll-timer)'s — measured when the reply was built; `null` when none is running |
+| `last_seq` | the newest ledger `seq` — of any game, since the [ledger](#ledger) is shared with roulette |
 | `currency`, `min_bet`, `max_bet`, `odds_rule`, `field_12_pays` | from the config |
 | `display_board` | Mode B: the board Hex posted with [`/board`](#announce-and-board), `{"title", "bets", "total"}`. `null` when there isn't one — the bets board then shows `bets` |
 
@@ -736,8 +744,8 @@ restart. `display_board` isn't saved: it's `null` again after a restart.
 ```
 
 (alice from the [hand below](#a-chat-command-flow): pass 100 + odds 200 won 640,
-then another 100 on the pass line.) `session` adds up that user's events in the ledger Hexcast keeps in memory
-(the latest 10 000): `debits`, `credits`, `net` = credits − debits (coins on
+then another 100 on the pass line.) `session` adds up that user's craps events in the ledger Hexcast keeps in memory
+(the latest 10 000, of every game): `debits`, `credits`, `net` = credits − debits (coins on
 the table count as spent until they come back), and the event count. Handy
 for a `!mybets` reply. It isn't a balance; Hex's hexbank owns balances.
 
@@ -756,16 +764,31 @@ for a `!mybets` reply. It isn't a balance; Hex's hexbank owns balances.
 
 (alice's 100 pass line won 1:1 on a come-out 7: 100 stake + 100 won.)
 
+**One ledger, every game.** Roulette's
+[table](games.md#table--spin-timer) writes to the same ledger: one file, one
+`seq` numbering, and every event names its game in `game` (`craps` or
+`roulette`). `/games/api/craps/ledger` serves only the craps events, so its
+seqs have gaps where roulette's are — that's normal. `GET /games/api/ledger`
+serves every game's events in one stream (add `&game=craps` or
+`&game=roulette` for one; an unknown name is a 404 `unknown game`), with the
+same parameters and reply — a bank that runs both tables tails that once.
+
+```
+curl "http://localhost:4747/games/api/craps/ledger?since=0"
+curl "http://localhost:4747/games/api/ledger?since=0&game=craps"
+```
+
 - Returns the events with `seq` **greater than** `since`, oldest first, at
-  most `limit` of them (default 500, up to 5000). `last_seq` is the newest
-  seq; `oldest_seq` the oldest one still served.
+  most `limit` of them (default 500, up to 5000). `last_seq` is the ledger's
+  newest seq, of any game; `oldest_seq` the oldest one still held in memory,
+  of any game.
 - `truncated` is `true` when you didn't get everything after `since`: either
   `limit` cut it short (call again from the last seq you processed), or some
-  of those events are older than the 10 000 kept in memory (`oldest_seq` is
-  higher than `since + 1` — read the file for those, see
+  of those events are older than the 10 000 (of every game) kept in memory
+  (`oldest_seq` is higher than `since + 1` — read the file for those, see
   [Restarts](#restarts)).
-- `seq` is unique and only ever goes up, and it keeps counting across
-  restarts.
+- `seq` is unique across the games and only ever goes up, and it keeps
+  counting across restarts.
 - `type` is `debit` (coins Hex takes) or `credit` (coins Hex pays).
   `reason` says why:
 
@@ -784,17 +807,20 @@ for a `!mybets` reply. It isn't a balance; Hex's hexbank owns balances.
 - `bet` is a readable label (`Pass line`, `Pass line odds`, `Come 6 lay
   odds`, …). `roll_id` is the roll's `id` for events a roll caused, `null`
   otherwise.
-- Every event is also appended as one JSON line to
+- Every event (of every game) is also appended as one JSON line to
   `config/games_ledger.jsonl` the moment it happens (rotated to
   `games_ledger.jsonl.1` at 10 MB). The API serves the most recent 10 000,
   reloaded from the file when Hexcast starts.
 - Panel websockets get each new batch pushed as
-  `{"type": "ledger", "game": "craps", "events": [...]}`.
+  `{"type": "ledger", "game": "craps", "events": [...]}` — one message per
+  game, so this one only ever holds craps events (roulette's come as
+  `"game": "roulette"`).
 
 ### Clear
 
 `GET` or `POST /games/api/craps/clear` — refunds every bet on the table
-(credits, reason `refund`), resets to a come-out and clears the shooter.
+(credits, reason `refund`), resets to a come-out, clears the shooter and
+stops any countdown.
 Returns `{"ok": true, "credits": [...], "ledger": [...], "refunded": N, "table": {...}}`.
 409 `bets_closed` while the dice are in the air. The panel's **Refund all &
 clear table** does the same.
@@ -846,13 +872,17 @@ These work exactly like Roulette's ([Games → Show, hide, stop](games.md#show-h
   dice are in the air). With **show when bets** on, the table also stays up
   on its own while any bet is on it (or Hex's [board](#announce-and-board)
   has lines) — `/hide` still hides it.
+- A running countdown — [auto-roll](#auto-roll) or the
+  [roll timer](#roll-timer) — keeps the table on screen too, even with
+  **show when bets** off and **hide when idle** on.
 - `/stop` (and `/games/api/stop`, the panel's **⏹ Stop**) aborts the
   animation and hides the table. A roll in the air is **committed** — it's
-  settled and paid exactly as if it had landed — and the auto-roll countdown
-  is cancelled.
+  settled and paid exactly as if it had landed — and any countdown is
+  cancelled.
 - After `/hide` or `/stop` the table stays hidden — even with **show when
-  bets** on and bets down — until `/show` or the next roll (a new bet with
-  auto-roll on starts a fresh countdown, and that roll brings it back).
+  bets** on and bets down, and while a countdown runs — until `/show`, a
+  `/timer` or the next roll (a new bet with auto-roll on starts a fresh
+  countdown, and that roll brings it back).
 
 ### Announce and board
 
@@ -1067,7 +1097,7 @@ a roll's `overrides`, and what the Edit Mode editor edits.
 | `odds_rule` | `"345"` | `"345"` \| `"1"` \| `"2"` \| `"3"` \| `"5"` \| `"10"` \| `"20"` \| `"100"` (see [Amounts](#amounts-limits-and-rounding)) | |
 | `field_12_pays` | `3` | `2` or `3` — the field pays this to 1 on a 12 | |
 | `auto_roll` | `false` | roll on its own when bets are down (see [Auto-roll](#auto-roll)) | |
-| `bet_window_seconds` | `20` | 5–300 — the auto-roll countdown | |
+| `bet_window_seconds` | `20` | 5–300 — the auto-roll countdown, and the [roll timer](#roll-timer)'s default | |
 
 ---
 
@@ -1083,8 +1113,9 @@ additions:
   `announce`, the [payouts card](#announce-and-board) Hex posted, or `null`.
 - **Panel** sockets (`/games/ws/panel`) also get
   `{"type": "ledger", "game": "craps", "events": [...]}` for every new batch
-  of ledger events. Overlays never get it (and ignore message types they
-  don't know).
+  of craps ledger events — and `"game": "roulette"` messages for roulette's,
+  since the [ledger](#ledger) is shared: one message per game, never mixed.
+  Overlays never get it (and ignore message types they don't know).
 
 ---
 
@@ -1120,8 +1151,9 @@ Hexcast doesn't have — different payouts, bonus or side bets, limits per
 viewer. Then Hex owns everything the table does in Mode A: which bets are
 allowed when, settling each one, keeping its bets safe across its own
 restarts, and keeping the screen in step with `/board` and `/announce`.
-Hexcast's table stays empty, so the ledger stays empty, auto-roll never
-starts (it only counts bets on Hexcast's table), and the panel's **On the
+Hexcast's table stays empty, so no craps events go in the ledger, auto-roll
+never starts (it only counts bets on Hexcast's table — the
+[roll timer](#roll-timer) gives Mode B a countdown), and the panel's **On the
 table** and **Ledger** cards stay empty too. See
 [Hex does the math](#hex-does-the-math-mode-b).
 
@@ -1154,6 +1186,11 @@ The short version:
   restarts.
 - **Announcing** — the `/roll?wait=true` reply's `credits[]` is for the chat
   message. Hex never pays from it.
+- **Roulette's table too?** It writes to the same ledger, with the same
+  `debits` and the same kind of credits. Tail `/games/api/ledger` (every
+  game) instead of `/games/api/craps/ledger`, with the same `last_seq` and
+  `done` — one tail pays both games. See
+  [Games → Hex's side: the table](games.md#hexs-side-the-table-mode-a).
 
 ### Who does what
 
@@ -1249,11 +1286,12 @@ debits have reason `odds` and `add`.
 ### Step 2 — paying out: tail the ledger
 
 The ledger is the one place that has every coin movement, whoever caused it:
-a roll from Hex, the panel's Roll button, [auto-roll](#auto-roll), a **⏹ Stop**
-that settles a roll in mid-air, a take-down or a clear from the panel. Tail
-it:
+a roll from Hex, the panel's Roll button, [auto-roll](#auto-roll) or the
+[roll timer](#roll-timer), a **⏹ Stop** that settles a roll in mid-air, a
+take-down or a clear from the panel. Tail it:
 
-1. `GET /games/api/craps/ledger?since=<last_seq>&limit=1000`.
+1. `GET /games/api/craps/ledger?since=<last_seq>&limit=1000` (or
+   `/games/api/ledger`, every game, when Hex runs roulette's table too).
 2. For each event, oldest first:
    - If its `seq` is in `done`, Hex already handled it from a reply. Skip it
      and drop it from `done`.
@@ -1310,8 +1348,9 @@ made on the panel land in the ledger too, without Hex calling anything.
   events. If `oldest_seq` is higher than `last_seq` + 1, the events in
   between aren't served any more. The full record is in
   `config/games_ledger.jsonl` (and `games_ledger.jsonl.1`), one JSON event per
-  line. Apply the ones after `last_seq` from there (skipping any in `done`),
-  then carry on tailing.
+  line, every game's. Apply the ones after `last_seq` from there — only the
+  craps ones (`"game": "craps"`), unless Hex tails every game — skipping any
+  in `done`, then carry on tailing.
 
 ### Rounding
 
@@ -1335,9 +1374,9 @@ and the house's result is `Σ debits − Σ credits − Σ exposure`. Coins are 
 created or lost, except the documented round-down on winnings.
 
 From Hex's side: once the tail has caught up, the total Hex has moved for a
-viewer (everything it debited and credited for craps) equals their ledger
-credits − debits. That holds in every case above, including a failed debit
-that was taken back down.
+viewer (everything it debited and credited for craps) equals their craps
+ledger credits − debits. That holds in every case above, including a failed
+debit that was taken back down.
 
 ### A chat-command flow
 
@@ -1507,7 +1546,7 @@ def on_down(user, what):
 
 
 def ledger_loop():
-    """Catches everything the commands don't: auto-rolls, panel rolls, take-downs, clears."""
+    """Catches everything the commands don't: auto-rolls, timer rolls, panel rolls, take-downs, clears."""
     while True:
         try:
             sync_ledger()
@@ -1574,7 +1613,9 @@ throws the dice, moves the puck, and shows what Hex tells it to. See
 **Only Hex rolls.** A roll from the panel's **Roll dice** or a curl still
 moves the puck and the shooter, but Hex never sees its result, so Hex's
 bets would miss that roll. (Auto-roll never starts in Mode B — it only
-counts bets on Hexcast's table.)
+counts bets on Hexcast's table. For a countdown, Hex starts the
+[roll timer](#roll-timer) itself and reads the roll it throws from
+`/last`.)
 
 **Restarts.**
 
@@ -1731,23 +1772,74 @@ play without a mod pressing Roll:
 
 - When bets are on the table and the game is idle, a countdown of **bet
   window** seconds (`bet_window_seconds`, default 20) starts — on the first
-  bet placed while idle, and again after a roll's result (and cooldown) if
-  bets remain.
+  bet placed while idle, again after a roll's result (and cooldown) if bets
+  remain, and when auto-roll is switched on with bets down.
 - At zero the server rolls exactly like `/roll`, with the current shooter as
-  the `user`.
-- A manual roll, `/clear`, `/stop`, or the table emptying cancels it. A
-  `test` roll (the editor's **Test in OBS**) also stops it; the countdown
-  starts over from the full bet window once the test roll is over.
+  the `user` — if auto-roll is still on and bets are still down.
+- Any roll cancels it (a manual one, or a `test` roll from the editor's
+  **Test in OBS**), and so do `/clear`, `/stop`, `/timer/cancel`, the table
+  emptying and switching auto-roll off. After a test roll the countdown
+  starts over from the full bet window, if bets are still down.
 - `table.auto_roll_in_ms` is the time left (when the message was built),
   `null` when it isn't counting. The overlay shows it as **NEXT ROLL 0:12**
   and the panel shows it too.
+- While it counts, the tray stays on screen — even with **show when bets**
+  off — unless `/hide` or **⏹ Stop** took it off.
+- A countdown doesn't survive a Hexcast restart. The bets do; auto-roll
+  counts again from the next bet placed (or start the
+  [roll timer](#roll-timer)).
 
-Auto-rolls pay out like any other roll — through the ledger. A bank that only
-reads `/roll` responses would miss them; tail the ledger.
+Rolls a countdown throws pay out like any other roll — through the ledger. A
+bank that only reads `/roll` responses would miss them; tail the ledger.
 
 Auto-roll only counts bets on Hexcast's own table, not a board Hex posted
 with `/board` — so in [Mode B](#hex-does-the-math-mode-b) it never starts,
-and Hex decides when to roll.
+and Hex decides when to roll (the [roll timer](#roll-timer) can count down
+to it).
+
+---
+
+## Roll timer
+
+`GET` or `POST /games/api/craps/timer` starts a countdown now — with or
+without bets on the table, auto-roll on or off. At zero the dice go exactly
+like an auto-roll, with the current shooter as the `user`, even with nothing
+on the table. Called while a countdown runs, it starts over. The Craps tab's
+**Start timer** does the same with the bet window, and **Cancel timer** stops
+it.
+
+```
+curl "http://localhost:4747/games/api/craps/timer?seconds=30"
+curl http://localhost:4747/games/api/craps/timer/cancel
+```
+
+- `seconds` goes in the query string or the JSON body: 5–300, clamped; left
+  out or not a number, it's `bet_window_seconds`. The reply is
+  `{"ok": true, "auto_in_ms": 30000, "table": TABLE, "state": STATE}`, and
+  `table.auto_roll_in_ms` counts it down from there — the overlay's
+  **NEXT ROLL** timer, like auto-roll's.
+- While a roll is in the air, showing its result or in cooldown it's **409**
+  busy, the same body as a busy [`/roll`](#roll). Nothing started; try again
+  after `retry_in_ms`.
+- What stops it: any roll (a `test` roll too — the timer is simply gone
+  then, start it again), `/stop`, `/timer/cancel` and `/clear`. Unlike
+  auto-roll's countdown, taking the last bet down or switching auto-roll off
+  doesn't.
+- `GET|POST /games/api/craps/timer/cancel` stops any countdown, the timer's
+  or auto-roll's, and nothing is thrown:
+  `{"ok": true, "cancelled": true, "table": TABLE, "state": STATE}`
+  (`cancelled` is `false` when none was running). With auto-roll on, the
+  next bet placed starts a fresh auto-roll countdown.
+- While it counts, the tray stays on screen, even with **show when bets**
+  off; `/timer` also brings back a tray that `/hide` took off.
+- In [Mode B](#hex-does-the-math-mode-b), where auto-roll never starts, it's
+  how Hex gets a countdown: `/timer`, then `/board` as Hex takes bets, and
+  Hex closes its bets when the countdown runs out. Nobody's call waits for
+  the roll the timer throws, so Hex watches `GET /games/api/craps/last` for
+  a new roll `id` and settles from that roll's `result`.
+
+Roulette has the same call, with a **NEXT SPIN** countdown — see
+[Games → Timer](games.md#timer).
 
 ---
 
@@ -1757,7 +1849,7 @@ and Hex decides when to roll.
 | --- | --- |
 | `games.json` | settings (the `"craps"` section) |
 | `games_craps_table.json` | the table: phase, point, shooter, hand rolls, every bet — saved after every change |
-| `games_ledger.jsonl` | the ledger, one JSON event per line (`.1` is the previous 10 MB) |
+| `games_ledger.jsonl` | the ledger, shared with roulette's table: every game's events, one JSON event per line (`.1` is the previous 10 MB) |
 
 Roll history is in memory only (up to 200 rolls, reset on restart), and so
 are Hex's [board and payouts card](#announce-and-board) (Mode B). Don't
@@ -1784,7 +1876,11 @@ visible** is off, and the source is in the live scene. Right-click →
 stays up while bets are on the table, or while Hex's [board](#announce-and-board)
 has lines (Mode B: post `{"bets": []}` when nothing is riding). Turn it off in
 Settings, or `/hide` it. An announce card also keeps the tray up until its
-`seconds` run out.
+`seconds` run out, and a running countdown ([auto-roll](#auto-roll) or the
+[roll timer](#roll-timer)) until it rolls.
+
+**`/timer` returns 409 `busy`.** The last roll is still in the air, showing
+its result or in cooldown — start the countdown after `retry_in_ms`.
 
 **A bet is rejected.** Read its `error`. The usual reasons: pass / don't pass
 only on the come-out, come / don't come only with a point on; odds need your
@@ -1812,8 +1908,10 @@ come-out; they come back on when a point is set.
 **Come odds came back on a come-out 7.** Come odds are off on the come-out:
 the flat bet loses, the odds are returned (`returned`).
 
-**Hex's balances are out of step.** Compare Hex's saved `last_seq` with
-`table.last_seq`, then sync from `last_seq`. Pay only from ledger events,
+**Hex's balances are out of step.** Sync from Hex's saved `last_seq` until
+`/ledger?since=<last_seq>` comes back empty (`table.last_seq` can be higher
+than the last craps seq: roulette's events share the numbering). Pay only
+from ledger events,
 apply each `seq` once (or mark it `done`, never both), and never pay from a
 `/roll` reply: it's for announcing. For one viewer, what Hex has moved for
 craps should equal their ledger credits − debits (see
@@ -1823,7 +1921,8 @@ the full record.
 **`hexcast.log` says "games_craps_table.json is older than the ledger (table
 at seq X, ledger at Y)".** A save of the table failed (disk full, or the file
 locked by antivirus / a sync tool) and Hexcast stopped before the next save.
-The bets moved by seqs X+1 … Y may be missing from — or still on — the table.
+The bets moved by the craps seqs the line names (after X; roulette's events
+don't count) may be missing from — or still on — the table.
 Before the next roll, compare the **On the table** card with those ledger
 events, and take down or re-place bets by hand to match.
 

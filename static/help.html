@@ -29,6 +29,12 @@
          color:var(--ink);text-decoration:none;font-size:13px;font-weight:600;padding:7px 14px}
   .toc a:hover{border-color:var(--hb-line-hi,#35354a)}
   section{scroll-margin-top:16px}
+  /* phones: the endpoint column (and any long run of code) wraps too, so the page fits instead of
+     scrolling sideways */
+  @media (max-width:700px){
+    .card p.hint,table.api td{overflow-wrap:anywhere}
+    table.api td:first-child{white-space:normal;width:40%}
+  }
 </style></head>
 <body>
 
@@ -250,11 +256,24 @@ curl -X POST http://localhost:4747/countdown/api/config -H "Content-Type: applic
     ball, and it bounces and settles in the pocket the <b>server</b> picked with
     <code>secrets.SystemRandom</code> — uniformly over the 38 pockets of an American double-zero wheel. The overlay
     only animates that result; nothing can force one. Placement works like the soundboard's Edit Mode.
-    Optional <b>bets</b> come back resolved at standard odds for a bot to pay out; <b>launch/landing
-    clips</b> play on the soundboard overlay. <code>{game}</code> is <code>roulette</code> here
-    (Craps has its own card below). All endpoints return <code>{"ok": true/false, ...}</code>.</p>
+    Optional <b>bets</b> sent with a spin come back resolved at standard odds for a bot to pay out — or chat's
+    bets wait on the <b>table</b> for the next spin, shown on an "on the table" board while a <b>spin timer</b>
+    counts down (<b>NEXT SPIN 0:12</b>), and at zero the wheel spins by itself and the winnings go through the
+    <b>ledger</b> craps uses. <b>Launch/landing clips</b> play on the soundboard overlay. <code>{game}</code> is
+    <code>roulette</code> here (Craps has its own card below). All endpoints return
+    <code>{"ok": true/false, ...}</code>.</p>
   <table class="api">
-    <tr><td>GET|POST /games/api/roulette/spin</td><td>start a spin (alias <code>/play</code>) — returns the result, resolved bets and <code>lands_at</code>; <b>409</b> <code>{"error": "busy", "retry_in_ms", "state"}</code> while a spin is spinning, showing its result, or in cooldown</td></tr>
+    <tr><td>GET|POST /games/api/roulette/spin</td><td>start a spin (alias <code>/play</code>) — returns the result, resolved bets and <code>lands_at</code>, plus the table's <code>settlements</code>, <code>credits</code>, <code>table_summary</code> and <code>table</code> (+ the spin's <code>ledger</code> events with <code>wait</code>); <b>409</b> <code>{"error": "busy", "retry_in_ms", "state"}</code> while a spin is spinning, showing its result, or in cooldown</td></tr>
+    <tr><td>GET|POST /games/api/roulette/bet</td><td>on the table for the next spin: <code>{user, bet, amount}</code> or <code>{"bets": [...]}</code> (up to 200; whole coins, <code>min_bet</code>, <code>max_bet</code> per bet line; the same user + bet adds to that line) → <code>accepted</code> (with <code>action</code> <code>new</code> / <code>add</code>), <code>rejected</code> (each with an <code>error</code>), <code>debits</code> <code>[{user, amount, bet_id, seq, reason}]</code>, <code>table</code>. 200 if any were accepted, 400 if all were rejected, <b>409</b> <code>bets_closed</code> while the ball is in the air</td></tr>
+    <tr><td>GET|POST /games/api/roulette/remove</td><td><code>{bet_id}</code> · <code>{user, bet}</code> · <code>{user, all: true}</code> → <code>removed</code> (each with its <code>refund</code>), <code>credits</code>, <code>ledger</code> (reason <code>remove</code>), <code>table</code>; 400 when nothing matches, <b>409</b> <code>bets_closed</code> while the ball is in the air</td></tr>
+    <tr><td>GET /games/api/roulette/table</td><td>every bet (<code>id</code>, <code>user</code>, <code>bet</code>, <code>label</code>, <code>type</code>, <code>numbers</code>, <code>odds</code>, <code>amount</code>, <code>pays</code>), <code>exposure</code> per user, <code>total_on_table</code>, <code>bets_open</code>, <code>auto_spin_in_ms</code> (the countdown, <code>null</code> when none), <code>last_seq</code>, <code>display_board</code></td></tr>
+    <tr><td>GET /games/api/roulette/user/{name}</td><td>one viewer's table bets, exposure and roulette session debits / credits / net</td></tr>
+    <tr><td>GET|POST /games/api/roulette/clear</td><td>refund every table bet (reason <code>refund</code>) and stop the countdown; 409 <code>bets_closed</code> while the ball is in the air</td></tr>
+    <tr><td>GET|POST /games/api/roulette/timer</td><td>start (or restart) the countdown now: <code>seconds</code> 5–300 (default <b>bet window</b>), with or without bets, auto-spin on or off; at 0 the wheel spins by itself with everything on the table → <code>{auto_in_ms, table, state}</code>; <b>409</b> busy unless idle. The same route works for craps</td></tr>
+    <tr><td>GET|POST /games/api/roulette/timer/cancel</td><td>stop any countdown (auto-spin's or the timer's); nothing spins → <code>{cancelled, table, state}</code></td></tr>
+    <tr><td>GET /games/api/roulette/ledger?since=0&amp;limit=500</td><td>roulette's ledger events with <code>seq</code> &gt; since, oldest first (limit up to 5000): <code>debit</code> <code>bet</code> / <code>add</code>, <code>credit</code> <code>win</code> (stake + winnings) / <code>remove</code> / <code>refund</code>; plus <code>last_seq</code> (of every game — gaps are craps events), <code>oldest_seq</code> and <code>truncated</code></td></tr>
+    <tr><td>GET /games/api/ledger?since=0&amp;game=</td><td>the shared ledger: every game's events in one stream, each with its <code>game</code>; <code>game=roulette</code> or <code>craps</code> for one</td></tr>
+    <tr><td>GET|POST /games/api/roulette/board · board/clear</td><td>Mode B: Hex's own "on the table" board before the spin — <code>{title, bets: [{user, text, amount}]}</code>, the same fields as craps' board (below) — shown instead of the table's bets (up to <b>table lines</b>; <b>show table</b> applies); returns <code>{table}</code> with it as <code>display_board</code>. Memory only, allowed while the ball flies; never touches bets or the ledger</td></tr>
     <tr><td>GET /games/api/roulette/last</td><td>last committed spin and its result</td></tr>
     <tr><td>GET|POST /games/api/roulette/announce</td><td>display only, for a bot that did its own math (Mode B): a winners card for the current or last spin — <code>{title, lines: [{user, amount, text}], empty_text, seconds, spin_id, currency}</code> — that replaces the computed winners list (up to <b>bets max</b> lines; <b>show bets</b> applies); held until the ball lands. <b>409</b> <code>{"error": "stale", "spin_id"}</code> when <code>spin_id</code> isn't the current (or last) spin; 400 on bad JSON, when <code>lines</code> isn't a list, or when no usable line and no <code>empty_text</code> was sent (<code>"lines": []</code> alone is fine — it shows <code>No winners</code>)</td></tr>
     <tr><td>GET|POST /games/api/roulette/announce/clear</td><td>take the card down now (the next spin clears it too)</td></tr>
@@ -263,9 +282,9 @@ curl -X POST http://localhost:4747/countdown/api/config -H "Content-Type: applic
     <tr><td>GET /games/api/roulette/validate?bet=...</td><td>parse a bet: <code>valid</code>, <code>type</code>, <code>label</code>, <code>numbers</code>, <code>odds</code> or <code>error</code></td></tr>
     <tr><td>GET /games/api/roulette/bets</td><td>bet-type reference: syntax examples, odds</td></tr>
     <tr><td>GET|POST /games/api/roulette/show · hide</td><td>put the idle wheel on / off screen (hide answers 409 while the ball is rolling)</td></tr>
-    <tr><td>GET|POST /games/api/stop</td><td>abort every animation and hide everything; a spin already started still goes into history</td></tr>
-    <tr><td>GET /games/api/status</td><td>connected overlay count + each game's state</td></tr>
-    <tr><td>GET · POST /games/api/config</td><td>full config as JSON · merge-and-save <code>{"roulette": {...}}</code></td></tr>
+    <tr><td>GET|POST /games/api/stop</td><td>abort every animation and hide everything, stop every countdown; a spin already started still goes into history (and settles the table)</td></tr>
+    <tr><td>GET /games/api/status</td><td>connected overlay count + each game's state (roulette's carries its <code>table</code>)</td></tr>
+    <tr><td>GET · POST /games/api/config</td><td>full config as JSON · merge-and-save <code>{"roulette": {...}}</code> — the table's keys: <code>currency</code>, <code>min_bet</code>, <code>max_bet</code>, <code>auto_spin</code>, <code>bet_window_seconds</code>, <code>show_when_bets</code>, <code>show_table</code>, <code>table_max</code>, <code>table_position</code></td></tr>
     <tr><td>GET /games/api</td><td>this reference as JSON</td></tr>
   </table>
   <h3>Spin parameters (query or JSON body — body wins)</h3>
@@ -273,23 +292,25 @@ curl -X POST http://localhost:4747/countdown/api/config -H "Content-Type: applic
     <tr><td>?user=bob</td><td>up to 40 chars, shown as an <code>@user spins</code> caption</td></tr>
     <tr><td>?duration=12</td><td>spin seconds, clamped 4–30 (default from Settings)</td></tr>
     <tr><td>?wait=true</td><td>hold the response until the ball lands (adds <code>"landed": true</code>)</td></tr>
-    <tr><td>?test=true</td><td>kept out of history/stats, no soundboard clip cues</td></tr>
+    <tr><td>?test=true</td><td>kept out of history/stats, no soundboard clip cues, the table's bets untouched</td></tr>
     <tr><td>?bet=red&amp;amount=100</td><td>one bet (<code>user</code> becomes its user); POST <code>"bets": [{"user", "bet", "amount"}]</code> for up to 200</td></tr>
     <tr><td>?x=80&amp;y=25&amp;scale=0.8</td><td>per-spin placement; POST <code>"overrides": {...}</code> takes any appearance key (theme, colours, result/history/bets display, sfx)</td></tr>
   </table>
   <h3>Two ways to run the money</h3>
-  <p class="hint"><b>Mode A — Hexcast does the math:</b> send <code>bets</code> with the spin and credit each
-    bet's <code>returned</code>. <b>Mode B — your bot does the math</b> (here that's <b>Hex</b>, whose own code
-    keeps everyone's coins in its <b>hexbank</b>): keep the bets in the bot, spin with <code>wait=true</code> and
-    no bets, work out the payouts from <code>result</code>, pay from the hexbank, then
-    <code>POST /announce</code> the winners with the spin's <code>id</code> as <code>spin_id</code>. Either way the
-    pocket is Hexcast's fair spin — a bot can't send a result, and announce only changes what the card says
-    (never the result, bets, history or stats).</p>
+  <p class="hint"><b>Mode A — Hexcast does the math</b>, two routes: send <code>bets</code> with the spin and
+    credit each bet's <code>returned</code> (no ledger), <i>or</i> put the bets on the <b>table</b> with
+    <code>/bet</code> and pay from the <b>ledger</b> (the durable route, like craps) — never the same bet from both.
+    <b>Mode B — your bot does the math</b> (here that's <b>Hex</b>, whose own code keeps everyone's coins in its
+    <b>hexbank</b>): keep the bets in the bot, spin with <code>wait=true</code> and no bets (or start the
+    <code>/timer</code> and show the bets with <code>/board</code>), work out the payouts from <code>result</code>,
+    pay from the hexbank, then <code>POST /announce</code> the winners with the spin's <code>id</code> as
+    <code>spin_id</code>. Either way the pocket is Hexcast's fair spin — a bot can't send a result, and announce
+    and board only change what the screen says (never the result, bets, ledger, history or stats).</p>
   <h3>Announce fields (query or JSON body — body wins)</h3>
   <table class="api">
     <tr><td>"lines": [{user, amount, text}]</td><td>up to 50 kept; each needs a <code>user</code> or a <code>text</code> (unusable lines are skipped); <code>[]</code> = nobody won. <code>user</code> ≤ 40 chars, cleaned like a spin's user (leading <code>@</code> dropped); <code>text</code> ≤ 60; <code>amount</code> optional, any finite number up to ±1e12 — shown <code>+200</code> green, <code>−50</code> red, <code>0</code> dim. Query shorthand for one line: <code>?user=alice&amp;amount=200&amp;text=Red</code></td></tr>
     <tr><td>title · empty_text</td><td>≤ 40 chars, default <code>WINNERS</code> · ≤ 60 chars, default <code>No winners</code> (shown when there are no lines)</td></tr>
-    <tr><td>currency</td><td>≤ 24 chars, shown after each amount; default the game's <code>currency</code> setting (craps: <code>hexcoins</code>), else empty — roulette has none</td></tr>
+    <tr><td>currency</td><td>≤ 24 chars, shown after each amount; default the game's <code>currency</code> setting (<code>hexcoins</code> unless changed); <code>""</code> for none</td></tr>
     <tr><td>seconds</td><td>1–120; default the rest of the result phase, or <b>result seconds</b> when the game isn't spinning or in <code>result</code>. Posted while the ball is in the air, it counts from the landing. The game stays on screen that long (unless hidden or stopped)</td></tr>
     <tr><td>spin_id</td><td>the current spin (in the air / showing its result), or the last committed one when there's none — also the default without it; any other id → <b>409</b> <code>stale</code></td></tr>
   </table>
@@ -316,18 +337,48 @@ curl -X POST http://localhost:4747/countdown/api/config -H "Content-Type: applic
     with an <code>error</code> and the stake as <code>returned</code> — except a bad <code>amount</code>
     (negative, not a number, over 1e12), which comes back as <code>0</code>. Hexcast keeps no balances — your bot
     credits <code>returned</code>. Full guide, config keys and bot recipes: <code>docs/games.md</code>.</p>
-  <p class="hint"><b>Hooking up the bank (Hex's hexbank, Mode A):</b> collect bets in Hex's own betting window,
-    check each bet's text with <code>/validate</code> and its amount in Hex (a positive whole number ≤ 1e12),
-    debit the stake, spin once with <code>"bets": [{user, bet, amount}]</code> and <code>wait=true</code>, then
-    credit every bet's <code>returned</code>. <b>409</b> busy: nothing spun, keep the stakes and retry after
+  <h3>Table &amp; spin timer (hexcoins)</h3>
+  <p class="hint">The durable Mode A route, the same as craps': bets wait on Hexcast's table, one-spin bets that can
+    come down until the ball is thrown; bets are closed only while it's in the air (<b>409</b>
+    <code>bets_closed</code>). <b>The countdown:</b> with <b>auto-spin</b> on (<code>auto_spin</code>), the first bet
+    starts a <b>bet window</b> countdown (<code>bet_window_seconds</code>, default 20), and it starts again after each
+    spin while bets are down; <code>/timer</code> starts one any time, even with no bets. At zero the wheel spins like
+    a <code>/spin</code> with every bet on the table. Any spin (test ones too), <b>Stop</b>, <code>/timer/cancel</code>
+    and <code>/clear</code> stop either kind; the last bet coming down or auto-spin switched off stop only auto-spin's.
+    While a countdown runs, the wheel stays on screen (unless hidden). At the landing each winning bet gets one ledger
+    <code>credit</code> <code>win</code> (stake + winnings, <code>roll_id</code> = the spin's id) and every bet leaves
+    the table; losers have no event (the stake was the debit). A restart in mid-air cancels that spin — the bets ride
+    on the next; <code>test</code> spins never touch the table.</p>
+  <p class="hint"><b>Hex's side (Mode A, table):</b> check the viewer's hexbank balance → <code>POST /bet</code> →
+    debit each <code>debits[]</code> entry and mark its <code>seq</code> done (a failed debit: <code>/remove</code>
+    that <code>bet_id</code>). Start rounds with <code>/timer</code> (or auto-spin). Pay by tailing
+    <code>/games/api/ledger?since=&lt;last applied seq&gt;</code> — every game in one tail — applying each event once
+    in <code>seq</code> order (credits <code>win</code>, <code>remove</code>, <code>refund</code>; debits Hex didn't
+    take itself, like a bet from the panel), saving that seq together with the hexbank change. Announce from
+    <code>/roulette/last</code> (<code>result</code>, <code>credits</code>), never pay from it.
+    <b>Mode B with the timer:</b> Hex keeps its bets → <code>POST /timer</code> → <code>POST /board</code> after every
+    bet → close bets at zero (or as soon as a spin starts) → wait for a new spin <code>id</code> on
+    <code>/roulette/last</code> → settle from its <code>result</code> → <code>POST /announce</code> and an empty
+    <code>/board</code>. Recipes and sample code: <code>docs/games.md</code> → Table &amp; spin timer.</p>
+  <p class="hint"><b>Hooking up the bank (Hex's hexbank, Mode A, bets on the spin call):</b> collect bets in Hex's own
+    betting window, check each bet's text with <code>/validate</code> and its amount in Hex (a positive whole number
+    ≤ 1e12), debit the stake, spin once with <code>"bets": [{user, bet, amount}]</code> and <code>wait=true</code>,
+    then credit every bet's <code>returned</code>. <b>409</b> busy: nothing spun, keep the stakes and retry after
     <code>retry_in_ms</code>; a <b>Stop</b> mid-spin still commits it, so pay as normal; <code>test</code> spins
-    never count. Roulette has <b>no ledger</b> — mark each spin <code>id</code> + bet index paid, and pay from
+    never count. This route has <b>no ledger</b> — mark each spin <code>id</code> + bet index paid, and pay from
     the reply promptly: <code>/history</code> (each spin with its resolved bets) is memory only, the last 200,
     emptied on restart. Step by step: <code>docs/games.md</code> → Hooking up the bank.</p>
   <pre>curl "http://localhost:4747/games/api/roulette/spin?user=bob&amp;bet=red&amp;amount=100&amp;wait=true"
 curl "http://localhost:4747/games/api/roulette/validate?bet=split:17/20"
 curl -X POST http://localhost:4747/games/api/roulette/spin -H "Content-Type: application/json" -d "{\"wait\":true,\"bets\":[{\"user\":\"alice\",\"bet\":\"17\",\"amount\":10},{\"user\":\"bob\",\"bet\":\"odd\",\"amount\":50}]}"
+curl "http://localhost:4747/games/api/roulette/bet?user=alice&amp;bet=red&amp;amount=100"
+curl -X POST http://localhost:4747/games/api/roulette/bet -H "Content-Type: application/json" -d "{\"bets\":[{\"user\":\"bob\",\"bet\":\"split:17/20\",\"amount\":25},{\"user\":\"carol\",\"bet\":\"17\",\"amount\":10}]}"
+curl "http://localhost:4747/games/api/roulette/timer?seconds=30"
+curl "http://localhost:4747/games/api/roulette/remove?user=bob&amp;bet=split:17/20"
+curl "http://localhost:4747/games/api/ledger?since=0"
+curl -X POST http://localhost:4747/games/api/roulette/board -H "Content-Type: application/json" -d "{\"bets\":[{\"user\":\"alice\",\"text\":\"Red\",\"amount\":100}]}"
 curl -X POST http://localhost:4747/games/api/roulette/announce -H "Content-Type: application/json" -d "{\"lines\":[{\"user\":\"alice\",\"amount\":850,\"text\":\"Split 17/20\"}],\"empty_text\":\"House wins\",\"currency\":\"hexcoins\"}"
+curl -X POST http://localhost:4747/games/api/config -H "Content-Type: application/json" -d "{\"roulette\":{\"auto_spin\":true,\"bet_window_seconds\":30}}"
 curl -X POST http://localhost:4747/games/api/config -H "Content-Type: application/json" -d "{\"roulette\":{\"spin_seconds\":12,\"cooldown_seconds\":30}}"</pre>
 </div>
 </section>
@@ -347,10 +398,11 @@ curl -X POST http://localhost:4747/games/api/config -H "Content-Type: applicatio
     <tr><td>GET|POST /games/api/craps/roll</td><td>throw the dice (aliases <code>/spin</code>, <code>/play</code>) — returns the dice, <code>settlements</code> (every bet with action), <code>credits</code> per user, <code>summary</code>, <code>table</code> (+ the roll's <code>ledger</code> events with <code>wait</code>); <b>409</b> <code>{"error": "busy", "retry_in_ms", "state"}</code> while a roll is in the air, showing its result, or in cooldown</td></tr>
     <tr><td>GET|POST /games/api/craps/bet</td><td><code>{user, bet, amount, target?}</code> or <code>{"bets": [...]}</code> (up to 200) → <code>accepted</code>, <code>rejected</code> (each with an <code>error</code>), <code>debits</code> <code>[{user, amount, bet_id, seq}]</code>, <code>table</code>. 200 if any were accepted, 400 if all were rejected, <b>409</b> <code>bets_closed</code> while the dice are in the air</td></tr>
     <tr><td>GET|POST /games/api/craps/remove</td><td><code>{bet_id}</code> · <code>{user, bet}</code> (<code>"bet": "odds"</code> takes down just the odds) · <code>{user, all: true}</code> → <code>removed</code>, <code>credits</code> (refunds), <code>ledger</code>; contract bets answer 400, <b>409</b> <code>bets_closed</code> while the dice are in the air</td></tr>
-    <tr><td>GET /games/api/craps/table</td><td>phase, point, shooter, hand rolls, every bet, <code>exposure</code> per user, <code>bets_open</code>, <code>auto_roll_in_ms</code>, <code>last_seq</code></td></tr>
-    <tr><td>GET /games/api/craps/user/{name}</td><td>one viewer's bets, exposure and session debits / credits / net</td></tr>
-    <tr><td>GET /games/api/craps/ledger?since=0&amp;limit=500</td><td>ledger events with <code>seq</code> &gt; since, oldest first (limit up to 5000), plus <code>last_seq</code>, <code>oldest_seq</code> and <code>truncated</code> (the limit cut it, or older events are only in <code>config/games_ledger.jsonl</code>)</td></tr>
-    <tr><td>GET|POST /games/api/craps/clear</td><td>refund every bet (reason <code>refund</code>), back to a come-out, shooter cleared; 409 <code>bets_closed</code> while the dice are in the air</td></tr>
+    <tr><td>GET /games/api/craps/table</td><td>phase, point, shooter, hand rolls, every bet, <code>exposure</code> per user, <code>bets_open</code>, <code>auto_roll_in_ms</code> (the countdown — auto-roll or <code>/timer</code>), <code>last_seq</code></td></tr>
+    <tr><td>GET /games/api/craps/user/{name}</td><td>one viewer's bets, exposure and craps session debits / credits / net</td></tr>
+    <tr><td>GET /games/api/craps/ledger?since=0&amp;limit=500</td><td>craps' ledger events with <code>seq</code> &gt; since, oldest first (limit up to 5000), plus <code>last_seq</code>, <code>oldest_seq</code> and <code>truncated</code> (the limit cut it, or older events are only in <code>config/games_ledger.jsonl</code>). The ledger is shared with roulette's table (one <code>seq</code> numbering, each event names its <code>game</code>), so gaps are normal; <code>GET /games/api/ledger</code> has every game's</td></tr>
+    <tr><td>GET|POST /games/api/craps/clear</td><td>refund every bet (reason <code>refund</code>), back to a come-out, shooter cleared, countdown stopped; 409 <code>bets_closed</code> while the dice are in the air</td></tr>
+    <tr><td>GET|POST /games/api/craps/timer · timer/cancel</td><td>the <b>roll timer</b>: start (or restart) a countdown now — <code>seconds</code> 5–300 (default <b>bet window</b>), with or without bets, auto-roll on or off; at 0 the shooter's dice go by themselves → <code>{auto_in_ms, table, state}</code>, <b>409</b> busy unless idle · stop any countdown → <code>{cancelled, table, state}</code>. A running countdown keeps the table on screen, even with <b>show when bets</b> off</td></tr>
     <tr><td>GET /games/api/craps/validate?bet=&amp;user=&amp;amount=&amp;target=</td><td>dry run against the current table: <code>valid</code>, <code>type</code>, <code>label</code>, <code>number</code>, <code>odds_text</code>, <code>error</code>, <code>hint</code> (when an amount won't pay exactly), <code>max_odds</code></td></tr>
     <tr><td>GET /games/api/craps/bets</td><td>bet reference: type, label, syntax, pays, when, one roll, notes + rules</td></tr>
     <tr><td>GET /games/api/craps/last · history · history/clear</td><td>as roulette — rolls newest first (in memory) + stats: totals, points set/made, seven-outs, naturals, craps, hard ways, hands, longest hand</td></tr>
@@ -391,8 +443,9 @@ curl -X POST http://localhost:4747/games/api/config -H "Content-Type: applicatio
     <code>/ledger?since=&lt;last applied seq&gt;</code>, apply each event once in <code>seq</code> order,
     and save that seq in Hex together with the hexbank change, so payouts happen exactly once across
     restarts of either side. Skip the debits Hex already took from a <code>/bet</code> reply; take any other
-    debit (a bet placed from the panel). The tail also catches panel rolls, auto-rolls, take-downs
-    (<code>remove</code>) and clears (<code>refund</code>). The <code>/roll?wait=true</code> reply's
+    debit (a bet placed from the panel). The tail also catches panel rolls, auto-rolls and timer rolls,
+    take-downs (<code>remove</code>) and clears (<code>refund</code>); running roulette's table too, tail
+    <code>/games/api/ledger</code> (every game) once instead. The <code>/roll?wait=true</code> reply's
     <code>credits</code> is for announcing in chat, not for paying. The table and ledger persist in
     <code>config/</code>; <code>seq</code> keeps counting across restarts, and a restart while the dice are in
     the air cancels that roll (bets stay, nothing is paid). Winnings round <b>down</b> to whole coins —
@@ -406,8 +459,9 @@ curl -X POST http://localhost:4747/games/api/config -H "Content-Type: applicatio
     credit the hexbank → <code>POST /announce</code> the payouts with the roll's <code>id</code> as
     <code>spin_id</code> and post the updated <code>/board</code>. The dice, puck and shooter are still Hexcast's
     fair roll — Hex can't send dice. Never also <code>/bet</code> those bets (they'd be settled and in the ledger
-    twice); auto-roll only counts bets on Hexcast's table, so Hex rolls; re-post the board after a Hexcast restart
-    (it's memory only). Recipe and sample code: <code>docs/craps.md</code>.</p>
+    twice); auto-roll only counts bets on Hexcast's table, so Hex rolls — or starts the roll timer
+    (<code>/timer</code>) and reads the roll it throws from <code>/last</code>; re-post the board after a Hexcast
+    restart (it's memory only). Recipe and sample code: <code>docs/craps.md</code>.</p>
   <pre>curl "http://localhost:4747/games/api/craps/bet?user=alice&amp;bet=pass&amp;amount=100"
 curl "http://localhost:4747/games/api/craps/bet?user=alice&amp;bet=odds&amp;amount=200"
 curl "http://localhost:4747/games/api/craps/roll?user=alice&amp;wait=true"
@@ -415,6 +469,7 @@ curl "http://localhost:4747/games/api/craps/ledger?since=0"
 curl "http://localhost:4747/games/api/craps/validate?bet=place6&amp;amount=25"
 curl -X POST http://localhost:4747/games/api/craps/bet -H "Content-Type: application/json" -d "{\"bets\":[{\"user\":\"bob\",\"bet\":\"place6\",\"amount\":60},{\"user\":\"carol\",\"bet\":\"field\",\"amount\":25}]}"
 curl -X POST http://localhost:4747/games/api/config -H "Content-Type: application/json" -d "{\"craps\":{\"auto_roll\":true,\"bet_window_seconds\":30}}"
+curl "http://localhost:4747/games/api/craps/timer?seconds=30"
 curl -X POST http://localhost:4747/games/api/craps/board -H "Content-Type: application/json" -d "{\"bets\":[{\"user\":\"alice\",\"text\":\"Pass 100 + odds 50\",\"amount\":150}]}"
 curl "http://localhost:4747/games/api/craps/announce?user=alice&amp;amount=200&amp;text=Pass%20line"</pre>
 </div>
