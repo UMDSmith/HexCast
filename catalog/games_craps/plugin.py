@@ -7,7 +7,7 @@ from . import craps
 
 def setup(ctx):
     core.register_game(craps.CRAPS, {
-        "title": "Craps", "order": 20,
+        "plugin": ctx.id, "title": "Craps", "order": 20,
         "static_dir": ctx.static_dir, "static_url": ctx.static_url,
         "panel_js": "craps_panel.js", "overlay": craps.OVERLAY, "api": craps.API_DOC,
     })

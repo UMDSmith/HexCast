@@ -1,5 +1,5 @@
 /*
- * Hexcast Games — Craps panel tab                       static/games/craps_panel.js
+ * Hexcast Games — Craps panel tab                       craps_panel.js
  *
  * Builds the whole Craps tab of the Games panel (/games -> section#tab-craps):
  *   1. OBS browser source      both overlay URLs + Copy
@@ -17,9 +17,10 @@
  *   8. Settings                every non-appearance key of config.craps
  *   9. API                     endpoints, bet syntax, curl examples, hooking up the bank
  *
- * Plain browser script, no modules / deps / build step. Loaded after games_panel.html's
- * inline script and after /static/games/craps.js (the renderer, window.HexGames.craps).
- * Everything lives inside one closure so nothing clashes with the roulette globals.
+ * Plain browser script, no modules / deps / build step. games_panel.html loads it right after the
+ * craps.js renderer (window.HexGames.craps) when Craps is installed; what the page shares (toast, copy,
+ * the Hex display helpers ...) comes from window.GamesPage. Everything lives inside one closure so
+ * nothing clashes with the other games' tabs.
  *
  * The page dispatches its /games/ws/panel socket to us through window.GamePanels.craps:
  *   onConfig(config)  {"type":"config"}   -> config.craps
@@ -28,6 +29,7 @@
  *   onLedger(events)  {"type":"ledger","game":"craps","events":[...]}
  *   onLink(bool)      socket up / down
  *   onTab(key)        a game tab was selected
+ *   onRemove()        Craps is being uninstalled: stop the timers, close the editor, free the renderer
  * and keeps the last config / state / link in window.GamesPage.last so we can catch up.
  */
 (function () {
@@ -73,7 +75,9 @@
   // ======================================================================
   // helpers (same behaviour as the page's)
   // ======================================================================
-  function $(id) { return document.getElementById(id); }
+  // Looked up inside our own section, not the whole document: once Craps is removed the section is
+  // detached, and a late timer or fetch reply must still find its elements instead of throwing.
+  function $(id) { return HOST.querySelector('#' + id); }
   var esc = typeof GP.esc === 'function' ? GP.esc : function (s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -658,7 +662,7 @@
     if (!c || typeof c.create !== 'function') {
       MIRS.failed = true;
       MIR.el.classList.add('empty');
-      viewMsg($('cr-mirror-msg'), 'Craps renderer not loaded (/static/games/craps.js).');
+      viewMsg($('cr-mirror-msg'), 'Craps renderer not loaded (' + ((typeof GP.gameScript === 'function' && GP.gameScript('craps')) || 'craps.js') + ').');
       return false;
     }
     var eff = mirrorEffective();
@@ -2129,6 +2133,25 @@
   }
 
   // ======================================================================
+  // Craps is being uninstalled
+  // ======================================================================
+  // The page removes the tab right after this: stop everything that would keep running against it.
+  var TIMERS = [];   // setInterval handles
+  function teardown() {
+    TIMERS.forEach(function (t) { clearInterval(t); });
+    TIMERS = [];
+    [_confirmT, _vT, _statsT].forEach(function (t) { clearTimeout(t); });
+    if (ED && ED.close) ED.close();
+    if (MIR) {
+      if (MIR.ro) MIR.ro.disconnect();
+      if (MIR.inst) { var inst = MIR.inst; MIR.inst = null; safe(function () { inst.destroy(); }); }
+    }
+    var st = document.getElementById('cr-style');
+    if (st) st.remove();
+    delete window.CrapsPanel;
+  }
+
+  // ======================================================================
   // wiring
   // ======================================================================
   function init() {
@@ -2246,16 +2269,16 @@
 
     renderDisplay();
 
-    setInterval(function () {
+    TIMERS.push(setInterval(function () {
       if (!tabShown()) return;
       renderReadout();
       renderAuto();
       if (STATE && STATE.announce) renderDisplay();   // the card's countdown
-    }, 200);
+    }, 200));
 
     // register with the page, then catch up on what its socket already delivered
     window.GamePanels = window.GamePanels || {};
-    window.GamePanels.craps = { onConfig: onConfig, onState: onState, onStop: onStop, onLedger: onLedger, onLink: onLink, onTab: onTab };
+    window.GamePanels.craps = { onConfig: onConfig, onState: onState, onStop: onStop, onLedger: onLedger, onLink: onLink, onTab: onTab, onRemove: teardown };
     var last = GP.last || {};
     if (last.config) onConfig(last.config);
     if (last.states && last.states.craps) onState(last.states.craps);

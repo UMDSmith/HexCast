@@ -258,77 +258,15 @@ var L = GamesLogic;
 var FADE_MS = 350;
 
 /* ---- registry ------------------------------------------------------------
-   One entry per game. The script must register window.HexGames[id] with the
-   renderer interface (create/setConfig/resize/play/showResult/setHistory/reset/
-   destroy, + optional setTable / setAnnounce); `renderer` is filled in once it has loaded.
-   `defaults` mirror the backend's so missing config keys fall back to the same
-   values; `appearance` = the keys a spin's `overrides` may change for that game.
+   One entry per INSTALLED game, from GET /games/api/registry (a game that is not installed has no
+   slot and no renderer here): {script, renderer, appearance, defaults, stateful}. The script must
+   register window.HexGames[id] with the renderer interface (create/setConfig/resize/play/showResult/
+   setHistory/reset/destroy, + optional setTable / setAnnounce); `renderer` is filled in once it has
+   loaded. `defaults` mirror the backend's so missing config keys fall back to the same values;
+   `appearance` = the keys a spin's `overrides` may change for that game.
    The box is the renderer's BASE_W x BASE_H (or BASE_SIZE square) in stage px.
-   Roulette: American double-zero wheel only — there is no `wheel` key. Both games
-   have a table (bets for the next spin / roll + the auto countdown). */
-var GAMES = {
-  roulette: {
-    script: '/static/games/roulette.js',
-    renderer: null,
-    appearance: L.APPEARANCE,     // roulette's list (GamesLogic's default)
-    defaults: {
-      x: 50, y: 50, scale: 1.25, theme: 'classic',
-      red_color: '', black_color: '', green_color: '',
-      spin_seconds: 9, result_seconds: 6, hide_when_idle: true,
-      show_result: true, result_position: 'center', result_details: true,
-      show_history: true, history_count: 10, show_user: true,
-      show_bets: true, bets_max: 5, sfx: true, sfx_volume: 0.5,
-      spin_clip: '', land_clip: '', cooldown_seconds: 0,
-      currency: 'hexcoins', min_bet: 1, max_bet: 100000, auto_spin: false, bet_window_seconds: 20,
-      show_when_bets: true, show_table: true, table_max: 6, table_position: 'right', show_rules: true
-    }
-  },
-  craps: {
-    script: '/static/games/craps.js',
-    renderer: null,
-    appearance: ['x', 'y', 'scale', 'theme', 'dice_style', 'show_point', 'show_history',
-      'history_count', 'show_user', 'show_bets', 'bets_max', 'show_payouts', 'payouts_max',
-      'sfx', 'sfx_volume', 'show_rules'],
-    defaults: {
-      x: 50, y: 50, scale: 1.0, theme: 'classic', dice_style: 'red',
-      roll_seconds: 4, result_seconds: 5, cooldown_seconds: 0,
-      hide_when_idle: true, show_when_bets: true, show_point: true,
-      show_history: true, history_count: 10, show_user: true,
-      show_bets: true, bets_max: 6, show_payouts: true, payouts_max: 5,
-      sfx: true, sfx_volume: 0.5, roll_clip: '', land_clip: '',
-      currency: 'hexcoins', min_bet: 1, max_bet: 100000, odds_rule: '345',
-      field_12_pays: 3, auto_roll: false, bet_window_seconds: 20, show_rules: true
-    }
-  },
-  // Round games: one multi-round game at a time. `stateful` = the renderer takes the whole
-  // STATE through setState() (no spins / tables / history); the host still owns show / hide,
-  // placement and the renderer's lifetime. `appearance` = what STATE.preview (the editor's
-  // Test in OBS) may change.
-  russian: {
-    script: '/static/games/russian.js',
-    renderer: null,
-    stateful: true,
-    appearance: ['x', 'y', 'scale', 'theme', 'title', 'show_rules', 'show_players', 'players_max', 'show_odds',
-      'sfx', 'sfx_volume'],
-    defaults: {
-      x: 50, y: 50, scale: 1.0, theme: 'saloon', title: 'Russian Roulette', show_rules: true, show_players: true,
-      players_max: 8, show_odds: true, sfx: true, sfx_volume: 0.6, hide_when_idle: true, commands_text: '',
-      rounds: 3, pull_seconds: 9, result_seconds: 4, summary_seconds: 10, currency: 'coins', dummy_name: 'Dummy'
-    }
-  },
-  trivia: {
-    script: '/static/games/trivia.js',
-    renderer: null,
-    stateful: true,
-    appearance: ['x', 'y', 'scale', 'theme', 'title', 'lore_label', 'show_rules', 'show_players', 'players_max',
-      'sfx', 'sfx_volume'],
-    defaults: {
-      x: 50, y: 50, scale: 1.0, theme: 'hex', title: 'TRIVIA', lore_label: 'Channel Lore', show_rules: true,
-      show_players: true, players_max: 8, sfx: true, sfx_volume: 0.5, hide_when_idle: true, commands_text: '',
-      currency: 'coins'
-    }
-  }
-};
+   `stateful` = a round game: the renderer takes the whole STATE through setState() (see syncRound()). */
+var GAMES = {};
 
 var stage = document.getElementById('stage');
 var slots = {};          // game id -> slot (only games this source shows)
@@ -789,8 +727,8 @@ function loadRenderer(slot) {
 }
 
 /* ---- messages -------------------------------------------------------------- */
-// config / state / stop only; anything else (e.g. the games' "ledger" messages, which
-// the server sends to panel sockets) is ignored.
+// config / state / stop, and the registry notice (a game was added or removed: start over); anything
+// else (e.g. the games' "ledger" messages, which the server sends to panel sockets) is ignored.
 function handle(m) {
   if (!m || typeof m !== 'object') return;
   if (m.type === 'config') {
@@ -819,6 +757,8 @@ function handle(m) {
       }
       run(slot, r.actions);
     });
+  } else if (m.type === 'registry') {
+    scheduleReload();
   }
 }
 
@@ -835,6 +775,7 @@ function connect() {
     while (outbox.length && sock.readyState === 1) {
       try { sock.send(outbox.shift()); } catch (e) { break; }
     }
+    checkRegistry();
   };
   sock.onmessage = function (e) {
     var m;
@@ -855,16 +796,53 @@ try {
   WANT = (new URLSearchParams(location.search).get('game') || '').toLowerCase()
     .split(',').map(function (s) { return s.trim(); }).filter(Boolean);
 } catch (e) { WANT = []; }
-WANT.forEach(function (w) { if (!own(GAMES, w)) report('unknown game "' + w + '" in ?game='); });
-Object.keys(GAMES).forEach(function (id) {
-  if (!WANT.length || WANT.indexOf(id) >= 0) slots[id] = makeSlot(id);
-});
+// The installed games come from the server. REG_SIG remembers what this page booted with.
+var REG_SIG = '';
+function registrySig(games) { return JSON.stringify(games); }
+
+// A game was added or removed (the server says so with {"type":"registry"}): the renderers were loaded for
+// the games of that moment, so the page starts over. OBS browser sources handle that fine.
+var reloadT = 0;
+function scheduleReload() {
+  clearTimeout(reloadT);
+  reloadT = setTimeout(function () { location.reload(); }, 600);
+}
+
+// The socket (re)connected: a page that missed the notice (or whose Hexcast was restarted with other
+// games) starts over too.
+function checkRegistry() {
+  fetch('/games/api/registry', { cache: 'no-store' })
+    .then(function (r) { return r.json(); })
+    .then(function (d) { if (d && Array.isArray(d.games) && registrySig(d.games) !== REG_SIG) scheduleReload(); })
+    .catch(function () {});
+}
+
+function boot(games) {
+  REG_SIG = registrySig(games);
+  games.forEach(function (g) {
+    var ov = g && g.overlay;
+    if (!g || typeof g.key !== 'string' || !ov || !ov.script) return;
+    GAMES[g.key] = { script: ov.script, renderer: null, appearance: ov.appearance, defaults: ov.defaults,
+      stateful: !!ov.stateful };
+  });
+  WANT.forEach(function (w) { if (!own(GAMES, w)) report('unknown game "' + w + '" in ?game='); });
+  Object.keys(GAMES).forEach(function (id) {
+    if (!WANT.length || WANT.indexOf(id) >= 0) slots[id] = makeSlot(id);
+  });
+  eachSlot(loadRenderer);
+  connect();        // (with no game installed the page just stays transparent, waiting for a registry notice)
+}
 
 // Debug / test hook (devtools: HexGamesOverlay.slots.roulette).
 window.HexGamesOverlay = { GAMES: GAMES, slots: slots, handle: handle, report: report };
 
-eachSlot(loadRenderer);
-connect();
+function loadRegistry() {
+  fetch('/games/api/registry', { cache: 'no-store' })
+    .then(function (r) { return r.json(); })
+    .then(function (d) { if (!d || !Array.isArray(d.games)) throw new Error('bad registry'); return d.games; })
+    .then(boot, function () { setTimeout(loadRegistry, 3000); });   // Hexcast is still starting: ask again
+}
+loadRegistry();
 })();
 </script>
 </body></html>

@@ -7,7 +7,7 @@ from . import roulette
 
 def setup(ctx):
     core.register_game(roulette.ROULETTE, {
-        "title": "Roulette", "order": 10,
+        "plugin": ctx.id, "title": "Roulette", "order": 10,
         "static_dir": ctx.static_dir, "static_url": ctx.static_url,
         "panel_js": "roulette_panel.js", "overlay": roulette.OVERLAY, "api": roulette.API_DOC,
     })

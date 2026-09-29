@@ -7,7 +7,7 @@ from . import trivia
 
 def setup(ctx):
     core.register_game(trivia.TRIVIA, {
-        "title": "Trivia", "order": 40,
+        "plugin": ctx.id, "title": "Trivia", "order": 40,
         "static_dir": ctx.static_dir, "static_url": ctx.static_url,
         "panel_js": "trivia_panel.js", "overlay": trivia.OVERLAY, "api": trivia.API_DOC,
     })

@@ -7,7 +7,7 @@ from . import russian
 
 def setup(ctx):
     core.register_game(russian.RUSSIAN, {
-        "title": "Russian Roulette", "order": 30,
+        "plugin": ctx.id, "title": "Russian Roulette", "order": 30,
         "static_dir": ctx.static_dir, "static_url": ctx.static_url,
         "panel_js": "russian_panel.js", "overlay": russian.OVERLAY, "api": russian.API_DOC,
     })

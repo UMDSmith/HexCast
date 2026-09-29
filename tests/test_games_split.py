@@ -27,11 +27,30 @@ def test_all_games_register_in_tab_order(real_world):
     reg = c.get("/games/api/registry").json()
     assert [g["key"] for g in reg["games"]] == ["roulette", "craps", "russian", "trivia"]
     for g in reg["games"]:
+        assert g["plugin"] == f"games_{g['key']}"
         assert g["overlay"]["script"].startswith(f"/plugins/games_{g['key']}/static/{g['key']}.js")
         assert g["panel_js"].startswith(f"/plugins/games_{g['key']}/static/{g['key']}_panel.js")
         assert g["overlay"]["appearance"] and g["overlay"]["defaults"]
     assert [g["key"] for g in reg["games"] if g["overlay"]["stateful"]] == ["russian", "trivia"]
     assert set(c.get("/games/api/status").json()["games"]) == {"roulette", "craps", "russian", "trivia"}
+
+
+def test_every_script_the_pages_name_is_served(real_world):
+    """The Games page and overlay are shells: the game scripts they load come from the registry."""
+    import re
+    install_all(real_world)
+    c = TestClient(real_world.app)
+    urls = []
+    for g in c.get("/games/api/registry").json()["games"]:
+        urls += [g["panel_js"], g["overlay"]["script"]]
+    for page in ("/games", "/games/overlay"):
+        html = c.get(page).text
+        urls += re.findall(r'src="(/plugins/games/static/[\w./-]+\.js\?v=\d+)"', html)
+        assert not re.search(r'id="tab-(roulette|craps|russian|trivia)"', html), page   # no game is hard-wired into a page
+    assert any("panel_common.js" in u for u in urls) and any("round_common.js" in u for u in urls)
+    for u in urls:
+        r = c.get(u)
+        assert r.status_code == 200 and "javascript" in r.headers["content-type"] and len(r.text) > 500, u
 
 
 def test_games_host_alone_has_no_games(real_world):

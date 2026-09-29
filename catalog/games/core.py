@@ -2303,7 +2303,7 @@ def recover_ledger() -> int:
 # What the pages need to know about each installed game. The panel builds one tab per entry
 # and the OBS overlay loads one renderer per entry (GET /games/api/registry), so a game that
 # is not installed has no tab and no renderer. An entry:
-#   {"title": "Craps", "order": 20,
+#   {"title": "Craps", "order": 20, "plugin": "games_craps",              # the add-on that provides it
 #    "static_dir": Path, "static_url": "/plugins/games_craps/static",     # where its files are
 #    "panel_js": "craps_panel.js",                                        # builds the tab
 #    "overlay": {"script": "craps.js", "appearance": [...], "defaults": {...}, "stateful": False},
@@ -2367,7 +2367,8 @@ def registry_view() -> dict:
             continue
         ov = fe.get("overlay") or {}
         games.append({
-            "key": key, "title": fe.get("title") or GAMES[key].title, "order": fe.get("order", 100),
+            "key": key, "plugin": fe.get("plugin"), "title": fe.get("title") or GAMES[key].title,
+            "order": fe.get("order", 100),
             "panel_js": _asset_url(fe, fe["panel_js"]) if fe.get("panel_js") else None,
             "overlay": {"script": _asset_url(fe, ov["script"]) if ov.get("script") else None,
                         "appearance": list(ov.get("appearance") or GAMES[key].APPEARANCE),

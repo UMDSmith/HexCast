@@ -201,6 +201,7 @@ from . import bingo
 
 def setup(ctx):
     core.register_game(bingo.BINGO, {
+        "plugin": ctx.id,
         "title": "Bingo", "order": 50,                          # tab label and position (Roulette 10, Craps 20 ...)
         "static_dir": ctx.static_dir, "static_url": ctx.static_url,
         "panel_js": "bingo_panel.js",                           # builds the tab
@@ -211,26 +212,28 @@ def setup(ctx):
     ctx.on_shutdown(lambda: core.unregister_game("bingo"))      # stops it, drops its tab and renderer
 ```
 
-While it is registered the game has its own section in `config/games.json` (removed and reinstalled games keep their settings), its chat commands and coins go through the shared ledger, and open panels and overlays learn about it at once: `GET /games/api/registry` lists the installed games and a `{"type": "registry"}` message on the Games websocket says "read it again". Nothing is reloaded by hand.
+While it is registered the game has its own section in `config/games.json` (a removed game keeps its settings for when it comes back), its coins go through the shared ledger, and open pages learn about it at once: `GET /games/api/registry` lists the installed games and a `{"type": "registry"}` message on the Games websocket says "read it again". Nothing is reloaded by hand - the tab appears, or goes, in the page that is open.
 
-**The panel script** (`panel_js`) is loaded by the Games page once its tab strip exists. It registers the handlers it needs and builds the game's tab inside the `<section>` the page created for it:
+**The overlay script** (`overlay.script`) is loaded by the OBS overlay (`/games/overlay`, or `?game=bingo` for one game) and registers a renderer, `window.HexGames.bingo`, with `create`, `setConfig`, `resize`, `play`, `showResult`, `setHistory`, `reset` and `destroy` (plus `setTable` / `setAnnounce` if the game has them). A game with `"stateful": true` (a round game) gets its whole state through `setState()` instead. `overlay.appearance` lists the settings a single round may override, `overlay.defaults` mirrors the game's default settings for a renderer that starts before its first config arrives.
+
+**The panel script** (`panel_js`) is loaded by the Games page right after the renderer, and builds the game's tab inside the `<section id="tab-bingo">` the page made for it. It registers the handlers it wants (all optional):
 
 ```js
 window.GamePanels = window.GamePanels || {};
 window.GamePanels.bingo = {
-  onConfig(cfg)   {},   // the game's settings arrived or changed
-  onState(state)  {},   // live game state
-  onStop()        {},   // the game was stopped
-  onLedger(led)   {},   // the coin ledger changed
-  onLink(up)      {},   // the connection to Hexcast went up / down
-  onTab(active)   {},   // the tab was shown / hidden
+  onConfig(config)  {},   // the settings arrived or changed (all games' sections)
+  onState(state)    {},   // live state of this game
+  onStop(game)      {},   // a stop was broadcast
+  onLedger(events)  {},   // new coin movements of this game
+  onLink(up)        {},   // the connection to Hexcast went up / down
+  onTab(key)        {},   // a tab was shown - yours when key === 'bingo'
+  onRemove()        {},   // the game is being removed: stop timers, drop listeners and injected styles
 };
-// helpers the page gives every panel: window.GamesPage = { api, rawReq, toast, busyToast, esc, copyText, loadClipList, ... }
 ```
 
-**The overlay script** (`overlay.script`) is loaded by the OBS overlay page (`/games/overlay?game=bingo`, or with no `game` to show them all) only for installed games. It registers a renderer, `window.HexGames.bingo = ...`, that draws the state it is sent. The overlay reloads itself when a game is installed or removed.
+The page gives every panel `window.GamesPage`: `api(method, path[, body])` (a JSON request: returns the body, or `null` after showing a toast), `rawReq` (the same, never toasts), `busyToast`, `toast`, `esc`, `copyText`, `loadClipList` (fills the `#clip-list` datalist), `last` (the latest config / state / link, for a panel that registers after they arrived), `registry` and `gameScript(key)`. A round game (one round at a time, chat votes) can skip most of it: `GamesPage.round.register(definition)` from `round_common.js` builds the whole tab - OBS card, live mirror, controls, players, history, ledger, settings and the placement editor - from a small description of the game; `catalog/games_russian/static/russian_panel.js` is about 240 lines. `catalog/games_craps/` is a complete example of a game that does everything itself.
 
-Both scripts are plain files served from your plugin's `static/`; look at `catalog/games_craps/static/` for a complete pair.
+Keep your CSS scoped to your section (`#tab-bingo ...`), because the page and the store share the document.
 
 ## The top-bar dot and the help page
 
