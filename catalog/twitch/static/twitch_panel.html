@@ -1,7 +1,7 @@
 <!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" href="/static/hexcast.png">
-<link rel="stylesheet" href="/static/hexbar.css">
+<link rel="stylesheet" href="/static/hexbar.css?v=2">
 <title>HexCast - Twitch</title>
 <style>
   :root{
@@ -948,5 +948,5 @@ setInterval(function(){
   fetch('/twitch/api/status').then(function(r){ return r.json(); }).then(paintStatus);
 }, 5000);
 </script>
-<script src="/static/hexbar.js"></script>
+<script src="/static/hexbar.js?v=2"></script>
 </body></html>
