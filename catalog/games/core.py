@@ -223,7 +223,7 @@ def _cut(s: str, limit: int) -> str:
     a flag, a skin-tone / keycap emoji or a joined (ZWJ) one is several), never through
     what shows as one character - half a flag, a family emoji without its last members,
     a letter without its accent: one that doesn't fit whole is dropped. The Games panel's
-    cut() (static/games/round_panels.js) keeps the same text."""
+    cut() (static/round_common.js) keeps the same text."""
     i = max(0, limit)
     if len(s) <= i:
         return s

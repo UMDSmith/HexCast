@@ -177,7 +177,60 @@ async with httpx.AsyncClient(transport=httpx.ASGITransport(app=ctx.app), base_ur
 
 ## Add-ons (plugins of a plugin)
 
-Set `"parent": "games"` and the plugin is an add-on of Games: it shows up in the **+** inside the Games tab instead of the main one, and is installed with (and removed with) Games. The parent decides what an add-on looks like - see the Games plugin for a full example (`catalog/games/`, `catalog/games_craps/`).
+Set `"parent": "games"` and the plugin is an **add-on** of Games: its card shows up in the **+** inside the Games tab, not in the main one. Installing an add-on installs its parent first; removing the parent removes its add-ons; the parent lists only the add-ons that are installed. Any plugin can be a parent - the parent decides what an add-on is. Games is the one that ships with Hexcast.
+
+### A game for Games
+
+Roulette, Craps, Russian Roulette and Trivia are each an add-on of Games. To write another one:
+
+```
+games_bingo/
+  plugin.json       "parent": "games"
+  plugin.py         registers the game
+  bingo.py          the game: a class on hexcast_plugins.games.core (Game, TableGame or RoundGame) + its routes
+  static/
+    bingo_panel.js  the game's tab in the Games page
+    bingo.js        the game on the OBS overlay
+```
+
+`plugin.py`:
+
+```python
+from hexcast_plugins.games import core
+from . import bingo
+
+def setup(ctx):
+    core.register_game(bingo.BINGO, {
+        "title": "Bingo", "order": 50,                          # tab label and position (Roulette 10, Craps 20 ...)
+        "static_dir": ctx.static_dir, "static_url": ctx.static_url,
+        "panel_js": "bingo_panel.js",                           # builds the tab
+        "overlay": bingo.OVERLAY,                               # {"script", "appearance", "defaults", "stateful"}
+        "api": bingo.API_DOC,                                   # its part of GET /games/api
+    })
+    ctx.include_router(bingo.router)                            # /games/api/bingo/...
+    ctx.on_shutdown(lambda: core.unregister_game("bingo"))      # stops it, drops its tab and renderer
+```
+
+While it is registered the game has its own section in `config/games.json` (removed and reinstalled games keep their settings), its chat commands and coins go through the shared ledger, and open panels and overlays learn about it at once: `GET /games/api/registry` lists the installed games and a `{"type": "registry"}` message on the Games websocket says "read it again". Nothing is reloaded by hand.
+
+**The panel script** (`panel_js`) is loaded by the Games page once its tab strip exists. It registers the handlers it needs and builds the game's tab inside the `<section>` the page created for it:
+
+```js
+window.GamePanels = window.GamePanels || {};
+window.GamePanels.bingo = {
+  onConfig(cfg)   {},   // the game's settings arrived or changed
+  onState(state)  {},   // live game state
+  onStop()        {},   // the game was stopped
+  onLedger(led)   {},   // the coin ledger changed
+  onLink(up)      {},   // the connection to Hexcast went up / down
+  onTab(active)   {},   // the tab was shown / hidden
+};
+// helpers the page gives every panel: window.GamesPage = { api, rawReq, toast, busyToast, esc, copyText, loadClipList, ... }
+```
+
+**The overlay script** (`overlay.script`) is loaded by the OBS overlay page (`/games/overlay?game=bingo`, or with no `game` to show them all) only for installed games. It registers a renderer, `window.HexGames.bingo = ...`, that draws the state it is sent. The overlay reloads itself when a game is installed or removed.
+
+Both scripts are plain files served from your plugin's `static/`; look at `catalog/games_craps/static/` for a complete pair.
 
 ## The top-bar dot and the help page
 

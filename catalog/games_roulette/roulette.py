@@ -50,7 +50,7 @@ ROULETTE_TABLE_PATH = CONFIG_DIR / "games_roulette_table.json"   # roulette bets
 ROULETTE_TABLE_MAX = 1000       # roulette: bet lines on the table (the next spin)
 
 # --------------------------------------------------------------------------
-# roulette wheel data (identical to static/games/roulette.js)
+# roulette wheel data (identical to static/roulette.js)
 # --------------------------------------------------------------------------
 # American double-zero wheel (38 pockets), clockwise from the zero pocket;
 # index 0 sits at 12 o'clock at wheel angle 0.
