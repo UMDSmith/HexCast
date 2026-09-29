@@ -282,3 +282,44 @@ def setup(ctx):
         except Gone as exc:
             closed = exc.code == 1012
         assert closed
+
+
+def test_updating_an_addon_leaves_its_running_parent_alone(world):
+    write_plugin(world.catalog, "base")
+    write_plugin(world.catalog, "kid", parent="base", nav=False, version="1.0.0")
+    world.installer.install("kid")
+    world.host.load_all()
+    meta = world.plugins / "base" / ".hexcast-plugin.json"
+    before = meta.read_text()
+    write_plugin(world.catalog, "kid", parent="base", nav=False, version="1.0.1")
+    assert world.installer.update("kid") == ["kid"]                    # not ["base", "kid"]
+    assert meta.read_text() == before
+    assert "base" in world.host.loaded
+
+
+def test_updating_installs_a_new_requirement_first(world):
+    write_plugin(world.catalog, "alpha", version="1.0.0")
+    write_plugin(world.catalog, "newdep")
+    world.installer.install("alpha")
+    write_plugin(world.catalog, "alpha", version="1.1.0", requires=["newdep"])
+    assert world.installer.update("alpha") == ["newdep", "alpha"]
+    assert (world.plugins / "newdep").exists()
+
+
+def test_corrupt_settings_file_falls_back_to_defaults(world):
+    (world.config / "plugins.json").write_text("{not json")
+    from hexcast_core.host import Settings
+    s = Settings(world.config / "plugins.json")
+    assert s.data == {"disabled": [], "migrated": False, "catalogs": []}
+    s.set_disabled("x", True)                                   # and it can be written over
+    assert Settings(world.config / "plugins.json").is_disabled("x")
+
+
+def test_catalog_hash_changes_with_content_but_not_with_pycache(world):
+    d = write_plugin(world.catalog, "alpha")
+    h1 = world.host.catalog.get("alpha").content_hash
+    (d / "__pycache__").mkdir()
+    (d / "__pycache__" / "x.cpython-311.pyc").write_bytes(b"1")
+    assert world.host.catalog.get("alpha").content_hash == h1
+    (d / "plugin.py").write_text((d / "plugin.py").read_text() + "\n# edit\n")
+    assert world.host.catalog.get("alpha").content_hash != h1

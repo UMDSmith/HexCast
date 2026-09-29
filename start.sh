@@ -64,5 +64,6 @@ fi
 echo
 echo "  Starting Hexcast - leave this running while you stream."
 echo "  Control panel:  http://localhost:4747/"
+echo "  Add Twitch, Music, Games and more from the + tab of the control panel."
 echo
 exec "$VENVPY" hexcast.py

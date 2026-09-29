@@ -134,3 +134,30 @@ def test_cli_lists_and_installs(tmp_path):
     out = subprocess.run([sys.executable, str(ROOT / "hexcast.py"), "plugins", "install", "nope"], env=env, cwd=ROOT,
                          capture_output=True, text=True, timeout=60)
     assert out.returncode == 1 and "not in the catalog" in out.stdout
+
+
+def test_broken_plugins_never_stop_the_soundboard_from_starting(tmp_path):
+    """A garbage plugin.json, a plugin that raises in setup, a corrupt plugins.json: Hexcast still starts,
+    the soundboard answers and the problems are reported."""
+    import json
+    import os
+    import subprocess
+    plugins, config = tmp_path / "plugins", tmp_path / "config"
+    (plugins / "garbage").mkdir(parents=True)
+    (plugins / "garbage" / "plugin.json").write_text("{nope")
+    (plugins / "raises").mkdir()
+    (plugins / "raises" / "plugin.json").write_text(json.dumps({"id": "raises", "name": "Raises", "version": "1.0.0"}))
+    (plugins / "raises" / "plugin.py").write_text("def setup(ctx):\n    raise RuntimeError('boom in setup')\n")
+    config.mkdir()
+    (config / "plugins.json").write_text("this is not json")
+    code = ("import hexcast\nfrom fastapi.testclient import TestClient\n"
+            "c = TestClient(hexcast.app)\n"
+            "print('ROOT', c.get('/').status_code, 'OVERLAY', c.get('/overlay').status_code)\n"
+            "print('ERRORS', sorted(hexcast.plugin_host.errors))\n")
+    env = {**os.environ, "HEXCAST_PLUGINS_DIR": str(plugins), "HEXCAST_CONFIG_DIR": str(config),
+           "SOUNDBOARD_MEDIA_DIR": str(tmp_path / "media")}
+    out = subprocess.run([sys.executable, "-c", code], env=env, cwd=ROOT, capture_output=True, text=True, timeout=120)
+    assert out.returncode == 0, out.stderr[-800:]
+    assert "ROOT 200 OVERLAY 200" in out.stdout
+    assert "ERRORS ['garbage', 'raises']" in out.stdout
+    assert "boom in setup" in out.stdout

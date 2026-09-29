@@ -122,8 +122,14 @@ class Installer:
         return done
 
     def plan_install_missing(self, entry: CatalogEntry) -> list[CatalogEntry]:
+        """The plugins `entry` requires that are not installed yet (what an update must add
+        first). Ones that are already there are left alone - and running."""
+        installed = self.host.scan()
         out: list[CatalogEntry] = []
         for dep in entry.manifest.requires:
+            here = installed.get(dep)
+            if here is not None and here.manifest is not None:
+                continue
             for e in self.plan_install(dep):
                 if all(x.id != e.id for x in out):
                     out.append(e)

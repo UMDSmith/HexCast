@@ -6,6 +6,7 @@ Games goes one level further: the **Games** plugin gives you a Games tab, and ea
 
 - [Using plugins](#using-plugins)
 - [Where things live](#where-things-live)
+- [How it works](#how-it-works)
 - [Writing a plugin](#writing-a-plugin)
 - [plugin.json reference](#pluginjson-reference)
 - [What `setup(ctx)` gets](#what-setupctx-gets)
@@ -57,6 +58,30 @@ media/                your sounds and videos
 Installing **copies** `catalog/<id>/` to `plugins/<id>/`. A `git pull` updates the catalog but never changes what is running - you press **Update** when you want it. Everything inside `plugins/` and `config/` is git-ignored.
 
 Every plugin's `static/` folder is served at `/plugins/<id>/static/...`.
+
+## How it works
+
+```
+ catalog/twitch/  ──Install──▶  plugins/twitch/  ──import──▶  hexcast_plugins.twitch.plugin.setup(ctx)
+ (ships with Hexcast)           (the copy that runs)                   │ adds routes / websockets / static
+                                                                       ▼
+ hexcast.py  ── PluginHost ──▶  records exactly what setup added to the FastAPI app
+   (soundboard)     │
+                    ├─ Disable / Update / Remove ─▶ teardown(ctx), close its websockets, drop its routes,
+                    │                               forget its modules - the rest of Hexcast never stops
+                    └─ boot: scan plugins/, start each enabled plugin (dependencies first);
+                       a broken one is reported on its card and skipped
+```
+
+- **The top bar is data, not code.** `GET /api/plugins/nav` lists the tabs of the installed plugins; each plugin's own
+  `nav.js` decides its dot. `/help` is assembled the same way from each plugin's `help.html`.
+- **Installing is copying.** The catalog folder is never imported, only copied; `plugins/<id>/.hexcast-plugin.json` remembers
+  where a copy came from and a digest of its files, which is how a card knows an **Update** is available (a `git pull` that
+  changes `catalog/` puts a dot on the **+** tab - nothing changes on a running stream until you press Update).
+- **Packages are the plugin's business.** `requirements.txt` is checked (cheaply) at start and installed with pip on Install or
+  Repair; in a fresh virtualenv the missing ones are restored in the background.
+- **Add-ons import their parent** (`from hexcast_plugins.games import core`) and register with it; the parent's routes, pages and
+  API index only ever mention add-ons that are installed.
 
 ## Writing a plugin
 

@@ -520,7 +520,10 @@ async def lifespan(app: FastAPI):
     obs = Observer()
     obs.schedule(WatchHandler(), str(MEDIA_DIR), recursive=True)
     obs.start()
-    await plugin_service.repair_pending()      # plugins whose Python packages went missing
+    try:
+        await plugin_service.repair_pending()  # plugins whose Python packages went missing
+    except Exception:
+        log.exception("plugins: restoring missing packages failed")
 
     print(f"\n  ==== Hexcast {VERSION} ====")
     print(f"  Control panel:       http://localhost:{PORT}/")
@@ -534,7 +537,10 @@ async def lifespan(app: FastAPI):
     print(f"\n  ! No authentication — keep this on a trusted LAN behind a firewall.")
     print(f"    Do NOT expose this to the internet.\n")
     yield
-    await plugin_host.shutdown()               # let the plugins close their sockets
+    try:
+        await plugin_host.shutdown()           # let the plugins close their sockets
+    except Exception:
+        log.exception("plugins: shutdown failed")
     obs.stop()
     obs.join()
 
@@ -1010,12 +1016,21 @@ plugin_service = PluginService(plugin_host, plugin_installer, STATIC_DIR)
 app.include_router(build_router(plugin_service))          # /plugins, /api/plugins/*, /help
 app.include_router(overlay_backgrounds.build_router(MEDIA_DIR))   # /api/backgrounds: pictures for overlays
 
-plugin_installer.clean_trash()
-plugin_migrate.run(plugin_host, plugin_installer)           # first start after upgrading: keep the old tabs
+# Nothing about plugins may stop the soundboard from starting: each step reports and moves on.
+def _plugin_step(what: str, fn) -> None:
+    try:
+        fn()
+    except Exception as exc:                                # a read-only folder, a corrupt file ...
+        log.exception("plugins: %s failed", what)
+        print(f"  [!] plugins: {what} failed ({type(exc).__name__}: {exc}) - see hexcast.log", flush=True)
+
+
+_plugin_step("cleanup", plugin_installer.clean_trash)
+_plugin_step("upgrade check", lambda: plugin_migrate.run(plugin_host, plugin_installer))   # keep an old install's tabs
 if os.getenv("HEXCAST_DEV"):                                # developers: catalog edits show up on restart
-    plugin_installer.sync_from_catalog(lambda m: print(f"  [dev] {m}", flush=True))
-plugin_host.load_all()
-for _pid, _mod in plugin_host.loaded.items():
+    _plugin_step("dev sync", lambda: plugin_installer.sync_from_catalog(lambda m: print(f"  [dev] {m}", flush=True)))
+_plugin_step("start", plugin_host.load_all)
+for _pid in plugin_host.loaded:
     print(f"  plugin: {_pid}", flush=True)
 for _pid, _why in plugin_host.errors.items():
     print(f"  [!] plugin '{_pid}' is not running: {_why}", flush=True)

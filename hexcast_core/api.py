@@ -327,10 +327,16 @@ class PluginService:
                 host.revision += 1
         return {"ok": True, "removed": removed, "restart_recommended": not clean}
 
+    def _save_disabled(self, pid: str, disabled: bool) -> None:
+        try:
+            self.host.settings.set_disabled(pid, disabled)
+        except OSError as exc:
+            raise ApiError(f"could not save the setting ({exc.strerror or exc}) - is config/ writable?", 500) from None
+
     async def enable(self, pid: str) -> dict:
         if pid not in self.host.scan():
             raise ApiError("not installed", 404)
-        self.host.settings.set_disabled(pid, False)
+        self._save_disabled(pid, False)
         self.host.errors.pop(pid, None)
         self._start_missing(self.host.order(self.host.scan()))
         self.host.revision += 1
@@ -339,7 +345,7 @@ class PluginService:
     async def disable(self, pid: str) -> dict:
         if pid not in self.host.scan():
             raise ApiError("not installed", 404)
-        self.host.settings.set_disabled(pid, True)
+        self._save_disabled(pid, True)
         stopped, clean = await self.host.unload(pid)
         self.host.errors.pop(pid, None)
         self.host.revision += 1
