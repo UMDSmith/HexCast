@@ -14,30 +14,11 @@ WebSocket, the same channel Discord's own StreamKit overlays use.
 
 ## Install
 
-Copy `discord_reactive.py` next to `hexcast.py`, and these two files into
-`static/`:
+Open the **+** tab in the top bar, find **Discord** and press **Install**. The tab appears straight away, and the
+Python packages it needs are installed for you - no restart. From a terminal:
+`python hexcast.py plugins install discord`. (More in [Plugins](plugins.md).)
 
-```
-static/discord_panel.html
-static/discord_overlay.html
-```
-
-Install the dependencies:
-
-```
-pip install -r requirements-discord.txt
-```
-
-`hexcast.py` already mounts the module when the file is present; nothing else
-changes. If you're wiring it into your own copy by hand, it's the same two
-lines as the other integrations, after `app.mount("/media", ...)`:
-
-```python
-from discord_reactive import attach_discord
-attach_discord(app, PORT)
-```
-
-Restart. You'll see two new URLs printed at startup.
+Two URLs are printed at startup.
 
 ### Connecting at boot instead of on first request
 
@@ -51,7 +32,7 @@ async def lifespan(app: FastAPI):
     ...
     obs.start()
 
-    from discord_reactive import start_discord, stop_discord   # add
+    from hexcast_plugins.discord.discord_reactive import start_discord, stop_discord   # add
     await start_discord()                                      # add
 
     print(f"\n  ==== Hexcast ====")

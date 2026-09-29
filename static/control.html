@@ -1130,47 +1130,6 @@ async function uploadFiles(files) {
   }
 }
 
-// ---- Integration status dots in the topbar --------------------------------
-function setDot(id, live, title) {
-  const dot = document.getElementById(id);
-  if (!dot) return;
-  dot.classList.toggle("on", live);
-  dot.parentNode.title = title;
-}
-
-(function pollIntegrations() {
-  fetch("/twitch/api/status")
-    .then(r => r.ok ? r.json() : null)
-    .then(s => {
-      const live = !!(s && s.connected);
-      setDot("twitchdot", live, live
-        ? (s.source === "eventsub" ? "Twitch connected \u2014 chat and events"
-                                   : "Twitch connected \u2014 chat only (not signed in)")
-        : "Twitch not connected \u2014 click to set up");
-    })
-    .catch(() => {});
-
-  fetch("/ytm/api/status")
-    .then(r => r.ok ? r.json() : null)
-    .then(s => {
-      const live = !!(s && s.connected);
-      let title;
-      if (live && s.now && s.now.title) {
-        title = (s.now.playing ? "\u25B6 " : "\u23F8 ") + s.now.title + " \u2014 " + s.now.author;
-      } else if (live) {
-        title = "YouTube Music connected \u2014 nothing playing";
-      } else if (s && s.paired) {
-        title = "YouTube Music Desktop is not running";
-      } else {
-        title = "YouTube Music not paired \u2014 click to set up";
-      }
-      setDot("musicdot", live, title);
-    })
-    .catch(() => {});
-
-  setTimeout(pollIntegrations, 10000);
-})();
-
 // ---- websocket / live index ----
 const statusEl = $("#status");
 let ws;

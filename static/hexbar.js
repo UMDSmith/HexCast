@@ -1,4 +1,4 @@
-/* Hexcast — shared top bar.
+/* Hexcast - shared top bar.
  *
  * Usage: put this in the page, as early in <body> as you like:
  *
@@ -8,45 +8,85 @@
  *
  * Anything inside #hexbar-actions is moved into the bar rather than recreated,
  * so existing event handlers bound by id keep working untouched.
+ *
+ * The tabs are not hard-wired: Soundboard is always first, then one tab per
+ * installed plugin (GET /api/plugins/nav), then "+" (the plugin store) and Help.
+ * A plugin's status dot is decided by a small script it ships (nav.status_js) that
+ * registers window.HexbarStatus[key] = function (status) -> {on, warn, title}.
  */
 (function () {
-  var SECTIONS = [
-    { key: 'soundboard', label: 'Soundboard', href: '/' },
-    { key: 'twitch',     label: 'Twitch',     href: '/twitch', status: '/twitch/api/status' },
-    { key: 'music',      label: 'Music',      href: '/ytm',    status: '/ytm/api/status' },
-    { key: 'discord',    label: 'Discord',    href: '/discord', status: '/discord/api/status' },
-    { key: 'clips',      label: 'Clips',      href: '/clips',   status: '/clips/api/status' },
-    { key: 'countdown',  label: 'Countdown',  href: '/countdown', status: '/countdown/api/status' },
-    { key: 'games',      label: 'Games',      href: '/games',   status: '/games/api/status' },
-    { key: 'ticker',     label: 'Ticker',     href: '/ticker',  status: '/ticker/api/status' },
-    { key: 'help',       label: 'Help',       href: '/help',    nodot: true }
-  ];
-
   var host = document.getElementById('hexbar');
   if (!host) return;
 
-  var current = (host.dataset.section || '').toLowerCase();
+  var CACHE_KEY = 'hexcast.nav.v1';
+  var FIRST = { key: 'soundboard', label: 'Soundboard', href: '/', color: 'var(--hb-accent)', alwaysOn: true };
+  var LAST = [
+    { key: 'store', label: '+', href: '/plugins', plus: true, nodot: true, title: 'Add plugins' },
+    { key: 'help', label: 'Help', href: '/help', nodot: true }
+  ];
+  var items = [];          // the plugin tabs, from the server (or the cache until it answers)
+  var updates = 0;         // installed plugins with a newer copy in the catalog (dot on the + tab)
+  window.HexbarStatus = window.HexbarStatus || {};
+  var loadedScripts = {};  // status_js url -> true
+
+  var section = (host.dataset.section || '');
+  var forcedKey = host.dataset.key || '';
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  function allTabs() {
+    return [FIRST].concat(items).concat(LAST);
+  }
+
   // Accept either the key or the label, so data-section="Now playing" still
   // highlights Music if a page wants a friendlier name.
-  var currentKey = host.dataset.key ||
-    (SECTIONS.filter(function (s) { return s.key === current || s.label.toLowerCase() === current; })[0] || {}).key ||
-    '';
+  function currentKey() {
+    if (forcedKey) return forcedKey;
+    var low = section.toLowerCase(), tabs = allTabs();
+    for (var i = 0; i < tabs.length; i++) {
+      if (tabs[i].key === low || String(tabs[i].label).toLowerCase() === low) return tabs[i].key;
+    }
+    return '';
+  }
 
-  var nav = SECTIONS.map(function (s) {
-    return '<a href="' + s.href + '" data-key="' + s.key + '"' +
-           (s.key === currentKey ? ' class="sel"' : '') + '>' +
-           (s.nodot ? '' : '<i class="hb-dot" id="hb-dot-' + s.key + '"></i>') + s.label + '</a>';
-  }).join('');
+  function renderNav() {
+    var cur = currentKey();
+    var html = allTabs().map(function (t) {
+      var cls = (t.key === cur ? 'sel' : '') + (t.plus ? ' hb-plus' + (updates ? ' has-update' : '') : '');
+      var style = t.color ? ' style="--tab:' + esc(t.color) + '"' : '';
+      var warnLink = (t.state && t.state !== 'running') ? ('/plugins#' + esc(t.id)) : t.href;
+      return '<a href="' + esc(warnLink) + '" data-key="' + esc(t.key) + '"' +
+             (cls.trim() ? ' class="' + cls.trim() + '"' : '') + style +
+             (t.title ? ' title="' + esc(t.plus && updates ? updates + ' plugin update' + (updates === 1 ? '' : 's') + ' available - open + to update' : t.title) + '"' : '') + '>' +
+             (t.nodot ? '' : '<i class="hb-dot" id="hb-dot-' + esc(t.key) + '"></i>') + esc(t.label) + '</a>';
+    }).join('');
+    var nav = host.querySelector('.hb-nav');
+    if (nav) nav.innerHTML = html;
+    // a re-render forgets the dots: put them back at once
+    var sb = document.getElementById('hb-dot-soundboard');
+    if (sb) { sb.classList.add('on'); sb.parentNode.title = 'Soundboard'; }
+    items.forEach(function (t) {
+      if (t.state && t.state !== 'running') {
+        setDot(t.key, false, true, t.label + ' is not running - ' +
+          (t.error || (t.state === 'needs_deps' ? 'its Python packages are missing' : t.state)));
+      }
+    });
+    lastResults && Object.keys(lastResults).forEach(function (k) {
+      var r = lastResults[k];
+      setDot(k, r.on, r.warn, r.title);
+    });
+  }
 
   host.innerHTML =
     '<a class="hb-brand" href="/" title="Hexcast">' +
       '<img src="/static/hexcast.png" alt="Hexcast">' +
       '<span class="hb-word">Hex<b>cast</b></span>' +
     '</a>' +
-    (host.dataset.section
-      ? '<span class="hb-sep">/</span><span class="hb-section">' + host.dataset.section + '</span>'
-      : '') +
-    '<nav class="hb-nav">' + nav + '</nav>' +
+    (section ? '<span class="hb-sep">/</span><span class="hb-section">' + esc(section) + '</span>' : '') +
+    '<nav class="hb-nav"></nav>' +
     '<span class="hb-spacer"></span>' +
     '<a class="hb-ver" id="hb-ver" href="https://github.com/UMDSmith/hexcast" target="_blank" rel="noopener"></a>' +
     '<div class="hb-actions" id="hb-actions"></div>';
@@ -59,9 +99,15 @@
     actions.parentNode.removeChild(actions);
   }
 
-  // The soundboard is whatever is serving this page, so it is always up.
-  var sbDot = document.getElementById('hb-dot-soundboard');
-  if (sbDot) { sbDot.classList.add('on'); sbDot.parentNode.title = 'Soundboard'; }
+  var lastResults = {};    // key -> last {on, warn, title}, kept across re-renders
+
+  function setDot(key, on, warn, title) {
+    var dot = document.getElementById('hb-dot-' + key);
+    if (!dot) return;
+    dot.classList.toggle('on', !!on);
+    dot.classList.toggle('warn', !!warn && !on);
+    if (title) dot.parentNode.title = title;
+  }
 
   // Version chip: show the running version, and flag when a newer one exists.
   // The server does the (cached) GitHub check, so this is one cheap local call.
@@ -83,164 +129,85 @@
       .catch(function () { verEl.style.display = 'none'; });
   }
 
-  function setDot(key, on, warn, title) {
-    var dot = document.getElementById('hb-dot-' + key);
-    if (!dot) return;
-    dot.classList.toggle('on', !!on);
-    dot.classList.toggle('warn', !!warn && !on);
-    dot.parentNode.title = title;
-  }
+  // ---- the plugin tabs ---------------------------------------------------------------
 
-  function poll() {
-    fetch('/twitch/api/status')
-      .then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (s) {
-        var live = !!(s && s.connected);
-        setDot('twitch', live, !!(s && !live), live
-          ? (s.source === 'eventsub'
-              ? 'Twitch connected — chat and events'
-              : 'Twitch connected — chat only, not signed in')
-          : 'Twitch not connected');
-      })
-      .catch(function () { setDot('twitch', false, false, 'Twitch module not installed'); });
-
-    fetch('/ytm/api/status')
-      .then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (s) {
-        var live = !!(s && s.connected);
-        var title;
-        if (live && s.now && s.now.title) {
-          title = (s.now.playing ? '\u25B6 ' : '\u23F8 ') + s.now.title + ' — ' + s.now.author;
-        } else if (live) {
-          title = 'YouTube Music connected — nothing playing';
-        } else if (s && s.paired) {
-          title = 'YouTube Music Desktop is not running';
-        } else {
-          title = 'YouTube Music not paired';
-        }
-        setDot('music', live, !!(s && s.paired && !live), title);
-      })
-      .catch(function () { setDot('music', false, false, 'Music module not installed'); });
-
-    fetch('/discord/api/status')
-      .then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (s) {
-        var live = !!(s && s.connected);
-        var title;
-        if (live && s.channel) {
-          title = 'Discord connected — ' + s.channel.name;
-        } else if (live) {
-          title = 'Discord connected — not in a voice channel';
-        } else if (s && s.authed) {
-          title = 'Discord desktop client is not running';
-        } else {
-          title = 'Discord not authorized';
-        }
-        setDot('discord', live, !!(s && s.authed && !live), title);
-      })
-      .catch(function () { setDot('discord', false, false, 'Discord module not installed'); });
-
-    fetch('/clips/api/status')
-      .then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (s) {
-        if (!s) { setDot('clips', false, false, 'Clips module not installed'); return; }
-        var live = !!s.ytdlp;
-        var title;
-        if (s.player && s.player.state !== 'idle' && s.player.item) {
-          title = 'Clips — playing #' + s.player.item.num + ' ' + (s.player.item.title || '');
-        } else if (live) {
-          title = 'Clips — ' + s.queued + ' queued';
-        } else {
-          title = 'Clips — yt-dlp not installed';
-        }
-        setDot('clips', live, !live, title);
-      })
-      .catch(function () { setDot('clips', false, false, 'Clips module not installed'); });
-
-    fetch('/games/api/status')
-      .then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (s) {
-        if (!s) { setDot('games', false, false, 'Games module not installed'); return; }
-        var n = +s.overlays || 0;
-        setDot('games', n > 0, true, gamesTitle(s.games, n));
-      })
-      .catch(function () { setDot('games', false, false, 'Games module not installed'); });
-
-    fetch('/ticker/api/status')
-      .then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (s) {
-        if (!s) { setDot('ticker', false, false, 'Ticker module not installed'); return; }
-        var n = +s.overlays || 0;
-        var what = !s.visible ? 'hidden'
-          : s.items + ' line' + (s.items === 1 ? '' : 's') + ' scrolling' +
-            (s.scrolling && s.scrolling.length ? ' (' + s.scrolling.join(', ') + ')' : '');
-        setDot('ticker', n > 0, true, 'Ticker — ' + what + ' · ' +
-          (n > 0 ? n + ' overlay' + (n === 1 ? '' : 's') + ' connected' : 'no overlay connected'));
-      })
-      .catch(function () { setDot('ticker', false, false, 'Ticker module not installed'); });
-  }
-
-  // Games dot title, from /games/api/status alone: what each game is doing — a game
-  // with a table (craps, roulette) also says its point, what is down and its countdown —
-  // else the overlays.
-  //   Games — roulette spinning
-  //   Games — craps rolling, point is 6, 5 bets down (300 hexcoins) · roulette idle
-  //   Games — craps: point is 6, 5 bets down (300 hexcoins) · 1 overlay connected
-  //   Games — roulette: 3 bets down (150 hexcoins), spins in 12s · 1 overlay connected
-  var GAME_WORDS = { spinning: 'spinning', result: 'showing result', cooldown: 'cooling down' };
-  var GAME_OWN_WORDS = { craps: { spinning: 'rolling' },
-    russian: { betting: 'taking bets', pulling: 'pulling the trigger', over: 'game over' },
-    trivia: { betting: 'taking bets', question: 'question open', votes: 'answers locked', reveal: 'revealing', over: 'game over' } };
-
-  function gameWord(key, state) {
-    var own = GAME_OWN_WORDS[key];
-    return (own && own[state]) || GAME_WORDS[state] || state;
-  }
-
-  function coins(v) {
-    return String(Math.round(+v || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-  }
-
-  function tableNote(t) {
-    if (!t || typeof t !== 'object') return '';
-    var bits = [];
-    if (t.phase === 'point' && t.point != null) bits.push('point is ' + t.point);
-    var nb = Array.isArray(t.bets) ? t.bets.length : 0;
-    if (nb) {
-      bits.push(nb + (nb === 1 ? ' bet' : ' bets') + ' down' +
-        (+t.total_on_table > 0 ? ' (' + coins(t.total_on_table) + ' ' + (t.currency || 'hexcoins') + ')' : ''));
-    }
-    if (typeof t.auto_roll_in_ms === 'number' && isFinite(t.auto_roll_in_ms)) {
-      bits.push('auto-roll in ' + Math.max(0, Math.ceil(t.auto_roll_in_ms / 1000)) + 's');
-    }
-    // roulette's spin timer (auto-spin or started with /timer)
-    if (typeof t.auto_spin_in_ms === 'number' && isFinite(t.auto_spin_in_ms)) {
-      bits.push('spins in ' + Math.max(0, Math.ceil(t.auto_spin_in_ms / 1000)) + 's');
-    }
-    return bits.join(', ');
-  }
-
-  function gamesTitle(games, n) {
-    games = games && typeof games === 'object' ? games : {};
-    var busy = [], idle = [], notes = [];
-    Object.keys(games).forEach(function (k) {
-      var g = games[k];
-      if (!g || typeof g !== 'object') return;
-      var note = tableNote(g.table);
-      if (g.state && g.state !== 'idle') {
-        busy.push(k + ' ' + gameWord(k, g.state) + (note ? ', ' + note : ''));
-      } else {
-        idle.push(k + ' idle' + (note ? ', ' + note : ''));
-        if (note) notes.push(k + ': ' + note);
-      }
+  var lastSig = '';
+  function applyItems(list, fromCache) {
+    var sig = JSON.stringify(list);
+    if (sig === lastSig) return;
+    lastSig = sig;
+    items = list.map(function (i) {
+      return { id: i.id, key: i.key || i.id, label: i.label, href: i.href, color: i.color,
+               state: i.state, error: i.error, status_url: i.status_url, status_js: i.status_js };
     });
-    var overlays = n > 0 ? n + ' overlay' + (n === 1 ? '' : 's') + ' connected' : 'no overlay connected';
-    if (busy.length) {
-      return 'Games — ' + busy.concat(idle).join(' · ') + (n > 0 ? '' : ' (no overlay connected)');
+    renderNav();
+    if (!fromCache) {
+      try { localStorage.setItem(CACHE_KEY, JSON.stringify(list)); } catch (e) {}
     }
-    return 'Games — ' + notes.concat([overlays]).join(' · ');
+    items.forEach(loadAdapter);
+    pollStatus();
   }
 
-  poll();
-  setInterval(poll, 10000);
+  function loadAdapter(t) {
+    if (!t.status_js || loadedScripts[t.status_js]) return;
+    loadedScripts[t.status_js] = true;
+    var s = document.createElement('script');
+    s.src = t.status_js;
+    s.onload = pollStatus;
+    document.head.appendChild(s);
+  }
+
+  function fetchNav() {
+    return fetch('/api/plugins/nav', { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        if (!d || !Array.isArray(d.items)) return;
+        var n = Array.isArray(d.updates) ? d.updates.length : 0;
+        if (n !== updates) { updates = n; renderNav(); }
+        applyItems(d.items, false);
+      })
+      .catch(function () {});
+  }
+
+  // ---- status dots -------------------------------------------------------------------
+
+  function pollOne(t) {
+    if (!t.status_url || (t.state && t.state !== 'running')) return;
+    var adapter = window.HexbarStatus[t.key];
+    fetch(t.status_url, { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .catch(function () { return null; })
+      .then(function (s) {
+        var res;
+        try {
+          res = typeof adapter === 'function' ? adapter(s)
+            : { on: !!s, warn: !s, title: t.label + (s ? '' : ' - not responding') };
+        } catch (e) {
+          res = { on: false, warn: true, title: t.label + ' - status error' };
+        }
+        res = res || {};
+        lastResults[t.key] = res;
+        setDot(t.key, res.on, res.warn, res.title);
+      });
+  }
+
+  function pollStatus() { items.forEach(pollOne); }
+
+  // ---- boot ----------------------------------------------------------------------------
+
+  var cached = null;
+  try { cached = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null'); } catch (e) {}
+  if (Array.isArray(cached)) {
+    // paint the last known tabs at once (no jump), then let the server correct them
+    items = cached.map(function (i) {
+      return { id: i.id, key: i.key || i.id, label: i.label, href: i.href, color: i.color,
+               state: i.state, error: i.error, status_url: i.status_url, status_js: i.status_js };
+    });
+    lastSig = JSON.stringify(cached);
+  }
+  renderNav();
+  items.forEach(loadAdapter);
+  fetchNav().then(pollStatus);
+  setInterval(function () { fetchNav().then(pollStatus); }, 10000);
+  window.HexbarRefresh = function () { return fetchNav().then(pollStatus); };   // e.g. right after an install
 })();

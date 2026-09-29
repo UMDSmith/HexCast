@@ -90,12 +90,12 @@ REM ---------------------------------------------------------------------------
 REM 5. Safety net: confirm the key packages actually import. If a previous
 REM    install was incomplete, heal it once and re-check.
 REM ---------------------------------------------------------------------------
-"%VENVPY%" -c "import fastapi, uvicorn, httpx, socketio, websockets" >nul 2>&1
+"%VENVPY%" -c "import fastapi, uvicorn, httpx, websockets, watchdog" >nul 2>&1
 if errorlevel 1 (
     echo  Some components are missing - repairing...
     "%VENVPY%" -m pip install -r requirements.txt
     copy /y requirements.txt ".venv\requirements.lock" >nul
-    "%VENVPY%" -c "import fastapi, uvicorn, httpx, socketio, websockets" >nul 2>&1
+    "%VENVPY%" -c "import fastapi, uvicorn, httpx, websockets, watchdog" >nul 2>&1
     if errorlevel 1 (
         echo  [X] Components still not working. Please send the messages above for help.
         pause

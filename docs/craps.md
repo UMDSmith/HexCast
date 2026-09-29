@@ -50,20 +50,9 @@ often:
 
 ## Install
 
-Craps is part of the Games module — there's nothing separate to switch on.
-With `games.py` next to `hexcast.py`, these files go in `static/`:
-
-```
-static/games_panel.html
-static/games_overlay.html
-static/games/roulette.js
-static/games/craps.js
-static/games/craps_panel.js
-```
-
-See [Games → Install](games.md#install) for the two lines that mount the
-module. Restart Hexcast after updating; new routes only appear after a
-restart. There are no extra dependencies.
+Craps is an add-on of the [Games](games.md) plugin. Install **Games** from the **+** tab, then click the **+** in the
+Games tab and install **Craps** (or `python hexcast.py plugins install games games_craps`). There are no extra Python
+packages. The ledger is shared with the other table games; installing or removing a game never touches the others' bets.
 
 ---
 

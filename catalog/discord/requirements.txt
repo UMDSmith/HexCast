@@ -1,0 +1,4 @@
+httpx>=0.27
+websockets>=12.0
+# FastAPI needs this to accept the image uploads (UploadFile); the plugin fails to load without it.
+python-multipart>=0.0.9

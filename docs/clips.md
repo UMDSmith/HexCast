@@ -27,26 +27,13 @@ direct playback can't reach (sub-only VODs, expired clips).
 
 ## Install
 
-Copy `clips.py` next to `hexcast.py`, and these two files into `static/`:
+Open the **+** tab in the top bar, find **Clips** and press **Install**. The tab appears straight away, and the
+Python packages it needs are installed for you - no restart. From a terminal:
+`python hexcast.py plugins install clips`. (More in [Plugins](plugins.md).)
 
-```
-static/clips_panel.html
-static/clips_overlay.html
-```
-
-`hexcast.py` already mounts the module when the file is present. If you're
-wiring it into your own copy by hand, it's the same two lines as the other
-integrations, after `app.mount("/media", ...)`:
-
-```python
-from clips import attach_clips
-attach_clips(app, PORT)
-```
-
-Restart. Two new URLs are printed at startup. As with the other modules, the
-module starts lazily on the first request because Hexcast uses
-`FastAPI(lifespan=...)`; call `start_clips()` from inside that lifespan to
-start at boot instead.
+Clips resolves links with yt-dlp, which lives in a small shared plugin (**yt-dlp helpers**) that is installed along
+with it - the Music plugin uses the same one. Two URLs are printed at startup. As with the other plugins the module
+starts lazily on the first request; call `start_clips()` from inside `hexcast.py`'s lifespan to start at boot instead.
 
 ---
 

@@ -19,48 +19,26 @@ Everything lives under `/ytm/*`.
 
 ## Install
 
-Copy `ytmusic.py` and `localmusic.py` next to `hexcast.py`, and these two files
-into `static/`:
+Open the **+** tab in the top bar, find **Music** and press **Install**. The tab appears straight away, and the
+Python packages it needs are installed for you - no restart. From a terminal:
+`python hexcast.py plugins install music`. (More in [Plugins](plugins.md).)
 
-```
-static/ytm_panel.html
-static/ytm_overlay.html
-```
+The local-file player is part of the same plugin. It needs **ffmpeg/ffprobe** (already a Hexcast dependency) to read
+tags, durations and embedded cover art; without ffmpeg it still plays, showing filenames and no art.
 
-`localmusic.py` is optional — it's the local-file player, mounted automatically
-by `ytmusic.py` when present. Without it the Music tab is YouTube-Music-only.
-The local player needs **ffmpeg/ffprobe** (already a Hexcast dependency) to read
-tags, durations and embedded cover art; without ffmpeg it still plays, showing
-filenames and no art.
-
-Install the dependencies:
-
-```
-pip install -r requirements-ytm.txt
-```
-
-Add to `hexcast.py`, after `app.mount("/media", ...)`:
-
-```python
-from ytmusic import attach_ytm
-attach_ytm(app, PORT)
-```
-
-The music video (optional) is looked up with **yt-dlp**, which comes from the
-main `requirements.txt` along with `yt-dlp-ejs`, its YouTube challenge-solver
-scripts. Nothing else is needed for anonymous lookups; the optional YouTube
-sign-in also needs a JavaScript runtime (see
+The music video (optional) is looked up with **yt-dlp**, which comes from the small **yt-dlp helpers** plugin that
+Music installs with itself (along with `yt-dlp-ejs`, its YouTube challenge-solver scripts; Clips uses the same one).
+Nothing else is needed for anonymous lookups; the optional YouTube sign-in also needs a JavaScript runtime (see
 [YouTube sign-in](#youtube-sign-in-optional)).
 
 Optionally, for real audio reactivity in the visualiser:
 
 ```
-pip install -r requirements-ytm-audio.txt
+pip install -r plugins/music/requirements-audio.txt
 ```
 
-As with the Twitch module, the connection opens lazily on the first request
-because Hexcast uses `FastAPI(lifespan=...)`. To connect at boot, call
-`start_ytm()` and `stop_ytm()` from inside that lifespan.
+As with the other plugins, the connection opens lazily on the first request. To connect at boot, call `start_ytm()` and
+`stop_ytm()` (from `hexcast_plugins.music.ytmusic`) inside `hexcast.py`'s lifespan.
 
 ---
 
@@ -372,7 +350,7 @@ desktop audio, so the capture happens server-side: WASAPI loopback on whatever
 your speakers are playing, an FFT, and 28 log-spaced bands from 40 Hz to 16 kHz
 streamed over the existing websocket. Linear bands would put almost every bar
 in the treble where there's nothing to look at, hence the log spacing. Requires
-`requirements-ytm-audio.txt`, and only runs while an overlay is actually
+`plugins/music/requirements-audio.txt`, and only runs while an overlay is actually
 connected, so it costs nothing when unused.
 
 Windows works against the default playback device out of the box. Linux needs
@@ -464,16 +442,16 @@ separate switch from the server itself.
 Desktop, not the browser. If the app is minimised you may not have seen it.
 
 **Transport buttons work but nothing else does.** REST is fine and the realtime
-feed isn't. Run `ytm_check.py` from the project folder — it tests each layer in
-order and prints the real error. `ytm_probe.py` goes further and tries several
+feed isn't. Run `plugins/music/tools/ytm_check.py` from the project folder — it tests each layer in
+order and prints the real error. `plugins/music/tools/ytm_probe.py` goes further and tries several
 client configurations.
 
 **Connects then drops with an auth error.** Tokens are bound to an app ID, and
 requesting a new one for the same ID invalidates the old. Pair once more and
 leave it.
 
-**Settings tab renders empty.** `ytmusic.py` is older than the HTML in
-`static/`. Restart Hexcast, then reload the page with Ctrl+Shift+R — the
+**Settings tab renders empty.** `plugins/music/ytmusic.py` is older than the HTML in
+`plugins/music/static/`. Restart Hexcast, then reload the page with Ctrl+Shift+R — the
 browser caches the page even though the server doesn't.
 
 **No album art.** YouTube Music fills metadata in two passes; artwork arrives a

@@ -1,0 +1,21 @@
+{
+  "id": "discord",
+  "name": "Discord",
+  "version": "1.0.0",
+  "description": "A voice-reactive overlay: everyone in your current Discord voice channel appears in OBS and lights up as they speak, using Discord avatars or custom PNGTuber-style idle/talking image pairs.",
+  "icon": "🎙️",
+  "color": "#5865f2",
+  "category": "Integrations",
+  "author": "UMDSmith",
+  "nav": {
+    "label": "Discord",
+    "href": "/discord",
+    "order": 40,
+    "key": "discord",
+    "status_url": "/discord/api/status",
+    "status_js": "nav.js"
+  },
+  "help": { "file": "help.html", "toc": [ { "id": "discord", "label": "Discord" } ] },
+  "legacy_config": ["discord.json", "discord_secrets.json"],
+  "order": 40
+}

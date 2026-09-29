@@ -1,0 +1,24 @@
+{
+  "id": "games_russian",
+  "name": "Russian Roulette",
+  "version": "1.0.0",
+  "parent": "games",
+  "description": "A revolver and a stuffed dummy with a chatter's name tag. Pull k loads k bullets; chat bets the dummy survives (and rides) or goes bang. Three pulls, about a minute and a half a game.",
+  "icon": "🔫",
+  "color": "#c0392b",
+  "category": "Games",
+  "author": "UMDSmith",
+  "help": {
+    "file": "help.html",
+    "toc": [
+      {
+        "id": "russian",
+        "label": "Russian Roulette"
+      }
+    ]
+  },
+  "legacy_config": [
+    "games.json"
+  ],
+  "order": 30
+}

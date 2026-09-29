@@ -24,21 +24,9 @@ a "Starting soon" scene that should just run when OBS loads it.
 
 ## Install
 
-Copy `countdown.py` next to `hexcast.py`, and these two files into `static/`:
-
-```
-static/countdown_panel.html
-static/countdown_overlay.html
-```
-
-`hexcast.py` already mounts the module when the file is present. If you're
-wiring it into your own copy by hand, it's the same two lines as the other
-integrations, after `app.mount("/media", ...)`:
-
-```python
-from countdown import attach_countdown
-attach_countdown(app, PORT)
-```
+Open the **+** tab in the top bar, find **Countdown** and press **Install**. The tab appears straight away, and the
+Python packages it needs are installed for you - no restart. From a terminal:
+`python hexcast.py plugins install countdown`. (More in [Plugins](plugins.md).)
 
 ---
 

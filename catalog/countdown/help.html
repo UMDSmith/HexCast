@@ -1,0 +1,29 @@
+<section id="countdown">
+<div class="card">
+  <h2>Countdown <span class="tag">/countdown</span></h2>
+  <p class="hint">Styleable countdown timer overlay — count down a fixed duration or to a clock
+    time. The server owns the remaining time and streams it to the overlay, so clock skew never
+    matters. <b>Media cues</b> can fire any number of soundboard clips, each anchored to its own
+    countdown threshold — set a clip to <b>end</b> at a point (e.g. intro music finishing exactly
+    at 0:00, timed backwards from the clip's length) or to <b>start</b> at a point. Clips play on
+    the soundboard overlay, honouring their saved trim/volume/cooldown, so keep both browser
+    sources in the scene.</p>
+  <table class="api">
+    <tr><td>GET /countdown/api/status</td><td>connected overlay count + timer snapshot</td></tr>
+    <tr><td>GET /countdown/api/config</td><td>full config as JSON</td></tr>
+    <tr><td>POST /countdown/api/config</td><td>merge-and-save any subset of config keys</td></tr>
+    <tr><td>POST /countdown/api/timer</td><td><code>{"action": "start"}</code> — also <code>pause</code>, <code>resume</code>, <code>reset</code>; start accepts an optional <code>"seconds"</code> for an ad-hoc duration</td></tr>
+  </table>
+  <h3>Media cues config</h3>
+  <p class="hint">Posted as a <code>media_cues</code> array (replaces the whole list). Each entry:
+    <code>enabled</code> (bool), <code>kind</code> (<code>audio</code> | <code>video</code>),
+    <code>name</code> (clip name), <code>anchor</code> (<code>end</code> = clip finishes at the
+    threshold, timed backwards from its length; <code>start</code> = clip fires at the threshold),
+    <code>offset</code> (seconds remaining at the threshold; <code>0</code> = at zero). Read when
+    the timer starts — pause cancels pending cues, resume re-arms them. The legacy single-cue keys
+    (<code>media_enabled</code>/<code>media_kind</code>/<code>media_name</code>/<code>media_end_offset</code>)
+    are still migrated automatically.</p>
+  <pre>curl -X POST http://localhost:4747/countdown/api/timer -H "Content-Type: application/json" -d "{\"action\":\"start\",\"seconds\":90}"
+curl -X POST http://localhost:4747/countdown/api/config -H "Content-Type: application/json" -d "{\"media_cues\":[{\"enabled\":true,\"kind\":\"audio\",\"name\":\"intro\",\"anchor\":\"end\",\"offset\":0}]}"</pre>
+</div>
+</section>

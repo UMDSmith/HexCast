@@ -57,13 +57,21 @@
 }
 .hb-nav a:hover{ color:var(--hb-ink); border-color:var(--hb-line-hi); }
 .hb-nav a.sel{ color:var(--hb-ink); background:var(--hb-panel); }
-.hb-nav a[data-key="soundboard"].sel{ border-color:var(--hb-accent); }
-.hb-nav a[data-key="twitch"].sel{ border-color:var(--hb-twitch); }
-.hb-nav a[data-key="music"].sel{ border-color:var(--hb-music); }
-.hb-nav a[data-key="discord"].sel{ border-color:var(--hb-discord); }
-.hb-nav a[data-key="clips"].sel{ border-color:var(--hb-clips); }
-.hb-nav a[data-key="games"].sel{ border-color:var(--hb-games); }
-.hb-nav a[data-key="help"].sel{ border-color:var(--hb-line-hi); }
+/* every tab brings its own colour (--tab, set by hexbar.js from the plugin's manifest) */
+.hb-nav a.sel{ border-color:var(--tab, var(--hb-line-hi)); }
+.hb-nav a[data-key="help"].sel, .hb-nav a[data-key="store"].sel{ border-color:var(--hb-line-hi); }
+
+/* the "+" tab: where plugins are added */
+.hb-nav a.hb-plus{
+  padding:6px 13px; font-size:16px; font-weight:700; line-height:1;
+  border-style:dashed; color:var(--hb-dim);
+}
+.hb-nav a.hb-plus.has-update{ color:var(--hb-good); }
+.hb-nav a.hb-plus.has-update::after{
+  content:""; width:7px; height:7px; border-radius:50%; margin-left:7px;
+  background:var(--hb-good); box-shadow:0 0 7px -1px var(--hb-good);
+}
+.hb-nav a.hb-plus:hover, .hb-nav a.hb-plus.sel{ color:var(--hb-good); border-color:var(--hb-good); border-style:solid; }
 
 .hb-dot{
   width:8px; height:8px; border-radius:50%;

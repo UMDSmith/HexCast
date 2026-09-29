@@ -1,0 +1,24 @@
+{
+  "id": "games_roulette",
+  "name": "Roulette",
+  "version": "1.0.0",
+  "parent": "games",
+  "description": "An American double-zero roulette wheel on your overlay. The server picks the pocket, chat bets (straight, split, street, corner, dozens, red/black ...) are settled at standard odds, and a spin timer runs the table by itself.",
+  "icon": "🎡",
+  "color": "#d4af37",
+  "category": "Games",
+  "author": "UMDSmith",
+  "help": {
+    "file": "help.html",
+    "toc": [
+      {
+        "id": "roulette",
+        "label": "Roulette"
+      }
+    ]
+  },
+  "legacy_config": [
+    "games.json"
+  ],
+  "order": 10
+}

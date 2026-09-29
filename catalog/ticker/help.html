@@ -1,0 +1,33 @@
+<section id="ticker">
+<div class="card">
+  <h2>Ticker <span class="tag">/ticker</span></h2>
+  <p class="hint">A news-style scrolling ticker overlay (<code>/ticker/overlay</code>, 1920×1080) that you
+    place anywhere with the panel's drag box. What scrolls is a list of <b>feeds</b>. Each feed is a named
+    list of lines led by its label badge, and feeds scroll in order. A line with a <code>key</code> is unique
+    in its feed, so writing the same key again updates it in place, which suits things like everyone's
+    hexcoin balance. The overlay takes the next line from the live list as each one scrolls off, so
+    changes land mid-scroll. New lines jump the queue. Every call below works as a GET with query
+    parameters or as a POST with JSON. Details: <code>docs/ticker.md</code>.</p>
+  <table class="api">
+    <tr><td>GET|POST /ticker/api/say?text=…&amp;ttl=60</td><td>one-off line in the <code>announce</code> feed. It scrolls next and is gone after <code>ttl</code> seconds (default: the announce feed's <code>ttl</code>, else 60; <code>0</code> keeps it). Optional <code>color</code>.</td></tr>
+    <tr><td>GET|POST /ticker/api/feed/{name}/add</td><td><code>text</code>, or <code>key</code> and/or <code>value</code>; optional <code>color</code>, <code>ttl</code>, <code>first=1</code>. With a <code>key</code> it upserts. Creates the feed if it's new.</td></tr>
+    <tr><td>GET|POST /ticker/api/feed/{name}/set</td><td>same as <code>add</code>, e.g. <code>?key=alice&amp;value=1300</code></td></tr>
+    <tr><td>POST /ticker/api/feed/{name}</td><td>create or update a feed. Settings you send change; the rest are kept: <code>label</code>, <code>template</code> (<code>{key}</code> <code>{value}</code> <code>{text}</code>), <code>sort</code> (<code>none</code>|<code>value_desc</code>|<code>value_asc</code>|<code>key</code>|<code>newest</code>), <code>limit</code>, <code>ttl</code> (seconds each new line lasts; <code>0</code> = forever, and a line's own <code>ttl</code> wins), <code>color</code>, <code>enabled</code>, <code>source</code>. <code>items</code> (strings or objects) or <code>values</code> (<code>{"alice":1300}</code>) replaces the lines.</td></tr>
+    <tr><td>GET|POST /ticker/api/feed/{name}/remove</td><td>by <code>id</code>, <code>key</code> or exact <code>text</code></td></tr>
+    <tr><td>GET|POST /ticker/api/feed/{name}/clear · enable?on=0|1 · refresh · delete</td><td>empty it · take it on/off air · poll its URL source now · remove it</td></tr>
+    <tr><td>GET /ticker/api/feed/{name} · /ticker/api/feeds</td><td>one feed or every feed, with each feed's rendered lines</td></tr>
+    <tr><td>POST /ticker/api/feeds/order</td><td><code>{"order": ["announce","balances","news"]}</code></td></tr>
+    <tr><td>GET /ticker/api/items</td><td>exactly what is scrolling right now</td></tr>
+    <tr><td>GET|POST /ticker/api/show · hide</td><td>show or hide the whole ticker</td></tr>
+    <tr><td>GET /ticker/api/status</td><td>overlays connected, <code>visible</code>, feed and line counts</td></tr>
+    <tr><td>GET|POST /ticker/api/config</td><td>style: merge-and-save any subset of keys</td></tr>
+  </table>
+  <p class="hint">A feed can also pull its lines from a JSON URL on a timer. The URL can return a list of
+    strings, a list of objects, or a <code>{"key": value}</code> object, and <code>path</code>,
+    <code>key_field</code> and <code>value_field</code> pick what to read. Or write
+    <code>config/ticker_feeds.json</code> directly; it's reloaded within a second.</p>
+  <pre>curl "http://localhost:4747/ticker/api/feed/balances/set?key=alice&amp;value=1300"
+curl -X POST http://localhost:4747/ticker/api/feed/balances -H "Content-Type: application/json" -d "{\"label\":\"HEXBANK\",\"sort\":\"value_desc\",\"limit\":20,\"values\":{\"alice\":1300,\"bob\":250}}"
+curl "http://localhost:4747/ticker/api/say?text=Raffle%20closes%20soon&amp;ttl=90"</pre>
+</div>
+</section>

@@ -1,0 +1,2 @@
+# Clips needs nothing beyond Hexcast's own requirements (fastapi, ...).
+# yt-dlp and its YouTube solver scripts come with the "ytdlp" plugin, which Clips requires.

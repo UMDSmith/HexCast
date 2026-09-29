@@ -55,7 +55,7 @@ else
 fi
 
 # 4. Safety net: confirm the key packages import; repair once if not.
-if ! "$VENVPY" -c "import fastapi, uvicorn, httpx, socketio, websockets" >/dev/null 2>&1; then
+if ! "$VENVPY" -c "import fastapi, uvicorn, httpx, websockets, watchdog" >/dev/null 2>&1; then
     echo "  Some components are missing - repairing..."
     "$VENVPY" -m pip install -r requirements.txt
     cp -f requirements.txt ".venv/requirements.lock"

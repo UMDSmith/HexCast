@@ -1,0 +1,29 @@
+{
+  "id": "music",
+  "name": "Music",
+  "version": "1.0.0",
+  "description": "A now-playing overlay with album art, live progress, an accent colour from the artwork and an audio visualiser - fed by the YouTube Music Desktop app (optionally with its music video) or by a folder of your own files, with a searchable library, queue and playlists. Includes a plain-text !song endpoint for chat bots.",
+  "icon": "🎵",
+  "color": "#ff0033",
+  "category": "Integrations",
+  "author": "UMDSmith",
+  "requires": ["ytdlp"],
+  "nav": {
+    "label": "Music",
+    "href": "/ytm",
+    "order": 30,
+    "key": "music",
+    "status_url": "/ytm/api/status",
+    "status_js": "nav.js"
+  },
+  "help": { "file": "help.html", "toc": [ { "id": "music", "label": "Music" } ] },
+  "legacy_config": [
+    "ytmusic.json",
+    "ytmusic_secrets.json",
+    "localmusic.json",
+    "localmusic_index.json",
+    "localmusic_meta.json",
+    "playlists.json"
+  ],
+  "order": 30
+}

@@ -5,35 +5,17 @@ overlays are ordinary OBS browser sources, so you size and place them in OBS
 like anything else.
 
 Everything lives under `/twitch/*`, so it cannot collide with the soundboard's
-routes. `hexcast.py` needs two lines added; nothing else changes.
+routes. It is a plugin: add it from the **+** tab.
 
 ---
 
 ## Install
 
-Copy `twitch.py` next to `hexcast.py`, and these four files into `static/`:
+Open the **+** tab in the top bar, find **Twitch** and press **Install**. The tab appears straight away, and the
+Python packages it needs are installed for you - no restart. From a terminal:
+`python hexcast.py plugins install twitch`. (More in [Plugins](plugins.md).)
 
-```
-static/twitch_panel.html
-static/twitch_chat.html
-static/twitch_events.html
-static/twitch_boot.js
-```
-
-Install the dependencies:
-
-```
-pip install -r requirements-twitch.txt
-```
-
-Add to `hexcast.py`, after `app.mount("/media", ...)`:
-
-```python
-from twitch import attach_twitch
-attach_twitch(app, PORT)
-```
-
-Restart. You'll see three new URLs printed at startup.
+Three URLs are printed at startup (and shown on the Twitch page).
 
 ### Connecting at boot instead of on first request
 
@@ -42,14 +24,14 @@ ignore `add_event_handler("startup")`. The Twitch connection therefore opens
 lazily, on the first panel or overlay request — fine in practice, but it means
 nothing connects until OBS or a browser asks for it.
 
-To connect at startup, edit the existing `lifespan`:
+To connect at startup, edit the existing `lifespan` in `hexcast.py`:
 
 ```python
 async def lifespan(app: FastAPI):
     ...
     obs.start()
 
-    from twitch import start_twitch, stop_twitch      # add
+    from hexcast_plugins.twitch.twitch import start_twitch, stop_twitch      # add (only while the plugin is installed)
     await start_twitch()                              # add
 
     print(f"\n  ==== Hexcast ====")
@@ -313,7 +295,7 @@ Twitch re-prompts for the full list.
 
 **A subscription failed with 400 "invalid subscription type and version".**
 Twitch has retired that version of the event. The subscription list in
-`twitch.py` (`SUB_PLAN`) carries a version string per type; check the current
+`plugins/twitch/twitch.py` (`SUB_PLAN`) carries a version string per type; check the current
 one at <https://dev.twitch.tv/docs/eventsub/eventsub-subscription-types/> and
 update it. Hype train moved from v1 to v2 this way.
 

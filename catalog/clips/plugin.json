@@ -1,0 +1,34 @@
+{
+  "id": "clips",
+  "name": "Clips",
+  "version": "1.0.0",
+  "description": "A hand-fired queue of Twitch clips and VODs, YouTube videos or any yt-dlp link, played full-window on an OBS overlay - with optional pre-download, an auto-leveler for consistent volume, and random-clip shoutouts for the Twitch !so command.",
+  "icon": "🎬",
+  "color": "#1fc7a8",
+  "category": "Overlays",
+  "author": "UMDSmith",
+  "requires": [
+    "ytdlp"
+  ],
+  "nav": {
+    "label": "Clips",
+    "href": "/clips",
+    "order": 50,
+    "key": "clips",
+    "status_url": "/clips/api/status",
+    "status_js": "nav.js"
+  },
+  "help": {
+    "file": "help.html",
+    "toc": [
+      {
+        "id": "clips",
+        "label": "Clips"
+      }
+    ]
+  },
+  "legacy_config": [
+    "clips.json"
+  ],
+  "order": 50
+}
