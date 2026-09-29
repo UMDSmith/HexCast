@@ -70,6 +70,7 @@
     if (sb) { sb.classList.add('on'); sb.parentNode.title = 'Soundboard'; }
     items.forEach(function (t) {
       if (t.state && t.state !== 'running') {
+        delete lastResults[t.key];               // an old green dot must not come back over the warning
         setDot(t.key, false, true, t.label + ' is not running - ' +
           (t.error || (t.state === 'needs_deps' ? 'its Python packages are missing' : t.state)));
       }

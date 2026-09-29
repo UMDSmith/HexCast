@@ -26,6 +26,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -33,7 +34,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from . import requirements as reqs
 from .host import PluginHost
 from .installer import InstallError, Installer
-from .manifest import ID_RE, Manifest
+from .manifest import Manifest, valid_id
 
 NOCACHE = {"Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache"}
 JOBS_KEPT = 30
@@ -61,9 +62,10 @@ class Job:
         self.lines.append(str(line)[:400])
 
     def view(self, since: int = 0) -> dict:
+        lines = list(self.lines)                 # the worker thread appends while we read: one snapshot
         return {"id": self.id, "title": self.title, "plugin": self.plugin, "state": self.state,
-                "error": self.error, "result": self.result, "lines": self.lines[since:],
-                "total": len(self.lines)}
+                "error": self.error, "result": self.result, "lines": lines[since:],
+                "total": len(lines)}
 
 
 def _needs_download(entry) -> bool:
@@ -103,6 +105,8 @@ def plugin_view(host: PluginHost, pid: str, catalog: dict, installed: dict) -> d
     out["latest_version"] = entry.manifest.version if entry else None
     out["needs_packages"] = bool(not is_installed and entry and _needs_download(entry))
     out["dependents"] = host.dependents(pid, installed) if is_installed else []
+    out["dependents_info"] = [{"id": d, "name": installed[d].manifest.name if installed[d].manifest else d}
+                              for d in out["dependents"]]
 
     def named(ids):
         """[{id, name, installed}] - so a card can say 'Also installs: yt-dlp helpers', not 'ytdlp'."""
@@ -137,7 +141,8 @@ class PluginService:
     def _busy(self) -> None:
         job = self.running_job()
         if job is not None:
-            raise ApiError("another install is running - wait for it to finish", 409, job=job.id)
+            raise ApiError("another install is running - wait for it to finish", 409,
+                           job=job.id, plugin=job.plugin, title=job.title)
 
     def _start(self, title: str, pid: str, work: Callable[[Job], Awaitable[dict | None]]) -> Job:
         job = Job(secrets.token_hex(4), title, pid)
@@ -177,7 +182,7 @@ class PluginService:
         return failed
 
     def _known(self, pid: str) -> None:
-        if not ID_RE.match(pid) or not (pid in self.host.scan() or pid in self.host.catalog.entries()):
+        if not valid_id(pid) or not (pid in self.host.scan() or pid in self.host.catalog.entries()):
             raise ApiError("no such plugin", 404)
 
     # ---- listing -------------------------------------------------------------------
@@ -225,8 +230,12 @@ class PluginService:
         host = self.host
 
         async def work(job: Job) -> dict:
-            ids = await asyncio.to_thread(self.installer.install, pid, job.log)
-            failed = self._start_missing(host.order(host.scan()), ids)
+            ids: list[str] = []
+            try:
+                ids = await asyncio.to_thread(self.installer.install, pid, job.log)
+            finally:
+                # dependencies that were installed before something failed still start
+                failed = self._start_missing(host.order(host.scan()), ids or None)
             for x in failed:
                 job.log(f"{x} was installed but could not start: {host.errors.get(x, 'unknown error')}")
             if pid in failed:
@@ -239,20 +248,27 @@ class PluginService:
     def update(self, pid: str) -> Job:
         self._known(pid)
         if pid not in self.host.scan():
-            raise ApiError("not installed")
+            raise ApiError("not installed", 404)
         self._busy()
         host = self.host
 
         async def work(job: Job) -> dict:
+            # 1. build the new copy and get its packages while the old one keeps running: if that
+            #    fails (offline pip ...) nothing has been touched and nothing was stopped
+            prepared = await asyncio.to_thread(self.installer.prepare_update, pid, job.log)
             was_running = [x for x in host.dependents(pid) + [pid] if x in host.loaded]
-            stopped, _ = await host.unload(pid)
-            job.log(("Stopped: " + ", ".join(stopped)) if stopped else "Nothing was running.")
             try:
-                ids = await asyncio.to_thread(self.installer.update, pid, job.log)
+                # 2. stop it just for the swap
+                stopped, _ = await host.unload(pid)
+                job.log(("Stopped: " + ", ".join(stopped)) if stopped else "Nothing was running.")
+                try:
+                    ids = await asyncio.to_thread(self.installer.commit, prepared, job.log)
+                finally:
+                    for x in host.order(host.scan()):
+                        if x in was_running or x in stopped:
+                            host.load(x)
             finally:
-                for x in host.order(host.scan()):
-                    if x in was_running or x in stopped:
-                        host.load(x)
+                prepared.discard()
             if pid in was_running and pid not in host.loaded and not host.settings.is_disabled(pid):
                 raise InstallError(f"updated, but it could not start: {host.errors.get(pid, 'unknown error')}")
             job.log("Done.")
@@ -304,28 +320,36 @@ class PluginService:
 
     async def uninstall(self, pid: str, cascade: bool) -> dict:
         host = self.host
-        installed = host.scan()
-        if pid not in installed:
+        if pid not in host.scan():
             raise ApiError("not installed", 404)
         self._busy()
-        dependents = host.dependents(pid, installed)
-        if dependents and not cascade:
-            names = [installed[d].manifest.name if installed[d].manifest else d for d in dependents]
-            raise ApiError("other plugins need this one", 409, dependents=dependents, names=names)
         async with self.lock:
+            installed = host.scan()
+            if pid not in installed:                   # somebody else removed it while we waited
+                raise ApiError("not installed", 404)
+            dependents = host.dependents(pid, installed)
+            if dependents and not cascade:
+                names = [installed[d].manifest.name if installed[d].manifest else d for d in dependents]
+                raise ApiError("other plugins need this one", 409, dependents=dependents, names=names)
             _, clean = await host.unload(pid)
             removed: list[str] = []
+            kept: dict[str, str] = {}
             try:
                 for x in dependents + [pid]:
-                    await asyncio.to_thread(self.installer.uninstall, x)
+                    where = await asyncio.to_thread(self.installer.uninstall, x)
                     removed.append(x)
+                    if where:
+                        kept[x] = where
                     host.errors.pop(x, None)
                     host.needs_deps.discard(x)
-            except InstallError as exc:
-                raise ApiError(str(exc), 500, removed=removed) from None
+            except (InstallError, OSError) as exc:
+                why = str(exc) if isinstance(exc, InstallError) else f"could not remove {x}: {exc.strerror or exc}"
+                raise ApiError(why, 500, removed=removed) from None
             finally:
+                # whatever is still installed (a removal failed half-way) goes back to running
+                self._start_missing(host.order(host.scan()))
                 host.revision += 1
-        return {"ok": True, "removed": removed, "restart_recommended": not clean}
+        return {"ok": True, "removed": removed, "kept": kept, "restart_recommended": not clean}
 
     def _save_disabled(self, pid: str, disabled: bool) -> None:
         try:
@@ -336,20 +360,38 @@ class PluginService:
     async def enable(self, pid: str) -> dict:
         if pid not in self.host.scan():
             raise ApiError("not installed", 404)
-        self._save_disabled(pid, False)
-        self.host.errors.pop(pid, None)
-        self._start_missing(self.host.order(self.host.scan()))
-        self.host.revision += 1
-        return {"ok": True, "running": pid in self.host.loaded, "error": self.host.errors.get(pid)}
+        self._busy()
+        async with self.lock:
+            if pid not in self.host.scan():
+                raise ApiError("not installed", 404)
+            self._save_disabled(pid, False)
+            self.host.errors.pop(pid, None)
+            self._start_missing(self.host.order(self.host.scan()))
+            self.host.revision += 1
+            return {"ok": True, "running": pid in self.host.loaded, "error": self.host.errors.get(pid)}
 
     async def disable(self, pid: str) -> dict:
         if pid not in self.host.scan():
             raise ApiError("not installed", 404)
-        self._save_disabled(pid, True)
-        stopped, clean = await self.host.unload(pid)
-        self.host.errors.pop(pid, None)
-        self.host.revision += 1
-        return {"ok": True, "stopped": stopped, "restart_recommended": not clean}
+        self._busy()
+        async with self.lock:
+            if pid not in self.host.scan():
+                raise ApiError("not installed", 404)
+            self._save_disabled(pid, True)
+            stopped, clean = await self.host.unload(pid)
+            self.host.errors.pop(pid, None)
+            self.host.revision += 1
+            return {"ok": True, "stopped": stopped, "restart_recommended": not clean}
+
+
+def check_same_origin(request: Request) -> None:
+    """Changing plugins is for the pages Hexcast itself serves (and for scripts, which send no
+    Origin). A page on another site - or another port - that the streamer happens to have open
+    must not be able to install, disable or remove plugins with a hidden form or fetch()."""
+    site = request.headers.get("sec-fetch-site")
+    origin = request.headers.get("origin")
+    if site == "cross-site" or (origin and urlparse(origin).netloc != request.headers.get("host", "")):
+        raise ApiError("refused: this request came from another web page", 403)
 
 
 def build_router(service: PluginService) -> APIRouter:
@@ -357,10 +399,12 @@ def build_router(service: PluginService) -> APIRouter:
     host = service.host
 
     def guard(fn):
-        """Turn an ApiError into the JSON error every Hexcast API answers with."""
+        """Turn an ApiError into the JSON error every Hexcast API answers with, and refuse
+        cross-site requests (every handler using it takes `request: Request`)."""
         @functools.wraps(fn)                      # FastAPI reads the handler's parameters from it
         async def call(*a, **kw):
             try:
+                check_same_origin(kw["request"])
                 return await fn(*a, **kw)
             except ApiError as exc:
                 return JSONResponse({"ok": False, "error": exc.message, **exc.extra}, status_code=exc.status)
@@ -383,17 +427,17 @@ def build_router(service: PluginService) -> APIRouter:
 
     @router.post("/api/plugins/{pid}/install")
     @guard
-    async def api_install(pid: str):
+    async def api_install(pid: str, request: Request):
         return {"ok": True, "job": service.install(pid).id}
 
     @router.post("/api/plugins/{pid}/update")
     @guard
-    async def api_update(pid: str):
+    async def api_update(pid: str, request: Request):
         return {"ok": True, "job": service.update(pid).id}
 
     @router.post("/api/plugins/{pid}/repair")
     @guard
-    async def api_repair(pid: str):
+    async def api_repair(pid: str, request: Request):
         return {"ok": True, "job": service.repair(pid).id}
 
     @router.post("/api/plugins/{pid}/uninstall")
@@ -407,12 +451,12 @@ def build_router(service: PluginService) -> APIRouter:
 
     @router.post("/api/plugins/{pid}/enable")
     @guard
-    async def api_enable(pid: str):
+    async def api_enable(pid: str, request: Request):
         return await service.enable(pid)
 
     @router.post("/api/plugins/{pid}/disable")
     @guard
-    async def api_disable(pid: str):
+    async def api_disable(pid: str, request: Request):
         return await service.disable(pid)
 
     @router.get("/plugins", response_class=HTMLResponse)

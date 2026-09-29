@@ -16,6 +16,7 @@ import inspect
 import json
 import logging
 import os
+import shutil
 import sys
 import tempfile
 import time
@@ -24,11 +25,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from starlette.staticfiles import StaticFiles
-
 from . import paths, requirements
 from .catalog import Catalog
 from .manifest import MANIFEST_NAME, Manifest, ManifestError, load_manifest
+from .staticfiles import RevalidatingStaticFiles
 
 NAMESPACE = "hexcast_plugins"
 META_NAME = ".hexcast-plugin.json"          # written by the installer next to plugin.json
@@ -54,21 +54,47 @@ def running_plugin(pid: str) -> types.ModuleType | None:
 
 class Settings:
     """config/plugins.json: which installed plugins are switched off, whether the one-time
-    upgrade migration has run, and extra catalog URLs. Tiny, and safe to hand-edit."""
+    upgrade migration has run, and extra catalog URLs. Tiny, and safe to hand-edit.
+
+    A file that cannot be read is never silently replaced: it is copied to plugins.json.bad,
+    `problem` says what happened (the console prints it), and the upgrade migration is not
+    run again on top of it. Keys this version does not know are kept when saving."""
 
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
         self.data: dict[str, Any] = {"disabled": [], "migrated": False, "catalogs": []}
+        self.problem: str | None = None
         try:
-            raw = json.loads(self.path.read_text(encoding="utf-8"))
-            if isinstance(raw, dict):
-                if isinstance(raw.get("disabled"), list):
-                    self.data["disabled"] = [str(x) for x in raw["disabled"]]
-                self.data["migrated"] = bool(raw.get("migrated", False))
-                if isinstance(raw.get("catalogs"), list):
-                    self.data["catalogs"] = [str(x) for x in raw["catalogs"] if isinstance(x, str)]
-        except (OSError, ValueError):
-            pass
+            text = self.path.read_text(encoding="utf-8-sig")         # -sig: Notepad / PowerShell add a BOM
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            self._damaged(f"cannot be read ({exc})")
+            return
+        try:
+            raw = json.loads(text)
+            if not isinstance(raw, dict):
+                raise ValueError("it is not a JSON object")
+        except (ValueError, RecursionError) as exc:
+            self._damaged(f"is not valid JSON ({exc})")
+            return
+        self.data.update({k: v for k, v in raw.items() if k not in ("disabled", "migrated", "catalogs")})
+        if isinstance(raw.get("disabled"), list):
+            self.data["disabled"] = [str(x) for x in raw["disabled"]]
+        self.data["migrated"] = bool(raw.get("migrated", False))
+        if isinstance(raw.get("catalogs"), list):
+            self.data["catalogs"] = [str(x) for x in raw["catalogs"] if isinstance(x, str)]
+
+    def _damaged(self, why: str) -> None:
+        self.data["migrated"] = True                                  # do not "upgrade" on top of a file we cannot read
+        keep = self.path.with_name(self.path.name + ".bad")
+        try:
+            shutil.copy2(self.path, keep)
+            where = f"a copy was kept as {keep.name}"
+        except OSError:
+            where = "it could not be copied aside"
+        self.problem = f"{self.path.name} {why}; {where}. Starting with the defaults - fix the file to bring your settings back."
+        log.warning("[plugins] %s", self.problem)
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -164,6 +190,13 @@ class PluginContext:
         self._host.revision += 1
 
 
+async def _await_quietly(awaitable, pid: str) -> None:
+    try:
+        await awaitable
+    except Exception as exc:
+        log.warning("plugin '%s' cleanup failed: %s: %s", pid, type(exc).__name__, exc)
+
+
 # ---- open websockets ---------------------------------------------------------------------
 
 class _SocketTracker:
@@ -214,7 +247,11 @@ class PluginHost:
         self.needs_deps: set[str] = set()             # installed, but packages are missing
         self.revision = 0                             # bumps whenever the set of plugins changes
         self._sockets: set = set()                    # (path, send) of every open websocket
-        self.plugins_dir.mkdir(parents=True, exist_ok=True)
+        self._loading: set[str] = set()               # plugins being started right now (cycle guard)
+        try:
+            self.plugins_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:                        # read-only disk, bad HEXCAST_PLUGINS_DIR ...
+            log.warning("[plugins] cannot create %s: %s - no plugins will be available", self.plugins_dir, exc)
         if app is not None:
             try:
                 app.add_middleware(_SocketTracker, sockets=self._sockets)
@@ -237,12 +274,14 @@ class PluginHost:
                 manifest, error = load_manifest(child), None
             except ManifestError as exc:
                 manifest, error = None, str(exc)
+            except Exception as exc:                  # whatever else: still only this folder's problem
+                manifest, error = None, f"plugin.json could not be read: {type(exc).__name__}: {exc}"
             meta: dict = {}
             try:
-                raw = json.loads((child / META_NAME).read_text(encoding="utf-8"))
+                raw = json.loads((child / META_NAME).read_text(encoding="utf-8-sig"))
                 if isinstance(raw, dict):
                     meta = raw
-            except (OSError, ValueError):
+            except (OSError, ValueError, RecursionError):
                 pass
             out[child.name] = Installed(child.name, child, manifest, error, meta)
         return out
@@ -274,15 +313,35 @@ class PluginHost:
         """Installed plugins that need `pid` (directly or not), the deepest dependents first."""
         installed = installed if installed is not None else self.scan()
         out: list[str] = []
+        seen = {pid}
 
         def walk(target: str) -> None:
             for other, inst in installed.items():
-                if inst.manifest and target in inst.manifest.requires and other not in out and other != pid:
+                if inst.manifest and target in inst.manifest.requires and other not in seen:
+                    seen.add(other)
                     walk(other)
                     out.append(other)
 
         walk(pid)
         return out
+
+    @staticmethod
+    def cycle_through(pid: str, installed: dict[str, Installed]) -> list[str] | None:
+        """['a', 'b', 'a'] when `pid` requires itself through other plugins, else None."""
+        def walk(cur: str, path: list[str]) -> list[str] | None:
+            inst = installed.get(cur)
+            if inst is None or inst.manifest is None:
+                return None
+            for dep in inst.manifest.requires:
+                if dep == pid:
+                    return path + [dep]
+                if dep not in path:
+                    found = walk(dep, path + [dep])
+                    if found:
+                        return found
+            return None
+
+        return walk(pid, [pid])
 
     # ---- namespace -------------------------------------------------------------------
 
@@ -337,6 +396,19 @@ class PluginHost:
         if self.settings.is_disabled(pid):
             self.errors.pop(pid, None)
             return False
+        cycle = self.cycle_through(pid, installed)
+        if cycle is not None or pid in self._loading:
+            self.errors[pid] = "circular requirement: " + " -> ".join(cycle or [pid])
+            return False
+        self._loading.add(pid)
+        try:
+            return self._load_after_deps(pid, inst, installed)
+        finally:
+            self._loading.discard(pid)
+
+    def _load_after_deps(self, pid: str, inst: Installed, installed: dict[str, Installed]) -> bool:
+        m = inst.manifest
+        assert m is not None
         for dep in m.requires:
             dep_inst = installed.get(dep)
             if dep_inst is None:
@@ -361,7 +433,7 @@ class PluginHost:
         ctx = PluginContext(self, inst)
         try:
             if ctx.static_dir.is_dir():
-                self.app.mount(ctx.static_url, StaticFiles(directory=str(ctx.static_dir)),
+                self.app.mount(ctx.static_url, RevalidatingStaticFiles(directory=str(ctx.static_dir)),
                                name=f"plugin_static_{m.id}")
             mod = importlib.import_module(f"{NAMESPACE}.{m.id}.{m.entry}")
             setup = getattr(mod, "setup", None)
@@ -373,6 +445,7 @@ class PluginHost:
                     result.close()
                 raise PluginError("setup(ctx) must be a plain function, not async")
         except (Exception, SystemExit) as exc:
+            self._undo_failed_setup(ctx)
             self._remove_routes_since(before)
             self._purge_modules(m.id)
             self.errors[m.id] = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
@@ -385,6 +458,22 @@ class PluginHost:
         self.needs_deps.discard(m.id)
         self.revision += 1
         return True
+
+    def _undo_failed_setup(self, ctx: "PluginContext") -> None:
+        """setup(ctx) raised half-way: run the ctx.on_shutdown() hooks it had already registered
+        (newest first), so a thread it started or a registry it joined does not leak on every retry.
+        The plugin's own teardown() is not called - setup never finished."""
+        for hook in reversed(ctx._shutdown):
+            try:
+                res = hook()
+                if inspect.isawaitable(res):
+                    try:
+                        asyncio.get_running_loop().create_task(_await_quietly(res, ctx.id))
+                    except RuntimeError:                  # no loop yet (start-up): run it to the end here
+                        asyncio.run(asyncio.wait_for(_await_quietly(res, ctx.id), TEARDOWN_SECONDS))
+            except Exception as exc:
+                log.warning("plugin '%s' cleanup after a failed start failed: %s: %s", ctx.id, type(exc).__name__, exc)
+        ctx._shutdown.clear()
 
     # ---- stopping --------------------------------------------------------------------
 
@@ -453,8 +542,9 @@ class PluginHost:
             clean = await self._run_teardown(rec, target) and clean
             await self._close_sockets(rec)
             self._remove_routes(rec.routes)
-            self.loaded.pop(target, None)
-            self._purge_modules(target)
+            if self.loaded.get(target) is rec:        # not replaced by a newer start while we awaited
+                self.loaded.pop(target, None)
+                self._purge_modules(target)
             stopped.append(target)
         if stopped:
             self.revision += 1

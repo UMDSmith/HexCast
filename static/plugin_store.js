@@ -89,7 +89,8 @@
       plugins: [], revision: -1, loaded: false, error: '',
       job: null,            // {id, plugin, title, lines, state, error}
       ask: null,            // {id, kind: 'remove'|'disable'|'cascade', names: []}
-      note: {}              // plugin id -> message under the card
+      note: {},             // plugin id -> message under the card
+      notice: ''            // one message above the lists (where a removed plugin's files went ...)
     };
     el.classList.add('hs');
 
@@ -135,7 +136,9 @@
               var kind = /^Update/.test(done.title) ? 'updated' : /^Install/.test(done.title) ? 'installed' : 'repaired';
               opts.onChange(kind, done.plugin);
             }
+            st.note = {};                                          // ("another install is running" ... is over)
             if (done.state === 'done') { setTimeout(function () { if (st.job === done) { st.job = null; render(); } }, 2500); }
+            else render();                                        // an error keeps its log until dismissed, buttons back
           });
         }).catch(function () { setTimeout(tick, 1500); });
       })();
@@ -145,7 +148,7 @@
       st.note[pid] = '';
       api('POST', '/api/plugins/' + encodeURIComponent(pid) + '/' + action).then(function (d) {
         if (d.ok && d.job) { followJob(d.job, pid, action.charAt(0).toUpperCase() + action.slice(1) + ' ' + nameOf(pid)); return; }
-        if (d.job) { followJob(d.job, pid, ''); }             // another one is running: watch that
+        if (d.job) { followJob(d.job, d.plugin || pid, d.title || ''); }   // another one is running: watch that
         st.note[pid] = d.error || 'That did not work.';
         render();
       });
@@ -159,6 +162,8 @@
         }
         if (!d.ok) { st.note[pid] = d.error || 'That did not work.'; render(); return; }
         st.ask = null;
+        var kept = d.kept ? Object.keys(d.kept) : [];
+        st.notice = kept.length ? kept.map(function (k) { return nameOf(k) + ' was added by hand, so a copy of its files was kept in ' + d.kept[k]; }).join('. ') + '.' : '';
         if (d.restart_recommended) st.note[pid] = 'Stopped, but it did not shut down cleanly - restart Hexcast to be sure.';
         if (action === 'enable' && d.running === false && d.error) st.note[pid] = 'Could not start: ' + d.error;
         load(true).then(function () { refreshBar(); if (opts.onChange) opts.onChange(what, pid); });
@@ -174,7 +179,7 @@
       if (p.state === 'disabled') return '<span class="hs-badge">Off</span>';
       if (p.state === 'needs_deps') return '<span class="hs-badge warn">Needs packages</span>';
       if (p.state === 'error') return '<span class="hs-badge bad">Problem</span>';
-      return '<span class="hs-badge warn">Starting</span>';
+      return '<span class="hs-badge warn">Stopped</span>';
     }
 
     function chips(p) {
@@ -200,9 +205,12 @@
         if (a.kind === 'cascade') {
           msg = (a.action === 'disable' ? 'Turning this off also stops: ' : 'Removing this also removes: ') + esc(a.names.join(', ')) + '.';
         } else if (a.kind === 'remove') {
-          msg = 'Remove ' + esc(p.name) + '? Your settings are kept.';
+          var also = (p.dependents_info || []).map(function (d) { return d.name; });
+          msg = 'Remove ' + esc(p.name) + '?' + (also.length ? ' This also removes: ' + esc(also.join(', ')) + '.' : '') +
+            ' Your settings are kept.' + (!p.source || p.source === 'local'
+              ? ' It was added by hand, so a copy of its files is kept in plugins/.removed/.' : '');
         } else {
-          msg = 'Turn off ' + esc(p.name) + '? It also stops: ' + esc(p.dependents.map(nameOf).join(', ')) + '.';
+          msg = 'Turn off ' + esc(p.name) + '? It also stops: ' + esc((p.dependents_info || []).map(function (d) { return d.name; }).join(', ')) + '.';
         }
         var act = a.kind === 'remove' || (a.kind === 'cascade' && a.action !== 'disable') ? 'uninstall' : 'disable';
         return '<span class="hs-confirm">' + msg + '</span>' +
@@ -223,7 +231,7 @@
           b.push('<button class="hs-btn' + (p.state === 'running' ? '' : ' primary') + '" data-do="update" data-id="' + esc(p.id) + '"' + dis +
                  '>Update' + (p.latest_version && p.latest_version !== p.installed_version ? ' to ' + esc(p.latest_version) : '') + '</button>');
         }
-        if (p.state === 'disabled') b.push('<button class="hs-btn" data-do="enable" data-id="' + esc(p.id) + '"' + dis + '>Turn on</button>');
+        if (p.state === 'disabled' || p.state === 'stopped') b.push('<button class="hs-btn" data-do="enable" data-id="' + esc(p.id) + '"' + dis + '>Turn on</button>');
         if (p.state === 'running' && !p.hidden) b.push('<button class="hs-btn" data-do="disable" data-id="' + esc(p.id) + '"' + dis + '>Turn off</button>');
         b.push('<button class="hs-btn danger" data-do="remove" data-id="' + esc(p.id) + '"' + dis + '>Remove</button>');
       }
@@ -247,6 +255,10 @@
         html += '<div class="hs-desc">' + (job.state === 'running' ? '<span class="hs-spin"></span>' : job.state === 'done' ? '✔ ' : '✖ ') +
           esc(job.state === 'running' ? (job.title || 'Working') + ' ...' : job.state === 'done' ? 'Done' : (job.error || 'Failed')) + '</div>' +
           '<pre class="hs-log" id="hs-log-' + esc(p.id) + '">' + esc(job.lines.join('\n')) + '</pre>';
+        if (job.state !== 'running') {
+          html += actions(p);
+          if (job.state === 'error') html += '<div class="hs-actions"><button class="hs-btn link" data-do="dismiss">Hide this</button></div>';
+        }
       } else {
         html += actions(p);
       }
@@ -259,6 +271,7 @@
       var avail = st.plugins.filter(function (p) { return !p.installed; });
       var html = '';
       if (st.error) html += '<div class="hs-err">' + esc(st.error) + '</div>';
+      if (st.notice) html += '<div class="hs-note">' + esc(st.notice) + '</div>';
       var errs = st.catalogErrors ? Object.keys(st.catalogErrors) : [];
       if (errs.length) {
         html += '<div class="hs-note">Skipped in the catalog: ' + esc(errs.map(function (k) { return k + ' (' + st.catalogErrors[k] + ')'; }).join('; ')) + '</div>';
@@ -295,12 +308,16 @@
         else simple(id, 'disable', undefined, 'disabled');
       }
       else if (what === 'cancel') { st.ask = null; render(); }
+      else if (what === 'dismiss') { st.job = null; render(); }
       else if (what === 'confirm') {
         var act = t.getAttribute('data-act');
-        var cascade = st.ask && st.ask.kind === 'cascade';
-        if (act === 'uninstall') simple(id, 'uninstall', { cascade: true }, 'removed');
+        var q = byId(id);
+        // "also removes ..." is only sent after the confirm text above has named those plugins
+        var cascade = !!(st.ask && st.ask.kind === 'cascade') || !!(q && (q.dependents || []).length);
+        st.notice = '';
+        if (act === 'uninstall') simple(id, 'uninstall', { cascade: cascade }, 'removed');
         else simple(id, 'disable', undefined, 'disabled');
-        if (cascade) st.ask = null;
+        if (st.ask && st.ask.kind === 'cascade') st.ask = null;
       }
     });
 

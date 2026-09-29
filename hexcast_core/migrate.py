@@ -30,18 +30,28 @@ def legacy_plugins(host: PluginHost) -> list[str]:
 
 
 def run(host: PluginHost, installer: Installer, log: Callable[[str], None] = print) -> list[str]:
-    """Install the plugins an existing setup was already using. Returns the ids installed."""
+    """Install the plugins an existing setup was already using. Returns the ids installed.
+
+    Only the files are copied here; a plugin whose Python packages are missing is restored
+    in the background right after start-up (PluginService.repair_pending), so a slow or
+    absent internet connection never delays the soundboard. One plugin failing does not stop
+    the others; a plugin that failed can be installed from the + tab (its settings are kept)."""
     if host.settings.data.get("migrated"):
         return []
+    if not host.catalog.bundled():
+        log("  [!] the catalog/ folder is missing or empty, so the upgrade step was skipped - "
+            "restore catalog/ (git pull, or unzip Hexcast again) and restart")
+        return []                                   # try again next start: nothing was decided
     installed: list[str] = []
     wanted = legacy_plugins(host)
     if wanted:
         log("  Upgrading: keeping the tabs you already use as plugins - " + ", ".join(wanted))
     for pid in wanted:
         try:
-            installed.extend(installer.install(pid, lambda s: None))
-        except InstallError as exc:
-            log(f"  [!] could not install {pid} during the upgrade: {exc}")
+            installed.extend(installer.install(pid, lambda s: None, packages=False))
+        except Exception as exc:                    # InstallError, a locked file (Windows), a full disk ...
+            reason = str(exc) if isinstance(exc, InstallError) else (getattr(exc, "strerror", None) or repr(exc))
+            log(f"  [!] could not install {pid} during the upgrade: {reason} - install it from the + tab")
     host.settings.data["migrated"] = True
     host.settings.save()
     return installed

@@ -45,6 +45,7 @@ import uvicorn
 from hexcast_core import Installer, PluginHost, PluginService, build_router
 from hexcast_core import backgrounds as overlay_backgrounds
 from hexcast_core import migrate as plugin_migrate
+from hexcast_core.staticfiles import RevalidatingStaticFiles
 from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -547,7 +548,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 app.mount("/media", StaticFiles(directory=str(MEDIA_DIR)), name="media")
-app.mount("/static", StaticFiles(directory=str(ROOT / "static")), name="static")
+app.mount("/static", RevalidatingStaticFiles(directory=str(ROOT / "static")), name="static")   # re-checked on every load, so an upgrade shows at once
 
 
 # ---- version / update check ------------------------------------------------
@@ -1027,9 +1028,11 @@ def _plugin_step(what: str, fn) -> None:
 
 _plugin_step("cleanup", plugin_installer.clean_trash)
 _plugin_step("upgrade check", lambda: plugin_migrate.run(plugin_host, plugin_installer))   # keep an old install's tabs
-if os.getenv("HEXCAST_DEV"):                                # developers: catalog edits show up on restart
+if os.getenv("HEXCAST_DEV", "").strip().lower() in ("1", "true", "yes", "on"):   # developers: catalog edits show up on restart
     _plugin_step("dev sync", lambda: plugin_installer.sync_from_catalog(lambda m: print(f"  [dev] {m}", flush=True)))
 _plugin_step("start", plugin_host.load_all)
+if plugin_host.settings.problem:
+    print(f"  [!] {plugin_host.settings.problem}", flush=True)
 for _pid in plugin_host.loaded:
     print(f"  plugin: {_pid}", flush=True)
 for _pid, _why in plugin_host.errors.items():

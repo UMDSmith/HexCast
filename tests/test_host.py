@@ -306,13 +306,27 @@ def test_updating_installs_a_new_requirement_first(world):
     assert (world.plugins / "newdep").exists()
 
 
-def test_corrupt_settings_file_falls_back_to_defaults(world):
-    (world.config / "plugins.json").write_text("{not json")
+def test_corrupt_settings_file_is_kept_aside_and_not_migrated_over(world):
+    path = world.config / "plugins.json"
+    path.write_text('{"disabled": ["ticker"], "migrated": true, "catalogs": [],}')       # a trailing comma
     from hexcast_core.host import Settings
-    s = Settings(world.config / "plugins.json")
-    assert s.data == {"disabled": [], "migrated": False, "catalogs": []}
-    s.set_disabled("x", True)                                   # and it can be written over
-    assert Settings(world.config / "plugins.json").is_disabled("x")
+    s = Settings(path)
+    assert s.data["disabled"] == [] and s.data["migrated"] is True       # defaults, but never "upgrade" on top of it
+    assert s.problem and "plugins.json.bad" in s.problem
+    assert (world.config / "plugins.json.bad").read_text().startswith('{"disabled": ["ticker"]')   # the user's text survives
+    s.set_disabled("x", True)                                           # and the file can be written afresh
+    assert Settings(path).is_disabled("x") and Settings(path).problem is None
+
+
+def test_settings_accept_a_bom_and_keep_unknown_keys(world):
+    path = world.config / "plugins.json"
+    path.write_bytes(b'\xef\xbb\xbf' + json.dumps({"disabled": ["a"], "migrated": True, "catalogs": ["https://x/y.json"],
+                                                  "note": {"keep": "me"}}).encode())
+    from hexcast_core.host import Settings
+    s = Settings(path)
+    assert s.problem is None and s.is_disabled("a") and s.catalogs == ["https://x/y.json"] and s.data["migrated"]
+    s.set_disabled("b", True)
+    assert json.loads(path.read_text())["note"] == {"keep": "me"}
 
 
 def test_catalog_hash_changes_with_content_but_not_with_pycache(world):

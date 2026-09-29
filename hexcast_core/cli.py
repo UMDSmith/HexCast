@@ -44,7 +44,14 @@ def main(argv: list[str] | None = None) -> int:
 
     host = PluginHost(None)
     installer = Installer(host)
-    installer.clean_trash()
+    # (no clean_trash() here: a running Hexcast may be in the middle of an install - it cleans up when it starts)
+    if host.settings.problem:
+        _say("[!] " + host.settings.problem)
+    if host.catalog.remote_urls:
+        host.catalog.refresh_remote(force=True)
+        for url, why in host.catalog.errors.items():
+            if url in host.catalog.remote_urls:
+                _say(f"[!] catalog {url}: {why}")
     catalog = host.catalog.entries()
     installed = host.scan()
 
@@ -82,6 +89,9 @@ def main(argv: list[str] | None = None) -> int:
                     installer.uninstall(x, _say)
         except InstallError as exc:
             _say(f"[!] {pid}: {exc}")
+            status = 1
+        except OSError as exc:                       # a locked file, a full disk ...
+            _say(f"[!] {pid}: {exc.strerror or exc}")
             status = 1
     return status
 

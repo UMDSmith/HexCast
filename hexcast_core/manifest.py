@@ -39,6 +39,8 @@ from typing import Any
 API_VERSION = 1                                # bump on an incompatible change to ctx / manifest
 
 ID_RE = re.compile(r"^[a-z][a-z0-9_]{1,31}$")
+# names Windows will not let a folder have, whatever the extension
+RESERVED_IDS = frozenset({"con", "prn", "aux", "nul"} | {f"com{i}" for i in range(1, 10)} | {f"lpt{i}" for i in range(1, 10)})
 VERSION_RE = re.compile(r"^\d+(\.\d+){0,3}([.+-][0-9A-Za-z.+-]*)?$")
 COLOR_RE = re.compile(r"^#[0-9a-fA-F]{3,8}$")
 MANIFEST_NAME = "plugin.json"
@@ -46,6 +48,11 @@ MANIFEST_NAME = "plugin.json"
 
 class ManifestError(ValueError):
     """The manifest is missing, unreadable or wrong. str(exc) is fit for the store card."""
+
+
+def valid_id(value: Any) -> bool:
+    """A usable plugin id (also a folder name, so no Windows device names)."""
+    return isinstance(value, str) and bool(ID_RE.match(value)) and value not in RESERVED_IDS
 
 
 @dataclass(frozen=True)
@@ -104,7 +111,7 @@ def _ids(d: dict, key: str) -> tuple[str, ...]:
         raise ManifestError(f"'{key}' must be a list of plugin ids")
     out: list[str] = []
     for item in v:
-        if not isinstance(item, str) or not ID_RE.match(item):
+        if not valid_id(item):
             raise ManifestError(f"'{key}' has an invalid plugin id: {item!r}")
         if item not in out:
             out.append(item)
@@ -121,8 +128,12 @@ def _rel_file(v: Any, what: str) -> str:
     return s
 
 
+_BAD_URL_CHARS = re.compile(r"[\s\\\x00-\x1f\x7f]")      # whitespace, backslash, control characters
+
+
 def _url_path(v: Any, what: str) -> str:
-    if not isinstance(v, str) or not v.startswith("/") or v.startswith("//") or "\n" in v:
+    # a browser reads "/\host" and "/<tab>/host" as another site, so only plain paths get through
+    if not isinstance(v, str) or not v.startswith("/") or v.startswith("//") or _BAD_URL_CHARS.search(v):
         raise ManifestError(f"'{what}' must be a path on this server, like /twitch")
     return v
 
@@ -132,10 +143,13 @@ def _nav(raw: Any, name: str, color: str, order: int) -> dict | None:
         return None
     if not isinstance(raw, dict):
         raise ManifestError("'nav' must be an object")
+    nav_order = raw.get("order", order)
+    if not isinstance(nav_order, int) or isinstance(nav_order, bool):
+        raise ManifestError("'nav.order' must be a whole number")
     nav: dict[str, Any] = {
         "label": _text(raw, "label", name, 24) or name,
         "href": _url_path(raw.get("href"), "nav.href"),
-        "order": int(raw.get("order", order)),
+        "order": nav_order,
         "color": _text(raw, "color", color, 16),
         "key": _text(raw, "key", "", 32),
     }
@@ -154,7 +168,10 @@ def _help(raw: Any) -> dict | None:
     if not isinstance(raw, dict):
         raise ManifestError("'help' must be an object")
     toc = []
-    for item in raw.get("toc") or []:
+    items = raw.get("toc") or []
+    if not isinstance(items, list):
+        raise ManifestError("'help.toc' must be a list")
+    for item in items:
         if not isinstance(item, dict) or not re.match(r"^[A-Za-z][\w-]*$", str(item.get("id", ""))):
             raise ManifestError("'help.toc' entries need an id and a label")
         toc.append({"id": item["id"], "label": _text(item, "label", item["id"], 40)})
@@ -163,12 +180,23 @@ def _help(raw: Any) -> dict | None:
 
 def parse_manifest(data: Any, folder: Path | None = None) -> Manifest:
     """Validate a decoded plugin.json. `folder` (when given) must be named after the id
-    and is where the requirements file is looked for."""
+    and is where the requirements file is looked for. Anything wrong with it - however odd -
+    is a ManifestError, never another exception: one bad plugin.json must not stop the rest."""
+    try:
+        return _parse_manifest(data, folder)
+    except ManifestError:
+        raise
+    except (TypeError, ValueError, OverflowError, RecursionError, AttributeError, KeyError, IndexError) as exc:
+        raise ManifestError(f"plugin.json is not valid: {type(exc).__name__}: {exc}") from None
+
+
+def _parse_manifest(data: Any, folder: Path | None) -> Manifest:
     if not isinstance(data, dict):
         raise ManifestError("plugin.json must be a JSON object")
     pid = data.get("id")
-    if not isinstance(pid, str) or not ID_RE.match(pid):
-        raise ManifestError("'id' must be 2-32 lowercase letters, digits or underscores, starting with a letter")
+    if not valid_id(pid):
+        raise ManifestError("'id' must be 2-32 lowercase letters, digits or underscores, starting with a letter "
+                            "(and not a Windows device name such as con or nul)")
     if folder is not None and folder.name != pid:
         raise ManifestError(f"the folder is called '{folder.name}' but the plugin id is '{pid}'")
     name = _text(data, "name", "", 40)
@@ -184,7 +212,7 @@ def parse_manifest(data: Any, folder: Path | None = None) -> Manifest:
         which = "newer" if api > API_VERSION else "older"
         raise ManifestError(f"written for a {which} plugin API (v{api}); this Hexcast speaks v{API_VERSION}")
     parent = data.get("parent")
-    if parent is not None and (not isinstance(parent, str) or not ID_RE.match(parent) or parent == pid):
+    if parent is not None and (not valid_id(parent) or parent == pid):
         raise ManifestError("'parent' must be another plugin's id")
     requires = _ids(data, "requires")
     if parent and parent not in requires:
@@ -225,9 +253,9 @@ def load_manifest(folder: Path) -> Manifest:
     """Read and validate <folder>/plugin.json."""
     path = folder / MANIFEST_NAME
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8-sig"))      # -sig: a BOM (Notepad, PowerShell) is fine
     except FileNotFoundError:
         raise ManifestError(f"no {MANIFEST_NAME} in {folder.name}/") from None
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RecursionError) as exc:
         raise ManifestError(f"{MANIFEST_NAME} is not readable JSON: {exc}") from None
     return parse_manifest(data, folder)
