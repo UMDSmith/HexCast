@@ -188,7 +188,9 @@
   //   Games — craps: point is 6, 5 bets down (300 hexcoins) · 1 overlay connected
   //   Games — roulette: 3 bets down (150 hexcoins), spins in 12s · 1 overlay connected
   var GAME_WORDS = { spinning: 'spinning', result: 'showing result', cooldown: 'cooling down' };
-  var GAME_OWN_WORDS = { craps: { spinning: 'rolling' } };
+  var GAME_OWN_WORDS = { craps: { spinning: 'rolling' },
+    russian: { betting: 'taking bets', pulling: 'pulling the trigger', over: 'game over' },
+    trivia: { betting: 'taking bets', question: 'question open', votes: 'answers locked', reveal: 'revealing', over: 'game over' } };
 
   function gameWord(key, state) {
     var own = GAME_OWN_WORDS[key];

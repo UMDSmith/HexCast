@@ -40,7 +40,7 @@ var GamesLogic = (function () {
   var APPEARANCE = ['x', 'y', 'scale', 'theme', 'red_color', 'black_color', 'green_color',
     'result_position', 'result_details', 'show_result', 'show_history', 'history_count',
     'show_user', 'show_bets', 'bets_max', 'sfx', 'sfx_volume',
-    'show_table', 'table_max', 'table_position'];
+    'show_table', 'table_max', 'table_position', 'show_rules'];
 
   function isObj(o) { return !!o && typeof o === 'object' && !Array.isArray(o); }
   function has(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
@@ -280,7 +280,7 @@ var GAMES = {
       show_bets: true, bets_max: 5, sfx: true, sfx_volume: 0.5,
       spin_clip: '', land_clip: '', cooldown_seconds: 0,
       currency: 'hexcoins', min_bet: 1, max_bet: 100000, auto_spin: false, bet_window_seconds: 20,
-      show_when_bets: true, show_table: true, table_max: 6, table_position: 'right'
+      show_when_bets: true, show_table: true, table_max: 6, table_position: 'right', show_rules: true
     }
   },
   craps: {
@@ -288,7 +288,7 @@ var GAMES = {
     renderer: null,
     appearance: ['x', 'y', 'scale', 'theme', 'dice_style', 'show_point', 'show_history',
       'history_count', 'show_user', 'show_bets', 'bets_max', 'show_payouts', 'payouts_max',
-      'sfx', 'sfx_volume'],
+      'sfx', 'sfx_volume', 'show_rules'],
     defaults: {
       x: 50, y: 50, scale: 1.0, theme: 'classic', dice_style: 'red',
       roll_seconds: 4, result_seconds: 5, cooldown_seconds: 0,
@@ -297,7 +297,35 @@ var GAMES = {
       show_bets: true, bets_max: 6, show_payouts: true, payouts_max: 5,
       sfx: true, sfx_volume: 0.5, roll_clip: '', land_clip: '',
       currency: 'hexcoins', min_bet: 1, max_bet: 100000, odds_rule: '345',
-      field_12_pays: 3, auto_roll: false, bet_window_seconds: 20
+      field_12_pays: 3, auto_roll: false, bet_window_seconds: 20, show_rules: true
+    }
+  },
+  // Round games: one multi-round game at a time. `stateful` = the renderer takes the whole
+  // STATE through setState() (no spins / tables / history); the host still owns show / hide,
+  // placement and the renderer's lifetime. `appearance` = what STATE.preview (the editor's
+  // Test in OBS) may change.
+  russian: {
+    script: '/static/games/russian.js',
+    renderer: null,
+    stateful: true,
+    appearance: ['x', 'y', 'scale', 'theme', 'title', 'show_rules', 'show_players', 'players_max', 'show_odds',
+      'sfx', 'sfx_volume'],
+    defaults: {
+      x: 50, y: 50, scale: 1.0, theme: 'saloon', title: 'Russian Roulette', show_rules: true, show_players: true,
+      players_max: 8, show_odds: true, sfx: true, sfx_volume: 0.6, hide_when_idle: true, commands_text: '',
+      rounds: 3, pull_seconds: 9, result_seconds: 4, summary_seconds: 10, currency: 'coins', dummy_name: 'Dummy'
+    }
+  },
+  trivia: {
+    script: '/static/games/trivia.js',
+    renderer: null,
+    stateful: true,
+    appearance: ['x', 'y', 'scale', 'theme', 'title', 'lore_label', 'show_rules', 'show_players', 'players_max',
+      'sfx', 'sfx_volume'],
+    defaults: {
+      x: 50, y: 50, scale: 1.0, theme: 'hex', title: 'TRIVIA', lore_label: 'Channel Lore', show_rules: true,
+      show_players: true, players_max: 8, sfx: true, sfx_volume: 0.5, hide_when_idle: true, commands_text: '',
+      currency: 'coins'
     }
   }
 };
@@ -700,9 +728,37 @@ function sync(slot) {
   if (slot.shown && !slot.fading && !slot.inst && slot.meta.renderer && wake(slot)) {
     slot.view = L.forget(slot.view);
   }
+  if (slot.meta.stateful) { syncRound(slot); return; }
   var r = L.reconcile(slot.view, slot.state, slot.config, appearanceKeys(slot));
   slot.view = r.view;
   run(slot, r.actions);
+}
+
+// Round games (russian, trivia): the generic reconcile only runs visibility + appearance
+// (their STATE has no spin / table / history), then the renderer gets the whole STATE,
+// its phase clock aged by the time the message sat here. The editor's Test in OBS
+// (STATE.preview {id, overrides}) rides that reconcile as a pseudo-spin, so its look
+// goes through effectiveConfig exactly like a table game's test spin overrides.
+function liveRound(slot, st) {
+  var s = L.merge(st);
+  if (L.isObj(st.game)) {
+    var g = L.merge(st.game), waited = slot.stateAt ? Math.max(0, performance.now() - slot.stateAt) : 0;
+    if (typeof g.ends_in_ms === 'number') g.ends_in_ms = Math.max(0, g.ends_in_ms - waited);
+    if (typeof g.elapsed_ms === 'number') g.elapsed_ms = g.elapsed_ms + waited;
+    s.game = g;
+  }
+  return s;
+}
+var ROUND_ACTIONS = { appearance: 1, show: 1, hide: 1 };   // the rest is setState()'s job
+function syncRound(slot) {
+  var st = slot.state;
+  var pv = st && L.isObj(st.preview) && st.preview.id != null ? { id: st.preview.id, overrides: st.preview.overrides } : null;
+  var lite = st ? { state: st.state, visible: st.visible, spin: pv, history: [] } : null;
+  var r = L.reconcile(slot.view, lite, slot.config, appearanceKeys(slot));
+  slot.view = r.view;
+  // a pseudo-spin makes reconcile ask for play / showResult / reset: not a round renderer's business
+  run(slot, r.actions.filter(function (a) { return own(ROUND_ACTIONS, a.type); }));
+  if (st && slot.inst && !slot.fading) call(slot, 'setState', liveRound(slot, st));
 }
 
 /* ---- renderer loading ------------------------------------------------------ */

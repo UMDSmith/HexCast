@@ -30,11 +30,16 @@
   section.gtab{display:none} section.gtab.sel{display:block}
 
   main{padding:18px 22px 60px;max-width:1080px}
+  /* The game renderers' own DOM lives in a .gstage (the live mirrors, the editors' previews)
+     and must look there exactly as on the OBS overlay, a bare page: the panel's generic
+     rules that could match it (.row, .last, .bar, .lock, .pos/.neg, .card h2 ...) skip it
+     with :not(:where(.gstage *)) (same specificity as before), and the stage resets what
+     its content would inherit / get from *{box-sizing} to the overlay's defaults. */
   .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
-  .card h2{margin:0 0 4px;font-size:14px;letter-spacing:.14em;text-transform:uppercase}
-  .card h2 .pill{margin-left:8px;vertical-align:2px;letter-spacing:.04em}
-  .card h3{margin:16px 0 4px;font-size:13px;color:var(--ink)}
-  .card p.hint{margin:0 0 14px;color:var(--dim);font-size:13px}
+  .card h2:not(:where(.gstage *)){margin:0 0 4px;font-size:14px;letter-spacing:.14em;text-transform:uppercase}
+  .card h2:not(:where(.gstage *)) .pill{margin-left:8px;vertical-align:2px;letter-spacing:.04em}
+  .card h3:not(:where(.gstage *)){margin:16px 0 4px;font-size:13px;color:var(--ink)}
+  .card p.hint:not(:where(.gstage *)){margin:0 0 14px;color:var(--dim);font-size:13px}
   .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px}
   label.f{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--dim);
           letter-spacing:.06em;text-transform:uppercase;font-weight:600}
@@ -52,7 +57,7 @@
              padding:9px 14px;font:600 13px inherit;cursor:pointer}
   button.sec:hover{border-color:var(--accent)}
   button:disabled{opacity:.4;cursor:not-allowed}
-  .row{display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin-top:14px}
+  .row:not(:where(.gstage *)){display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin-top:14px}
   .url{display:flex;gap:8px;align-items:center;margin:8px 0}
   .url a{flex:1;background:#08080c;border:1px solid var(--line);border-radius:8px;
             padding:9px 11px;font:13px var(--mono);color:var(--good);overflow:auto;white-space:nowrap;
@@ -93,7 +98,10 @@
       repeating-linear-gradient(0deg,#0c0c11 0 39px,#141420 39px 40px),
       repeating-linear-gradient(90deg,#0c0c11 0 39px,#141420 39px 40px),#0a0a0e;
     border:1px solid var(--line);border-radius:8px;overflow:hidden;user-select:none}
-  .gstage{position:absolute;left:0;top:0;width:1920px;height:1080px;transform-origin:0 0;pointer-events:none}
+  .gstage{position:absolute;left:0;top:0;width:1920px;height:1080px;transform-origin:0 0;pointer-events:none;
+          font:16px/normal serif;color:#000;letter-spacing:normal;word-spacing:normal;text-transform:none;
+          text-align:start;text-indent:0;white-space:normal;text-shadow:none}
+  :where(.gstage *){box-sizing:content-box}
   .gwheel{position:absolute;left:50%;top:50%;transform-origin:center center;will-change:transform,left,top;pointer-events:auto}
   .gwheel.empty{border:6px dashed rgba(255,176,32,.55);border-radius:50%}
   .mirror .gwheel{pointer-events:none;transition:opacity .35s ease}
@@ -110,12 +118,12 @@
   #g-state.result{color:var(--good)}
   #g-state.cooldown{color:var(--warn)}
   #g-sub{font-size:12px;color:var(--dim);margin-top:4px;min-height:18px}
-  .last{display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;
+  .last:not(:where(.gstage *)){display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;
         background:#0c0c11;min-height:66px}
-  .last .none{color:var(--dim);font-size:13px}
-  .last .meta{display:flex;flex-direction:column;gap:2px;min-width:0}
-  .last .det{font:700 12px var(--mono);letter-spacing:.08em;color:var(--ink)}
-  .last .who{font-size:12px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .last:not(:where(.gstage *)) .none{color:var(--dim);font-size:13px}
+  .last:not(:where(.gstage *)) .meta{display:flex;flex-direction:column;gap:2px;min-width:0}
+  .last:not(:where(.gstage *)) .det{font:700 12px var(--mono);letter-spacing:.08em;color:var(--ink)}
+  .last:not(:where(.gstage *)) .who{font-size:12px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .tagt{font:700 10px/1 var(--mono);letter-spacing:.1em;padding:3px 6px;border-radius:99px;border:1px solid #4d3a10;color:var(--warn);margin-left:6px}
   .disc{flex:0 0 auto;width:46px;height:46px;border-radius:50%;display:flex;align-items:center;justify-content:center;
         font:800 18px/1 var(--mono);color:#fff;box-shadow:inset 0 0 0 2px rgba(255,255,255,.2),0 2px 8px rgba(0,0,0,.5)}
@@ -146,10 +154,11 @@
   .srow .top{display:flex;justify-content:space-between;gap:10px;font-size:11px;margin-bottom:4px}
   .srow .lbl{color:var(--dim);text-transform:uppercase;letter-spacing:.08em;font-weight:600}
   .srow .cnt{font:12px var(--mono);color:var(--ink);text-align:right}
-  .bar{display:flex;height:10px;border-radius:99px;overflow:hidden;background:#0c0c11;border:1px solid var(--line)}
-  .bar i{display:block;height:100%}
-  .bar i.red{background:var(--pk-red)} .bar i.black{background:#3a3a46} .bar i.green{background:var(--pk-green)}
-  .bar i.a{background:#4ea1ff} .bar i.b{background:#a970ff}
+  .bar:not(:where(.gstage *)){display:flex;height:10px;border-radius:99px;overflow:hidden;background:#0c0c11;border:1px solid var(--line)}
+  .bar:not(:where(.gstage *)) i{display:block;height:100%}
+  .bar:not(:where(.gstage *)) i.red{background:var(--pk-red)} .bar:not(:where(.gstage *)) i.black{background:#3a3a46}
+  .bar:not(:where(.gstage *)) i.green{background:var(--pk-green)}
+  .bar:not(:where(.gstage *)) i.a{background:#4ea1ff} .bar:not(:where(.gstage *)) i.b{background:#a970ff}
   .chips{display:flex;flex-wrap:wrap;gap:5px;align-items:center}
   .chips .none{color:var(--dim);font-size:12px}
   .hc{display:grid;grid-template-columns:auto 1fr;gap:8px 12px;align-items:center;margin-top:14px}
@@ -216,7 +225,7 @@
   button.mini.yes:hover,button.danger:hover{background:#4a1a1a;border-color:var(--red)}
   .confirm{display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
   .confirm .q{font-size:12px;color:var(--warn);white-space:normal;text-align:right}
-  .lock{color:var(--dim);font-size:12px}
+  .lock:not(:where(.gstage *)){color:var(--dim);font-size:12px}
 
   /* ---- ledger (the roulette events of the shared games ledger) ---- */
   .lsum{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:2px 0 12px}
@@ -225,7 +234,7 @@
   .tile b{display:block;font:800 19px/1.3 var(--mono);color:var(--ink);font-variant-numeric:tabular-nums;
           white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .tile small{display:block;font-size:11px;color:var(--dim)}
-  .pos{color:var(--good) !important} .neg{color:var(--red-soft) !important}
+  .pos:not(:where(.gstage *)){color:var(--good) !important} .neg:not(:where(.gstage *)){color:var(--red-soft) !important}
   .lbar{display:flex;gap:9px;flex-wrap:wrap;align-items:flex-end}
   .lbar label.f{flex:1 1 200px}
   table.lg{width:100%;border-collapse:collapse;font-size:12.5px}
@@ -377,6 +386,8 @@
 <nav id="gtabs">
   <button data-tab="roulette" class="sel">Roulette</button>
   <button data-tab="craps">Craps</button>
+  <button data-tab="russian">Russian Roulette</button>
+  <button data-tab="trivia">Trivia</button>
 </nav>
 
 <main>
@@ -540,6 +551,7 @@
       <label class="f sw"><input type="checkbox" id="s-show_when_bets"> Keep it on screen while bets are down</label>
       <label class="f sw"><input type="checkbox" id="s-auto_spin"> Auto-spin after the bet window</label>
       <label class="f sw"><input type="checkbox" id="s-show_table"> Show the "on the table" board</label>
+      <label class="f sw"><input type="checkbox" id="s-show_rules"> Show the "how to play" box</label>
       <label class="f sw"><input type="checkbox" id="s-show_user"> Show "@user spins" caption</label>
       <label class="f sw"><input type="checkbox" id="s-show_bets"> Show winners list after landing</label>
       <label class="f sw"><input type="checkbox" id="s-sfx"> Built-in ball sounds</label>
@@ -565,6 +577,9 @@
 </section>
 <!-- Craps: markup, styles and logic are built by /static/games/craps_panel.js -->
 <section class="gtab" id="tab-craps"></section>
+<!-- Russian Roulette + Trivia: built by /static/games/round_panels.js -->
+<section class="gtab" id="tab-russian"></section>
+<section class="gtab" id="tab-trivia"></section>
 </main>
 
 <div id="toast">Saved</div>
@@ -583,15 +598,15 @@ var DEFAULTS = {
   sfx:true, sfx_volume:0.5, spin_clip:'', land_clip:'', cooldown_seconds:0,
   // the table + spin timer (ROULETTE_TIMER_SPEC §1)
   currency:'hexcoins', min_bet:1, max_bet:100000, auto_spin:false, bet_window_seconds:20,
-  show_when_bets:true, show_table:true, table_max:6, table_position:'right'
+  show_when_bets:true, show_table:true, table_max:6, table_position:'right', show_rules:true
 };
 // Keys the spin `overrides` may carry (spec §4 APPEARANCE).
 var APPEARANCE = ['x','y','scale','theme','red_color','black_color','green_color','result_position',
   'result_details','show_result','show_history','history_count','show_user','show_bets','bets_max','sfx','sfx_volume',
-  'show_table','table_max','table_position'];
+  'show_table','table_max','table_position','show_rules'];
 // Keys the placement modal edits (and saves / sends as Test-in-OBS overrides).
 var EDIT_KEYS = ['x','y','scale','theme','red_color','black_color','green_color','result_position',
-  'result_details','show_result','show_history','history_count','show_table','table_max','table_position'];
+  'result_details','show_result','show_history','history_count','show_table','table_max','table_position','show_rules'];
 var THEMES = [['classic','Classic — walnut & gold'],['neon','Neon'],['midnight','Midnight'],['royal','Royal']];
 var TABLE_POSITIONS = [['right','Right of the wheel'],['left','Left of the wheel'],['below','Below the wheel'],['above','Above the wheel']];
 // Ledger reasons (the roulette events of the shared games ledger).
@@ -793,6 +808,13 @@ function requestResize(v){
   requestAnimationFrame(function(){ v._rz = false; if(v.inst) safe(function(){ v.inst.resize(); }); });
 }
 function viewMsg(el, text){ el.textContent = text || ''; el.style.display = text ? 'flex' : 'none'; }
+// An editor modal closes on a click on its backdrop only when the press started there too:
+// selecting text in an input and letting go outside the modal is not a click outside.
+function closeOnBackdrop(ov, close){
+  var downOnOv = false;
+  ov.addEventListener('pointerdown', function(e){ downOnOv = e.target === ov; });
+  ov.addEventListener('click', function(e){ var d = downOnOv; downOnOv = false; if(e.target === ov && d) close(); });
+}
 
 /* ---------- live mirror (driven by WS state, like the overlay §8) ---------- */
 var STATE = null, STATE_AT = 0;
@@ -1795,6 +1817,7 @@ var SET = [
   { k:'show_when_bets', t:'check' },
   { k:'auto_spin', t:'check' },
   { k:'show_table', t:'check' },
+  { k:'show_rules', t:'check' },
   { k:'table_max', t:'int', min:1, max:20 },
   { k:'table_position', t:'select' },
   { k:'show_user', t:'check' },
@@ -2087,6 +2110,10 @@ function openEditor(){
           <input type="number" id="ed-table_max" min="1" max="20" step="1" style="flex:0 0 80px">
           <span class="value" style="min-width:0;text-align:left">lines</span>
         </div>
+        <div class="editor-row">
+          <label>Rules</label>
+          <label class="tog"><input type="checkbox" id="ed-show_rules"> how-to-play box (while bets are open)</label>
+        </div>
       </div>
       <div class="modal-actions">
         <div class="left">
@@ -2203,7 +2230,7 @@ function openEditor(){
 
   // Appearance rows
   var themeSel = q('#ed-theme'), posSel = q('#ed-result_position'), tposSel = q('#ed-table_position');
-  var cbs = ['show_result', 'result_details', 'show_history', 'show_table'];
+  var cbs = ['show_result', 'result_details', 'show_history', 'show_table', 'show_rules'];
   var histNum = q('#ed-history_count'), tmaxNum = q('#ed-table_max');
   function paintColors(){
     ['red', 'black', 'green'].forEach(function(c){
@@ -2250,7 +2277,7 @@ function openEditor(){
   });
 
   // ---- ▶ Preview: a local demo spin in the modal (random pocket + seed, configured duration; no server call) ----
-  var previewBtn = q('.preview');
+  var previewBtn = q('.modal-actions .preview');
   var previewTok = 0, previewTimer = null;
   function previewDone(tok){
     if(tok !== previewTok) return;
@@ -2322,15 +2349,17 @@ function openEditor(){
     ED = null;
   }
   document.addEventListener('keydown', onKey);
-  q('.close').onclick = close;
-  q('.cancel').onclick = close;
-  ov.addEventListener('click', function(e){ if(e.target === ov) close(); });
+  // The buttons are looked up inside the modal's chrome: the renderer's DOM in the preview
+  // comes first in the modal and may use the same class names.
+  q('.modal-header .close').onclick = close;
+  q('.modal-actions .cancel').onclick = close;
+  closeOnBackdrop(ov, close);
 
-  q('.test').onclick = async function(){
+  q('.modal-actions .test').onclick = async function(){
     var d = await api('POST', '/games/api/roulette/spin', { test: true, overrides: snapshot() }, "Can't test");
     if(d) toast('fired to OBS — not saved yet');
   };
-  q('.save').onclick = async function(){
+  q('.modal-actions .save').onclick = async function(){
     var d = await api('POST', '/games/api/config', { roulette: snapshot() }, "Can't save");
     if(!d) return;
     var conf = d.config || (d.roulette ? { roulette: d.roulette } : null);
@@ -2339,7 +2368,7 @@ function openEditor(){
     toast('saved roulette placement');
     // Modal stays open so you can keep fine-tuning. Close via × / Cancel / Esc / click-outside.
   };
-  q('.reset').onclick = function(){
+  q('.modal-actions .reset').onclick = function(){
     Object.assign(w, pick(DEFAULTS, EDIT_KEYS));
     syncControls(); update(); pushCfg();
     toast('defaults restored — not saved yet');
@@ -2553,4 +2582,7 @@ function showTab(key){
 </script>
 <script src="/static/games/craps.js"></script>
 <script src="/static/games/craps_panel.js"></script>
+<script src="/static/games/russian.js"></script>
+<script src="/static/games/trivia.js"></script>
+<script src="/static/games/round_panels.js"></script>
 </body></html>

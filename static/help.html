@@ -52,6 +52,8 @@
   <a href="#countdown">Countdown</a>
   <a href="#games">Games</a>
   <a href="#craps">Craps</a>
+  <a href="#russian">Russian Roulette</a>
+  <a href="#trivia">Trivia</a>
   <a href="#ticker">Ticker</a>
   <a href="#notes">Browser notes</a>
 </div>
@@ -473,6 +475,60 @@ curl -X POST http://localhost:4747/games/api/config -H "Content-Type: applicatio
 curl "http://localhost:4747/games/api/craps/timer?seconds=30"
 curl -X POST http://localhost:4747/games/api/craps/board -H "Content-Type: application/json" -d "{\"bets\":[{\"user\":\"alice\",\"text\":\"Pass 100 + odds 50\",\"amount\":150}]}"
 curl "http://localhost:4747/games/api/craps/announce?user=alice&amp;amount=200&amp;text=Pass%20line"</pre>
+</div>
+</section>
+
+<section id="russian">
+<div class="card">
+  <h2>Russian Roulette <span class="tag">/games#russian</span></h2>
+  <p class="hint">A side-on revolver and a stuffed dummy with a name tag on the games overlay (<code>/games/overlay</code>, or
+    <code>?game=russian</code>). Pull k loads k bullets and re-spins (chance k/6); chat bets the dummy <b>survives</b>
+    (the stake rides and grows from pull to pull) or goes <b>bang</b> this pull — all against the bank (your bot), through
+    the shared <b>ledger</b>. 30 s to bet, 20 s between pulls, 3 pulls; no bets ends the game. The dummy's
+    <code>dummy_user</code> (the volunteer) gets 5% of the bank's net win. Placement, look and the header's title
+    (<code>title</code>, your branding) live in the Games panel's Edit Mode. Details: <code>docs/russian_roulette.md</code>.</p>
+  <table class="api">
+    <tr><td>GET|POST /games/api/russian/start</td><td><code>{dummy, dummy_user, rounds, seconds, test}</code> — start a game; <code>test</code> writes nothing to the ledger; 409 while one runs</td></tr>
+    <tr><td>GET|POST /games/api/russian/bet</td><td><code>{user, side: survive|bang, amount}</code> → <code>debits</code>, <code>player</code>; 409 <code>bets_closed</code> outside a betting window</td></tr>
+    <tr><td>GET|POST /games/api/russian/cashout</td><td><code>{user}</code> → the survive stake's value now (ledger <code>credit</code>, reason <code>cashout</code>)</td></tr>
+    <tr><td>GET|POST /games/api/russian/remove</td><td><code>{user, side?}</code> — take back what went down in this window (<code>refund</code>)</td></tr>
+    <tr><td>GET|POST /games/api/russian/dummy</td><td><code>{dummy, dummy_user}</code> — before the first pull, or for the next game</td></tr>
+    <tr><td>GET|POST /games/api/russian/next</td><td>end the current phase now (alias <code>/pull</code>)</td></tr>
+    <tr><td>GET /games/api/russian/table · user/{name} · ledger · history · bets</td><td>the STATE · one player · this game's ledger events · finished games + stats · rules + odds</td></tr>
+    <tr><td>GET|POST /games/api/russian/stop</td><td>end the game: a pull in progress counts, bang bets refunded, survive stakes cashed out</td></tr>
+    <tr><td>GET|POST /games/api/russian/preview</td><td><code>{overrides, seconds}</code> — Edit Mode's Test in OBS: the scene on screen for a few seconds with that look (<code>STATE.preview</code>); never touches the game · <code>/preview/clear</code></td></tr>
+  </table>
+  <pre>curl -X POST http://localhost:4747/games/api/russian/start -H "Content-Type: application/json" -d "{\"dummy\":\"Bob\",\"dummy_user\":\"bob\"}"
+curl "http://localhost:4747/games/api/russian/bet?user=alice&amp;side=survive&amp;amount=100"
+curl "http://localhost:4747/games/api/russian/cashout?user=alice"</pre>
+</div>
+</section>
+
+<section id="trivia">
+<div class="card">
+  <h2>Trivia <span class="tag">/games#trivia</span></h2>
+  <p class="hint">A game-show quiz on the games overlay (<code>?game=trivia</code>). Chat bets <b>before</b> each question
+    (only its number, category and difficulty show), then answers A–E; everyone may answer, only bets are paid. Right
+    answers pay ×1.5 / ×2 / ×3 by difficulty, +10% per question won in a row; winners <b>ride</b> or <b>cash out</b>
+    (no choice = cashed out). 15 questions from Open Trivia DB and your own lore questions, never repeated in a night.
+    The board's title (<code>title</code>, "TRIVIA") and the name of your own questions (<code>lore_label</code>,
+    "Channel Lore") are your branding: set them in the Games panel's Edit Mode or Settings. Details: <code>docs/trivia.md</code>.</p>
+  <table class="api">
+    <tr><td>GET|POST /games/api/trivia/start</td><td><code>{questions, difficulty, category, lore, seconds, test}</code> — 409 while one runs, 503 when no question could be had</td></tr>
+    <tr><td>GET|POST /games/api/trivia/bet</td><td><code>{user, amount}</code> — a stake on the next question (ledger <code>debit</code>)</td></tr>
+    <tr><td>GET|POST /games/api/trivia/answer</td><td><code>{user, answer}</code> — <code>A</code>–<code>E</code>, <code>1</code>–<code>5</code> or the option text; the last answer counts</td></tr>
+    <tr><td>GET|POST /games/api/trivia/ride · cashout</td><td><code>{user}</code> — let a win ride · take it (<code>credit</code>)</td></tr>
+    <tr><td>GET|POST /games/api/trivia/next</td><td>end the current phase now</td></tr>
+    <tr><td>GET|POST /games/api/trivia/lore · lore/remove</td><td>your own questions: list · add <code>{question, correct, incorrect[], difficulty, category}</code> or <code>{"questions": [...]}</code> · delete <code>{id}</code></td></tr>
+    <tr><td>GET /games/api/trivia/bank · categories · POST asked/clear</td><td>question pool + asked list · OpenTDB categories · a new night</td></tr>
+    <tr><td>GET /games/api/trivia/table · user/{name} · ledger · history</td><td>the STATE (the answer only from the reveal on) · one player · ledger events · finished games</td></tr>
+    <tr><td>GET|POST /games/api/trivia/stop</td><td>end the game: stakes refunded, winnings cashed out</td></tr>
+    <tr><td>GET|POST /games/api/trivia/preview</td><td><code>{overrides, seconds}</code> — Edit Mode's Test in OBS: the board on screen for a few seconds with that look; never touches the game · <code>/preview/clear</code></td></tr>
+  </table>
+  <pre>curl -X POST http://localhost:4747/games/api/trivia/start
+curl "http://localhost:4747/games/api/trivia/bet?user=alice&amp;amount=100"
+curl "http://localhost:4747/games/api/trivia/answer?user=alice&amp;answer=B"
+curl "http://localhost:4747/games/api/trivia/ride?user=alice"</pre>
 </div>
 </section>
 

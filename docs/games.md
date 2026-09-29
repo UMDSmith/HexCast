@@ -24,14 +24,22 @@ lives under `/games/*`.
 | --- | --- | --- |
 | **Roulette** | an American double-zero wheel; bets sent with a spin come back resolved for your bot to pay, or chat's bets wait on a table for the next spin, with a spin timer and a ledger that Hex pays from | this page |
 | **Craps** | a bank-craps table: chat bets hexcoins that stay on the table across rolls, with a ledger that Hex, the channel's bot, pays from | [docs/craps.md](craps.md) |
+| **Russian Roulette** | a revolver and a stuffed dummy: pull k loads k bullets; chat bets it survives (and rides) or goes bang, against the bank; a volunteer's name on the dummy earns a cut | [docs/russian_roulette.md](russian_roulette.md) |
+| **Trivia** | a game-show quiz (Open Trivia DB + your own lore questions): bet before the question, answer A–E, ride winnings for a streak bonus or cash out | [docs/trivia.md](trivia.md) |
 
 They share one panel at `/games` — **one tab per game** under the top bar
-(`/games#roulette`, `/games#craps` open straight to one) — one OBS browser
-source (`/games/overlay` shows every game; `?game=roulette` or `?game=craps`
-limits a source to one), the same Edit Mode, the same
-`/games/api/{game}/...` API shape (the [timer](#timer) included), and one
-[ledger](#the-shared-ledger). The rest of this page is about Roulette and the
-parts every game shares.
+(`/games#roulette`, `/games#craps`, `/games#russian`, `/games#trivia` open
+straight to one) — one OBS browser source (`/games/overlay` shows every game;
+`?game=roulette`, `?game=craps`, `?game=russian` or `?game=trivia` limits a
+source to one), the same Edit Mode, the same `/games/api/{game}/...` API shape,
+and one [ledger](#the-shared-ledger). Russian Roulette and Trivia are *round
+games* — one multi-round game at a time, started with `/start` instead of a
+spin (their `/spin` and `/timer` answer 400). They have no test spin to carry
+the Edit Mode editor's **Test in OBS**, so theirs is `POST /games/api/{game}/preview`
+(the look on the overlay for a few seconds, `STATE.preview`), and their titles
+are settings (`title`, trivia's `lore_label`) so a stream can brand them; their
+pages have the details. The rest of this page is about Roulette and the parts
+every game shares.
 
 ---
 
@@ -516,6 +524,7 @@ The table's keys in the `"roulette"` section of the config (they're also in
 | `show_table` | `true` | the "on the table" board before the spin |
 | `table_max` | `6` | 1–20 — board lines before `+N more` |
 | `table_position` | `"right"` | `right` \| `left` \| `below` \| `above` — where the board sits next to the wheel |
+| `show_rules` | `true` | the "how to play" box while bets are open (no spin up): the bets in one line each and what they pay, in the theme's colours. It takes the side the board doesn't |
 
 `currency`, `min_bet` and `max_bet` only apply to the table — bets sent with
 a spin call are unchanged. `show_table`, `table_max` and `table_position` are
@@ -816,14 +825,18 @@ pay from a spin's reply — pay from the ledger.
 
 ### The shared ledger
 
-Craps and roulette share one ledger: one file, `config/games_ledger.jsonl`,
-one `seq` numbering, and every event names its game in `game`.
+Every game shares one ledger — roulette, craps, Russian Roulette and Trivia:
+one file, `config/games_ledger.jsonl`, one `seq` numbering, and every event
+names its game in `game`. A bank running every game tails
+`GET /games/api/ledger?since=<last_seq>` once.
 
 | Endpoint | Events |
 | --- | --- |
 | `GET /games/api/roulette/ledger?since=0&limit=500` | roulette's |
 | `GET /games/api/craps/ledger?since=0&limit=500` | craps' (see [Craps → Ledger](craps.md#ledger)) |
-| `GET /games/api/ledger?since=0&limit=500` | every game's; add `&game=roulette` (or `craps`) for one — an unknown name is a 404 `unknown game` |
+| `GET /games/api/russian/ledger?since=0&limit=500` | Russian Roulette's (see [its ledger reasons](russian_roulette.md#ledger-reasons)) |
+| `GET /games/api/trivia/ledger?since=0&limit=500` | Trivia's (see [its ledger reasons](trivia.md#ledger-reasons)) |
+| `GET /games/api/ledger?since=0&limit=500` | every game's; add `&game=roulette` (or `craps`, `russian`, `trivia`) for one — an unknown name is a 404 `unknown game` |
 
 ```
 curl "http://localhost:4747/games/api/roulette/ledger?since=0"
@@ -845,16 +858,17 @@ events.)
 - Each returns the events with `seq` **greater than** `since`, oldest first,
   at most `limit` of them (default 500, up to 5000).
 - `seq` is unique across the games and only ever goes up — it keeps counting
-  across restarts — so one game's events have gaps where the other's are.
+  across restarts — so one game's events have gaps where the others' are.
   That's normal. `last_seq` is always the ledger's newest seq, of any game.
 - `truncated` is `true` when you didn't get everything after `since`: either
   `limit` cut it short (call again from the last seq you processed), or some
   of those events are older than the 10 000 (of every game) kept in memory —
   `oldest_seq` is the oldest one still held; the rest are in
   `games_ledger.jsonl` (and `games_ledger.jsonl.1`).
-- `type` is `debit` (coins Hex takes) or `credit` (coins Hex pays); `bet` is
-  a readable label, `bet_id` the table bet, and `roll_id` the spin's `id` on
-  a win (`null` otherwise). Roulette's reasons:
+- `type` is `debit` (coins the bank takes) or `credit` (coins the bank pays);
+  `bet` is a readable label, `bet_id` the table bet, and `roll_id` the spin's
+  `id` on a win (`null` otherwise). Craps', Russian Roulette's and Trivia's
+  reasons are in their own docs; roulette's:
 
 | `type` | `reason` | When |
 | --- | --- | --- |
@@ -866,7 +880,8 @@ events.)
 
 - Panel websockets (`/games/ws/panel`) get every new batch pushed, one
   message per game: `{"type": "ledger", "game": "roulette", "events": [...]}`.
-- Only table bets are in it. Bets sent with a spin call never are.
+- Of roulette's bets, only table bets are in it. Bets sent with a spin call
+  never are.
 
 ### Board
 
@@ -1367,8 +1382,9 @@ overlay for the current (or last) spin. It's the display call for
 [Mode B](#two-ways-to-run-the-money), where Hex did the math: the card
 **replaces** the winners list Hexcast would build, in the same style. It's
 display only — it doesn't touch the result, any bets, the history or the
-stats. Every game has it (on the craps tray it replaces the payouts board —
-see [Craps → Announce and board](craps.md#announce-and-board)). Parameters go
+stats. Roulette and craps have it (on the craps tray it replaces the payouts board —
+see [Craps → Announce and board](craps.md#announce-and-board)); the round games
+(Russian Roulette, Trivia) answer 400 — their game-over card is built in (`STATE.game.summary`). Parameters go
 in the query string, a JSON body (POST), or both — the body wins where they
 overlap.
 
@@ -1589,6 +1605,7 @@ a spin's `overrides`, and what the Edit Mode editor edits.
 | `show_table` | `true` | the "on the table" board before the spin (the [table](#table--spin-timer)'s bets, or Hex's [board](#board)) | ✓ |
 | `table_max` | `6` | 1–20 — board lines before `+N more` | ✓ |
 | `table_position` | `"right"` | `right` \| `left` \| `below` \| `above` — where the board sits next to the wheel | ✓ |
+| `show_rules` | `true` | the "how to play" box while bets are open: the bets, one line each, and what they pay (the theme's colours; the side the board doesn't take) | ✓ |
 | `sfx` | `true` | built-in synthesized ball sounds in the overlay | ✓ |
 | `sfx_volume` | `0.5` | 0–1 | ✓ |
 | `spin_clip`, `land_clip` | `""` | soundboard clip names fired at launch / landing (`""` = none) | |

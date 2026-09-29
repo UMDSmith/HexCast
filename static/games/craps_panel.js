@@ -50,11 +50,11 @@
     show_bets: true, bets_max: 6, show_payouts: true, payouts_max: 5,
     sfx: true, sfx_volume: 0.5, roll_clip: '', land_clip: '',
     currency: 'hexcoins', min_bet: 1, max_bet: 100000, odds_rule: '345',
-    field_12_pays: 3, auto_roll: false, bet_window_seconds: 20
+    field_12_pays: 3, auto_roll: false, bet_window_seconds: 20, show_rules: true
   };
   // The only keys a roll's `overrides` may carry — and what the Edit-Mode editor edits.
   var APPEARANCE = ['x', 'y', 'scale', 'theme', 'dice_style', 'show_point', 'show_history', 'history_count',
-    'show_user', 'show_bets', 'bets_max', 'show_payouts', 'payouts_max', 'sfx', 'sfx_volume'];
+    'show_user', 'show_bets', 'bets_max', 'show_payouts', 'payouts_max', 'sfx', 'sfx_volume', 'show_rules'];
   var EDIT_KEYS = APPEARANCE;
   var THEMES = [['classic', 'Classic — casino green'], ['neon', 'Neon — black & Hexcast red'],
     ['midnight', 'Midnight — navy'], ['royal', 'Royal — purple & gold']];
@@ -636,6 +636,13 @@
     requestAnimationFrame(function () { v._rz = false; if (v.inst) safe(function () { v.inst.resize(); }); });
   }
   function viewMsg(el, text) { el.textContent = text || ''; el.style.display = text ? 'flex' : 'none'; }
+  // The editor closes on a click on its backdrop only when the press started there too:
+  // selecting text in an input and letting go outside the modal is not a click outside.
+  function closeOnBackdrop(ov, close) {
+    var downOnOv = false;
+    ov.addEventListener('pointerdown', function (e) { downOnOv = e.target === ov; });
+    ov.addEventListener('click', function (e) { var d = downOnOv; downOnOv = false; if (e.target === ov && d) close(); });
+  }
 
   // ======================================================================
   // live mirror (driven by the WS state exactly like the overlay's reconcile)
@@ -1851,6 +1858,10 @@
           <span class="value" style="min-width:0;text-align:left">winners</span>
         </div>
         <div class="editor-row">
+          <label>Rules</label>
+          <label class="tog"><input type="checkbox" id="cr-ed-show_rules"> how-to-play box (while bets are open)</label>
+        </div>
+        <div class="editor-row">
           <label>Sound</label>
           <label class="tog" style="min-width:122px"><input type="checkbox" id="cr-ed-sfx"> dice sounds</label>
           <input type="range" id="cr-ed-sfx_volume" min="0" max="1" step="0.05">
@@ -1948,7 +1959,7 @@
 
     // Appearance rows
     var sels = { theme: q('#cr-ed-theme'), dice_style: q('#cr-ed-dice_style') };
-    var cbs = ['show_point', 'show_user', 'show_history', 'show_bets', 'show_payouts', 'sfx'];
+    var cbs = ['show_point', 'show_user', 'show_history', 'show_bets', 'show_payouts', 'show_rules', 'sfx'];
     var nums = ['history_count', 'bets_max', 'payouts_max'];
     var vol = q('#cr-ed-sfx_volume');
     function paintVol() { q('#cr-ed-volval').textContent = Math.round(w.sfx_volume * 100) + '%'; }
@@ -1974,7 +1985,7 @@
     vol.oninput = function () { w.sfx_volume = clamp(num(vol.value, 0.5), 0, 1); paintVol(); pushCfg(); };
 
     // ---- ▶ Preview: a local demo roll on the sample table (resultFor + random seed; no server call) ----
-    var previewBtn = q('.preview');
+    var previewBtn = q('.modal-actions .preview');
     var previewTok = 0, previewTimer = null;
     function previewDone(tok) {
       if (tok !== previewTok) return;
@@ -2055,15 +2066,17 @@
       ED = null;
     }
     document.addEventListener('keydown', onKey);
-    q('.close').onclick = close;
-    q('.cancel').onclick = close;
-    ov.addEventListener('click', function (e) { if (e.target === ov) close(); });
+    // The buttons are looked up inside the modal's chrome: the renderer's DOM in the preview
+    // comes first in the modal and may use the same class names.
+    q('.modal-header .close').onclick = close;
+    q('.modal-actions .cancel').onclick = close;
+    closeOnBackdrop(ov, close);
 
-    q('.test').onclick = async function () {
+    q('.modal-actions .test').onclick = async function () {
       var d = await api('POST', API + '/roll', { test: true, overrides: snapshot() }, "Can't test");
       if (d) toast('fired to OBS — not saved yet');
     };
-    q('.save').onclick = async function () {
+    q('.modal-actions .save').onclick = async function () {
       var d = await api('POST', '/games/api/config', { craps: snapshot() }, "Can't save");
       if (!d) return;
       var conf = d.config || (d.craps ? { craps: d.craps } : null);
@@ -2072,7 +2085,7 @@
       toast('saved craps placement');
       // Modal stays open so you can keep fine-tuning. Close via × / Cancel / Esc / click-outside.
     };
-    q('.reset').onclick = function () {
+    q('.modal-actions .reset').onclick = function () {
       Object.assign(w, pick(DEFAULTS, EDIT_KEYS));
       syncControls(); update(); pushCfg();
       toast('defaults restored — not saved yet');

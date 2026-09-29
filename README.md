@@ -190,6 +190,26 @@ the Games panel and placed with the same **Edit Mode** as the soundboard:
   holds no balances — the channel's bot (**Hex**, with its hexbank) is the
   **bank**, and a numbered, persisted **ledger** tells it exactly what to
   take and pay, even across restarts. See [docs/craps.md](docs/craps.md).
+- **Russian Roulette** — a side-on revolver and a stuffed burlap dummy with a
+  name tag (a chatter who volunteered, who earns a cut of the bank's win).
+  Pull k loads k bullets and re-spins; chat bets the dummy **survives** (the
+  stake rides and grows from pull to pull — cash out or let it ride) or goes
+  **bang** this pull. On a bang the stuffing bursts out and the dummy crumples
+  off its post, then gets re-stuffed for the next game. Three pulls, ~1:30 a
+  game. See [docs/russian_roulette.md](docs/russian_roulette.md).
+- **Trivia** — a game-show board with hexagon lozenges: chat bets **before**
+  seeing each question (only its category and difficulty), answers A–E, sees
+  how many picked each option, then the right one lights up green and the
+  wrong ones drop away. Winners ride their balance for a streak bonus or cash
+  out. 15 questions from easy to hard, from **Open Trivia DB** and your own
+  lore questions, never repeated in a night. See
+  [docs/trivia.md](docs/trivia.md).
+
+Both round games are placed and styled in the same **Edit Mode** editor as
+roulette and craps (sample game, ▶ Preview, **Test in OBS**), and carry your
+branding, not ours: the title (`title`: "Russian Roulette" / "TRIVIA") and
+trivia's name for your own questions (`lore_label`: "Channel Lore") are
+settings.
 
 Soundboard clips can fire when the ball or dice are thrown and when they land.
 
@@ -202,7 +222,11 @@ identical spin or roll, and a source that reconnects mid-spin rejoins at the
 right moment. A spin or roll is one HTTP call, and `wait=true` holds the
 response until it lands. **Launch/landing clips play on the base soundboard
 overlay (`/overlay`)** — keep both browser sources in your scene. See
-[docs/games.md](docs/games.md) and [docs/craps.md](docs/craps.md).
+[docs/games.md](docs/games.md), [docs/craps.md](docs/craps.md),
+[docs/russian_roulette.md](docs/russian_roulette.md) and [docs/trivia.md](docs/trivia.md).
+Every bet in every game is against the bank (the bot), paid through the same
+ledger; Hexcast never reads chat — your bot turns chat commands into API calls,
+so any AI vtuber's bot can run them.
 
 ### 📰 Ticker
 
@@ -468,6 +492,38 @@ A bet, take-down or clear while the dice are in the air returns HTTP 409
 like roulette. The ledger is shared with roulette's table — one `seq`
 numbering, each event names its `game` — so a bank running both tails
 `/games/api/ledger` once.
+
+**Games (Russian Roulette)** — one game at a time; bets against the bank, paid
+through the same ledger:
+
+```
+GET|POST /games/api/russian/start              → {dummy, dummy_user, rounds, seconds, test} → a game (409 if one runs)
+GET|POST /games/api/russian/bet                → {user, side: survive|bang, amount} → debits (409 bets_closed)
+GET|POST /games/api/russian/cashout            → {user} → the survive stake's value now (credit)
+GET|POST /games/api/russian/remove             → {user, side?} → take back this window's bets (refund)
+GET|POST /games/api/russian/dummy              → {dummy, dummy_user} → this game (before pull 1) or the next
+GET|POST /games/api/russian/next               → end the current phase now (alias /pull)
+GET  /games/api/russian/table · user/{name} · ledger?since=0 · history · bets
+GET|POST /games/api/russian/stop               → end it: stakes refunded, survive stakes cashed out
+GET|POST /games/api/russian/preview            → {overrides, seconds} → Test in OBS: that look on screen for a few seconds (never the game)
+```
+
+**Games (Trivia)** — bet before each question, answer, ride or cash out:
+
+```
+GET|POST /games/api/trivia/start               → {questions, difficulty, category, lore, seconds, test}
+GET|POST /games/api/trivia/bet                 → {user, amount} → a stake on the NEXT question (debit)
+GET|POST /games/api/trivia/answer              → {user, answer: A-E | 1-5 | text} (anyone; only bets are paid)
+GET|POST /games/api/trivia/ride · cashout      → {user} → let a win ride · take it (credit)
+GET|POST /games/api/trivia/next                → end the current phase now
+GET|POST /games/api/trivia/lore · lore/remove  → your own questions: list / add {question, correct, incorrect[], difficulty} / delete
+GET  /games/api/trivia/bank · categories · POST asked/clear   → question pool · OpenTDB categories · a new night
+GET  /games/api/trivia/table · user/{name} · ledger?since=0 · history · bets
+GET|POST /games/api/trivia/stop                → end it: stakes refunded, winnings cashed out
+GET|POST /games/api/trivia/preview             → {overrides, seconds} → Test in OBS: that look on screen for a few seconds (never the game)
+```
+
+`start` with `"test": true` plays either game without touching the ledger.
 Rules, every bet, and the step-by-step guide for hooking up Hex's hexbank:
 [docs/craps.md](docs/craps.md#hooking-up-the-bank-hexcoins) — or, when Hex does
 the math: [Hex does the math (Mode B)](docs/craps.md#hex-does-the-math-mode-b).

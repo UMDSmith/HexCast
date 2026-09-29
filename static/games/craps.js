@@ -76,10 +76,10 @@
     show_bets: true, bets_max: 6, show_payouts: true, payouts_max: 5,
     sfx: true, sfx_volume: 0.5, roll_clip: '', land_clip: '',
     currency: 'hexcoins', min_bet: 1, max_bet: 100000, odds_rule: '345',
-    field_12_pays: 3, auto_roll: false, bet_window_seconds: 20
+    field_12_pays: 3, auto_roll: false, bet_window_seconds: 20, show_rules: true
   };
   var APPEARANCE = ['x', 'y', 'scale', 'theme', 'dice_style', 'show_point', 'show_history', 'history_count',
-    'show_user', 'show_bets', 'bets_max', 'show_payouts', 'payouts_max', 'sfx', 'sfx_volume'];
+    'show_user', 'show_bets', 'bets_max', 'show_payouts', 'payouts_max', 'sfx', 'sfx_volume', 'show_rules'];
 
   // felt / rail / layout colours per theme
   var THEMES = {
@@ -888,7 +888,7 @@
     var cur = String(o.currency == null ? '' : o.currency).trim().slice(0, 24);
     o.currency = cur || 'hexcoins';
     var bk = ['hide_when_idle', 'show_when_bets', 'show_point', 'show_history', 'show_user', 'show_bets',
-      'show_payouts', 'sfx', 'auto_roll'];
+      'show_payouts', 'sfx', 'auto_roll', 'show_rules'];
     for (var i = 0; i < bk.length; i++) o[bk[i]] = toBool(o[bk[i]], DEFAULTS[bk[i]]);
     return o;
   }
@@ -1632,6 +1632,30 @@
     'display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}',
     '.hgc-rb i{font-style:normal;color:rgba(255,255,255,.38);}',
     '.hgc-more,.hgc-none{font-size:12.5px;color:rgba(255,255,255,.55);padding-top:5px;}',
+    /* how to play (show_rules): the same board, edged in the theme's accent, only while bets are open.
+       A round in two numbered steps (the one the table is on lit), then the bets: name + pays on one
+       line, what it means under it; a tip line at the foot */
+    '.hgc-board.hgc-rules{width:560px;min-width:0;max-width:none;box-sizing:border-box;border-color:var(--hgc-edge);}',
+    '.hgc-rsteps,.hgc-rcols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);column-gap:14px;}',
+    '.hgc-rcols{column-gap:18px;}',
+    '.hgc-rh{margin:5px 0 1px;font-size:10.5px;letter-spacing:.18em;font-weight:900;color:var(--hgc-accent);}',
+    '.hgc-rh small{margin-left:6px;font-size:10.5px;letter-spacing:.02em;font-weight:600;color:rgba(255,255,255,.45);}',
+    '.hgc-st{display:flex;gap:9px;align-items:flex-start;margin:4px 0;padding:6px 9px;border-radius:10px;',
+    'font-size:12.5px;line-height:1.38;color:rgba(255,255,255,.6);}',
+    '.hgc-st.hgc-on{color:#fff;background:linear-gradient(rgba(0,0,0,.42),rgba(0,0,0,.42)),var(--hgc-accent-a);}',
+    '.hgc-st u{flex:0 0 auto;width:19px;height:19px;border-radius:50%;text-decoration:none;display:flex;align-items:center;',
+    'justify-content:center;font-size:11px;font-weight:900;color:#111;background:rgba(255,255,255,.55);margin-top:1px;}',
+    '.hgc-st.hgc-on u{background:var(--hgc-accent);}',
+    '.hgc-st b{display:block;font-size:11.5px;letter-spacing:.14em;font-weight:900;color:inherit;}',
+    '.hgc-rl{padding:4px 0 3px;}',
+    '.hgc-rl+.hgc-rl,.hgc-st+.hgc-rl{border-top:1px solid rgba(255,255,255,.06);}',
+    '.hgc-rn{display:flex;justify-content:space-between;align-items:baseline;gap:10px;font-size:13px;}',
+    '.hgc-rn b{font-weight:800;color:#fff;white-space:nowrap;}',
+    '.hgc-rn i{font-style:normal;font-weight:800;color:var(--hgc-accent);white-space:nowrap;font-variant-numeric:tabular-nums;}',
+    '.hgc-rd{margin-top:1px;font-size:11.5px;line-height:1.33;color:rgba(255,255,255,.66);}',
+    '.hgc-rt{margin-top:6px;padding-top:6px;border-top:1px solid rgba(255,255,255,.09);font-size:11.5px;line-height:1.4;',
+    'color:rgba(255,255,255,.55);}',
+    '.hgc-rt b{color:var(--hgc-accent);font-weight:800;}',
     '.hgc-none{font-size:14.5px;color:rgba(255,255,255,.8);padding:3px 0 2px;}',
     /* Hex's own boards (setAnnounce / table.display_board): same boards, signed amounts,
        free-form titles and text-only lines */
@@ -1768,6 +1792,9 @@
     this.sideR = el('div', 'hgc-sidein', el('div', 'hgc-side hgc-r', r));
     this.betsEl = el('div', 'hgc-board hgc-hide', this.sideL);
     this.payEl = el('div', 'hgc-board hgc-hide', this.sideR);
+    // how to play: the right column is free while bets are open (the payouts only show after a roll)
+    this.rulesEl = el('div', 'hgc-board hgc-rules hgc-hide', this.sideR);
+    this.rulesSig = '';
     c.appendChild(r);
   };
 
@@ -1779,6 +1806,7 @@
     var s = this.root.style, acc = hexRgb(th.accent);
     s.setProperty('--hgc-accent', th.accent);
     s.setProperty('--hgc-accent-a', rgba(acc, 0.55));
+    s.setProperty('--hgc-edge', rgba(acc, 0.4));
     // text around a small tray stays readable: below scale 0.9 the boards, strips and
     // the call shrink less than the tray (from the placement scale, not the rendered
     // size, so the panel's scaled preview shows the same proportions as OBS)
@@ -1793,6 +1821,7 @@
     this._renderCountdown();
     if (this.callOn) this._renderCall(false);
     if (this.payOn) this._renderPayouts(false);
+    this._renderRules(false);
     this._updatePuck(true);
     if (this.sfx) this.sfx.setVolume(e.sfx_volume);
     this._draw();
@@ -2013,6 +2042,7 @@
     this.evIdx = 0;
     while (this.evIdx < P.events.length && P.events[this.evIdx].t <= t) this.evIdx++;
     this._hideResult();
+    this._renderRules(false);
     this._applyEff();
     if (pt) this._applyTable(pt.t, pt.at, true);
     this._renderHistory();
@@ -2139,6 +2169,7 @@
     this.tableSig = sig;
     if (changed) {
       this._renderBets(!quiet);
+      this._renderRules(!quiet);
       this._renderCaption(false);
       // the puck only travels when the point changes, not when a fresh instance (the
       // overlay re-creates it each time the game is shown) learns where it already is
@@ -2488,11 +2519,13 @@
     this._fitTop(R);
     function wOf(b) { return b.classList.contains('hgc-hide') ? 0 : b.offsetWidth; }
     function fits(room, w) { return !R || room >= SIDE_GAP + (w || 300) * ui + SIDE_EDGE; }
-    var wB = wOf(bets), wP = wOf(pay);
+    var rules = this.rulesEl, wB = wOf(bets), wP = wOf(pay), wR = wOf(rules);
     var bl = fits(R && R.l, wB) || !fits(R && R.r, wB), pl = !fits(R && R.r, wP) && fits(R && R.l, wP);
-    var wantB = bl ? this.sideL : this.sideR, wantP = pl ? this.sideL : this.sideR;
+    var rl = !fits(R && R.r, wR) && fits(R && R.l, wR);
+    var wantB = bl ? this.sideL : this.sideR, wantP = pl ? this.sideL : this.sideR, wantR = rl ? this.sideL : this.sideR;
     if (bets.parentNode !== wantB) wantB.insertBefore(bets, wantB.firstChild);
     if (pay.parentNode !== wantP) wantP.appendChild(pay);
+    if (rules.parentNode !== wantR) wantR.appendChild(rules);
     this._fitSide(this.sideL, R, R && R.l, true);
     this._fitSide(this.sideR, R, R && R.r, false);
   };
@@ -2522,6 +2555,84 @@
     col.style.setProperty('--hgc-sui', s.toFixed(3));
     col.style[left ? 'marginRight' : 'marginLeft'] = (SIDE_GAP - dx).toFixed(1) + 'px';
     inner.style.transform = dy ? 'translateY(' + (dy / s).toFixed(1) + 'px)' : '';
+  };
+
+  // How to play (show_rules): what the coming roll means (come-out or the point), then the
+  // bets, one line each. Only while no roll is up - bets are open and the column is free.
+  // [name, pays, what it means]: the bets that stay on the table until they win or lose |
+  // the one-roll bets (decided by the very next roll)
+  var RULE_STAY = [
+    ['Pass', '1:1', 'Wins by the two steps above. The easiest bet - start here.'],
+    ["Don't Pass", '1:1', 'The opposite of Pass (a 12 on the first roll is a tie).'],
+    ["Come / Don't Come", '1:1', 'The same two bets, started on any roll after the point is set.'],
+    ['Odds', '2:1 3:2 6:5', 'Extra behind Pass or Come once they have a number. Pays 4/10, 5/9, 6/8. No house edge.'],
+    ['Lay odds', '1:2 2:3 5:6', "The same, behind Don't Pass or Don't Come."],
+    ['Place 4-10', '9:5 7:5 7:6', 'Your number before a 7, again and again - the bet stays up.'],
+    ['Hard way', '7:1 9:1', 'Your number as a pair (e.g. 4+4 for 8) before a 7 or the easy way.']
+  ];
+  var RULE_ONE = [
+    ['Field', '1:1+', '2, 3, 4, 9, 10, 11 or 12 wins; 5, 6, 7 or 8 loses.'],
+    ['Any 7', '4:1', 'Any 7.'],
+    ['Any Craps', '7:1', 'A 2, 3 or 12.'],
+    ['Aces', '30:1', 'A 2 (1+1, snake eyes).'],
+    ['Ace-Deuce', '15:1', 'A 3.'],
+    ['Yo', '15:1', 'An 11.'],
+    ['Boxcars', '30:1', 'A 12 (6+6).'],
+    ['Horn', '27:4 3:1', 'Split over 2, 3, 11 and 12 (bet a multiple of 4).'],
+    ['C&E', '3:1 7:1', 'Any craps plus 11 (bet an even amount).']
+  ];
+  function ruleColumn(box, title, sub, rows) {
+    var col = el('div', '', box), h = el('div', 'hgc-rh', col);
+    h.appendChild(document.createTextNode(title));
+    el('small', '', h).textContent = sub;
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i], rw = el('div', 'hgc-rl', col), rn = el('div', 'hgc-rn', rw);
+      el('b', '', rn).textContent = r[0];
+      el('i', '', rn).textContent = r[1];
+      el('div', 'hgc-rd', rw).textContent = r[2];
+    }
+  }
+  function ruleStep(box, n, on, title, text) {
+    var st = el('div', 'hgc-st' + (on ? ' hgc-on' : ''), box);
+    el('u', '', st).textContent = String(n);
+    var tx = el('div', '', st);
+    el('b', '', tx).textContent = title;
+    tx.appendChild(document.createTextNode(text));
+  }
+  RP._renderRules = function (anim) {
+    var e = this.eff, box = this.rulesEl;
+    if (!e.show_rules || this.mode !== 'idle') {
+      if (!box.classList.contains('hgc-hide')) { box.classList.add('hgc-hide'); this._placeSides(); }
+      return;
+    }
+    var tb = this._tableShown(), pt = tb && tb.phase === 'point' ? +tb.point : 0;
+    var point = pt >= 4 && pt <= 10 && pt !== 7 ? pt : 0;
+    var sig = point + '|' + e.field_12_pays, hidden = box.classList.contains('hgc-hide');
+    if (sig !== this.rulesSig) {
+      this.rulesSig = sig;
+      box.textContent = '';
+      var hd = el('div', 'hgc-bh', box);
+      el('b', '', hd).textContent = 'HOW TO PLAY';
+      el('span', '', hd).textContent = 'Craps';
+      // a round, in two steps side by side: the one the table is on now is lit
+      var steps = el('div', 'hgc-rsteps', box);
+      ruleStep(steps, 1, !point, 'FIRST ROLL', '7 or 11: Pass wins. 2, 3 or 12: Pass loses. Any other number becomes the point.');
+      ruleStep(steps, 2, !!point, point ? 'THE POINT IS ' + point : 'THEN',
+        point ? 'Roll a ' + point + ' again before a 7: Pass wins. A 7 first: Pass loses, new round.'
+          : 'Keep rolling. The point again before a 7: Pass wins. A 7 first: Pass loses.');
+      var cols = el('div', 'hgc-rcols', box);
+      ruleColumn(cols, 'STAY UP', 'until they win or lose', RULE_STAY);
+      ruleColumn(cols, 'ONE ROLL', 'the very next roll only', RULE_ONE);
+      var tip = el('div', 'hgc-rt', box);
+      el('b', '', tip).textContent = '7:6';
+      tip.appendChild(document.createTextNode(' means bet 6 to win 7. Field: a 2 pays 2:1, a 12 pays ' +
+        (+e.field_12_pays === 2 ? '2:1' : '3:1') + '. Horn and C&E pay on the part that wins.'));
+    }
+    if (hidden) {
+      box.classList.remove('hgc-hide');
+      if (anim) { box.classList.remove('hgc-in'); void box.offsetWidth; box.classList.add('hgc-in'); }
+    }
+    this._placeSides();
   };
 
   RP._hideResult = function () {

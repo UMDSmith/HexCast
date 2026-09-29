@@ -1088,6 +1088,7 @@ a roll's `overrides`, and what the Edit Mode editor edits.
 | `bets_max` | `6` | 1–20 — viewers listed on the bets board (lines, on Hex's board) | ✓ |
 | `show_payouts` | `true` | the payouts board after a roll (Hex's [`/announce`](#announce-and-board) card too) | ✓ |
 | `payouts_max` | `5` | 1–20 — winners listed (lines, on Hex's card) | ✓ |
+| `show_rules` | `true` | the "how to play" box while no roll is up: what the coming roll means (the come-out, or "the point is 6: roll a 6 before a 7"), then the bets, one line each, and what they pay — in the theme's colours, beside the tray on the side the payouts board uses after a roll | ✓ |
 | `sfx` | `true` | built-in synthesized dice sounds in the overlay | ✓ |
 | `sfx_volume` | `0.5` | 0–1 | ✓ |
 | `roll_clip`, `land_clip` | `""` | soundboard clip names fired at the throw / landing (`""` = none; up to 200 chars) | |

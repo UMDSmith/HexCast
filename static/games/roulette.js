@@ -48,7 +48,9 @@
  * spin is up (below the history strip instead when there is no room above). The
  * board goes where table_position says (right / left / above / below), to the other
  * side when it would run off the stage there; the result card and the winners card
- * never share the screen with it.
+ * never share the screen with it. The "how to play" box (show_rules) takes the side the
+ * board doesn't (it stacks under the board when only that side has room), and only shows
+ * while no spin is up.
  *
  * Motion model — everything is a pure function of (plan, t), t = seconds since
  * launch, so any overlay can seek to elapsed_ms and every client draws the same
@@ -94,11 +96,11 @@
     show_bets: true, bets_max: 5, sfx: true, sfx_volume: 0.5,
     spin_clip: '', land_clip: '', cooldown_seconds: 0,
     currency: 'hexcoins', min_bet: 1, max_bet: 100000, auto_spin: false, bet_window_seconds: 20,
-    show_when_bets: true, show_table: true, table_max: 6, table_position: 'right'
+    show_when_bets: true, show_table: true, table_max: 6, table_position: 'right', show_rules: true
   };
   var APPEARANCE = ['x', 'y', 'scale', 'theme', 'red_color', 'black_color', 'green_color', 'result_position',
     'result_details', 'show_result', 'show_history', 'history_count', 'show_user', 'show_bets',
-    'bets_max', 'sfx', 'sfx_volume', 'show_table', 'table_max', 'table_position'];
+    'bets_max', 'sfx', 'sfx_volume', 'show_table', 'table_max', 'table_position', 'show_rules'];
   var TABLE_POS = { right: 1, left: 1, above: 1, below: 1 };
 
   var THEMES = {
@@ -509,7 +511,7 @@
     o.bet_window_seconds = toNum(o.bet_window_seconds, 20, 5, 300);
     o.currency = typeof o.currency === 'string' || typeof o.currency === 'number' ? annStr(o.currency, 24) : DEFAULTS.currency;
     var bk = ['hide_when_idle', 'show_result', 'result_details', 'show_history', 'show_user', 'show_bets', 'sfx',
-      'show_table', 'show_when_bets', 'auto_spin'];
+      'show_table', 'show_when_bets', 'auto_spin', 'show_rules'];
     for (i = 0; i < bk.length; i++) o[bk[i]] = toBool(o[bk[i]], DEFAULTS[bk[i]]);
     return o;
   }
@@ -1285,10 +1287,26 @@
     '.hgr-row .hgr-a small{margin-left:4px;font-size:11.5px;font-weight:700;color:rgba(255,255,255,.5);}',
     /* above / below the wheel: about as wide as the wheel, two columns */
     '.hgr-board.hgr-wide{width:440px;min-width:0;max-width:none;box-sizing:border-box;}',
-    '.hgr-wide .hgr-rows{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:22px;}',
-    '.hgr-wide .hgr-rows.hgr-one{grid-template-columns:minmax(0,1fr);}',
-    '.hgr-wide .hgr-row{gap:7px;font-size:14.5px;}',
-    '.hgr-wide .hgr-row .hgr-u{max-width:112px;}.hgr-wide .hgr-row .hgr-l{font-size:12px;}',
+    /* how to play (show_rules): the board's look in the theme's edge; only while no spin is up.
+       The basics lit up top, then the bets: name + pays on one line, what it means under it */
+    '.hgr-board.hgr-rules{width:520px;min-width:0;max-width:none;box-sizing:border-box;border-color:var(--hgr-edge);',
+    'box-shadow:0 14px 34px rgba(0,0,0,.55),0 0 18px var(--hgr-edge-glow),inset 0 1px 0 rgba(255,255,255,.06);}',
+    '.hgr-tableside .hgr-rules{margin-top:14px;}',
+    '.hgr-rp{margin:3px 0 5px;padding:7px 10px;border-radius:10px;font-size:12.5px;line-height:1.4;color:#fff;',
+    'background:linear-gradient(rgba(0,0,0,.42),rgba(0,0,0,.42)),var(--hgr-accent-a);}',
+    '.hgr-rp b{display:block;font-size:11.5px;letter-spacing:.14em;font-weight:900;color:#fff;margin-bottom:1px;}',
+    '.hgr-rcols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);column-gap:18px;}',
+    '.hgr-rh{margin:4px 0 1px;font-size:10.5px;letter-spacing:.18em;font-weight:900;color:var(--hgr-accent);}',
+    '.hgr-rh small{margin-left:6px;font-size:10.5px;letter-spacing:.02em;font-weight:600;color:rgba(255,255,255,.45);}',
+    '.hgr-rl{padding:4px 0 3px;}',
+    '.hgr-rl+.hgr-rl{border-top:1px solid rgba(255,255,255,.06);}',
+    '.hgr-rn{display:flex;justify-content:space-between;align-items:baseline;gap:10px;font-size:13px;}',
+    '.hgr-rn b{font-weight:800;color:#fff;white-space:nowrap;}',
+    '.hgr-rn i{font-style:normal;font-weight:800;color:var(--hgr-accent);white-space:nowrap;font-variant-numeric:tabular-nums;}',
+    '.hgr-rd{margin-top:1px;font-size:12px;line-height:1.35;color:rgba(255,255,255,.66);}',
+    '.hgr-rt{margin-top:6px;padding-top:6px;border-top:1px solid rgba(255,255,255,.09);font-size:11.5px;line-height:1.4;',
+    'color:rgba(255,255,255,.55);}',
+    '.hgr-rt b{color:var(--hgr-accent);font-weight:800;}',
     /* keyframes */
     '@keyframes hgr-pop{0%{transform:scale(.25);opacity:0}55%{transform:scale(1.1);opacity:1}78%{transform:scale(.97)}100%{transform:scale(1);opacity:1}}',
     '@keyframes hgr-pulse{0%,100%{opacity:.45;transform:scale(.92)}50%{opacity:.95;transform:scale(1.05)}}',
@@ -1396,6 +1414,7 @@
     this.bottomBox = el('div', 'hgr-bottom', r);
     this.sideBox = el('div', 'hgr-side hgr-r', r);
     this.tableSide = el('div', 'hgr-side hgr-r', r);
+    this.rulesSide = el('div', 'hgr-side hgr-l', r);
     this.capEl = el('div', 'hgr-cap hgr-hide', this.topBox);
     this.histEl = el('div', 'hgr-hist hgr-hide', this.bottomBox);
     this.betsEl = el('div', 'hgr-bets hgr-hide', this.sideBox);
@@ -1414,6 +1433,9 @@
     this.cdTxt = el('b', '', tx);
     // the "on the table" board (moved to its table_position by _fitTable)
     this.boardEl = el('div', 'hgr-board hgr-hide', this.tableSide);
+    // how to play (show_rules): placed by _fitTable too
+    this.rulesEl = el('div', 'hgr-board hgr-rules hgr-hide', this.rulesSide);
+    this.rulesBuilt = false;
     this.boardTitleEl = null;
     // badge
     var b = this.badgeEl = el('div', 'hgr-badge hgr-hide');
@@ -1958,7 +1980,63 @@
   RP._renderTable = function (anim) {
     this._countdown();
     this._renderBoard(anim);
+    this._renderRules(anim);
     this._fitTable();
+  };
+
+  // How to play (show_rules): the bets in one line each, what they pay. Only while no spin
+  // is up (the countdown's time: bets are open), never with the result or a winners card.
+  // [name, pays, what it covers]: outside bets (many numbers, small pays) | inside bets
+  var RULE_OUTSIDE = [
+    ['Red / Black', '1:1', 'The colour: 18 red, 18 black.'],
+    ['Odd / Even', '1:1', 'An odd or an even number.'],
+    ['Low / High', '1:1', 'Low is 1-18, high is 19-36.'],
+    ['Dozen', '2:1', '12 numbers in a block: 1-12, 13-24 or 25-36.'],
+    ['Column', '2:1', 'Every third number, e.g. 1, 4, 7 ... 34 (one of the 3 long rows).']
+  ];
+  var RULE_INSIDE = [
+    ['Straight', '35:1', 'One number - 0 or 00 too.'],
+    ['Split', '17:1', '2 numbers side by side, e.g. 17-18 or 0-00.'],
+    ['Street', '11:1', 'A row of 3, e.g. 1-2-3.'],
+    ['Trio', '11:1', 'A zero and 2 numbers: 0-1-2, 0-00-2 or 00-2-3.'],
+    ['Corner', '8:1', '4 numbers in a square, e.g. 1-2-4-5.'],
+    ['Basket', '6:1', '0, 00, 1, 2 and 3.'],
+    ['Six line', '5:1', '2 rows of 3 side by side, e.g. 1-6.']
+  ];
+  function ruleColumn(box, title, sub, rows) {
+    var col = el('div', '', box), h = el('div', 'hgr-rh', col);
+    h.appendChild(document.createTextNode(title));
+    el('small', '', h).textContent = sub;
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i], rw = el('div', 'hgr-rl', col), rn = el('div', 'hgr-rn', rw);
+      el('b', '', rn).textContent = r[0];
+      el('i', '', rn).textContent = r[1];
+      el('div', 'hgr-rd', rw).textContent = r[2];
+    }
+  }
+  RP._renderRules = function (anim) {
+    var box = this.rulesEl;
+    if (!this.eff.show_rules || this.mode !== 'idle') { box.classList.add('hgr-hide'); box.classList.remove('hgr-in'); return; }
+    if (!this.rulesBuilt) {
+      this.rulesBuilt = true;
+      var hd = el('div', 'hgr-bh', box);
+      el('b', '', hd).textContent = 'HOW TO PLAY';
+      el('span', '', hd).textContent = 'Roulette';
+      var ph = el('div', 'hgr-rp', box);
+      el('b', '', ph).textContent = 'PICK WHERE THE BALL LANDS';
+      ph.appendChild(document.createTextNode('38 pockets: 1-36, 0 and 00 (the green ones). Bets close when the wheel ' +
+        'spins. Outside bets all lose on 0 and 00.'));
+      var cols = el('div', 'hgr-rcols', box);
+      ruleColumn(cols, 'OUTSIDE BETS', 'many numbers', RULE_OUTSIDE);
+      ruleColumn(cols, 'INSIDE BETS', 'on the number grid', RULE_INSIDE);
+      var tip = el('div', 'hgr-rt', box);
+      el('b', '', tip).textContent = '35:1';
+      tip.appendChild(document.createTextNode(' means bet 1 to win 35, and your bet comes back too. Fewer numbers, bigger pay.'));
+    }
+    if (box.classList.contains('hgr-hide')) {
+      box.classList.remove('hgr-hide');
+      if (anim) { box.classList.remove('hgr-in'); void box.offsetWidth; box.classList.add('hgr-in'); }
+    }
   };
 
   // bets are still being taken: a countdown is up and has not reached zero
@@ -2080,8 +2158,12 @@
   RP._fitTable = function () {
     if (this.destroyed) return;
     var cdOn = !this.cdEl.classList.contains('hgr-hide');
-    if (!cdOn && !this.boardOn) return;
     var st = this._stageRect();
+    this._fitBoard(cdOn, st);
+    this._fitRules(st);
+  };
+  RP._fitBoard = function (cdOn, st) {
+    if (!cdOn && !this.boardOn) return;
     this.cdMoved = false;
     this._putCd(true);
     if (cdOn && st) {
@@ -2100,6 +2182,32 @@
       }
     }
     this._nudgeBoard();
+  };
+  // the side the board doesn't use (left when the board is above / below or away); the other
+  // side when that one runs off the stage - stacked under the board if the board is there
+  RP._fitRules = function (st) {
+    var r = this.rulesEl;
+    if (r.classList.contains('hgr-hide')) return;
+    var bside = this.boardOn && (this.boardPos === 'left' || this.boardPos === 'right') ? this.boardPos : null;
+    var want = bside === 'left' ? 'right' : 'left', other = want === 'left' ? 'right' : 'left';
+    this._putRules(want, false);
+    if (!st) return;
+    var over = overflowPx(r.getBoundingClientRect(), st);
+    if (over > 0.5) {
+      this._putRules(other, other === bside);
+      if (!(overflowPx(r.getBoundingClientRect(), st) < over)) this._putRules(want, false);
+    }
+  };
+  RP._putRules = function (side, stack) {
+    var r = this.rulesEl;
+    if (stack) {
+      if (r.parentNode !== this.tableSide || this.tableSide.lastChild !== r) this.tableSide.appendChild(r);
+      this.tableSide.classList.add('hgr-tableside');
+      return;
+    }
+    this.tableSide.classList.remove('hgr-tableside');
+    this.rulesSide.className = 'hgr-side ' + (side === 'left' ? 'hgr-l' : 'hgr-r');
+    if (r.parentNode !== this.rulesSide) this.rulesSide.appendChild(r);
   };
   RP._putCd = function (top) {
     var c = this.cdEl, box = top ? this.topBox : this.bottomBox, after = top ? this.capEl : this.histEl;

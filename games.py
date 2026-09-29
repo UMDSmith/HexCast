@@ -19,6 +19,8 @@ Adds:
     http://localhost:4747/games/api/ledger           -> every coin movement, by seq (for the bank bot)
     http://localhost:4747/games/api/roulette/announce -> show the bot's own winners card (it did the math)
     http://localhost:4747/games/api/craps/board      -> show the bot's own "on the table" board
+    http://localhost:4747/games/api/russian/start    -> start a Russian Roulette game (/bet, /cashout, /next ...)
+    http://localhost:4747/games/api/trivia/start     -> start a Trivia game (/bet, /answer, /ride, /cashout ...)
     ws://localhost:4747/games/ws/overlay             -> overlay feed
     ws://localhost:4747/games/ws/panel               -> panel feed (+ "ledger" pushes, one per game)
 
@@ -29,7 +31,9 @@ visibility, the countdown and the websocket feed are shared. Roulette is the
 first game (an American double-zero wheel, with the full standard bet table
 resolved server-side so a chat bot can run a points casino). Craps is the
 second: a persistent bank-craps table (bets stay down across rolls), every bet
-settled by standard casino rules. Both keep a table (`TableGame`: bets placed
+settled by standard casino rules. Russian Roulette and Trivia are ROUND games
+(`RoundGame`: one multi-round game at a time, bets against the bank, see below).
+Roulette and craps keep a table (`TableGame`: bets placed
 ahead of the spin / roll, persisted) and share one sequenced, persisted ledger
 that tells the external bank (the bot holding everyone's hexcoins) exactly
 what to debit and credit - Hexcast itself never holds a balance.
@@ -46,7 +50,9 @@ between the server and the OBS machine never matters.
 from __future__ import annotations
 
 import asyncio
+import base64
 import copy
+import hashlib
 import json
 import logging
 import math
@@ -55,6 +61,7 @@ import re
 import secrets
 import tempfile
 import time
+import unicodedata
 import urllib.parse
 from collections import deque
 from fractions import Fraction
@@ -90,6 +97,22 @@ def _read_static(name: str) -> str:
             f"next to hexcast.py."
         )
     return path.read_text(encoding="utf-8")
+
+
+# A game script referenced by a page ("/static/games/craps.js" in a src attribute or the
+# overlay's registry) gets ?v=<its mtime>: the pages themselves are sent no-store, but the
+# scripts are plain static files that OBS / the browser may keep cached for hours - after an
+# update they would keep running the old renderer. A changed file is a new URL.
+_GAME_SCRIPT = re.compile(r"(/static/games/([\w.-]+\.js))(?=[\"'])")
+
+
+def _versioned(html: str) -> str:
+    def stamp(m: re.Match) -> str:
+        try:
+            return f"{m.group(1)}?v={int((STATIC_DIR / 'games' / m.group(2)).stat().st_mtime)}"
+        except OSError:
+            return m.group(1)
+    return _GAME_SCRIPT.sub(stamp, html)
 
 
 # --------------------------------------------------------------------------
@@ -185,7 +208,43 @@ def _flag(v: Any) -> bool:
     return b if b is not _INVALID else False
 
 
-_CTRL = re.compile(r"[\x00-\x1f\x7f]")
+# Control characters - and lone UTF-16 surrogates (half an emoji from a client that cut a
+# string mid-character, sent as a "\ud83d" JSON escape): a str holding one can't be
+# encoded as UTF-8, so every JSON answer / broadcast carrying it would fail.
+_CTRL = re.compile(r"[\x00-\x1f\x7f\ud800-\udfff]")
+_SURROGATES = re.compile(r"[\ud800-\udfff]")
+
+
+def _joins(prev: str, ch: str) -> bool:
+    """Does `ch` continue the character `prev` is part of? A combining mark / variation
+    selector, the zero-width joiner, a skin-tone modifier, an emoji tag - or anything
+    right after a joiner."""
+    o = ord(ch)
+    return (prev == "‍" or ch == "‍" or unicodedata.category(ch) in ("Mn", "Me", "Mc")
+            or 0x1F3FB <= o <= 0x1F3FF or 0xE0020 <= o <= 0xE007F)
+
+
+def _is_ri(ch: str) -> bool:
+    return 0x1F1E6 <= ord(ch) <= 0x1F1FF          # regional indicator: two make a flag
+
+
+def _cut(s: str, limit: int) -> str:
+    """s cut to at most `limit` characters (code points, like len(): a plain emoji is one;
+    a flag, a skin-tone / keycap emoji or a joined (ZWJ) one is several), never through
+    what shows as one character - half a flag, a family emoji without its last members,
+    a letter without its accent: one that doesn't fit whole is dropped. The Games panel's
+    cut() (static/games/round_panels.js) keeps the same text."""
+    i = max(0, limit)
+    if len(s) <= i:
+        return s
+    while i > 0 and _joins(s[i - 1], s[i]):
+        i -= 1
+    j = i
+    while j > 0 and _is_ri(s[j - 1]):              # flags pair up from the start of a run
+        j -= 1
+    if (i - j) % 2 and _is_ri(s[i]):
+        i -= 1
+    return s[:i]
 
 
 def _clean_user(v: Any) -> str | None:
@@ -195,6 +254,23 @@ def _clean_user(v: Any) -> str | None:
         return None
     s = _CTRL.sub("", str(v)).strip().lstrip("@").strip()[:USER_MAX_CHARS]
     return s or None
+
+
+def _bet_text(v: Any) -> str:
+    """A request's bet string (roulette / craps): control characters and lone surrogates
+    removed - it is echoed in replies and kept on the table - trimmed, at most
+    BET_TEXT_MAX_CHARS. Missing / an object / a list -> ""."""
+    if v is None or isinstance(v, (dict, list)):
+        return ""
+    return _CTRL.sub("", str(v)).strip()[:BET_TEXT_MAX_CHARS]
+
+
+def _bet_id(v: Any, limit: int = 64) -> str:
+    """A request's bet id (bet_id / target), cleaned like _bet_text. Missing / not a
+    scalar -> ""."""
+    if v is None or isinstance(v, (dict, list, bool)):
+        return ""
+    return _CTRL.sub("", str(v)).strip()[:limit]
 
 
 _HEX6 = re.compile(r"^#[0-9a-f]{6}$")
@@ -230,12 +306,14 @@ def _coerce(spec: tuple, value: Any) -> Any:
             return ""
         if isinstance(value, (dict, list)):
             return _INVALID
-        return str(value).strip()[: spec[1]]
+        return _cut(_SURROGATES.sub("", str(value)).strip(), spec[1])
     if kind == "name":
-        # ("name", max_len): a short non-empty label (craps currency); control chars removed
+        # ("name", max_len): a short non-empty label (craps currency, a title); control chars
+        # and lone surrogates removed, at most max_len characters (code points; _cut() never
+        # leaves half an emoji / flag behind)
         if value is None or isinstance(value, (dict, list, bool)):
             return _INVALID
-        s = _CTRL.sub("", str(value)).strip()[: spec[1]].strip()
+        s = _cut(_CTRL.sub("", str(value)).strip(), spec[1]).strip()
         return s if s else _INVALID
     if kind == "intenum":
         # ("intenum", (2, 3)): an integer from a fixed set ("2" / 2.0 accepted)
@@ -574,7 +652,7 @@ def resolve_bet(entry: Any, result: dict, default_user: str | None = None) -> di
         entry = {"bet": None, "_bad": "bet entry must be an object"}
     user = _clean_user(entry.get("user")) or _clean_user(default_user)
     text = entry.get("bet")
-    bet_text = "" if text is None or isinstance(text, (dict, list)) else str(text).strip()[:BET_TEXT_MAX_CHARS]
+    bet_text = _bet_text(text)
     amount, amount_err = _parse_amount(entry.get("amount"))
 
     parsed = parse_bet(bet_text)
@@ -700,16 +778,17 @@ def _soon(coro) -> None:
 # --------------------------------------------------------------------------
 # In mode B the bot keeps the bets and pays from its own bank. Hexcast still
 # picks every outcome and animates it; the bot only tells the overlay what to
-# SHOW: a winners card after a result (/announce, every game) and, for the
-# table games, the "on the table" board (/craps/board, /roulette/board).
+# SHOW: a winners card after a result (/announce) and the "on the table" board
+# (/craps/board, /roulette/board) - table games only: a round game (russian,
+# trivia) builds its own game-over card, and its /announce answers 400.
 # Display calls never touch a table's bets, the ledger, history or stats.
 
 def _display_text(v: Any, limit: int) -> str | None:
-    """A display string: control chars removed, trimmed, at most `limit` chars.
-    Empty or not text-like -> None."""
+    """A display string: control chars removed, trimmed, at most `limit` chars (_cut:
+    never half an emoji / flag). Empty or not text-like -> None."""
     if v is None or isinstance(v, (dict, list, bool)):
         return None
-    s = _CTRL.sub("", str(v)).strip()[:limit].strip()
+    s = _cut(_CTRL.sub("", str(v)).strip(), limit).strip()
     return s or None
 
 
@@ -804,7 +883,8 @@ def _display_lines(entries: list, limit: int, signed: bool) -> list[dict]:
 #   validate(params)        /validate body;  bets_payload()  /bets body
 #   auto_key, has_table_bets(), auto_params()   the countdown (see below)
 #
-# Every game also carries the bot's winners card (/announce, STATE.announce):
+# Every table game also carries the bot's winners card (/announce, STATE.announce;
+# a RoundGame's is always null and the route refuses it):
 # display only, it keeps the game visible while it is up, expires on its own
 # (server clears it + broadcasts) and a new spin takes it down.
 #
@@ -923,7 +1003,8 @@ class Game:
     def validate(self, params: dict) -> dict:
         """Body of GET /games/api/{game}/validate (without "ok")."""
         bet = params.get("bet")
-        return {"bet": (bet or "")[:BET_TEXT_MAX_CHARS], **self.parse_bet(bet)}
+        text = _bet_text(bet)
+        return {"bet": text, **self.parse_bet(text)}
 
     def reset_stats(self) -> None:
         self._spins = 0
@@ -1708,6 +1789,7 @@ class Roulette(TableGame):
         "show_when_bets": True,         # stay visible while bets (or the bot's board) are down
         "show_table": True, "table_max": 6,                     # the "on the table" board before the spin
         "table_position": "right",      # right | left | below | above (of the wheel box)
+        "show_rules": True,             # the "how to play" box while bets are open
     }
     SCHEMA: dict[str, tuple] = {
         "x": ("num", 0, 100), "y": ("num", 0, 100), "scale": ("num", 0.2, 5),
@@ -1730,11 +1812,12 @@ class Roulette(TableGame):
         "show_when_bets": ("bool",),
         "show_table": ("bool",), "table_max": ("int", 1, 20),
         "table_position": ("enum", ("right", "left", "below", "above")),
+        "show_rules": ("bool",),
     }
     APPEARANCE = ("x", "y", "scale", "theme", "red_color", "black_color", "green_color",
                   "result_position", "result_details", "show_result", "show_history",
                   "history_count", "show_user", "show_bets", "bets_max", "sfx", "sfx_volume",
-                  "show_table", "table_max", "table_position")
+                  "show_table", "table_max", "table_position", "show_rules")
 
     # ---- table -----------------------------------------------------------
     # BET (internal, persisted): {id, user, bet (the text as placed), type, numbers,
@@ -1780,7 +1863,7 @@ class Roulette(TableGame):
             return plan
         user = _clean_user(entry.get("user")) or _clean_user(default_user)
         raw = entry.get("bet")
-        text = "" if raw is None or isinstance(raw, (dict, list)) else str(raw).strip()[:BET_TEXT_MAX_CHARS]
+        text = _bet_text(raw)
         plan.update(user=user, bet=text, amount_in=entry.get("amount"))
 
         def fail(msg: str, **kw) -> dict:
@@ -1855,9 +1938,9 @@ class Roulette(TableGame):
         """Take bets down: {bet_id} | {user, bet} | {user, all:true}. Returns (status, body)."""
         user = _clean_user(params.get("user"))
         bid = params.get("bet_id", params.get("id"))
-        bid = str(bid).strip() if bid is not None and not isinstance(bid, (dict, list, bool)) else ""
+        bid = _bet_id(bid)
         text = params.get("bet")
-        text = "" if text is None or isinstance(text, (dict, list)) else str(text).strip()[:BET_TEXT_MAX_CHARS]
+        text = _bet_text(text)
         if bid:
             b = self._bet_by_id(bid)
             if b is None:
@@ -2942,6 +3025,7 @@ class Craps(TableGame):
         "odds_rule": "345",             # 345 | 1 | 2 | 3 | 5 | 10 | 20 | 100
         "field_12_pays": 3,             # 2 | 3
         "auto_roll": False, "bet_window_seconds": 20,
+        "show_rules": True,             # the "how to play" box while bets are open
     }
     SCHEMA: dict[str, tuple] = {
         "x": ("num", 0, 100), "y": ("num", 0, 100), "scale": ("num", 0.2, 5),
@@ -2961,9 +3045,11 @@ class Craps(TableGame):
         "odds_rule": ("strenum", ODDS_RULES),
         "field_12_pays": ("intenum", (2, 3)),
         "auto_roll": ("bool",), "bet_window_seconds": ("num", 5, 300),
+        "show_rules": ("bool",),
     }
     APPEARANCE = ("x", "y", "scale", "theme", "dice_style", "show_point", "show_history", "history_count",
-                  "show_user", "show_bets", "bets_max", "show_payouts", "payouts_max", "sfx", "sfx_volume")
+                  "show_user", "show_bets", "bets_max", "show_payouts", "payouts_max", "sfx", "sfx_volume",
+                  "show_rules")
 
     def duration_range(self) -> tuple[float, float]:
         return ROLL_SECONDS_MIN, ROLL_SECONDS_MAX
@@ -3039,10 +3125,9 @@ class Craps(TableGame):
             return plan
         user = _clean_user(entry.get("user")) or _clean_user(default_user)
         raw = entry.get("bet")
-        text = "" if raw is None or isinstance(raw, (dict, list)) else str(raw).strip()[:BET_TEXT_MAX_CHARS]
+        text = _bet_text(raw)
         target = entry.get("target")
-        target = (str(target).strip()[:64] or None) if target is not None and not isinstance(
-            target, (dict, list, bool)) else None
+        target = _bet_id(target) or None
         plan.update(user=user, bet=text, amount_in=entry.get("amount"), label=text or "?")
 
         def fail(msg: str, **kw) -> dict:
@@ -3204,9 +3289,9 @@ class Craps(TableGame):
         (their odds can still come down). Returns (status, body)."""
         user = _clean_user(params.get("user"))
         bid = params.get("bet_id", params.get("id"))
-        bid = str(bid).strip() if bid is not None and not isinstance(bid, (dict, list, bool)) else ""
+        bid = _bet_id(bid)
         text = params.get("bet")
-        text = "" if text is None or isinstance(text, (dict, list)) else str(text).strip()[:BET_TEXT_MAX_CHARS]
+        text = _bet_text(text)
         take: list[tuple[dict, bool]] = []            # (bet, odds only)
         if bid:
             b = self._bet_by_id(bid)
@@ -3462,7 +3547,7 @@ def _rejected_entry(entry: Any, default_user: Any, error: str) -> dict:
     if not isinstance(entry, dict):
         return {"user": _clean_user(default_user), "bet": "", "amount": None, "error": error}
     raw = entry.get("bet")
-    text = "" if raw is None or isinstance(raw, (dict, list)) else str(raw).strip()[:BET_TEXT_MAX_CHARS]
+    text = _bet_text(raw)
     return {"user": _clean_user(entry.get("user")) or _clean_user(default_user), "bet": text,
             "amount": _echo(entry.get("amount")), "error": error}
 
@@ -3487,13 +3572,2052 @@ def _bet_entries(params: dict) -> list:
 
 
 # --------------------------------------------------------------------------
+# round games: Russian Roulette + Trivia
+# --------------------------------------------------------------------------
+# Unlike roulette / craps (one spin at a time, bets on a table), a ROUND game runs
+# one multi-round game at a time:
+#
+#   /start -> betting -> action -> result -> betting -> ... -> over -> idle
+#
+# driven by one server-side deadline per phase (the overlay counts down to it).
+# Every player bets against the BANK (the bot's bank): a stake is a ledger DEBIT
+# when it is placed, winnings are a ledger CREDIT when the player cashes out (or is
+# cashed out when the game ends). Nothing moves while a stake rides. Each change is
+# persisted crash-safe like the tables: the game file journals the change's ledger
+# events before they reach the shared ledger (Ledger.recover replays a torn one).
+#
+# A game still running when Hexcast stops is settled at the next start-up (and by
+# /stop): an outcome already decided counts (the trigger was pulled / the answers
+# were locked), then every stake still on the line is refunded, and every ride is
+# cashed out at its current value. `test` games (start with test=true) play exactly
+# the same but never write to the ledger - their coin movements only show in the
+# game's own log.
+#
+# A round game has no spin to carry appearance overrides, so the Edit Mode editor's
+# "Test in OBS" is /preview: the game goes on screen for a few seconds with the
+# editor's unsaved look on top of the saved config (STATE.preview), over whatever it
+# shows (the idle scene between games). Display only - it never touches the game,
+# bets or the ledger; it expires on its own (the server clears it + broadcasts), a new
+# one replaces it, and /hide or /stop end it.
+
+RUSSIAN_PATH = CONFIG_DIR / "games_russian.json"          # the running game + history (russian roulette)
+TRIVIA_PATH = CONFIG_DIR / "games_trivia.json"            # the running game + history (trivia)
+TRIVIA_BANK_PATH = CONFIG_DIR / "games_trivia_bank.json"  # OpenTDB session token, question pool, asked list
+TRIVIA_LORE_PATH = CONFIG_DIR / "games_trivia_lore.json"  # lore: the channel's own questions
+
+ROUND_HISTORY_MAX = 50          # finished games kept per round game
+ROUND_PLAYERS_MAX = 500         # players with coins in one game
+ROUND_LOG_MAX = 400             # coin movements kept in a game's own log
+DUMMY_NAME_MAX = 24
+COMMANDS_TEXT_MAX = 120
+ROUND_TITLE_MAX = 32            # the game's title on the overlay (your branding: title)
+LORE_LABEL_MAX = 24             # trivia: what the overlay calls your own questions (lore_label)
+PREVIEW_SECONDS = 8.0           # /preview (the editor's Test in OBS): default + clamp
+PREVIEW_SECONDS_MIN = 2.0
+PREVIEW_SECONDS_MAX = 60.0
+
+RR_CHAMBERS = 6
+RR_ROUNDS_MAX = 5               # round k loads k bullets: 6 would be certain
+
+
+def _floor(x: Fraction) -> int:
+    return int(math.floor(x))
+
+
+def _mult_view(x: Fraction) -> float:
+    """A multiplier for display, rounded DOWN to 2 decimals (never overstated)."""
+    return math.floor(x * 100) / 100
+
+
+def _pct_frac(v: Any) -> Fraction:
+    f = _as_float(v)
+    return Fraction(str(round(f, 4))) / 100 if f is not None and f > 0 else Fraction(0)
+
+
+class RoundGame(Game):
+    """A game of rounds, bets against the bank (see above). Subclasses provide the
+    phases (advance), the money rules (open_settlement, summaries) and the views."""
+
+    PHASES: tuple[str, ...] = ()
+    STAT_KEYS: tuple[str, ...] = ()
+    CLIP_KEYS: tuple[str, ...] = ()
+
+    def __init__(self, path: Path | None = None, ledger: Ledger | None = None) -> None:
+        super().__init__()
+        self.path = Path(path) if path else self.default_path()
+        self.ledger = ledger if ledger is not None else LEDGER
+        self.g: dict | None = None              # the running game (None = idle)
+        self._task: asyncio.Task | None = None  # the phase deadline
+        self._token: object | None = None
+        self._bc: asyncio.Task | None = None    # a coalesced broadcast (answers / bets)
+        self.preview: dict | None = None        # Test in OBS: {id, overrides} (without expires_in_ms)
+        self._preview_until: float | None = None
+        self._preview_task: asyncio.Task | None = None
+        self._preview_token: object | None = None
+        journal, seq = self._load()
+        self._recovery = (self.key, self.path.name, journal, seq)
+
+    # ---- per-game pieces ------------------------------------------------------
+
+    def default_path(self) -> Path:
+        raise NotImplementedError
+
+    def clean_game(self, raw: Any) -> dict | None:
+        raise NotImplementedError
+
+    def advance(self) -> None:
+        """The current phase's deadline passed (or /next): move on."""
+        raise NotImplementedError
+
+    def open_settlement(self) -> list[dict]:
+        """Abort: the ledger events that give back everything still on the line."""
+        raise NotImplementedError
+
+    def summary(self, outcome: str) -> dict:
+        raise NotImplementedError
+
+    def game_view(self, now: float) -> dict:
+        raise NotImplementedError
+
+    def table_bets(self) -> list[dict]:
+        """[{user, amount}] of the coins on the line (hexbar / status)."""
+        return []
+
+    # ---- stats / history ------------------------------------------------------
+
+    def reset_stats(self) -> None:
+        self._spins = 0
+        self._st: dict[str, Any] = {k: 0 for k in self.STAT_KEYS}
+
+    def stats(self) -> dict:
+        return dict(self._st)
+
+    def clear_history(self) -> None:
+        super().clear_history()
+        self.save()
+
+    def _record_game(self, summary: dict) -> None:
+        g = self.g
+        entry = {"id": g["id"], "game": self.key, "test": bool(g.get("test")),
+                 "started_at": g.get("started_at"), "ended_at": round(time.time(), 3), "result": summary}
+        self.history.insert(0, entry)
+        del self.history[ROUND_HISTORY_MAX:]
+        if not g.get("test"):
+            try:
+                self.record(summary)
+            except Exception:
+                log.exception("[games] %s stats failed", self.key)
+
+    # ---- persistence ------------------------------------------------------------
+
+    def _load(self) -> tuple[list[dict], int]:
+        if not self.path.exists():
+            return [], 0
+        try:
+            raw = json.loads(self.path.read_text(encoding="utf-8"))
+            if not isinstance(raw, dict):
+                raise ValueError("not a JSON object")
+        except Exception:
+            log.exception("[games] %s is unreadable - starting fresh (copy kept as .bad)", self.path)
+            try:
+                self.path.with_name(self.path.name + ".bad").write_bytes(self.path.read_bytes())
+            except OSError:
+                pass
+            return [], 0
+        hist = raw.get("history")
+        self.history = [h for h in hist if isinstance(h, dict) and isinstance(h.get("id"), str)
+                        and isinstance(h.get("result"), dict)][:ROUND_HISTORY_MAX] if isinstance(hist, list) else []
+        st = raw.get("stats")
+        if isinstance(st, dict):
+            for k in self.STAT_KEYS:
+                v = st.get(k)
+                if isinstance(v, dict):
+                    self._st[k] = {str(a): b for a, b in v.items() if _strict_int(b) is not None}
+                elif _strict_int(v) is not None:
+                    self._st[k] = _strict_int(v)
+        try:
+            self.g = self.clean_game(raw.get("game"))
+        except Exception:
+            log.exception("[games] %s: the saved game is unreadable - dropped", self.key)
+            self.g = None
+        if self.g is not None:
+            self.state = self.g["phase"]
+        journal = raw.get("journal")
+        events = [e for e in map(_clean_event, journal if isinstance(journal, list) else []) if e is not None]
+        seq = _strict_int(raw.get("last_seq")) or 0
+        return sorted(events, key=lambda e: e["seq"]), max(0, seq)
+
+    def save(self, journal: list[dict] | None = None) -> bool:
+        data = {"version": 1, "game": self.g, "history": self.history[:ROUND_HISTORY_MAX], "stats": self._st,
+                "last_seq": self.ledger.last_seq, "saved_at": round(time.time(), 3), "journal": journal or []}
+        return _atomic_write_text(self.path, json.dumps(data, indent=1))
+
+    def resume(self) -> None:
+        """Start-up: a game that was running when Hexcast stopped is settled now."""
+        if self.g is None:
+            return
+        log.warning("[games] %s game %s was still running when Hexcast stopped (%s) - settling it",
+                    self.key, self.g.get("id"), self.g.get("phase"))
+        try:
+            self._abort("restart")
+        except Exception:
+            log.exception("[games] %s: settling the interrupted game failed - dropped", self.key)
+            self.g, self.state = None, "idle"
+            self.save()
+
+    def _persist(self, events: list[dict]) -> list[dict]:
+        """Log coin movements of the running game: stamp -> save the game file WITH the
+        events as its journal -> append them to the ledger (test games: log only)."""
+        g = self.g
+        if not events:
+            self.save()
+            return []
+        if g is not None and g.get("test"):
+            ts = round(time.time(), 3)
+            out = [{"seq": None, "ts": ts, "game": self.key, "test": True, **e} for e in events]
+            self._log(out)
+            self.save()
+            return out
+        stamped = self.ledger.stamp([{"game": self.key, **e} for e in events])
+        self._log(stamped)
+        self.save(journal=self.ledger.unwritten + stamped)
+        out = self.ledger.write(stamped)
+        _soon(_flush_ledger())
+        return out
+
+    def _log(self, events: list[dict]) -> None:
+        g = self.g
+        if g is None:
+            return
+        tot = g.setdefault("totals", {})
+        for e in events:
+            amt = int(e.get("amount") or 0)
+            if e.get("type") == "debit":
+                g["debits"] = int(g.get("debits", 0)) + amt
+                t = tot.setdefault(e["user"], {"bet": 0, "paid": 0})
+                t["bet"] += amt
+            else:
+                g["credits"] = int(g.get("credits", 0)) + amt
+                if e.get("reason") == "volunteer_cut":
+                    continue
+                t = tot.setdefault(e["user"], {"bet": 0, "paid": 0})
+                t["paid"] += amt
+        lg = g.setdefault("log", [])
+        lg.extend(events)
+        del lg[:-ROUND_LOG_MAX]
+
+    def players_summary(self) -> list[dict]:
+        tot = (self.g or {}).get("totals") or {}
+        rows = [{"user": u, "bet": t["bet"], "paid": t["paid"], "net": t["paid"] - t["bet"]} for u, t in tot.items()]
+        rows.sort(key=lambda r: (-r["net"], r["user"].lower()))
+        return rows
+
+    # ---- phases + the deadline timer -------------------------------------------
+
+    @property
+    def phase(self) -> str:
+        return self.g["phase"] if self.g else "idle"
+
+    def _set_phase(self, phase: str, seconds: float | None) -> None:
+        g = self.g
+        now = time.time()
+        g["phase"] = phase
+        g["phase_at"] = round(now, 3)
+        g["ends_at"] = round(now + seconds, 3) if seconds is not None else None
+        self.state = phase
+        if seconds is not None:
+            self._arm(g["ends_at"])
+        else:
+            self._disarm()
+
+    def _arm(self, at: float) -> None:
+        self._disarm()
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return            # no loop (start-up / unit use): _heal() moves the game on
+        token = self._token = object()
+        self._task = loop.create_task(self._fire(token, at))
+
+    def _disarm(self) -> None:
+        self._token = None
+        task, self._task = self._task, None
+        if task is not None and not task.done():
+            try:
+                current = asyncio.current_task()
+            except RuntimeError:
+                current = None
+            if task is not current:
+                task.cancel()
+
+    async def _fire(self, token: object, at: float) -> None:
+        try:
+            await asyncio.sleep(max(0.0, at - time.time()))
+        except asyncio.CancelledError:
+            return
+        if token is not self._token:
+            return
+        self._task, self._token = None, None
+        self.step()
+        try:
+            await _flush_ledger()
+            await HUB.broadcast_state(self)
+        except Exception:
+            pass
+
+    def step(self) -> None:
+        """advance(), and never leave a game stuck if a rule throws: settle it."""
+        try:
+            self.advance()
+        except Exception:
+            log.exception("[games] %s: moving the game on failed - settling it", self.key)
+            try:
+                self._abort("error")
+            except Exception:
+                log.exception("[games] %s: settling after an error failed - dropped", self.key)
+                self.g, self.state = None, "idle"
+                self.save()
+
+    def _heal(self) -> None:
+        """A deadline that passed long ago with no timer behind it (a crashed task, no
+        loop when it was armed) - move the game on now."""
+        for _ in range(8):
+            g = self.g
+            if g is None or g.get("ends_at") is None:
+                return
+            if time.time() < g["ends_at"] + 2 or (self._task is not None and not self._task.done()):
+                return
+            log.warning("[games] %s: %s deadline passed without its timer - moving on", self.key, g["phase"])
+            self.step()
+
+    def timing(self, now: float) -> dict:
+        g = self.g
+        ends = g.get("ends_at")
+        at = g.get("phase_at") or now
+        return {"ends_in_ms": None if ends is None else max(0, int(round((ends - now) * 1000))),
+                "phase_ms": None if ends is None else max(0, int(round((ends - at) * 1000))),
+                "elapsed_ms": max(0, int(round((now - at) * 1000)))}
+
+    def _to_idle(self) -> None:
+        self._disarm()
+        self.g, self.state = None, "idle"
+        self.shown = False
+        self.save()
+
+    def _abort(self, reason: str) -> None:
+        self._disarm()
+        g = self.g
+        if g is None:
+            return
+        events = self.open_settlement()
+        if events:
+            self._persist(events)
+        if g["phase"] != "over":
+            g["outcome"] = reason
+            g["summary"] = self.summary(reason)
+            self._record_game(g["summary"])
+        self.g, self.state = None, "idle"
+        self.save()
+
+    def _clip(self, key: str) -> None:
+        g = self.g
+        name = self.cfg.get(key)
+        if name and not (g and g.get("test")):
+            _soon(_fire_clip(name, f"{self.key} {key}"))
+
+    def skip(self) -> tuple[int, dict]:
+        """/next: end the current phase now."""
+        g = self.g
+        if g is None:
+            return 409, {"error": "no game running"}
+        if g.get("ends_at") is None:
+            return 409, {"error": f"nothing to skip in {g['phase']}"}
+        was = g["phase"]
+        self.step()
+        return 200, {"skipped": was}
+
+    # ---- money helpers --------------------------------------------------------
+
+    def _coins(self, v: Any, already: int = 0) -> tuple[int | None, str | None]:
+        amt, err = _parse_coins(v)
+        if err:
+            return None, err
+        cfg = self.cfg
+        if amt < cfg["min_bet"]:
+            return None, f"minimum bet is {cfg['min_bet']} {cfg['currency']}"
+        if cfg["max_bet"] and already + amt > cfg["max_bet"]:
+            extra = f" ({already} already down this round)" if already else ""
+            return None, f"max bet is {cfg['max_bet']} {cfg['currency']}{extra}"
+        return amt, None
+
+    def _closed(self, what: str = "bets") -> tuple[int, dict]:
+        g = self.g
+        if g is None:
+            return 409, {"error": "no game running - start one with /start"}
+        ms = max(0, int(round(((g.get("ends_at") or time.time()) - time.time()) * 1000)))
+        return 409, {"error": f"{what}_closed", "phase": g["phase"], "retry_in_ms": ms}
+
+    # ---- Game overrides (the spin lifecycle doesn't apply) ------------------------
+
+    def busy_response(self, until: str = "idle") -> JSONResponse | None:
+        if until == "land":
+            return None           # /hide: allowed any time
+        return _err(f"{self.title} has no /spin or /timer - start a game with POST /games/api/{self.key}/start "
+                    f"(a look preview on the overlay: POST /games/api/{self.key}/preview)")
+
+    def on_config(self) -> None:
+        pass
+
+    def on_idle(self) -> None:
+        pass
+
+    def visible(self) -> bool:
+        if self.preview_active():
+            return True               # Test in OBS: on screen for its seconds, even while hidden
+        if self.hidden:
+            return False
+        if self.g is not None:
+            return True
+        return self.shown or not self.cfg.get("hide_when_idle", True)
+
+    def stop(self) -> bool:
+        active = self.g is not None
+        if active:
+            self._abort("stopped")
+        self._disarm()
+        self.clear_preview()
+        self.shown = False
+        self.hidden = True
+        return active
+
+    def hide(self) -> None:
+        self.clear_preview()
+        super().hide()
+
+    # ---- Test in OBS: the editor's appearance preview (see the top) ---------------
+
+    def _preview_ms(self, now: float | None = None) -> int:
+        """ms until the preview ends (<= 0: none / over)."""
+        if self.preview is None or self._preview_until is None:
+            return 0
+        now = time.time() if now is None else now
+        return int(round((self._preview_until - now) * 1000))
+
+    def preview_active(self, now: float | None = None) -> bool:
+        return self._preview_ms(now) > 0
+
+    def preview_view(self, now: float | None = None) -> dict | None:
+        """STATE.preview: {id, overrides, expires_in_ms} as of `now`, or None."""
+        ms = self._preview_ms(now)
+        return {**self.preview, "expires_in_ms": ms} if ms > 0 else None
+
+    def set_preview(self, params: dict) -> tuple[int, dict]:
+        """/preview: show the game for `seconds` with appearance `overrides` (x=&y=&scale=
+        shorthand too) on top of the saved config. Only this game's APPEARANCE keys are
+        kept (validate_overrides); nothing else changes."""
+        overrides = self.spin_overrides(params)
+        secs = _as_float(params.get("seconds"))
+        secs = PREVIEW_SECONDS if secs is None else min(PREVIEW_SECONDS_MAX, max(PREVIEW_SECONDS_MIN, secs))
+        now = time.time()
+        self.preview = {"id": f"pv-{secrets.token_hex(4)}", "overrides": overrides}
+        self._preview_until = now + secs
+        self._arm_preview_timer()
+        return 200, {"preview": self.preview_view(now)}
+
+    def clear_preview(self) -> bool:
+        """End the preview now (/preview/clear, /hide, /stop). True if one was up."""
+        was = self.preview_active()
+        self.preview, self._preview_until = None, None
+        self._cancel_preview_timer()
+        return was
+
+    def _arm_preview_timer(self) -> None:
+        self._cancel_preview_timer()
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return            # no loop (unit use): the preview still reads as over once expired
+        token = self._preview_token = object()
+        task = self._preview_task = loop.create_task(self._preview_expire(token, self._preview_until))
+        _BG_TASKS.add(task)       # stays referenced while it broadcasts (it drops _preview_task first)
+        task.add_done_callback(_BG_TASKS.discard)
+
+    def _cancel_preview_timer(self) -> None:
+        self._preview_token = None
+        task, self._preview_task = self._preview_task, None
+        if task is not None and not task.done():
+            try:
+                current = asyncio.current_task()
+            except RuntimeError:
+                current = None
+            if task is not current:
+                task.cancel()
+
+    async def _preview_expire(self, token: object, at: float) -> None:
+        try:
+            await asyncio.sleep(max(0.0, at - time.time()))
+        except asyncio.CancelledError:
+            return
+        if self._preview_token is not token:
+            return
+        self.preview, self._preview_until = None, None
+        self._preview_token, self._preview_task = None, None
+        try:
+            await HUB.broadcast_state(self)       # the look goes back to the saved one (and maybe hides)
+        except Exception:
+            pass
+
+    def table_view(self) -> dict:
+        bets = self.table_bets()
+        return {"bets": bets, "total_on_table": sum(b["amount"] for b in bets),
+                "currency": self.cfg["currency"], "last_seq": self.ledger.last_seq}
+
+    def state_view(self) -> dict:
+        self._heal()
+        now = time.time()
+        return {"state": self.phase, "visible": self.visible(), "spin": None, "last": self.last(),
+                "history": [], "busy_ms": 0, "announce": None, "table": self.table_view(),
+                "game": self.game_view(now) if self.g is not None else None,
+                "idle": self.idle_view(), "preview": self.preview_view(now)}
+
+    def idle_view(self) -> dict:
+        """What the overlay shows between games (next game's settings)."""
+        return {}
+
+    def broadcast_soon(self) -> None:
+        """Coalesce bursts (a chat full of answers) into one STATE every 250 ms."""
+        if self._bc is not None and not self._bc.done():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+
+        async def later():
+            await asyncio.sleep(0.25)
+            try:
+                await HUB.broadcast_state(self)
+            except Exception:
+                pass
+        self._bc = loop.create_task(later())
+
+
+def _round_players(raw: Any, clean_one) -> dict:
+    out: dict[str, Any] = {}
+    if isinstance(raw, dict):
+        for u, v in list(raw.items())[:ROUND_PLAYERS_MAX]:
+            user = _clean_user(u)
+            val = clean_one(v)
+            if user and val is not None:
+                out[user] = val
+    return out
+
+
+def _round_common(raw: Any, phases: tuple[str, ...]) -> dict | None:
+    """The fields every saved round game has, cleaned (None = unusable)."""
+    if not isinstance(raw, dict) or not isinstance(raw.get("id"), str) or raw.get("phase") not in phases:
+        return None
+    totals = {}
+    if isinstance(raw.get("totals"), dict):
+        for u, t in raw["totals"].items():
+            if isinstance(t, dict) and _clean_user(u):
+                totals[_clean_user(u)] = {"bet": max(0, _strict_int(t.get("bet")) or 0),
+                                          "paid": max(0, _strict_int(t.get("paid")) or 0)}
+    return {"id": raw["id"][:40], "test": bool(raw.get("test")), "phase": raw["phase"],
+            "started_at": _as_float(raw.get("started_at")) or time.time(),
+            "phase_at": _as_float(raw.get("phase_at")) or time.time(),
+            "ends_at": _as_float(raw.get("ends_at")),
+            "debits": max(0, _strict_int(raw.get("debits")) or 0),
+            "credits": max(0, _strict_int(raw.get("credits")) or 0),
+            "totals": totals, "log": [e for e in raw.get("log") or [] if isinstance(e, dict)][-ROUND_LOG_MAX:],
+            "ever_bet": bool(raw.get("ever_bet")),
+            "outcome": raw.get("outcome") if isinstance(raw.get("outcome"), str) else None,
+            "summary": raw.get("summary") if isinstance(raw.get("summary"), dict) else None,
+            "last": raw.get("last") if isinstance(raw.get("last"), dict) else None,
+            "currency": _SURROGATES.sub("", str(raw.get("currency") or "coins"))[:24]}
+
+
+# --------------------------------------------------------------------------
+# russian roulette
+# --------------------------------------------------------------------------
+# A revolver, a stuffed dummy with a name tag. Round k loads one more bullet (k of 6)
+# and re-spins the cylinder: the dummy is shot with chance k/6. Up to `rounds` (3)
+# pulls; a bang ends the game. Two bets, both against the bank:
+#
+#   survive  "it clicks": rides from pull to pull. The house edge is taken ONCE, when
+#            the stake goes in: a stake that went in on pull j is worth, after the
+#            dummy survived pull c,  stake * keep * alive(j-1) / alive(c)
+#            (keep = 1 - edge, alive(c) = chance to survive pulls 1..c). Cash out
+#            between pulls, or ride; riders still in after the last pull are cashed
+#            out. A bang wipes every survive stake.
+#   bang     "this pull fires": one pull only, pays stake * keep * 6 / k.
+#
+# The dummy's name is display; a dummy `user` (the volunteer) gets `volunteer_cut_pct`
+# of the bank's net win for the game (nothing when the bank loses).
+
+_RR_SIDES = {"survive": "survive", "survives": "survive", "live": "survive", "lives": "survive",
+             "alive": "survive", "click": "survive", "safe": "survive",
+             "bang": "bang", "die": "bang", "dies": "bang", "shot": "bang", "shoot": "bang", "fire": "bang",
+             "fires": "bang", "dead": "bang", "death": "bang"}
+_RR_THEMES = ("saloon", "noir", "neon")
+_RR_OUTCOMES = {"bang": "BANG! The dummy is down", "survived": "The dummy survived every pull",
+                "walked": "Everyone walked away - the dummy lives", "no_bets": "No bets - no game",
+                "stopped": "Game stopped - every stake returned", "restart": "Settled after a restart",
+                "error": "Settled after an error"}
+
+
+def rr_alive(c: int) -> Fraction:
+    """Chance the dummy survives pulls 1..c (pull k: k bullets of 6, re-spun)."""
+    p = Fraction(1)
+    for k in range(1, c + 1):
+        p *= Fraction(RR_CHAMBERS - k, RR_CHAMBERS)
+    return p
+
+
+def rr_ride_mult(entered: int, survived: int, keep: Fraction) -> Fraction:
+    """Worth of 1 coin staked on pull `entered` once the dummy survived pull `survived`."""
+    if survived < entered:
+        return Fraction(1)                  # not at risk yet
+    return keep * rr_alive(entered - 1) / rr_alive(survived)
+
+
+def rr_bang_mult(k: int, keep: Fraction) -> Fraction:
+    return keep * RR_CHAMBERS / k
+
+
+def rr_odds(rounds: int, keep: Fraction) -> list[dict]:
+    return [{"round": k, "bullets": k, "fire_pct": round(100 * k / RR_CHAMBERS, 1),
+             "survive": _mult_view(rr_ride_mult(k, k, keep)),       # a fresh stake on this pull
+             "ride": _mult_view(rr_ride_mult(1, k, keep)),          # in since pull 1
+             "bang": _mult_view(rr_bang_mult(k, keep))} for k in range(1, rounds + 1)]
+
+
+class RussianRoulette(RoundGame):
+    key = "russian"
+    title = "Russian Roulette"
+    id_prefix = "rr"
+    PHASES = ("betting", "pulling", "result", "over")
+    STAT_KEYS = ("games", "bangs", "survived", "walked", "no_bets", "stopped", "pulls",
+                 "total_bet", "total_paid", "house_net", "bang_rounds")
+
+    DEFAULTS: dict[str, Any] = {
+        # placement: scene centre in % of the 1920x1080 stage; scale x the 1100x560 scene
+        "x": 50, "y": 50, "scale": 1.0,
+        "theme": "saloon",              # saloon | noir | neon
+        "title": "Russian Roulette",    # the title on the overlay (your branding)
+        "show_rules": True,             # rules box while bets are open
+        "show_players": True, "players_max": 8,
+        "show_odds": True,              # the payout ladder
+        "sfx": True, "sfx_volume": 0.6,
+        "hide_when_idle": True,
+        "commands_text": "",            # e.g. "!live 100 · !bang 50 · !cashout" (your bot's commands)
+        "rounds": 3,                    # pulls per game (round k = k bullets)
+        "house_edge_pct": 5,
+        "open_bet_seconds": 30,         # the first betting window
+        "between_seconds": 20,          # the window before every later pull
+        "pull_seconds": 9,              # load, spin, cock, pull
+        "result_seconds": 4,            # BANG / click stays up
+        "summary_seconds": 10,          # game over card (+ the dummy's revive)
+        "currency": "coins",            # your bot's coin name, shown after amounts
+        "min_bet": 1, "max_bet": 100000,  # per player per pull (per side); 0 = no max
+        "max_payout": 0,                # a survive stake worth this much is cashed out; 0 = no cap
+        "volunteer_cut_pct": 5,
+        "dummy_name": "Dummy",          # when a game starts without one
+        "pull_clip": "", "click_clip": "", "bang_clip": "",   # soundboard clips
+    }
+    SCHEMA: dict[str, tuple] = {
+        "x": ("num", 0, 100), "y": ("num", 0, 100), "scale": ("num", 0.2, 5),
+        "theme": ("enum", _RR_THEMES), "title": ("name", ROUND_TITLE_MAX),
+        "show_rules": ("bool",), "show_players": ("bool",), "players_max": ("int", 1, 20),
+        "show_odds": ("bool",), "sfx": ("bool",), "sfx_volume": ("num", 0, 1),
+        "hide_when_idle": ("bool",), "commands_text": ("str", COMMANDS_TEXT_MAX),
+        "rounds": ("int", 1, RR_ROUNDS_MAX), "house_edge_pct": ("num", 0, 25),
+        "open_bet_seconds": ("num", 5, 300), "between_seconds": ("num", 5, 300),
+        "pull_seconds": ("num", 6, 20), "result_seconds": ("num", 2, 30), "summary_seconds": ("num", 4, 60),
+        "currency": ("name", 24), "min_bet": ("int", 1, 1e9), "max_bet": ("int", 0, 1e12),
+        "max_payout": ("int", 0, 1e12), "volunteer_cut_pct": ("num", 0, 50),
+        "dummy_name": ("name", DUMMY_NAME_MAX),
+        "pull_clip": ("str", 200), "click_clip": ("str", 200), "bang_clip": ("str", 200),
+    }
+    APPEARANCE = ("x", "y", "scale", "theme", "title", "show_rules", "show_players", "players_max", "show_odds",
+                  "sfx", "sfx_volume")
+
+    def __init__(self, path: Path | None = None, ledger: Ledger | None = None) -> None:
+        self.next_dummy: dict | None = None     # /dummy while idle: the next game's dummy
+        super().__init__(path, ledger)
+
+    def default_path(self) -> Path:
+        return RUSSIAN_PATH
+
+    def validate_config(self, raw: Any) -> dict:
+        out = super().validate_config(raw)
+        if out["max_bet"] and out["max_bet"] < out["min_bet"]:
+            out["max_bet"] = 0
+        return out
+
+    # ---- saved game -----------------------------------------------------------
+
+    def clean_game(self, raw: Any) -> dict | None:
+        g = _round_common(raw, self.PHASES)
+        if g is None:
+            return None
+
+        def tranches(v):
+            if not isinstance(v, list):
+                return None
+            out = []
+            for t in v:
+                if isinstance(t, dict):
+                    a, r = _strict_int(t.get("amount")), _strict_int(t.get("round"))
+                    if a and a > 0 and r and 1 <= r <= RR_ROUNDS_MAX:
+                        out.append({"amount": a, "round": r})
+            return out or None
+
+        def stake(v):
+            a = _strict_int(v)
+            return a if a and a > 0 else None
+
+        rounds = min(RR_ROUNDS_MAX, max(1, _strict_int(raw.get("rounds")) or 3))
+        loaded = sorted({c for c in (raw.get("loaded") or []) if _strict_int(c) is not None and 0 <= c < RR_CHAMBERS})
+        pull = raw.get("pull") if isinstance(raw.get("pull"), dict) else None
+        if pull is not None:
+            pull = {"round": min(rounds, max(1, _strict_int(pull.get("round")) or 1)),
+                    "fired": bool(pull.get("fired")), "resolved": bool(pull.get("resolved")),
+                    "stop": _strict_int(pull.get("stop")) or 0, "new": _strict_int(pull.get("new")) or 0,
+                    "loaded": [c for c in pull.get("loaded") or [] if _strict_int(c) is not None],
+                    "seed": _strict_int(pull.get("seed")) or 0}
+        dummy = raw.get("dummy") if isinstance(raw.get("dummy"), dict) else {}
+        g.update({
+            "rounds": rounds, "round": min(rounds, max(1, _strict_int(raw.get("round")) or 1)),
+            "survived": min(rounds, max(0, _strict_int(raw.get("survived")) or 0)),
+            "edge_pct": _as_float(raw.get("edge_pct")) or 0.0,
+            "cut_pct": _as_float(raw.get("cut_pct")) or 0.0,
+            "max_payout": max(0, _strict_int(raw.get("max_payout")) or 0),
+            "dummy": {"name": _display_text(dummy.get("name"), DUMMY_NAME_MAX) or "Dummy",
+                      "user": _clean_user(dummy.get("user"))},
+            "loaded": loaded, "pull": pull,
+            "pulls": [p for p in raw.get("pulls") or [] if isinstance(p, dict)],
+            "positions": _round_players(raw.get("positions"), tranches),
+            "bangs": _round_players(raw.get("bangs"), stake),
+            "cut": raw.get("cut") if isinstance(raw.get("cut"), dict) else None,
+        })
+        return g
+
+    # ---- money ----------------------------------------------------------------
+
+    def _keep(self) -> Fraction:
+        return 1 - _pct_frac(self.g["edge_pct"])
+
+    def _value(self, trs: list[dict], survived: int) -> Fraction:
+        """A player's survive stakes, worth now (after `survived` pulls), capped."""
+        keep = self._keep()
+        v = sum((t["amount"] * rr_ride_mult(t["round"], survived, keep) for t in trs), Fraction(0))
+        cap = self.g.get("max_payout") or 0
+        return min(v, Fraction(cap)) if cap else v
+
+    def _player(self, user: str) -> dict:
+        g = self.g
+        trs = g["positions"].get(user) or []
+        c, r = g["survived"], g["round"]
+        keep = self._keep()
+        bang = g["bangs"].get(user, 0)
+        out = {"user": user, "stake": sum(t["amount"] for t in trs),
+               "fresh": sum(t["amount"] for t in trs if t["round"] > c),
+               "value": _floor(self._value(trs, c)) if trs else 0,
+               "bang": bang, "bang_pays": _floor(bang * rr_bang_mult(r, keep)) if bang else 0}
+        # what the survive stake is worth if the dummy survives the coming pull
+        nxt = r if g["phase"] == "betting" else None
+        out["if_survives"] = _floor(self._value(trs, nxt)) if trs and nxt else None
+        return out
+
+    def players_view(self) -> list[dict]:
+        g = self.g
+        users = list(dict.fromkeys(list(g["positions"]) + list(g["bangs"])))
+        rows = [self._player(u) for u in users]
+        rows.sort(key=lambda p: (-(p["value"] + p["bang"]), p["user"].lower()))
+        return rows
+
+    def table_bets(self) -> list[dict]:
+        if self.g is None:
+            return []
+        return [{"user": p["user"], "amount": p["value"] + p["bang"]} for p in self.players_view()]
+
+    def _cashout_events(self, users: list[str], reason: str = "cashout", label: str = "Cash out") -> list[dict]:
+        g = self.g
+        events = []
+        for u in users:
+            trs = g["positions"].pop(u, None)
+            if not trs:
+                continue
+            amt = _floor(self._value(trs, g["survived"]))
+            if amt > 0:
+                at_risk = any(t["round"] <= g["survived"] for t in trs)
+                events.append(_ev("credit", u, amt, reason if at_risk else "refund",
+                                  f"{g['id']}/survive", label if at_risk else "Survive (taken back)", g["id"]))
+        return events
+
+    # ---- API actions -------------------------------------------------------------
+
+    def start_game(self, params: dict) -> tuple[int, dict]:
+        if self.g is not None:
+            return 409, {"error": "a game is already running", "phase": self.phase}
+        cfg = self.cfg
+        nd = self.next_dummy or {}
+        name = (_display_text(params.get("dummy"), DUMMY_NAME_MAX) or nd.get("name")
+                or _clean_user(params.get("dummy_user")) or nd.get("user") or cfg["dummy_name"])
+        duser = _clean_user(params.get("dummy_user")) if params.get("dummy_user") not in (None, "") else nd.get("user")
+        r = _as_float(params.get("rounds"))
+        rounds = int(min(RR_ROUNDS_MAX, max(1, r))) if r is not None else cfg["rounds"]
+        now = time.time()
+        self.g = {
+            "id": f"rr-{secrets.token_hex(4)}", "test": _flag(params.get("test")), "phase": "betting",
+            "started_at": round(now, 3), "phase_at": round(now, 3), "ends_at": None,
+            "rounds": rounds, "round": 1, "survived": 0,
+            "edge_pct": cfg["house_edge_pct"], "cut_pct": cfg["volunteer_cut_pct"], "max_payout": cfg["max_payout"],
+            "dummy": {"name": _cut(name, DUMMY_NAME_MAX), "user": duser},
+            "loaded": [], "pull": None, "pulls": [], "positions": {}, "bangs": {},
+            "debits": 0, "credits": 0, "totals": {}, "log": [], "ever_bet": False,
+            "outcome": None, "summary": None, "last": None, "cut": None, "currency": cfg["currency"],
+        }
+        self.next_dummy = None
+        self.hidden = False
+        secs = _as_float(params.get("seconds"))
+        secs = min(300.0, max(5.0, secs)) if secs is not None else float(cfg["open_bet_seconds"])
+        self._set_phase("betting", secs)
+        self.save()
+        return 200, {"started": self.g["id"]}
+
+    def set_dummy(self, params: dict) -> tuple[int, dict]:
+        name = _display_text(params.get("dummy", params.get("name")), DUMMY_NAME_MAX)
+        user = _clean_user(params.get("dummy_user", params.get("user")))
+        if not name and not user:
+            return 400, {"error": "dummy needs a dummy (name) and/or dummy_user (the volunteer who gets the cut)"}
+        d = {"name": name or user, "user": user}
+        g = self.g
+        if g is None:
+            self.next_dummy = d
+            return 200, {"dummy": d, "applies": "next game"}
+        if g["phase"] != "betting" or g["round"] != 1:
+            return 409, {"error": "the dummy can only change before the first pull"}
+        g["dummy"] = d
+        self.save()
+        return 200, {"dummy": d, "applies": "this game"}
+
+    def place(self, params: dict) -> tuple[int, dict]:
+        g = self.g
+        if g is None or g["phase"] != "betting":
+            return self._closed()
+        user = _clean_user(params.get("user"))
+        if not user:
+            return 400, {"error": "user required"}
+        raw = params.get("side", params.get("bet"))
+        side = _RR_SIDES.get(re.sub(r"[\s_\-!']", "", str(raw or "")).lower())
+        if side is None:
+            return 400, {"error": "side must be survive (live, click) or bang (die, shot)"}
+        if user not in g["positions"] and user not in g["bangs"] and \
+                len(set(g["positions"]) | set(g["bangs"])) >= ROUND_PLAYERS_MAX:
+            return 400, {"error": f"the game is full ({ROUND_PLAYERS_MAX} players)"}
+        r = g["round"]
+        if side == "survive":
+            trs = g["positions"].setdefault(user, [])
+            cur = next((t for t in trs if t["round"] == r), None)
+            amt, err = self._coins(params.get("amount"), cur["amount"] if cur else 0)
+            if err:
+                if not trs:
+                    g["positions"].pop(user, None)
+                return 400, {"error": err}
+            if cur:
+                cur["amount"] += amt
+            else:
+                trs.append({"amount": amt, "round": r})
+            label = f"Survive · pull {r}"
+        else:
+            have = g["bangs"].get(user, 0)
+            amt, err = self._coins(params.get("amount"), have)
+            if err:
+                return 400, {"error": err}
+            g["bangs"][user] = have + amt
+            label = f"Bang · pull {r}"
+        added = (side == "survive" and cur is not None) or (side == "bang" and have > 0)
+        g["ever_bet"] = True
+        logged = self._persist([_ev("debit", user, amt, "add" if added else "bet", f"{g['id']}/{side}", label, g["id"])])
+        return 200, {"side": side, "amount": amt, "debits": _debits(logged), "player": self._player(user)}
+
+    def cashout(self, params: dict) -> tuple[int, dict]:
+        g = self.g
+        if g is None or g["phase"] != "betting":
+            return self._closed("cashout")
+        user = _clean_user(params.get("user"))
+        if not user:
+            return 400, {"error": "user required"}
+        if user not in g["positions"]:
+            return 400, {"error": f"@{user} has no survive stake in this game"}
+        logged = self._persist(self._cashout_events([user]))
+        return 200, {"credits": _aggregate_credits(logged, "amount"), "ledger": logged}
+
+    def remove(self, params: dict) -> tuple[int, dict]:
+        """Take back what went down in THIS betting window (not yet at risk)."""
+        g = self.g
+        if g is None or g["phase"] != "betting":
+            return self._closed()
+        user = _clean_user(params.get("user"))
+        if not user:
+            return 400, {"error": "user required"}
+        raw = params.get("side", params.get("bet"))
+        side = _RR_SIDES.get(re.sub(r"[\s_\-!']", "", str(raw or "")).lower()) if raw not in (None, "") else None
+        events = []
+        if side in (None, "bang") and g["bangs"].get(user):
+            amt = g["bangs"].pop(user)
+            events.append(_ev("credit", user, amt, "refund", f"{g['id']}/bang", "Bang (taken back)", g["id"]))
+        if side in (None, "survive") and g["positions"].get(user):
+            trs = g["positions"][user]
+            fresh = [t for t in trs if t["round"] > g["survived"]]
+            if fresh:
+                amt = sum(t["amount"] for t in fresh)
+                keep = [t for t in trs if t["round"] <= g["survived"]]
+                if keep:
+                    g["positions"][user] = keep
+                else:
+                    g["positions"].pop(user)
+                events.append(_ev("credit", user, amt, "refund", f"{g['id']}/survive", "Survive (taken back)", g["id"]))
+        if not events:
+            return 400, {"error": f"@{user} has nothing placed this round to take back (riding stakes: /cashout)"}
+        logged = self._persist(events)
+        return 200, {"credits": _aggregate_credits(logged, "amount"), "ledger": logged}
+
+    def user_view(self, name: Any) -> dict:
+        user = _clean_user(name)
+        g = self.g
+        player = self._player(user) if g is not None and user and (user in g["positions"] or user in g["bangs"]) else None
+        return {"user": user, "player": player, "session": self.ledger.session(user, self.key)}
+
+    # ---- the game ---------------------------------------------------------------
+
+    def advance(self) -> None:
+        ph = self.g["phase"]
+        if ph == "betting":
+            self._pull()
+        elif ph == "pulling":
+            self._land()
+        elif ph == "result":
+            self._after_result()
+        else:
+            self._to_idle()
+
+    def _pull(self) -> None:
+        g = self.g
+        if not g["positions"] and not g["bangs"]:
+            self._finish("walked" if g["ever_bet"] else "no_bets")
+            return
+        r = g["round"]
+        empty = [c for c in range(RR_CHAMBERS) if c not in g["loaded"]]
+        new = _RNG.choice(empty)                    # one more bullet...
+        loaded = sorted(g["loaded"] + [new])
+        stop = _RNG.randrange(RR_CHAMBERS)          # ...and a fair re-spin: fires with chance r/6
+        g["loaded"] = loaded
+        g["pull"] = {"round": r, "new": new, "loaded": loaded, "stop": stop, "fired": stop in loaded,
+                     "resolved": False, "seed": secrets.randbits(31)}
+        self._set_phase("pulling", float(self.cfg["pull_seconds"]))
+        self._clip("pull_clip")
+        self.save()
+
+    def _resolve(self) -> list[dict]:
+        """Settle the pull (once): bang -> bang bets paid, survive stakes lost;
+        click -> bang bets lost, survive stakes grow."""
+        g = self.g
+        p = g["pull"]
+        if p is None or p["resolved"]:
+            return []
+        p["resolved"] = True
+        r, keep, events = p["round"], self._keep(), []
+        winners, losers = [], []
+        if p["fired"]:
+            for u, amt in g["bangs"].items():
+                pay = _floor(amt * rr_bang_mult(r, keep))
+                events.append(_ev("credit", u, pay, "win", f"{g['id']}/bang", f"Bang · pull {r}", g["id"]))
+                winners.append({"user": u, "side": "bang", "amount": pay})
+            for u, trs in g["positions"].items():
+                losers.append({"user": u, "side": "survive", "amount": sum(t["amount"] for t in trs)})
+            g["positions"] = {}
+        else:
+            for u, amt in g["bangs"].items():
+                losers.append({"user": u, "side": "bang", "amount": amt})
+            g["survived"] = r
+            for u, trs in g["positions"].items():
+                winners.append({"user": u, "side": "survive", "amount": _floor(self._value(trs, r))})
+            cap = g.get("max_payout") or 0
+            if cap:
+                capped = [u for u, trs in g["positions"].items() if self._value(trs, r) >= cap]
+                events += self._cashout_events(capped, "cashout", "Cash out · max payout")
+        g["bangs"] = {}
+        g["pulls"].append({"round": r, "bullets": r, "fired": p["fired"]})
+        winners.sort(key=lambda w: -w["amount"])
+        losers.sort(key=lambda w: -w["amount"])
+        g["last"] = {"round": r, "fired": p["fired"], "winners": winners, "losers": losers}
+        return events
+
+    def _land(self) -> None:
+        g = self.g
+        events = self._resolve()
+        self._set_phase("result", float(self.cfg["result_seconds"]))
+        self._persist(events)
+        self._clip("bang_clip" if g["pull"]["fired"] else "click_clip")
+
+    def _after_result(self) -> None:
+        g = self.g
+        if g["pull"] and g["pull"]["fired"]:
+            self._finish("bang")
+        elif g["round"] >= g["rounds"]:
+            self._finish("survived", self._cashout_events(list(g["positions"]), "cashout", "Cash out · survived"))
+        else:
+            g["round"] += 1
+            g["pull"] = None
+            self._set_phase("betting", float(self.cfg["between_seconds"]))
+            self.save()
+
+    def _finish(self, outcome: str, events: list[dict] | None = None) -> None:
+        g = self.g
+        if events:
+            self._persist(events)
+        net = g["debits"] - g["credits"]
+        d = g["dummy"]
+        pct = _pct_frac(g["cut_pct"])
+        g["cut"] = None
+        if outcome != "no_bets" and d.get("user") and pct > 0 and net > 0 and _floor(net * pct) >= 1:
+            amt = _floor(net * pct)
+            self._persist([_ev("credit", d["user"], amt, "volunteer_cut", f"{g['id']}/cut", "Volunteer cut", g["id"])])
+            g["cut"] = {"user": d["user"], "amount": amt, "pct": g["cut_pct"]}
+        g["outcome"] = outcome
+        g["summary"] = self.summary(outcome)
+        self._record_game(g["summary"])
+        secs = float(self.cfg["summary_seconds"])
+        self._set_phase("over", min(secs, 6.0) if outcome == "no_bets" else secs)
+        self.save()
+
+    def open_settlement(self) -> list[dict]:
+        g = self.g
+        events = []
+        if g["phase"] == "pulling":
+            events += self._resolve()                 # the trigger was pulled: it counts
+        for u, amt in list(g["bangs"].items()):
+            events.append(_ev("credit", u, amt, "refund", f"{g['id']}/bang", "Bang (game stopped)", g["id"]))
+        g["bangs"] = {}
+        events += self._cashout_events(list(g["positions"]), "cashout", "Cash out · game stopped")
+        return events
+
+    def summary(self, outcome: str) -> dict:
+        g = self.g
+        fired = next((p["round"] for p in g["pulls"] if p.get("fired")), None)
+        return {"outcome": outcome, "text": _RR_OUTCOMES.get(outcome, outcome), "dummy": dict(g["dummy"]),
+                "rounds": g["rounds"], "pulls": len(g["pulls"]), "fired_on": fired,
+                "total_bet": g["debits"], "total_paid": g["credits"], "house_net": g["debits"] - g["credits"],
+                "cut": g.get("cut"), "players": self.players_summary(), "test": bool(g.get("test")),
+                "currency": g["currency"]}
+
+    def record(self, s: dict) -> None:
+        st = self._st
+        st["games"] += 1
+        key = {"bang": "bangs", "survived": "survived", "walked": "walked", "no_bets": "no_bets"}.get(
+            s["outcome"], "stopped")
+        st[key] += 1
+        st["pulls"] += s["pulls"]
+        st["total_bet"] += s["total_bet"]
+        st["total_paid"] += s["total_paid"]
+        st["house_net"] += s["house_net"]
+        if s.get("fired_on"):
+            br = st["bang_rounds"] if isinstance(st["bang_rounds"], dict) else {}
+            br[str(s["fired_on"])] = br.get(str(s["fired_on"]), 0) + 1
+            st["bang_rounds"] = br
+
+    def reset_stats(self) -> None:
+        super().reset_stats()
+        self._st["bang_rounds"] = {}
+
+    # ---- views --------------------------------------------------------------------
+
+    def game_view(self, now: float) -> dict:
+        g, cfg = self.g, self.cfg
+        keep = self._keep()
+        pull = None
+        if g["pull"] is not None and g["phase"] in ("pulling", "result", "over"):
+            pull = {k: g["pull"][k] for k in ("round", "new", "loaded", "stop", "fired", "seed")}
+        players = self.players_view()
+        return {"id": g["id"], "test": g["test"], "phase": g["phase"], **self.timing(now),
+                "round": g["round"], "rounds": g["rounds"], "survived": g["survived"],
+                "bullets": g["round"], "loaded": list(g["loaded"]), "pull": pull,
+                "dummy": dict(g["dummy"]), "edge_pct": g["edge_pct"], "cut_pct": g["cut_pct"],
+                "odds": rr_odds(g["rounds"], keep), "players": players,
+                "at_risk": sum(p["value"] for p in players), "bang_total": sum(p["bang"] for p in players),
+                "last": g["last"], "outcome": g.get("outcome"), "summary": g.get("summary"),
+                "currency": g["currency"], "min_bet": cfg["min_bet"], "max_bet": cfg["max_bet"],
+                "commands_text": cfg["commands_text"]}
+
+    def idle_view(self) -> dict:
+        cfg = self.cfg
+        d = self.next_dummy or {"name": cfg["dummy_name"], "user": None}
+        return {"dummy": d, "rounds": cfg["rounds"],
+                "odds": rr_odds(cfg["rounds"], 1 - _pct_frac(cfg["house_edge_pct"])),
+                "currency": cfg["currency"]}
+
+    def bets_payload(self) -> dict:
+        cfg = self.cfg
+        keep = 1 - _pct_frac(cfg["house_edge_pct"])
+        return {"ok": True, "game": self.key, "currency": cfg["currency"], "min_bet": cfg["min_bet"],
+                "max_bet": cfg["max_bet"], "house_edge_pct": cfg["house_edge_pct"],
+                "odds": rr_odds(cfg["rounds"], keep), "sides": {
+                    "survive": ["survive", "live", "lives", "alive", "click", "safe"],
+                    "bang": ["bang", "die", "dies", "shot", "fire", "dead"]},
+                "rules": [
+                    f"Round k loads k bullets of 6 and re-spins the cylinder: the dummy is shot with chance k/6. "
+                    f"Up to {cfg['rounds']} pulls; a bang ends the game.",
+                    "survive: rides from pull to pull and grows (the multipliers above); cash out between pulls "
+                    "or let it ride. Riders still in after the last pull are cashed out. A bang loses it.",
+                    "bang: this pull fires. One pull only.",
+                    "Every bet is against the bank: POST /bet debits, cash-outs and wins credit (the ledger).",
+                    "Bets and cash-outs only while bets are open (409 bets_closed otherwise). /remove takes back "
+                    "what went down in the current window.",
+                    "No bets when the window closes: the game ends.",
+                    f"The volunteer (dummy_user) gets {cfg['volunteer_cut_pct']}% of the bank's net win for the game."]}
+
+    def validate(self, params: dict) -> dict:
+        raw = params.get("side", params.get("bet"))
+        side = _RR_SIDES.get(re.sub(r"[\s_\-!']", "", str(raw or "")).lower())
+        amt, err = self._coins(params.get("amount")) if params.get("amount") not in (None, "") else (None, None)
+        g = self.g
+        r = g["round"] if g else 1
+        keep = self._keep() if g else 1 - _pct_frac(self.cfg["house_edge_pct"])
+        out: dict[str, Any] = {"valid": side is not None and err is None, "side": side, "round": r, "amount": amt}
+        if side is None:
+            out["error"] = "side must be survive or bang"
+        elif err:
+            out["error"] = err
+        else:
+            m = rr_ride_mult(r, r, keep) if side == "survive" else rr_bang_mult(r, keep)
+            out["multiplier"] = _mult_view(m)
+            if amt:
+                out["pays"] = _floor(amt * m)
+        return out
+
+
+# --------------------------------------------------------------------------
+# trivia: the question bank (Open Trivia DB + the channel's lore)
+# --------------------------------------------------------------------------
+# Open Trivia DB (https://opentdb.com, CC BY-SA 4.0): multiple-choice questions by
+# difficulty and category, base64-encoded, one call per 5 s per IP (every call here
+# goes through one lock that keeps that gap). A session token keeps questions from
+# repeating; unasked questions are kept in a pool on disk; every question asked (either
+# source) goes on the "asked" list, which is never asked again for `repeat_hours`.
+# Lore: the channel's own questions (2-5 options), kept in games_trivia_lore.json. The
+# overlay calls them by the config's `lore_label` ("Channel Lore"); a lore question
+# without a category has category "" in the STATE and the overlay shows that label instead.
+
+OPENTDB_URL = "https://opentdb.com"
+OPENTDB_GAP_SECONDS = 5.3
+TRIVIA_DIFFICULTIES = ("easy", "medium", "hard")
+TRIVIA_POOL_MAX = 150           # unasked OpenTDB questions kept per difficulty
+TRIVIA_LORE_MAX = 5000
+TRIVIA_Q_MAX = 300              # question length
+TRIVIA_A_MAX = 120              # answer length
+TRIVIA_OPTIONS_MAX = 5
+TRIVIA_VOTERS_MAX = 5000
+TRIVIA_LETTERS = "ABCDE"
+TRIVIA_LORE_OLD_CATEGORY = "Hex Lore"   # the category lore questions got when they had none (before lore_label)
+
+
+def _qtext(v: Any, limit: int) -> str | None:
+    if v is None or isinstance(v, (dict, list, bool)):
+        return None
+    s = _cut(re.sub(r"\s+", " ", _CTRL.sub(" ", _SURROGATES.sub("", str(v)))).strip(), limit).strip()
+    return s or None
+
+
+def _b64(v: Any) -> str:
+    try:
+        return base64.b64decode(str(v or "")).decode("utf-8", "replace")
+    except Exception:
+        return ""
+
+
+def trivia_question(raw: Any, source: str = "lore") -> dict | None:
+    """One question, cleaned: {id, key, source, category, difficulty, question, correct,
+    incorrect[1..4]} (None = unusable). `incorrect` may be a list or "a|b|c"."""
+    if not isinstance(raw, dict):
+        return None
+    q = _qtext(raw.get("question"), TRIVIA_Q_MAX)
+    c = _qtext(raw.get("correct", raw.get("correct_answer")), TRIVIA_A_MAX)
+    inc = raw.get("incorrect", raw.get("incorrect_answers"))
+    if isinstance(inc, str):
+        inc = inc.split("|")
+    if not q or not c or not isinstance(inc, list):
+        return None
+    wrong, seen = [], {c.lower()}
+    for w in inc:
+        t = _qtext(w, TRIVIA_A_MAX)
+        if t and t.lower() not in seen:
+            seen.add(t.lower())
+            wrong.append(t)
+    wrong = wrong[:TRIVIA_OPTIONS_MAX - 1]
+    if not wrong:
+        return None
+    d = str(raw.get("difficulty") or "medium").strip().lower()
+    if d not in TRIVIA_DIFFICULTIES:
+        d = "medium"
+    key = hashlib.sha1(f"{q.lower()}|{c.lower()}".encode("utf-8")).hexdigest()[:16]
+    out = {"id": ("lore-" if source == "lore" else "otdb-") + key[:10], "key": key, "source": source,
+           "category": _qtext(raw.get("category"), 60) or ("" if source == "lore" else "General Knowledge"),
+           "difficulty": d, "question": q, "correct": c, "incorrect": wrong}
+    if source == "opentdb":
+        out["cat_id"] = _strict_int(raw.get("cat_id")) or 0
+    return out
+
+
+class TriviaBank:
+    def __init__(self, path: Path, lore_path: Path) -> None:
+        self.path, self.lore_path = Path(path), Path(lore_path)
+        self.token: str | None = None
+        self.pool: dict[str, list[dict]] = {d: [] for d in TRIVIA_DIFFICULTIES}
+        self.asked: dict[str, float] = {}      # question key -> when it was asked
+        self.lore: list[dict] = []
+        self.categories: list[dict] | None = None
+        self.last_error: str | None = None
+        self.last_fetch: float | None = None
+        self._next_at = 0.0
+        self._lock: asyncio.Lock | None = None
+        self._load()
+
+    def _load(self) -> None:
+        try:
+            raw = json.loads(self.path.read_text(encoding="utf-8")) if self.path.exists() else {}
+        except Exception:
+            log.exception("[games] %s is unreadable - starting an empty question pool", self.path)
+            raw = {}
+        if isinstance(raw, dict):
+            self.token = raw.get("token") if isinstance(raw.get("token"), str) else None
+            pool = raw.get("pool") if isinstance(raw.get("pool"), dict) else {}
+            for d in TRIVIA_DIFFICULTIES:
+                qs = [trivia_question(x, "opentdb") for x in pool.get(d) or []]
+                self.pool[d] = [q for q in qs if q][:TRIVIA_POOL_MAX]
+            asked = raw.get("asked") if isinstance(raw.get("asked"), dict) else {}
+            self.asked = {str(k)[:16]: float(v) for k, v in asked.items() if _as_float(v) is not None}
+        try:
+            lr = json.loads(self.lore_path.read_text(encoding="utf-8")) if self.lore_path.exists() else {}
+        except Exception:
+            log.exception("[games] %s is unreadable - the lore is empty until it is fixed (copy kept as .bad)",
+                          self.lore_path)
+            try:
+                self.lore_path.with_name(self.lore_path.name + ".bad").write_bytes(self.lore_path.read_bytes())
+            except OSError:
+                pass
+            lr = {}
+        items = lr.get("questions") if isinstance(lr, dict) else lr
+        keys: set[str] = set()
+        for x in items if isinstance(items, list) else []:
+            q = trivia_question(x, "lore")
+            if q and q["key"] not in keys:
+                keys.add(q["key"])
+                self.lore.append(q)
+
+    def save(self) -> None:
+        _atomic_write_text(self.path, json.dumps({"version": 1, "token": self.token, "pool": self.pool,
+                                                  "asked": self.asked}, indent=1))
+
+    def save_lore(self) -> bool:
+        items = [{k: q[k] for k in ("id", "category", "difficulty", "question", "correct", "incorrect")}
+                 for q in self.lore]
+        return _atomic_write_text(self.lore_path, json.dumps({"version": 1, "questions": items}, indent=1))
+
+    # ---- asked list -------------------------------------------------------------
+
+    def prune(self, hours: float) -> None:
+        if hours and hours > 0:
+            cut = time.time() - hours * 3600
+            self.asked = {k: v for k, v in self.asked.items() if v >= cut}
+
+    def mark_asked(self, q: dict) -> None:
+        self.asked[q["key"]] = round(time.time(), 1)
+        self.save()
+
+    def clear_asked(self) -> int:
+        n = len(self.asked)
+        self.asked = {}
+        self.save()
+        return n
+
+    # ---- OpenTDB ------------------------------------------------------------------
+
+    async def _get(self, path: str, params: dict) -> dict:
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        async with self._lock:
+            wait = self._next_at - time.monotonic()
+            if wait > 0:
+                await asyncio.sleep(wait)
+            try:
+                async with httpx.AsyncClient(timeout=10, headers={"User-Agent": "Hexcast-games"}) as c:
+                    r = await c.get(OPENTDB_URL + path, params=params)
+                    data = r.json()
+            finally:
+                self._next_at = time.monotonic() + OPENTDB_GAP_SECONDS
+        return data if isinstance(data, dict) else {}
+
+    async def _ensure_token(self) -> None:
+        if self.token:
+            return
+        d = await self._get("/api_token.php", {"command": "request"})
+        if d.get("response_code") == 0 and isinstance(d.get("token"), str):
+            self.token = d["token"]
+            self.save()
+
+    async def fetch(self, difficulty: str, category: int, amount: int) -> int:
+        """Add up to `amount` new questions of one difficulty (and category, 0 = any)
+        to the pool. Returns how many were added (0 on any failure: last_error says why)."""
+        amount = max(1, min(50, int(amount)))
+        data: dict = {}
+        try:
+            await self._ensure_token()
+            for _attempt in range(4):
+                params: dict[str, Any] = {"amount": amount, "type": "multiple", "encode": "base64",
+                                          "difficulty": difficulty}
+                if category:
+                    params["category"] = category
+                if self.token:
+                    params["token"] = self.token
+                data = await self._get("/api.php", params)
+                code = data.get("response_code")
+                if code == 0:
+                    break
+                if code == 1 and amount > 3:          # not that many left for this query
+                    amount = max(3, amount // 3)
+                    continue
+                if code == 3:                         # token unknown / expired
+                    self.token = None
+                    await self._ensure_token()
+                    continue
+                if code == 4:                         # this token has seen them all: start over
+                    await self._get("/api_token.php", {"command": "reset", "token": self.token or ""})
+                    continue
+                if code == 5:                         # rate limited: the lock waits the gap
+                    continue
+                self.last_error = f"OpenTDB answered response_code {code} for {difficulty} (category {category or 'any'})"
+                return 0
+            else:
+                self.last_error = f"OpenTDB kept refusing {difficulty} questions (category {category or 'any'})"
+                return 0
+        except Exception as exc:
+            self.last_error = f"OpenTDB unreachable: {exc.__class__.__name__}: {exc}"
+            log.warning("[games] trivia: %s", self.last_error)
+            return 0
+        have = {q["key"] for d in TRIVIA_DIFFICULTIES for q in self.pool[d]}
+        added = 0
+        for item in data.get("results") or []:
+            if not isinstance(item, dict):
+                continue
+            q = trivia_question({"question": _b64(item.get("question")), "correct": _b64(item.get("correct_answer")),
+                                 "incorrect": [_b64(x) for x in item.get("incorrect_answers") or []],
+                                 "difficulty": _b64(item.get("difficulty")), "category": _b64(item.get("category")),
+                                 "cat_id": category}, "opentdb")
+            if q is None or q["key"] in have or q["key"] in self.asked:
+                continue
+            have.add(q["key"])
+            self.pool[q["difficulty"]].append(q)
+            added += 1
+        for d in TRIVIA_DIFFICULTIES:
+            del self.pool[d][:-TRIVIA_POOL_MAX]
+        self.last_error = None if added else f"OpenTDB had no new {difficulty} questions (category {category or 'any'})"
+        self.last_fetch = time.time()
+        self.save()
+        return added
+
+    async def load_categories(self) -> list[dict]:
+        if self.categories is None:
+            try:
+                d = await self._get("/api_category.php", {})
+                cats = [{"id": _strict_int(c.get("id")), "name": str(c.get("name"))[:60]}
+                        for c in d.get("trivia_categories") or [] if isinstance(c, dict)]
+                self.categories = [c for c in cats if c["id"]]
+            except Exception as exc:
+                self.last_error = f"OpenTDB unreachable: {exc.__class__.__name__}: {exc}"
+                return []
+        return self.categories
+
+    def take_pool(self, difficulty: str, category: int) -> dict | None:
+        lst = self.pool.get(difficulty) or []
+        lst[:] = [q for q in lst if q["key"] not in self.asked]
+        for i, q in enumerate(lst):
+            if not category or q.get("cat_id") == category:
+                lst.pop(i)
+                self.save()
+                return q
+        return None
+
+    def pool_count(self, difficulty: str, category: int) -> int:
+        return sum(1 for q in self.pool.get(difficulty) or []
+                   if q["key"] not in self.asked and (not category or q.get("cat_id") == category))
+
+    # ---- lore (the channel's own questions) ---------------------------------------
+
+    def take_lore(self, difficulty: str | None, exclude: set[str]) -> dict | None:
+        free = [q for q in self.lore if q["key"] not in self.asked and q["key"] not in exclude]
+        same = [q for q in free if q["difficulty"] == difficulty] if difficulty else free
+        pick = same or free
+        return copy.deepcopy(_RNG.choice(pick)) if pick else None
+
+    def add_lore(self, entries: list) -> tuple[list[dict], list[dict]]:
+        added, rejected = [], []
+        keys = {q["key"] for q in self.lore}
+        for e in entries:
+            q = trivia_question(e, "lore")
+            if q is None:
+                rejected.append({"entry": _echo(e.get("question") if isinstance(e, dict) else e),
+                                 "error": "needs question, correct and 1-4 incorrect answers"})
+            elif q["key"] in keys:
+                rejected.append({"entry": q["question"][:40], "error": "already in the lore"})
+            elif len(self.lore) >= TRIVIA_LORE_MAX:
+                rejected.append({"entry": q["question"][:40], "error": f"the lore is full ({TRIVIA_LORE_MAX})"})
+            else:
+                keys.add(q["key"])
+                self.lore.append(q)
+                added.append(q)
+        if added:
+            self.save_lore()
+        return added, rejected
+
+    def remove_lore(self, ids: list[str]) -> int:
+        want = {str(i) for i in ids}
+        before = len(self.lore)
+        self.lore = [q for q in self.lore if q["id"] not in want]
+        if len(self.lore) != before:
+            self.save_lore()
+        return before - len(self.lore)
+
+    def status(self, category: int = 0) -> dict:
+        return {"pool": {d: self.pool_count(d, 0) for d in TRIVIA_DIFFICULTIES},
+                "pool_category": {d: self.pool_count(d, category) for d in TRIVIA_DIFFICULTIES} if category else None,
+                "asked": len(self.asked), "lore": len(self.lore),
+                "lore_unasked": sum(1 for q in self.lore if q["key"] not in self.asked),
+                "token": bool(self.token), "last_error": self.last_error, "last_fetch": self.last_fetch}
+
+
+TRIVIA_BANK = TriviaBank(TRIVIA_BANK_PATH, TRIVIA_LORE_PATH)
+
+
+# --------------------------------------------------------------------------
+# trivia: the game
+# --------------------------------------------------------------------------
+# `questions` questions (15), easy -> medium -> hard. Before each question a betting
+# window shows its number, category and difficulty - never the question. Then the
+# question and its 2-5 options; EVERYONE may answer (last answer counts) but only
+# bettors are paid. The vote counts show when answers close (show_votes), then the
+# answer. Pays (total return) by difficulty: easy x1.5, medium x2, hard x3, plus a
+# streak bonus of +10% per question already won in a row, capped at max_multiplier x
+# the coins the player put in. A winner then RIDES (the whole balance goes on the next
+# question, streak kept) or CASHES OUT (credited; may bet fresh again) - one who does
+# neither is cashed out when the window closes. A wrong (or no) answer loses the stake.
+
+_TRIVIA_THEMES = ("hex", "gameshow", "neon")
+_TRIVIA_OUTCOMES = {"complete": "Every question played", "walked": "Nobody left playing",
+                    "no_bets": "No bets - no game", "no_questions": "Ran out of questions",
+                    "stopped": "Game stopped - every stake returned", "restart": "Settled after a restart",
+                    "error": "Settled after an error"}
+
+
+def trivia_plan(n: int, mode: str) -> list[str]:
+    """The difficulty of each question: ramp = easy thirds first (a remainder goes to
+    the easier groups), or all one difficulty, or mixed at random."""
+    if mode in TRIVIA_DIFFICULTIES:
+        return [mode] * n
+    if mode == "mixed":
+        return [_RNG.choice(TRIVIA_DIFFICULTIES) for _ in range(n)]
+    e, m = (n + 2) // 3, (n + 1) // 3
+    return ["easy"] * e + ["medium"] * m + ["hard"] * (n - e - m)
+
+
+def trivia_choice(v: Any, options: list) -> int | None:
+    """A player's answer: a letter (A-E), a 1-based number, or the option's text."""
+    if v is None or isinstance(v, (dict, list, bool)):
+        return None
+    if isinstance(v, (int, float)):
+        i = int(v) - 1 if float(v).is_integer() else -1
+    else:
+        s = str(v).strip().lower()
+        t = s.strip("!.()[]:- ")
+        if len(t) == 1 and t in "abcde":
+            i = ord(t) - 97
+        elif t.isdigit():
+            i = int(t) - 1
+        else:
+            i = next((k for k, o in enumerate(options) if o.strip().lower() == s), -1)
+    return i if 0 <= i < len(options) else None
+
+
+class Trivia(RoundGame):
+    key = "trivia"
+    title = "Trivia"
+    id_prefix = "tv"
+    PHASES = ("betting", "question", "votes", "reveal", "over")
+    STAT_KEYS = ("games", "complete", "walked", "no_bets", "no_questions", "stopped", "questions",
+                 "right", "wrong", "total_bet", "total_paid", "house_net")
+
+    DEFAULTS: dict[str, Any] = {
+        # placement: board centre in % of the 1920x1080 stage; scale x the 1120x630 board
+        "x": 50, "y": 50, "scale": 1.0,
+        "theme": "hex",                 # hex | gameshow | neon
+        "title": "TRIVIA",              # the board's title (your branding)
+        "lore_label": "Channel Lore",   # what the overlay calls your own questions
+        "show_rules": True, "show_players": True, "players_max": 8,
+        "sfx": True, "sfx_volume": 0.5,
+        "hide_when_idle": True,
+        "commands_text": "",            # e.g. "!bet 100 · !a B · !ride · !cashout" (your bot's commands)
+        "questions": 15,
+        "difficulty": "ramp",           # ramp | easy | medium | hard | mixed
+        "category": 0,                  # OpenTDB category id, 0 = any
+        "lore": "mixed",                # off | mixed | only (lore: the channel's own questions)
+        "lore_every": 5,                # mixed: every Nth question is lore (when there is some left)
+        "repeat_hours": 12,             # an asked question isn't asked again for this long (0 = never again)
+        "open_bet_seconds": 30,         # before question 1
+        "between_seconds": 15,          # before every later question (ride / cash out / bet)
+        "answer_seconds": 15,
+        "show_votes": "before_reveal",  # before_reveal | live | off
+        "votes_seconds": 3,
+        "reveal_seconds": 5,
+        "summary_seconds": 10,
+        "pay_easy": 1.5, "pay_medium": 2.0, "pay_hard": 3.0,    # total return, stake included
+        "streak_bonus_pct": 10,         # + per question already won in a row
+        "max_multiplier": 50,           # a balance never passes this x the coins put in; 0 = no cap
+        "currency": "coins",            # your bot's coin name, shown after amounts
+        "min_bet": 1, "max_bet": 100000,
+        "question_clip": "", "reveal_clip": "",                  # soundboard clips
+    }
+    SCHEMA: dict[str, tuple] = {
+        "x": ("num", 0, 100), "y": ("num", 0, 100), "scale": ("num", 0.2, 5),
+        "theme": ("enum", _TRIVIA_THEMES),
+        "title": ("name", ROUND_TITLE_MAX), "lore_label": ("name", LORE_LABEL_MAX),
+        "show_rules": ("bool",), "show_players": ("bool",), "players_max": ("int", 1, 20),
+        "sfx": ("bool",), "sfx_volume": ("num", 0, 1), "hide_when_idle": ("bool",),
+        "commands_text": ("str", COMMANDS_TEXT_MAX),
+        "questions": ("int", 1, 50), "difficulty": ("enum", ("ramp", "easy", "medium", "hard", "mixed")),
+        "category": ("int", 0, 1000), "lore": ("enum", ("off", "mixed", "only")), "lore_every": ("int", 1, 50),
+        "repeat_hours": ("num", 0, 8760),
+        "open_bet_seconds": ("num", 5, 300), "between_seconds": ("num", 5, 300),
+        "answer_seconds": ("num", 5, 120), "show_votes": ("enum", ("before_reveal", "live", "off")),
+        "votes_seconds": ("num", 1, 30), "reveal_seconds": ("num", 2, 30), "summary_seconds": ("num", 4, 60),
+        "pay_easy": ("num", 1, 100), "pay_medium": ("num", 1, 100), "pay_hard": ("num", 1, 100),
+        "streak_bonus_pct": ("num", 0, 100), "max_multiplier": ("num", 0, 1e6),
+        "currency": ("name", 24), "min_bet": ("int", 1, 1e9), "max_bet": ("int", 0, 1e12),
+        "question_clip": ("str", 200), "reveal_clip": ("str", 200),
+    }
+    APPEARANCE = ("x", "y", "scale", "theme", "title", "lore_label", "show_rules", "show_players", "players_max",
+                  "sfx", "sfx_volume")
+
+    def __init__(self, path: Path | None = None, ledger: Ledger | None = None,
+                 bank: TriviaBank | None = None) -> None:
+        self.bank = bank if bank is not None else TRIVIA_BANK
+        self._starting = False
+        self._prefetch_task: asyncio.Task | None = None
+        super().__init__(path, ledger)
+
+    def default_path(self) -> Path:
+        return TRIVIA_PATH
+
+    def validate_config(self, raw: Any) -> dict:
+        out = super().validate_config(raw)
+        if out["max_bet"] and out["max_bet"] < out["min_bet"]:
+            out["max_bet"] = 0
+        return out
+
+    # ---- saved game -----------------------------------------------------------
+
+    def clean_game(self, raw: Any) -> dict | None:
+        g = _round_common(raw, self.PHASES)
+        if g is None:
+            return None
+
+        def pos(v):
+            if not isinstance(v, dict):
+                return None
+            bal, basis = _strict_int(v.get("balance")), _strict_int(v.get("basis"))
+            if bal is None or bal < 0 or basis is None or basis < 1:
+                return None
+            return {"balance": bal, "basis": basis, "streak": max(0, _strict_int(v.get("streak")) or 0),
+                    "status": "won" if v.get("status") == "won" else "in", "fresh": bool(v.get("fresh"))}
+
+        qs = raw.get("questions") if isinstance(raw.get("questions"), list) else []
+        total = max(1, min(50, _strict_int(raw.get("total")) or len(qs) or 1))
+        questions = []
+        for q in (qs + [None] * total)[:total]:
+            ok = isinstance(q, dict) and isinstance(q.get("options"), list) and _strict_int(q.get("answer")) is not None
+            questions.append(q if ok else None)
+        pays = raw.get("pays") if isinstance(raw.get("pays"), dict) else {}
+        plan = [d if d in TRIVIA_DIFFICULTIES else "medium" for d in (raw.get("plan") or [])][:total]
+        g.update({
+            "total": total, "index": min(total - 1, max(0, _strict_int(raw.get("index")) or 0)),
+            "plan": plan + ["medium"] * (total - len(plan)), "questions": questions,
+            "lore_slots": [bool(x) for x in (raw.get("lore_slots") or [])][:total],
+            "category": _strict_int(raw.get("category")) or 0,
+            "lore": raw.get("lore") if raw.get("lore") in ("off", "mixed", "only") else "mixed",
+            "pays": {k: _as_float(pays.get(k)) or d for k, d in
+                     (("easy", 1.5), ("medium", 2.0), ("hard", 3.0), ("bonus_pct", 0.0), ("max_multiplier", 0.0))},
+            "positions": _round_players(raw.get("positions"), pos),
+            "answers": {u: a for u, a in (raw.get("answers") or {}).items()
+                        if _clean_user(u) and _strict_int(a) is not None} if isinstance(raw.get("answers"), dict) else {},
+            "results": [r for r in raw.get("results") or [] if isinstance(r, dict)],
+            "opentdb": bool(raw.get("opentdb")),
+        })
+        return g
+
+    # ---- questions ------------------------------------------------------------------
+
+    def _deal(self, q: dict) -> dict:
+        """A bank question -> a game question: options shuffled, the answer's index."""
+        opts = [q["correct"]] + list(q["incorrect"])
+        _RNG.shuffle(opts)
+        return {"id": q["id"], "key": q["key"], "source": q["source"], "category": q["category"],
+                "difficulty": q["difficulty"], "question": q["question"], "options": opts,
+                "answer": opts.index(q["correct"])}
+
+    def _need(self, g: dict, difficulty: str) -> int:
+        n = sum(1 for i in range(g["total"]) if g["plan"][i] == difficulty and g["questions"][i] is None
+                and not (g["lore_slots"][i] if i < len(g["lore_slots"]) else False))
+        return min(50, max(3, n + 3))
+
+    async def _prepare(self, g: dict, i: int) -> dict | None:
+        d = g["plan"][i]
+        lore_slot = g["lore_slots"][i] if i < len(g["lore_slots"]) else False
+        exclude = {q["key"] for q in g["questions"] if q}
+        q = None
+        if lore_slot or g["lore"] == "only":
+            q = self.bank.take_lore(d, exclude)
+        if q is None and g["lore"] != "only":
+            q = self.bank.take_pool(d, g["category"])
+            if q is None:
+                await self.bank.fetch(d, g["category"], self._need(g, d))
+                q = self.bank.take_pool(d, g["category"])
+        if q is None and g["lore"] != "off":
+            q = self.bank.take_lore(None, exclude)          # anything left in the lore
+        return self._deal(q) if q else None
+
+    async def _prefetch(self, g: dict) -> None:
+        try:
+            for i in range(1, g["total"]):
+                if self.g is not g:
+                    return
+                if g["questions"][i] is None:
+                    q = await self._prepare(g, i)
+                    if self.g is not g:
+                        return
+                    g["questions"][i] = q
+                    if q and q["source"] == "opentdb":
+                        g["opentdb"] = True
+                    self.save()
+        except Exception:
+            log.exception("[games] trivia: getting the questions failed")
+
+    # ---- API actions ------------------------------------------------------------------
+
+    async def start_game(self, params: dict) -> tuple[int, dict]:
+        if self.g is not None or self._starting:
+            return 409, {"error": "a game is already running", "phase": self.phase}
+        cfg = self.cfg
+        n = _as_float(params.get("questions"))
+        n = int(min(50, max(1, n))) if n is not None else cfg["questions"]
+        mode = str(params.get("difficulty") or cfg["difficulty"]).lower()
+        mode = mode if mode in ("ramp", "easy", "medium", "hard", "mixed") else cfg["difficulty"]
+        cat = _as_float(params.get("category"))
+        cat = int(cat) if cat is not None and cat >= 0 else cfg["category"]
+        lore = str(params.get("lore") or cfg["lore"]).lower()
+        lore = lore if lore in ("off", "mixed", "only") else cfg["lore"]
+        every = max(1, cfg["lore_every"])
+        plan = trivia_plan(n, mode)
+        slots = [lore == "only" or (lore == "mixed" and (i + 1) % every == 0) for i in range(n)]
+        self.bank.prune(float(cfg["repeat_hours"]))
+        g = {"id": f"tv-{secrets.token_hex(4)}", "test": _flag(params.get("test")), "phase": "betting",
+             "started_at": round(time.time(), 3), "phase_at": round(time.time(), 3), "ends_at": None,
+             "total": n, "index": 0, "plan": plan, "lore_slots": slots, "category": cat, "lore": lore,
+             "questions": [None] * n,
+             "pays": {"easy": cfg["pay_easy"], "medium": cfg["pay_medium"], "hard": cfg["pay_hard"],
+                      "bonus_pct": cfg["streak_bonus_pct"], "max_multiplier": cfg["max_multiplier"]},
+             "positions": {}, "answers": {}, "results": [], "opentdb": False,
+             "debits": 0, "credits": 0, "totals": {}, "log": [], "ever_bet": False,
+             "outcome": None, "summary": None, "last": None, "currency": cfg["currency"]}
+        self._starting = True
+        try:
+            q0 = await self._prepare(g, 0)
+        finally:
+            self._starting = False
+        if self.g is not None:
+            return 409, {"error": "a game is already running", "phase": self.phase}
+        if q0 is None:
+            why = self.bank.last_error or "no questions left"
+            return 503, {"error": f"no question to start with: {why}. Add lore questions (POST /lore), or try again "
+                                  f"(OpenTDB allows one call per 5 s)", "bank": self.bank.status(cat)}
+        g["questions"][0] = q0
+        g["opentdb"] = q0["source"] == "opentdb"
+        self.g = g
+        self.hidden = False
+        secs = _as_float(params.get("seconds"))
+        secs = min(300.0, max(5.0, secs)) if secs is not None else float(cfg["open_bet_seconds"])
+        self._set_phase("betting", secs)
+        self.save()
+        self._prefetch_task = asyncio.get_running_loop().create_task(self._prefetch(g))
+        _BG_TASKS.add(self._prefetch_task)
+        self._prefetch_task.add_done_callback(_BG_TASKS.discard)
+        return 200, {"started": g["id"]}
+
+    def place(self, params: dict) -> tuple[int, dict]:
+        g = self.g
+        if g is None or g["phase"] != "betting":
+            return self._closed()
+        user = _clean_user(params.get("user"))
+        if not user:
+            return 400, {"error": "user required"}
+        p = g["positions"].get(user)
+        if p is not None and p["status"] == "won":
+            return 409, {"error": f"@{user} has {p['balance']} {g['currency']} waiting - ride or cash out first"}
+        if p is not None and not p["fresh"]:
+            return 409, {"error": f"@{user} is riding {p['balance']} {g['currency']} - a ride can't be topped up "
+                                  f"(cash out, then bet again)"}
+        if p is None and len(g["positions"]) >= ROUND_PLAYERS_MAX:
+            return 400, {"error": f"the game is full ({ROUND_PLAYERS_MAX} players)"}
+        amt, err = self._coins(params.get("amount"), p["balance"] if p else 0)
+        if err:
+            return 400, {"error": err}
+        n = g["index"] + 1
+        if p is None:
+            g["positions"][user] = {"balance": amt, "basis": amt, "streak": 0, "status": "in", "fresh": True}
+        else:
+            p["balance"] += amt
+            p["basis"] += amt
+        g["ever_bet"] = True
+        logged = self._persist([_ev("debit", user, amt, "add" if p else "bet", f"{g['id']}/q{n}", f"Question {n}",
+                                    g["id"])])
+        return 200, {"amount": amt, "debits": _debits(logged), "player": self._player(user)}
+
+    def ride(self, params: dict) -> tuple[int, dict]:
+        g = self.g
+        if g is None or g["phase"] != "betting":
+            return self._closed("rides")
+        user = _clean_user(params.get("user"))
+        p = g["positions"].get(user) if user else None
+        if p is None or p["status"] != "won":
+            return 400, {"error": f"@{user or '?'} has no winnings waiting to ride"}
+        p["status"] = "in"
+        self.save()
+        return 200, {"player": self._player(user)}
+
+    def cashout(self, params: dict) -> tuple[int, dict]:
+        g = self.g
+        if g is None or g["phase"] != "betting":
+            return self._closed("cashout")
+        user = _clean_user(params.get("user"))
+        p = g["positions"].get(user) if user else None
+        if p is None:
+            return 400, {"error": f"@{user or '?'} has nothing to cash out"}
+        logged = self._persist(self._cashout_events([user]))
+        return 200, {"credits": _aggregate_credits(logged, "amount"), "ledger": logged}
+
+    def answer(self, params: dict) -> tuple[int, dict]:
+        g = self.g
+        if g is None or g["phase"] != "question":
+            return self._closed("answers")
+        user = _clean_user(params.get("user"))
+        if not user:
+            return 400, {"error": "user required"}
+        q = g["questions"][g["index"]]
+        i = trivia_choice(params.get("answer", params.get("choice")), q["options"])
+        if i is None:
+            return 400, {"error": f"answer with a letter A-{TRIVIA_LETTERS[len(q['options']) - 1]}"}
+        if user not in g["answers"] and len(g["answers"]) >= TRIVIA_VOTERS_MAX:
+            return 400, {"error": "too many answers"}
+        changed = user in g["answers"]
+        g["answers"][user] = i
+        return 200, {"answer": TRIVIA_LETTERS[i], "changed": changed, "bettor": user in g["positions"]}
+
+    def _cashout_events(self, users: list[str], label: str = "Cash out") -> list[dict]:
+        g = self.g
+        events = []
+        for u in users:
+            p = g["positions"].pop(u, None)
+            if p and p["balance"] > 0:
+                reason = "refund" if p["fresh"] else "cashout"
+                events.append(_ev("credit", u, p["balance"], reason, f"{g['id']}/q{g['index'] + 1}",
+                                  "Bet (taken back)" if p["fresh"] else label, g["id"]))
+        return events
+
+    def user_view(self, name: Any) -> dict:
+        user = _clean_user(name)
+        g = self.g
+        player = self._player(user) if g is not None and user in g["positions"] else None
+        answer = None
+        if g is not None and user in g.get("answers", {}):
+            answer = TRIVIA_LETTERS[g["answers"][user]]
+        return {"user": user, "player": player, "answer": answer, "session": self.ledger.session(user, self.key)}
+
+    # ---- the game -------------------------------------------------------------------
+
+    def _mult(self, difficulty: str, streak: int) -> Fraction:
+        p = self.g["pays"]
+        base = Fraction(str(p.get(difficulty, 2.0)))
+        return base * (1 + Fraction(str(p.get("bonus_pct", 0))) / 100 * streak)
+
+    def advance(self) -> None:
+        ph = self.g["phase"]
+        if ph == "betting":
+            self._open_question()
+        elif ph == "question":
+            if self.cfg["show_votes"] == "before_reveal":
+                self._set_phase("votes", float(self.cfg["votes_seconds"]))
+                self.save()
+            else:
+                self._reveal()
+        elif ph == "votes":
+            self._reveal()
+        elif ph == "reveal":
+            self._after_reveal()
+        else:
+            self._to_idle()
+
+    def _open_question(self) -> None:
+        g = self.g
+        waiting = [u for u, p in g["positions"].items() if p["status"] == "won"]
+        events = self._cashout_events(waiting, f"Cash out · after question {g['index']}")
+        if not g["positions"]:
+            self._finish("walked" if g["ever_bet"] else "no_bets", events)
+            return
+        q = g["questions"][g["index"]]
+        if q is None:
+            q = self._take_now(g["index"])
+        if q is None:
+            events += self._cashout_events(list(g["positions"]), "Cash out · no question")
+            self._finish("no_questions", events)
+            return
+        for p in g["positions"].values():
+            p["fresh"] = False                       # on the line now
+        g["answers"] = {}
+        self.bank.mark_asked(q)
+        self._set_phase("question", float(self.cfg["answer_seconds"]))
+        self._persist(events)
+        self._clip("question_clip")
+
+    def _take_now(self, i: int) -> dict | None:
+        """The prefetch hasn't delivered question i: whatever the pool / lore has now."""
+        g = self.g
+        d = g["plan"][i]
+        exclude = {q["key"] for q in g["questions"] if q}
+        q = None
+        if g["lore"] != "only":
+            q = self.bank.take_pool(d, g["category"]) or self.bank.take_pool(d, 0)
+        if q is None and g["lore"] != "off":
+            q = self.bank.take_lore(d, exclude)
+        if q is None:
+            return None
+        g["questions"][i] = self._deal(q)
+        return g["questions"][i]
+
+    def _reveal(self) -> None:
+        g = self.g
+        i = g["index"]
+        q = g["questions"][i]
+        right, wrong = [], []
+        cap = Fraction(str(g["pays"].get("max_multiplier") or 0))
+        for u, p in list(g["positions"].items()):
+            if g["answers"].get(u) == q["answer"]:
+                new = _floor(p["balance"] * self._mult(q["difficulty"], p["streak"]))
+                if cap:
+                    new = min(new, _floor(p["basis"] * cap))
+                right.append({"user": u, "was": p["balance"], "balance": new, "streak": p["streak"] + 1})
+                p.update(balance=new, streak=p["streak"] + 1, status="won")
+            else:
+                a = g["answers"].get(u)
+                wrong.append({"user": u, "lost": p["balance"], "answer": TRIVIA_LETTERS[a] if a is not None else None})
+                del g["positions"][u]
+        right.sort(key=lambda r: -r["balance"])
+        wrong.sort(key=lambda r: -r["lost"])
+        votes = self._votes()
+        voters_right = sum(1 for a in g["answers"].values() if a == q["answer"])
+        res = {"number": i + 1, "difficulty": q["difficulty"], "source": q["source"],
+               "correct": TRIVIA_LETTERS[q["answer"]], "votes": votes, "voters": len(g["answers"]),
+               "voters_right": voters_right, "right": right, "wrong": wrong}
+        g["results"].append({k: res[k] for k in ("number", "difficulty", "source", "correct", "voters", "voters_right")}
+                            | {"bettors_right": len(right), "bettors_wrong": len(wrong)})
+        g["last"] = res
+        self._set_phase("reveal", float(self.cfg["reveal_seconds"]))
+        self.save()
+        self._clip("reveal_clip")
+
+    def _after_reveal(self) -> None:
+        g = self.g
+        if g["index"] >= g["total"] - 1:
+            self._finish("complete", self._cashout_events(list(g["positions"]), "Cash out · final"))
+            return
+        g["index"] += 1
+        g["answers"] = {}
+        self._set_phase("betting", float(self.cfg["between_seconds"]))
+        self.save()
+
+    def _finish(self, outcome: str, events: list[dict] | None = None) -> None:
+        g = self.g
+        if events:
+            self._persist(events)
+        g["outcome"] = outcome
+        g["summary"] = self.summary(outcome)
+        self._record_game(g["summary"])
+        secs = float(self.cfg["summary_seconds"])
+        self._set_phase("over", min(secs, 6.0) if outcome == "no_bets" else secs)
+        self.save()
+
+    def open_settlement(self) -> list[dict]:
+        g = self.g
+        if g["phase"] == "votes":
+            self._reveal()                          # the answers were locked: the question counts
+        # still on an unanswered question: stakes go back (a ride gets its balance back)
+        return self._cashout_events(list(g["positions"]), "Cash out · game stopped")
+
+    def summary(self, outcome: str) -> dict:
+        g = self.g
+        asked = len(g["results"])
+        return {"outcome": outcome, "text": _TRIVIA_OUTCOMES.get(outcome, outcome), "questions": asked,
+                "total": g["total"], "total_bet": g["debits"], "total_paid": g["credits"],
+                "house_net": g["debits"] - g["credits"], "players": self.players_summary(),
+                "right": sum(r.get("bettors_right", 0) for r in g["results"]),
+                "wrong": sum(r.get("bettors_wrong", 0) for r in g["results"]),
+                "test": bool(g.get("test")), "currency": g["currency"]}
+
+    def record(self, s: dict) -> None:
+        st = self._st
+        st["games"] += 1
+        st[s["outcome"] if s["outcome"] in ("complete", "walked", "no_bets", "no_questions") else "stopped"] += 1
+        st["questions"] += s["questions"]
+        st["right"] += s["right"]
+        st["wrong"] += s["wrong"]
+        st["total_bet"] += s["total_bet"]
+        st["total_paid"] += s["total_paid"]
+        st["house_net"] += s["house_net"]
+
+    # ---- views --------------------------------------------------------------------
+
+    def _votes(self) -> list[int]:
+        g = self.g
+        q = g["questions"][g["index"]]
+        out = [0] * len(q["options"]) if q else []
+        for a in g["answers"].values():
+            if 0 <= a < len(out):
+                out[a] += 1
+        return out
+
+    def _player(self, user: str) -> dict:
+        g = self.g
+        p = g["positions"][user]
+        q = g["questions"][g["index"]]
+        nxt = None
+        if q and p["status"] in ("in", "won"):
+            m = self._mult(q["difficulty"], p["streak"])
+            nxt = _floor(p["balance"] * m)
+            cap = Fraction(str(g["pays"].get("max_multiplier") or 0))
+            if cap:
+                nxt = min(nxt, _floor(p["basis"] * cap))
+        return {"user": user, "status": p["status"], "balance": p["balance"], "basis": p["basis"],
+                "streak": p["streak"], "fresh": p["fresh"], "if_right": nxt,
+                "answered": g["phase"] == "question" and user in g["answers"]}
+
+    def players_view(self) -> list[dict]:
+        rows = [self._player(u) for u in self.g["positions"]]
+        rows.sort(key=lambda p: (-p["balance"], p["user"].lower()))
+        return rows
+
+    def table_bets(self) -> list[dict]:
+        if self.g is None:
+            return []
+        return [{"user": u, "amount": p["balance"]} for u, p in self.g["positions"].items()]
+
+    def _category(self, q: dict) -> str:
+        """A question's category in the STATE. A lore question without one (or with the old
+        automatic "Hex Lore") gets "": the overlay shows the lore label in its place - the
+        label it is drawing with, which during a Test in OBS is the previewed one, not the
+        saved one."""
+        cat = q.get("category") or ""
+        if q.get("source") == "lore" and cat in ("", TRIVIA_LORE_OLD_CATEGORY):
+            return ""
+        return cat
+
+    def game_view(self, now: float) -> dict:
+        g, cfg = self.g, self.cfg
+        i = g["index"]
+        q = g["questions"][i]
+        ph = g["phase"]
+        head = {"number": i + 1, "category": self._category(q), "difficulty": q["difficulty"],
+                "source": q["source"]} if q else {"number": i + 1, "category": None,
+                                                  "difficulty": g["plan"][i], "source": None}
+        question = None
+        if q and ph in ("question", "votes", "reveal") or (q and ph == "over" and g["last"]
+                                                          and g["last"]["number"] == i + 1):
+            question = {**head, "text": q["question"], "options": list(q["options"]),
+                        "answer": q["answer"] if ph in ("reveal", "over") else None}
+        show_votes = ph in ("votes", "reveal") or (ph == "question" and cfg["show_votes"] == "live") or \
+            (ph == "over" and question is not None)
+        if cfg["show_votes"] == "off" and ph == "question":
+            show_votes = False
+        pays = g["pays"]
+        players = self.players_view()
+        return {"id": g["id"], "test": g["test"], "phase": ph, **self.timing(now),
+                "number": i + 1, "total": g["total"], "plan": list(g["plan"]),
+                "next": head if ph == "betting" else None, "question": question,
+                "votes": self._votes() if show_votes and q else None, "voters": len(g["answers"]),
+                "players": players, "on_the_line": sum(p["balance"] for p in players if p["status"] == "in"),
+                "waiting": sum(p["balance"] for p in players if p["status"] == "won"),
+                "pays": {"easy": pays["easy"], "medium": pays["medium"], "hard": pays["hard"],
+                         "bonus_pct": pays["bonus_pct"], "max_multiplier": pays["max_multiplier"]},
+                "results": [{"number": r["number"], "difficulty": r["difficulty"], "correct": r["correct"]}
+                            for r in g["results"]],
+                "last": g["last"], "outcome": g.get("outcome"), "summary": g.get("summary"),
+                "opentdb": g.get("opentdb", False), "currency": g["currency"],
+                "min_bet": cfg["min_bet"], "max_bet": cfg["max_bet"], "commands_text": cfg["commands_text"]}
+
+    def idle_view(self) -> dict:
+        cfg = self.cfg
+        return {"questions": cfg["questions"], "difficulty": cfg["difficulty"], "lore": cfg["lore"],
+                "pays": {"easy": cfg["pay_easy"], "medium": cfg["pay_medium"], "hard": cfg["pay_hard"],
+                         "bonus_pct": cfg["streak_bonus_pct"], "max_multiplier": cfg["max_multiplier"]},
+                "currency": cfg["currency"]}
+
+    def bets_payload(self) -> dict:
+        cfg = self.cfg
+        return {"ok": True, "game": self.key, "currency": cfg["currency"], "min_bet": cfg["min_bet"],
+                "max_bet": cfg["max_bet"],
+                "pays": {"easy": cfg["pay_easy"], "medium": cfg["pay_medium"], "hard": cfg["pay_hard"],
+                         "streak_bonus_pct": cfg["streak_bonus_pct"], "max_multiplier": cfg["max_multiplier"]},
+                "rules": [
+                    "Bet BEFORE the question: the betting window shows its number, category and difficulty only.",
+                    f"Answer with a letter (A-E), a number or the option's text. Everyone may answer (the last "
+                    f"answer counts); only bettors are paid. A wrong or missing answer loses the stake.",
+                    f"A right answer pays (total, stake included) easy x{cfg['pay_easy']}, medium "
+                    f"x{cfg['pay_medium']}, hard x{cfg['pay_hard']}, +{cfg['streak_bonus_pct']}% per question "
+                    f"already won in a row" + (f", never more than x{cfg['max_multiplier']} the coins put in"
+                                               if cfg["max_multiplier"] else "") + ".",
+                    "A winner then rides (the whole balance on the next question) or cashes out (and may bet "
+                    "fresh). One who does neither is cashed out when the window closes.",
+                    "A ride can't be topped up: cash out, then bet again.",
+                    "Every bet is against the bank: /bet debits, /cashout credits (the ledger).",
+                    "No bets when a window closes: the game ends."]}
+
+    def validate(self, params: dict) -> dict:
+        amt, err = self._coins(params.get("amount"))
+        return {"valid": err is None, "amount": amt, **({"error": err} if err else {})}
+
+
+def _debits(logged: list[dict]) -> list[dict]:
+    return [{"user": e["user"], "amount": e["amount"], "seq": e.get("seq"), "reason": e["reason"]} for e in logged]
+
+
+# --------------------------------------------------------------------------
 # registry + config
 # --------------------------------------------------------------------------
 
 ROULETTE = Roulette(recover=False)   # restores the table from games_roulette_table.json
 CRAPS = Craps(recover=False)         # restores the table from games_craps_table.json
-# start-up repair of BOTH tables at once (a journal may hold the other game's events)
-LEDGER.recover([ROULETTE._recovery, CRAPS._recovery])
+RUSSIAN = RussianRoulette()          # restores a running game from games_russian.json (settled below)
+TRIVIA = Trivia()                    # restores a running game from games_trivia.json (settled below)
+# start-up repair of EVERY game file at once (a journal may hold another game's events)
+LEDGER.recover([ROULETTE._recovery, CRAPS._recovery, RUSSIAN._recovery, TRIVIA._recovery])
 GAMES: dict[str, Game] = {}
 
 
@@ -3533,6 +5657,8 @@ def load_config() -> dict:
 
 register_game(ROULETTE)
 register_game(CRAPS)
+register_game(RUSSIAN)
+register_game(TRIVIA)
 
 
 def save_config(cfg: dict) -> dict:
@@ -3542,6 +5668,7 @@ def save_config(cfg: dict) -> dict:
 
 
 CONFIG: dict[str, dict] = load_config()
+
 
 
 # --------------------------------------------------------------------------
@@ -3604,6 +5731,11 @@ async def _flush_ledger() -> None:
         await HUB.broadcast_panel({"type": "ledger", "game": game, "events": evs})
 
 
+# a round game still running when Hexcast stopped is settled now (needs CONFIG + the ledger push)
+RUSSIAN.resume()
+TRIVIA.resume()
+
+
 # --------------------------------------------------------------------------
 # routes
 # --------------------------------------------------------------------------
@@ -3639,12 +5771,12 @@ async def _params(request: Request) -> tuple[dict, JSONResponse | None]:
 @router.get("", response_class=HTMLResponse)
 @router.get("/", response_class=HTMLResponse)
 async def panel():
-    return HTMLResponse(_read_static("games_panel.html"), headers=_NOCACHE)
+    return HTMLResponse(_versioned(_read_static("games_panel.html")), headers=_NOCACHE)
 
 
 @router.get("/overlay", response_class=HTMLResponse)
 async def overlay():
-    return HTMLResponse(_read_static("games_overlay.html"), headers=_NOCACHE)
+    return HTMLResponse(_versioned(_read_static("games_overlay.html")), headers=_NOCACHE)
 
 
 @router.get("/api")
@@ -3670,7 +5802,8 @@ async def api_root():
         "announce":       "GET|POST /games/api/{game}/announce   the bot's own winners card (it did the math): "
                           "{title, lines:[{user, amount, text}] (<=50), empty_text, seconds (1-120), spin_id, "
                           "currency} | user=&amount=&text= shorthand -> {announce, state}; a new spin clears it; "
-                          '409 {"error":"stale","spin_id"} when spin_id is not the current / last spin',
+                          '409 {"error":"stale","spin_id"} when spin_id is not the current / last spin; '
+                          "roulette and craps only (russian / trivia: 400 - their game-over card is built in)",
         "announce_clear": "GET|POST /games/api/{game}/announce/clear",
         "timer":          "GET|POST /games/api/{game}/timer   seconds (5-300, default bet_window_seconds): start (or "
                           "restart) the countdown now, with or without bets, auto_spin / auto_roll on or off; at zero "
@@ -3764,6 +5897,44 @@ async def api_root():
                 "curl 'http://host:4747/games/api/craps/ledger?since=0'",
                 "curl 'http://host:4747/games/api/craps/remove?user=bob&bet=place6'",
             ],
+        },
+        "russian": {
+            "about":    "one game at a time: betting -> pulling -> result -> ... -> over. Pull k loads k bullets of 6 "
+                        "and re-spins. Bets are against the bank; docs/russian_roulette.md",
+            "start":    "GET|POST /games/api/russian/start   {dummy, dummy_user, rounds (1-5), seconds (first bet "
+                        "window), test} -> {started, state}; 409 while a game runs",
+            "bet":      "GET|POST /games/api/russian/bet   {user, side: survive|bang, amount} -> {debits, player, state}; "
+                        "409 bets_closed outside the betting window",
+            "cashout":  "GET|POST /games/api/russian/cashout   {user} -> {credits, ledger}: the survive stake's value now",
+            "remove":   "GET|POST /games/api/russian/remove   {user, side?}: take back this window's bets (refund)",
+            "dummy":    "GET|POST /games/api/russian/dummy   {dummy, dummy_user}: before pull 1, else the next game",
+            "next":     "GET|POST /games/api/russian/next   (alias /pull) end the current phase now",
+            "table":    "GET /games/api/russian/table   the STATE (game: phase, round, odds, players, pull, last, summary)",
+            "user":     "GET /games/api/russian/user/{name}",
+            "ledger":   "GET /games/api/russian/ledger?since=0   reasons: bet, add, win, cashout, refund, volunteer_cut",
+            "stop":     "GET|POST /games/api/russian/stop   end the game: stakes refunded, survive stakes cashed out",
+            "preview":  "GET|POST /games/api/russian/preview   {overrides:{appearance}, seconds (2-60, default 8)} | "
+                        "x=&y=&scale= shorthand: the Edit Mode editor's Test in OBS - on screen for `seconds` with that "
+                        "look (STATE.preview), never touches the game; /preview/clear ends it",
+        },
+        "trivia": {
+            "about":    "one game at a time: betting -> question -> votes -> reveal -> ... -> over. Bet BEFORE the "
+                        "question; everyone may answer, only bettors are paid; docs/trivia.md",
+            "start":    "GET|POST /games/api/trivia/start   {questions, difficulty, category, lore, seconds, test} -> "
+                        "{started, state}; 503 when no question could be had (OpenTDB down and no lore)",
+            "bet":      "GET|POST /games/api/trivia/bet   {user, amount} -> {debits, player, state}",
+            "answer":   "GET|POST /games/api/trivia/answer   {user, answer: A-E | 1-5 | option text} -> {answer, changed, bettor}",
+            "ride":     "GET|POST /games/api/trivia/ride   {user}: a winner lets the balance ride",
+            "cashout":  "GET|POST /games/api/trivia/cashout   (alias /remove) {user}: take the balance (a fresh bet: refund)",
+            "next":     "GET|POST /games/api/trivia/next   end the current phase now",
+            "table":    "GET /games/api/trivia/table   the STATE (the answer only from the reveal on)",
+            "lore":     "GET /games/api/trivia/lore · POST {question, correct, incorrect[], difficulty, category} | "
+                        "{questions:[...]} · POST /lore/remove {id | ids}",
+            "bank":     "GET /games/api/trivia/bank · GET /categories · POST /asked/clear (a new night)",
+            "ledger":   "GET /games/api/trivia/ledger?since=0   reasons: bet, add, cashout, refund",
+            "stop":     "GET|POST /games/api/trivia/stop   end the game: stakes refunded, winnings cashed out",
+            "preview":  "GET|POST /games/api/trivia/preview   {overrides:{appearance}, seconds (2-60, default 8)}: "
+                        "Test in OBS, like russian's; /preview/clear ends it",
         },
     }
 
@@ -4016,6 +6187,180 @@ async def api_roulette_board(request: Request):
     return await _board_request(ROULETTE, request)
 
 
+# ---- round games: russian roulette + trivia (before the generic /api/{game}/...
+#      routes; /spin, /play and /timer answer 400 for them - a game starts with /start) --
+
+async def _round_request(g: RoundGame, request: Request, fn, *, quick: bool = False):
+    """Run one round-game action fn(params) -> (status, body). `quick` (answers): the
+    STATE broadcast is coalesced and the reply stays small."""
+    params, err = await _params(request)
+    if err is not None:
+        return err
+    status, body = fn(params)
+    if status != 200:
+        return _err(body.pop("error"), status, **body)
+    if quick:
+        g.broadcast_soon()
+        return {"ok": True, **body}
+    await _flush_ledger()
+    await HUB.broadcast_state(g)
+    return {"ok": True, **body, "state": g.state_view()}
+
+
+@router.api_route("/api/russian/start", methods=["GET", "POST"])
+async def api_rr_start(request: Request):
+    return await _round_request(RUSSIAN, request, RUSSIAN.start_game)
+
+
+@router.api_route("/api/russian/dummy", methods=["GET", "POST"])
+async def api_rr_dummy(request: Request):
+    return await _round_request(RUSSIAN, request, RUSSIAN.set_dummy)
+
+
+@router.api_route("/api/russian/bet", methods=["GET", "POST"])
+async def api_rr_bet(request: Request):
+    return await _round_request(RUSSIAN, request, RUSSIAN.place)
+
+
+@router.api_route("/api/russian/cashout", methods=["GET", "POST"])
+async def api_rr_cashout(request: Request):
+    return await _round_request(RUSSIAN, request, RUSSIAN.cashout)
+
+
+@router.api_route("/api/russian/remove", methods=["GET", "POST"])
+async def api_rr_remove(request: Request):
+    return await _round_request(RUSSIAN, request, RUSSIAN.remove)
+
+
+@router.api_route("/api/russian/next", methods=["GET", "POST"])
+@router.api_route("/api/russian/pull", methods=["GET", "POST"])
+async def api_rr_next(request: Request):
+    return await _round_request(RUSSIAN, request, lambda _p: RUSSIAN.skip())
+
+
+@router.get("/api/russian/table")
+async def api_rr_table():
+    return {"ok": True, **RUSSIAN.state_view()}
+
+
+@router.get("/api/russian/user/{name}")
+async def api_rr_user(name: str):
+    return {"ok": True, **RUSSIAN.user_view(name)}
+
+
+@router.get("/api/russian/ledger")
+async def api_rr_ledger(since: str | None = None, limit: str | None = None):
+    return _ledger_reply(since, limit, "russian")
+
+
+@router.api_route("/api/trivia/start", methods=["GET", "POST"])
+async def api_trivia_start(request: Request):
+    params, err = await _params(request)
+    if err is not None:
+        return err
+    status, body = await TRIVIA.start_game(params)
+    if status != 200:
+        return _err(body.pop("error"), status, **body)
+    await HUB.broadcast_state(TRIVIA)
+    return {"ok": True, **body, "state": TRIVIA.state_view()}
+
+
+@router.api_route("/api/trivia/bet", methods=["GET", "POST"])
+async def api_trivia_bet(request: Request):
+    return await _round_request(TRIVIA, request, TRIVIA.place)
+
+
+@router.api_route("/api/trivia/answer", methods=["GET", "POST"])
+async def api_trivia_answer(request: Request):
+    return await _round_request(TRIVIA, request, TRIVIA.answer, quick=True)
+
+
+@router.api_route("/api/trivia/ride", methods=["GET", "POST"])
+async def api_trivia_ride(request: Request):
+    return await _round_request(TRIVIA, request, TRIVIA.ride)
+
+
+@router.api_route("/api/trivia/cashout", methods=["GET", "POST"])
+@router.api_route("/api/trivia/remove", methods=["GET", "POST"])
+async def api_trivia_cashout(request: Request):
+    return await _round_request(TRIVIA, request, TRIVIA.cashout)
+
+
+@router.api_route("/api/trivia/next", methods=["GET", "POST"])
+async def api_trivia_next(request: Request):
+    return await _round_request(TRIVIA, request, lambda _p: TRIVIA.skip())
+
+
+@router.get("/api/trivia/table")
+async def api_trivia_table():
+    return {"ok": True, **TRIVIA.state_view()}
+
+
+@router.get("/api/trivia/user/{name}")
+async def api_trivia_user(name: str):
+    return {"ok": True, **TRIVIA.user_view(name)}
+
+
+@router.get("/api/trivia/ledger")
+async def api_trivia_ledger(since: str | None = None, limit: str | None = None):
+    return _ledger_reply(since, limit, "trivia")
+
+
+@router.get("/api/trivia/lore")
+async def api_trivia_lore_list():
+    return {"ok": True, "count": len(TRIVIA_BANK.lore), "questions": TRIVIA_BANK.lore}
+
+
+@router.post("/api/trivia/lore")
+async def api_trivia_lore_add(request: Request):
+    params, err = await _params(request)
+    if err is not None:
+        return err
+    entries = params.get("questions")
+    if isinstance(entries, dict):
+        entries = [entries]
+    if not isinstance(entries, list):
+        entries = [params] if params.get("question") else []
+    if not entries:
+        return _err('lore needs {question, correct, incorrect:[...], difficulty, category} or {"questions": [...]}')
+    added, rejected = TRIVIA_BANK.add_lore(entries[:TRIVIA_LORE_MAX])
+    ok = bool(added)
+    body = {"ok": ok, "added": added, "rejected": rejected, "count": len(TRIVIA_BANK.lore)}
+    if not ok:
+        body["error"] = rejected[0]["error"] if len(rejected) == 1 else "every question was rejected"
+    return JSONResponse(body, status_code=200 if ok else 400)
+
+
+@router.api_route("/api/trivia/lore/remove", methods=["GET", "POST"])
+async def api_trivia_lore_remove(request: Request):
+    params, err = await _params(request)
+    if err is not None:
+        return err
+    ids = params.get("ids")
+    ids = ids if isinstance(ids, list) else ([params.get("id")] if params.get("id") else [])
+    if not ids:
+        return _err("lore/remove needs id or ids")
+    removed = TRIVIA_BANK.remove_lore(ids)
+    return {"ok": True, "removed": removed, "count": len(TRIVIA_BANK.lore)}
+
+
+@router.get("/api/trivia/categories")
+async def api_trivia_categories():
+    cats = await TRIVIA_BANK.load_categories()
+    return {"ok": bool(cats), "categories": cats, **({"error": TRIVIA_BANK.last_error} if not cats else {})}
+
+
+@router.get("/api/trivia/bank")
+async def api_trivia_bank():
+    TRIVIA_BANK.prune(float(TRIVIA.cfg["repeat_hours"]))
+    return {"ok": True, **TRIVIA_BANK.status(TRIVIA.cfg["category"])}
+
+
+@router.api_route("/api/trivia/asked/clear", methods=["GET", "POST"])
+async def api_trivia_asked_clear():
+    return {"ok": True, "cleared": TRIVIA_BANK.clear_asked(), **TRIVIA_BANK.status(TRIVIA.cfg["category"])}
+
+
 # ---- the shared ledger (every game) ----------------------------------------------
 
 @router.get("/api/ledger")
@@ -4151,12 +6496,61 @@ async def api_timer(game: str, request: Request):
     return {"ok": True, "auto_in_ms": g.auto_in_ms(), "table": g.table_view(), "state": g.state_view()}
 
 
-# /announce/clear before /announce (display only: never touches bets, ledger, history)
-@router.api_route("/api/{game}/announce/clear", methods=["GET", "POST"])
-async def api_announce_clear(game: str):
+# /preview/clear before /preview. Round games only (display only: never touches the game,
+# bets or the ledger); a table game's Test in OBS is a test spin / roll with `overrides`.
+def _preview_game(game: str) -> RoundGame | JSONResponse:
     g = get_game(game)
     if g is None:
         return _unknown_game()
+    if not isinstance(g, RoundGame):
+        return _err(f"{g.title} has no /preview - preview a look with a test spin: POST /games/api/{g.key}/spin "
+                    '{"test": true, "overrides": {...}}')
+    return g
+
+
+@router.api_route("/api/{game}/preview/clear", methods=["GET", "POST"])
+async def api_preview_clear(game: str):
+    g = _preview_game(game)
+    if isinstance(g, JSONResponse):
+        return g
+    cleared = g.clear_preview()
+    await HUB.broadcast_state(g)
+    return {"ok": True, "cleared": cleared, "preview": None, "state": g.state_view()}
+
+
+@router.api_route("/api/{game}/preview", methods=["GET", "POST"])
+async def api_preview(game: str, request: Request):
+    g = _preview_game(game)
+    if isinstance(g, JSONResponse):
+        return g
+    params, err = await _params(request)
+    if err is not None:
+        return err
+    status, body = g.set_preview(params)
+    if status != 200:
+        return _err(body.pop("error"), status, **body)
+    await HUB.broadcast_state(g)
+    return {"ok": True, **body, "state": g.state_view()}
+
+
+# /announce/clear before /announce (display only: never touches bets, ledger, history).
+# Table games only: a round game's overlay has no announce card (STATE.announce is always
+# null) - its game-over card is built in.
+def _announce_game(game: str) -> Game | JSONResponse:
+    g = get_game(game)
+    if g is None:
+        return _unknown_game()
+    if isinstance(g, RoundGame):
+        return _err(f"{g.title} has no /announce - its game-over card is built in "
+                    f"(the winners are in STATE.game.summary: GET /games/api/{g.key}/table)")
+    return g
+
+
+@router.api_route("/api/{game}/announce/clear", methods=["GET", "POST"])
+async def api_announce_clear(game: str):
+    g = _announce_game(game)
+    if isinstance(g, JSONResponse):
+        return g
     cleared = g.clear_announce()
     await HUB.broadcast_state(g)
     return {"ok": True, "cleared": cleared, "announce": None, "state": g.state_view()}
@@ -4164,9 +6558,9 @@ async def api_announce_clear(game: str):
 
 @router.api_route("/api/{game}/announce", methods=["GET", "POST"])
 async def api_announce(game: str, request: Request):
-    g = get_game(game)
-    if g is None:
-        return _unknown_game()
+    g = _announce_game(game)
+    if isinstance(g, JSONResponse):
+        return g
     params, err = await _params(request)
     if err is not None:
         return err
