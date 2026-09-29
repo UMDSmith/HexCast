@@ -1,0 +1,15 @@
+# Keep secrets, your media and local state out of the image (COPY . . would bake them in).
+.git
+.github
+.venv
+venv
+__pycache__
+*.pyc
+*.log
+config/
+media/
+plugins/
+tests/
+docs/
+hexcast.log
+files.zip

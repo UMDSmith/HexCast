@@ -566,6 +566,8 @@ class PluginHost:
 
     def state(self, pid: str, inst: Installed | None = None) -> str:
         """running | disabled | error | needs_deps | stopped"""
+        if inst is not None and inst.manifest is None:
+            return "error"                          # plugin.json is broken, whatever may still be serving from before
         if pid in self.loaded:
             return "running"
         if self.settings.is_disabled(pid):

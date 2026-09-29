@@ -367,6 +367,9 @@ class PluginService:
             self._save_disabled(pid, False)
             self.host.errors.pop(pid, None)
             self._start_missing(self.host.order(self.host.scan()))
+            inst = self.host.scan().get(pid)
+            if inst is not None and inst.manifest is None:            # (order() leaves those out: say why)
+                self.host.errors[pid] = inst.error or "plugin.json is unreadable"
             self.host.revision += 1
             return {"ok": True, "running": pid in self.host.loaded, "error": self.host.errors.get(pid)}
 

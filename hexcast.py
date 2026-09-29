@@ -525,6 +525,8 @@ async def lifespan(app: FastAPI):
         await plugin_service.repair_pending()  # plugins whose Python packages went missing
     except Exception:
         log.exception("plugins: restoring missing packages failed")
+    if plugin_host.catalog.remote_urls:        # configured plugin indexes: fetch in the background (never blocks start-up)
+        asyncio.get_running_loop().create_task(asyncio.to_thread(plugin_host.catalog.refresh_remote, 6.0, True))
 
     print(f"\n  ==== Hexcast {VERSION} ====")
     print(f"  Control panel:       http://localhost:{PORT}/")

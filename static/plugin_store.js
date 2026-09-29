@@ -224,6 +224,9 @@
       } else {
         if (p.state === 'needs_deps') b.push('<button class="hs-btn primary" data-do="repair" data-id="' + esc(p.id) + '"' + dis + '>Repair</button>');
         if (p.state === 'error') b.push('<button class="hs-btn primary" data-do="enable" data-id="' + esc(p.id) + '"' + dis + '>Try again</button>');
+        if (p.state === 'error' && p.in_catalog && p.source !== 'local') {
+          b.push('<button class="hs-btn" data-do="update" data-id="' + esc(p.id) + '"' + dis + ' title="Put back a fresh copy of the plugin\'s files">Reinstall</button>');
+        }
         if (p.state === 'running' && p.nav && p.nav.href && !p.parent) {
           b.push('<a class="hs-btn primary" href="' + esc(p.nav.href) + '">Open</a>');
         }

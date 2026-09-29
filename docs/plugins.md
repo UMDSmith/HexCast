@@ -24,9 +24,9 @@ Games goes one level further: the **Games** plugin gives you a Games tab, and ea
 | --- | --- |
 | **Install** | Copies the plugin in, installs its Python packages if it needs any (the card shows the progress), and starts it. Nothing to restart. If it needs another plugin, that one is installed with it. |
 | **Open** | Goes to the plugin's tab. |
-| **Update** | Shown when the catalog has a newer copy (after a `git pull`, say). Stops the plugin, replaces its files, starts it again. |
+| **Update** | Shown when the catalog has a newer copy (after a `git pull`, say). The new files and their Python packages are prepared first while the plugin keeps running; it is stopped only for the swap and started again. If anything goes wrong the old version stays as it was. |
 | **Disable / Enable** | Stops the plugin and hides its tab without deleting anything. |
-| **Remove** | Deletes the plugin's files. **Your settings and secrets in `config/` are kept**, so installing it again brings everything back. |
+| **Remove** | Deletes the plugin's files (the confirmation names anything that goes with it). **Your settings and secrets in `config/` are kept**, so installing it again brings everything back. A plugin somebody wrote or copied in by hand has no other copy, so its folder is moved to `plugins/.removed/` instead of being deleted. |
 | **Repair** | Re-installs the plugin's Python packages (shown when they went missing). |
 
 **From a terminal** (same thing, no browser - handy for scripts and Docker builds):
@@ -55,7 +55,7 @@ config/               settings and secrets, for the core and every plugin (never
 media/                your sounds and videos
 ```
 
-Installing **copies** `catalog/<id>/` to `plugins/<id>/`. A `git pull` updates the catalog but never changes what is running - you press **Update** when you want it. Everything inside `plugins/` and `config/` is git-ignored.
+Installing **copies** `catalog/<id>/` to `plugins/<id>/` (the folders `.stage-*`, `.swap`, `.trash` and `.removed` inside `plugins/` are Hexcast's own housekeeping). A `git pull` updates the catalog but never changes what is running - you press **Update** when you want it. Everything inside `plugins/` and `config/` is git-ignored.
 
 Every plugin's `static/` folder is served at `/plugins/<id>/static/...`.
 
@@ -108,7 +108,7 @@ async def hello():
     return {"hello": "world"}
 
 def setup(ctx):
-    ctx.include_router(router)      # or ctx.app.include_router(router) - the whole FastAPI app is yours
+    ctx.include_router(router)      # or ctx.app.include_router(router), add_api_route, mount, websockets ...
 ```
 
 `plugin.json`:
@@ -123,7 +123,7 @@ def setup(ctx):
 }
 ```
 
-Drop the folder into `plugins/` and restart - or into `catalog/` and press **Install** in the **+** tab. Whatever routes, websockets and static mounts `setup` adds are tracked by the host, so **disable, update and remove undo them without any code from you**. If you start background tasks or open sockets, close them in an optional `teardown(ctx)` (plain or `async`) or with `ctx.on_shutdown(fn)`.
+Drop the folder into `plugins/` and restart - or into `catalog/` and press **Install** in the **+** tab. Whatever routes, websockets and static mounts `setup` adds are tracked by the host, so **disable, update and remove undo them without any code from you**. Other changes to the app - middleware, exception handlers - are not tracked (and cannot be added once Hexcast is serving), so a plugin should not make them. If you start background tasks or open sockets, close them in an optional `teardown(ctx)` (plain or `async`) or with `ctx.on_shutdown(fn)`; if `setup` itself raises half-way, the `on_shutdown` hooks registered so far still run (newest first), so a failed start leaves nothing behind.
 
 A plugin that fails to start (bad import, exception in `setup`) is reported on its card and in the console; it never takes Hexcast down.
 
@@ -274,7 +274,7 @@ The **+** tab lists the *catalog*. Two sources:
    }
    ```
 
-   The zip holds the plugin folder's contents (or one top-level folder with them). Hexcast refuses a zip whose checksum does not match, and never unpacks anything outside `plugins/<id>/`. **A plugin is code that runs on your PC with your permissions: only add catalogs you trust.** Remote catalogs can only be added by editing that file, never from the web page.
+   The zip holds the plugin folder's contents (or one top-level folder with them). The index and the downloads must be `https://` (plain `http://` only for `localhost`), and every plugin needs its `sha256`: Hexcast skips an entry without one, refuses a zip whose checksum does not match, and never unpacks anything outside `plugins/<id>/`. If the index cannot be reached the last good list stays; it is fetched again after a minute. **A plugin is code that runs on your PC with your permissions: only add catalogs you trust.** Remote catalogs can only be added by editing that file, never from the web page.
 
 `python tools/build_catalog.py out/` builds such an index and the zips from the `catalog/` folder.
 
@@ -286,5 +286,8 @@ The first start after upgrading looks in `config/` for the settings of each bund
 
 - **A card says "Python packages are missing"** - press **Repair**. This also happens by itself in the background when Hexcast starts in a fresh virtualenv.
 - **A plugin will not start** - the card shows the error; `hexcast.log` has the full traceback. Fix it and press **Update** (or **Disable** then **Enable**).
+- **"config/plugins.json is not valid JSON" at start** - the file was copied to `config/plugins.json.bad` and Hexcast started with the defaults (it does not run the upgrade step over it). Fix the JSON, or delete the file to start over.
+- **An install failed** - nothing is left half-installed: the card is back to **Install** with the log of what went wrong (usually pip and the internet connection). An update that fails leaves the old version running.
 - **Files in `plugins/.trash/`** - Windows had a file open while removing a plugin; they are deleted on the next start.
+- **Plugin changes from other web pages are refused** - the plugin API only accepts requests from the pages Hexcast serves (and from scripts and `curl`, which send no `Origin`), so a site open in another tab cannot install or remove plugins.
 - **Developing a plugin in `catalog/`** - start Hexcast with `HEXCAST_DEV=1` and changed plugins are re-installed from the catalog on every start.
