@@ -1,0 +1,28 @@
+<section id="soundboard">
+<div class="card">
+  <h2>Soundboard <span class="tag">core</span></h2>
+  <p class="hint">Trigger media from your library by name — everything a bot, hotkey deck, or
+    channel-point redeem needs is a single GET. Names are the filename without extension,
+    case-insensitive. The overlay applies each clip's saved position, scale, volume, trim
+    and chroma key automatically; query params override them for one play. Chroma keying
+    (Edit Mode → clip → Chroma key: color, 💧 eyedropper, tolerance) removes the green
+    screen per clip inside the overlay, so overlapping clips composite cleanly — drop any
+    chroma filter on the OBS source itself.</p>
+  <table class="api">
+    <tr><td>GET /api/list</td><td>every triggerable name, grouped audio / video</td></tr>
+    <tr><td>GET /api/play/{name}</td><td>play by name across both kinds (audio checked first)</td></tr>
+    <tr><td>GET /api/play/{kind}/{name}</td><td>same, but explicit — kind is <code>audio</code> or <code>video</code></td></tr>
+    <tr><td>GET /api/stop</td><td>clear all overlay visuals and stop all audio</td></tr>
+    <tr><td>GET /api</td><td>this reference as JSON</td></tr>
+  </table>
+  <h3>Per-play overrides (query params)</h3>
+  <table class="api">
+    <tr><td>?x=50&amp;y=50&amp;scale=2</td><td>position/size, video only (percent of canvas, scale factor)</td></tr>
+    <tr><td>?volume=0.5</td><td>0.0–1.0, audio and video-with-audio</td></tr>
+    <tr><td>?start=2&amp;end=5</td><td>trim window in seconds (static images use it as display time)</td></tr>
+  </table>
+  <pre>curl http://localhost:4747/api/play/airhorn
+curl "http://localhost:4747/api/play/video/cheer?x=80&amp;y=20&amp;scale=2&amp;end=3"
+curl http://localhost:4747/api/stop</pre>
+</div>
+</section>

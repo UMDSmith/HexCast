@@ -10,7 +10,7 @@
     POST /api/plugins/{id}/uninstall     {cascade?}   (settings are kept)
     POST /api/plugins/{id}/enable | disable
     GET  /api/plugins/jobs/{job}         progress of an install / update / repair
-    GET  /help                           the help page, assembled from the running plugins
+    GET  /help  /help/{page}             the help: an index, and one page per plugin / game that is installed
 
 Installing and updating run as background jobs (pip can take a while); the page polls
 the job for its log. Only one job runs at a time.
@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import html
+import json
 import secrets
 import time
 from dataclasses import dataclass, field
@@ -467,19 +468,114 @@ def build_router(service: PluginService) -> APIRouter:
         return HTMLResponse((service.static_dir / "plugins.html").read_text(encoding="utf-8"), headers=NOCACHE)
 
     @router.get("/help", response_class=HTMLResponse)
-    async def help_page():
-        return HTMLResponse(render_help(host, service.static_dir))
+    async def help_index():
+        return HTMLResponse(render_help(host, service.static_dir), headers=NOCACHE)
+
+    @router.get("/help/{slug}", response_class=HTMLResponse)
+    async def help_page(slug: str):
+        page = render_help(host, service.static_dir, slug)
+        if page is None:                                   # not installed (or a typo): show the index instead
+            return HTMLResponse(render_help(host, service.static_dir), status_code=404, headers=NOCACHE)
+        return HTMLResponse(page, headers=NOCACHE)
 
     return router
 
 
-def render_help(host: PluginHost, static_dir: Path) -> str:
-    """static/help.html (soundboard + notes) with the running plugins' help sections spliced in."""
+CORE_HELP = [
+    ("soundboard", "Soundboard", "Play, stop and list your clips with one GET - the base of every bot.", "/api"),
+    ("plugins", "Plugins", "Install, update and remove plugins from a script or a bot.", "/plugins"),
+    ("notes", "Browser & OBS notes", "Autoplay, OBS browser-source settings, and why there is no login.", ""),
+]
+
+
+def help_entries(host: PluginHost, static_dir: Path) -> list[dict]:
+    """Every page of the help: the core ones, then one per running plugin that documents itself,
+    grouped (Core / Integrations / the plugin an add-on belongs to, e.g. Games)."""
+    entries: list[dict] = []
+    for slug, title, blurb, tag in CORE_HELP:
+        f = Path(static_dir) / "help" / f"{slug}.html"
+        try:
+            body = f.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        entries.append({"slug": slug, "title": title, "group": "Core", "blurb": blurb, "tag": tag, "html": body, "ids": [slug]})
+    scan = host.scan()
+    rest = []
+    fragments = host.help_fragments()
+    parents = {m.parent for m, _ in fragments if m.parent}
+    for manifest, fragment in fragments:
+        toc = (manifest.help or {}).get("toc") or []
+        ids = [t["id"] for t in toc] or [manifest.id]
+        if manifest.parent:
+            pm = scan.get(manifest.parent)
+            group = pm.manifest.name if pm and pm.manifest else manifest.parent.title()
+        elif manifest.id in parents:
+            group = manifest.name                         # Games heads its own group, its games follow
+        else:
+            group = "Integrations"
+        blurb = (manifest.description or "").strip()
+        if len(blurb) > 150:
+            blurb = blurb[:147].rsplit(" ", 1)[0] + "..."
+        tag = (manifest.nav or {}).get("href", "")
+        if manifest.parent and ids:
+            tag = f"{(scan[manifest.parent].manifest.nav or {}).get('href', '')}#{ids[0]}" if manifest.parent in scan and scan[manifest.parent].manifest else tag
+        rest.append((manifest, {"slug": ids[0], "title": manifest.name, "group": group, "blurb": blurb, "tag": tag,
+                                "html": fragment, "ids": ids}))
+    # a parent's own page (Games) comes before its add-ons; add-ons keep their manifest order
+    rest.sort(key=lambda mr: (1 if mr[0].parent else 0, mr[0].order, mr[0].name.lower()))
+    entries += [e for _, e in rest]
+    return entries
+
+
+def _group_order(entries: list[dict]) -> list[str]:
+    groups: list[str] = []
+    for e in entries:
+        if e["group"] not in groups:
+            groups.append(e["group"])
+    return groups
+
+
+def render_help(host: PluginHost, static_dir: Path, slug: str | None = None) -> str | None:
+    """/help (the index) or /help/<slug> (one page). None if there is no such page."""
+    entries = help_entries(host, static_dir)
+    current = next((e for e in entries if e["slug"] == slug), None) if slug else None
+    if slug and current is None:
+        return None
+    esc = html.escape
+    groups = _group_order(entries)
+    nav = [f'<a href="/help"{" class=sel" if current is None else ""}>All help</a>']
+    for g in groups:
+        nav.append(f"<h4>{esc(g)}</h4>")
+        for e in entries:
+            if e["group"] == g:
+                sel = ' class="sel"' if current is e else ""
+                nav.append(f'<a href="/help/{esc(e["slug"])}"{sel}>{esc(e["title"])}</a>')
+    anchors = {i: e["slug"] for e in entries for i in e["ids"]}
+    if current is None:
+        cards = []
+        for g in groups:
+            cards.append(f'<div class="grp">{esc(g)}</div><div class="cards">')
+            for e in entries:
+                if e["group"] == g:
+                    tag = f'<span class="tag">{esc(e["tag"])}</span>' if e["tag"] else ""
+                    cards.append(f'<a class="hc" href="/help/{esc(e["slug"])}"><b>{esc(e["title"])}</b>{tag}'
+                                 f'<p>{esc(e["blurb"])}</p></a>')
+            cards.append("</div>")
+        body = ('<h1>Help &amp; API reference</h1>'
+                '<p class="lead">Everything Hexcast does is a URL, so a bot, a hotkey deck or a channel-point redeem only needs '
+                'to call it. Pick a page: each has the endpoints, the parameters and copy-paste examples. Calls are plain '
+                '<code>GET</code>s (or a <code>POST</code> with the same fields as JSON) and answer '
+                '<code>{"ok": true/false, ...}</code>. Only what you have installed is listed; add more from the '
+                '<b>+</b> tab.</p>' + "\n".join(cards))
+        title, crumbs = "Help", ""
+    else:
+        title = current["title"]
+        crumbs = (f'<p class="crumbs"><a href="/help">Help</a> / {esc(current["group"])} / {esc(title)}</p>'
+                  if current["group"] != "Core" else f'<p class="crumbs"><a href="/help">Help</a> / {esc(title)}</p>')
+        body = current["html"]
     page = (Path(static_dir) / "help.html").read_text(encoding="utf-8")
-    toc, sections = [], []
-    for manifest, fragment in host.help_fragments():
-        for t in (manifest.help or {}).get("toc", []):
-            toc.append(f'  <a href="#{html.escape(t["id"])}">{html.escape(t["label"])}</a>')
-        sections.append(fragment)
-    page = page.replace("<!--HELP_TOC-->", "\n".join(toc))
-    return page.replace("<!--HELP_SECTIONS-->", "\n".join(sections))
+    page = page.replace("/*HELP_ANCHORS*/{}", json.dumps(anchors))
+    for key, val in (("<!--HELP_TITLE-->", esc(title)), ("<!--HELP_NAV-->", "\n".join(nav)),
+                     ("<!--HELP_CRUMBS-->", crumbs), ("<!--HELP_BODY-->", body)):
+        page = page.replace(key, val)
+    return page

@@ -74,7 +74,7 @@ Every plugin's `static/` folder is served at `/plugins/<id>/static/...`.
 ```
 
 - **The top bar is data, not code.** `GET /api/plugins/nav` lists the tabs of the installed plugins; each plugin's own
-  `nav.js` decides its dot. `/help` is assembled the same way from each plugin's `help.html`.
+  `nav.js` decides its dot. `/help` is assembled the same way: an index plus one page (`/help/<page>`) per running plugin, built from its `help.html`.
 - **Installing is copying.** The catalog folder is never imported, only copied; `plugins/<id>/.hexcast-plugin.json` remembers
   where a copy came from and a digest of its files, which is how a card knows an **Update** is available (a `git pull` that
   changes `catalog/` puts a dot on the **+** tab - nothing changes on a running stream until you press Update).
@@ -93,7 +93,7 @@ myplugin/
   plugin.py       def setup(ctx): ...
   static/         optional - served at /plugins/myplugin/static/
   requirements.txt  optional - installed with pip when the plugin is
-  help.html       optional - a section of the /help page
+  help.html       optional - the plugin's page in /help
 ```
 
 `plugin.py`:
@@ -250,7 +250,7 @@ Keep your CSS scoped to your section (`#tab-bingo ...`), because the page and th
 
 The key is `nav.key` (or the plugin id). Without a script the dot is green whenever the URL answers.
 
-**Help.** `help.html` is spliced into `/help` while the plugin is running. Write full `<section id="..." class="card">...</section>` blocks and list them in `help.toc`.
+**Help.** While the plugin is running its `help.html` is its own page at `/help/<page>`, listed on the help index and in the sidebar (under the parent's name for an add-on). `<page>` is the first `id` in `help.toc`, and the index card uses your manifest `description`. Write full `<section id="..." class="card">...</section>` blocks; `<h3>` headings become an "On this page" row of links, so use them to split a long reference. Link to another page with `/help/<page>`.
 
 ## Catalogs
 

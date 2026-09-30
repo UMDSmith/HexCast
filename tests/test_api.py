@@ -14,7 +14,7 @@ def client(world):
     static = world.plugins.parent / "static"
     static.mkdir()
     (static / "plugins.html").write_text("<html>store</html>")
-    (static / "help.html").write_text("<html><!--HELP_TOC-->|<!--HELP_SECTIONS--></html>")
+    (static / "help.html").write_text("<html><!--HELP_TITLE-->|<!--HELP_NAV-->|<!--HELP_CRUMBS-->|<!--HELP_BODY--></html>")
     service = PluginService(world.host, world.installer, static)
     world.app.include_router(build_router(service))
     world.service = service
@@ -166,15 +166,24 @@ def test_only_one_install_at_a_time(world, client):
     assert client.post("/api/plugins/alpha/install").status_code == 200
 
 
-def test_help_page_is_assembled_from_running_plugins(world, client):
+def test_help_has_an_index_and_one_page_per_running_plugin(world, client):
     write_plugin(world.catalog, "alpha", files={"help.html": '<section id="alpha">Alpha docs</section>'},
-                 extra={"help": {"file": "help.html", "toc": [{"id": "alpha", "label": "Alpha"}]}})
-    assert client.get("/help").text == "<html>|</html>"
-    install(client, "alpha")
-    page = client.get("/help").text
-    assert '<a href="#alpha">Alpha</a>' in page and "Alpha docs" in page
+                 extra={"help": {"file": "help.html", "toc": [{"id": "alpha", "label": "Alpha"}]}, "description": "Does alpha things."})
+    write_plugin(world.catalog, "base", files={"help.html": '<section id="base">Base docs</section>'},
+                 extra={"help": {"file": "help.html", "toc": [{"id": "base", "label": "Base"}]}})
+    write_plugin(world.catalog, "kid", parent="base", nav=False, files={"help.html": '<section id="kid">Kid docs</section>'},
+                 extra={"help": {"file": "help.html", "toc": [{"id": "kid", "label": "Kid"}]}})
+    assert client.get("/help/alpha").status_code == 404                      # not installed: no page
+    for pid in ("alpha", "base", "kid"):
+        install(client, pid)
+    index = client.get("/help").text
+    assert '/help/alpha"' in index and "Does alpha things." in index and "Alpha docs" not in index    # links, not a wall of text
+    assert "<h4>Integrations</h4>" in index and "<h4>Base</h4>" in index                               # add-ons sit under their parent
+    page = client.get("/help/kid")
+    assert page.status_code == 200 and "Kid docs" in page.text and "Alpha docs" not in page.text
+    assert 'href="/help/kid" class="sel"' in page.text and "Base / Kid" in page.text
     client.post("/api/plugins/alpha/disable")
-    assert "Alpha docs" not in client.get("/help").text
+    assert client.get("/help/alpha").status_code == 404 and "Alpha docs" not in client.get("/help").text
 
 
 def test_status_dot_script_is_served_from_the_plugin(world, client):

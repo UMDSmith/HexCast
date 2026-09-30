@@ -1,0 +1,23 @@
+<section id="plugins">
+<div class="card">
+  <h2>Plugins <span class="tag">core</span></h2>
+  <p class="hint">Hexcast is the soundboard plus plugins. Everything else &mdash; Twitch, Music, Discord, Clips,
+    Countdown, Games, Ticker &mdash; is added from the <b>+</b> tab in the top bar, in a few seconds and with no restart.
+    A plugin appears on this page (with its API) only while it is installed. Removing one keeps its settings, so adding
+    it back later picks up where you left off. Full guide: <code>docs/plugins.md</code>.</p>
+  <table class="api">
+    <tr><td>GET /api/plugins</td><td>what is installed and what can be installed; <code>?parent=games</code> lists an add-on family (the games)</td></tr>
+    <tr><td>GET /api/plugins/nav</td><td>the tabs of the top bar</td></tr>
+    <tr><td>POST /api/plugins/{id}/install</td><td>install (and start) a plugin, plus anything it requires &rarr; <code>{job}</code></td></tr>
+    <tr><td>POST /api/plugins/{id}/update</td><td>replace it with the catalog's newer copy &rarr; <code>{job}</code></td></tr>
+    <tr><td>POST /api/plugins/{id}/repair</td><td>re-install its Python packages &rarr; <code>{job}</code></td></tr>
+    <tr><td>GET /api/plugins/jobs/{job}</td><td>progress of an install / update / repair: <code>state</code>, <code>lines</code></td></tr>
+    <tr><td>POST /api/plugins/{id}/uninstall</td><td><code>{"cascade": true}</code> also removes the plugins that need it; settings are kept</td></tr>
+    <tr><td>POST /api/plugins/{id}/enable · disable</td><td>turn a plugin on or off without deleting it</td></tr>
+    <tr><td>GET /api/backgrounds</td><td>the shared library of overlay background images (also <code>POST</code> to upload, <code>POST /delete</code>)</td></tr>
+  </table>
+  <pre>curl -X POST http://localhost:4747/api/plugins/twitch/install
+python hexcast.py plugins install music games games_roulette
+python hexcast.py plugins list</pre>
+</div>
+</section>

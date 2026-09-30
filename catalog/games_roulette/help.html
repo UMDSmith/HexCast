@@ -10,7 +10,7 @@
     bets wait on the <b>table</b> for the next spin, shown on an "on the table" board while a <b>spin timer</b>
     counts down (<b>NEXT SPIN 0:12</b>), and at zero the wheel spins by itself and the winnings go through the
     <b>ledger</b> craps uses. <b>Launch/landing clips</b> play on the soundboard overlay. <code>{game}</code> is
-    <code>roulette</code> here (Craps has its own card below). All endpoints return
+    <code>roulette</code> here (each game has its own help page). All endpoints return
     <code>{"ok": true/false, ...}</code>.</p>
   <table class="api">
     <tr><td>GET|POST /games/api/roulette/spin</td><td>start a spin (alias <code>/play</code>) — returns the result, resolved bets and <code>lands_at</code>, plus the table's <code>settlements</code>, <code>credits</code>, <code>table_summary</code> and <code>table</code> (+ the spin's <code>ledger</code> events with <code>wait</code>); <b>409</b> <code>{"error": "busy", "retry_in_ms", "state"}</code> while a spin is spinning, showing its result, or in cooldown</td></tr>

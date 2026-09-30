@@ -60,12 +60,14 @@ def test_top_bar_script_and_store_assets_are_served(client):
     assert 'id="hexbar"' in html and "twitch" not in html.lower().replace("twitch.tv", "")
 
 
-def test_help_page_lists_only_the_core_sections(client):
-    page = client.get("/help").text
-    for keep in ('id="soundboard"', 'id="plugins"', 'id="notes"'):
-        assert keep in page
-    for gone in ('id="twitch"', 'id="games"', 'id="clips"', "<!--HELP_"):
-        assert gone not in page
+def test_help_lists_only_the_core_pages(client):
+    index = client.get("/help").text
+    for keep in ("/help/soundboard", "/help/plugins", "/help/notes"):
+        assert keep in index
+    for gone in ("/help/twitch", "/help/games", "/help/clips", "<!--HELP_"):
+        assert gone not in index
+    assert 'id="soundboard"' in client.get("/help/soundboard").text
+    assert client.get("/help/twitch").status_code == 404
 
 
 def test_soundboard_still_works_without_any_plugin(hexcast, client):
@@ -101,7 +103,7 @@ def test_install_and_remove_from_the_running_app(hexcast, client):
     assert client.get("/countdown").status_code == 200
     assert client.get("/countdown/api/status").json()["connected"]
     assert [i["id"] for i in client.get("/api/plugins/nav").json()["items"]] == ["countdown"]
-    assert 'id="countdown"' in client.get("/help").text
+    assert 'id="countdown"' in client.get("/help/countdown").text
     assert client.post("/api/plugins/countdown/uninstall", json={}).json()["removed"] == ["countdown"]
     assert client.get("/countdown").status_code == 404
     assert client.get("/api/plugins/nav").json()["items"] == []
