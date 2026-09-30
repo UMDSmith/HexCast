@@ -1,0 +1,30 @@
+{
+  "id": "countdown",
+  "name": "Countdown",
+  "version": "1.0.0",
+  "description": "A styleable countdown timer overlay - a fixed duration or a clock time - with media cues that fire soundboard clips at any point on the way down.",
+  "icon": "⏱️",
+  "color": "#ffb020",
+  "category": "Overlays",
+  "author": "UMDSmith",
+  "nav": {
+    "label": "Countdown",
+    "href": "/countdown",
+    "order": 60,
+    "status_url": "/countdown/api/status",
+    "status_js": "nav.js"
+  },
+  "help": {
+    "file": "help.html",
+    "toc": [
+      {
+        "id": "countdown",
+        "label": "Countdown"
+      }
+    ]
+  },
+  "legacy_config": [
+    "countdown.json"
+  ],
+  "order": 60
+}

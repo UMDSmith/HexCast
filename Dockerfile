@@ -18,6 +18,14 @@ RUN mkdir -p media/audio media/video
 # Copy application code
 COPY . .
 
+# Plugins to bake into the image (a space-separated list of ids; "all" = everything in catalog/).
+# Without this the image starts with just the soundboard and you add plugins from the + tab
+# - but those live inside the container and are gone when it is recreated, so bake the ones you use:
+#   docker build --build-arg PLUGINS="twitch music games games_roulette games_craps" -t hexcast .
+ARG PLUGINS=""
+RUN if [ "$PLUGINS" = "all" ]; then python hexcast.py plugins install --all; \
+    elif [ -n "$PLUGINS" ]; then python hexcast.py plugins install $PLUGINS; fi
+
 # Expose the control panel port
 EXPOSE 4747
 

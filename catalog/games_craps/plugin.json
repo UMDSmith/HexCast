@@ -1,0 +1,24 @@
+{
+  "id": "games_craps",
+  "name": "Craps",
+  "version": "1.0.0",
+  "parent": "games",
+  "description": "A bank-craps table that chat bets the channel currency on: pass / don't pass, come, odds, place bets, hard ways, the field and one-roll props, all at casino odds, with an auto-roll.",
+  "icon": "🎲",
+  "color": "#2fa36b",
+  "category": "Games",
+  "author": "UMDSmith",
+  "help": {
+    "file": "help.html",
+    "toc": [
+      {
+        "id": "craps",
+        "label": "Craps"
+      }
+    ]
+  },
+  "legacy_config": [
+    "games.json"
+  ],
+  "order": 20
+}

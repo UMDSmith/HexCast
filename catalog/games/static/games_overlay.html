@@ -1,0 +1,848 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>HexCast games</title>
+<style>
+  html,body{margin:0;padding:0;background:transparent;overflow:hidden;height:100%;width:100%;}
+  /* Fixed 1920x1080 design stage, scaled to fill the browser source, so a game's
+     x/y % placement and scale mean exactly what the panel's editor shows. */
+  #stage{ position:absolute; top:0; left:0; width:1920px; height:1080px; transform-origin:top left; pointer-events:none; }
+
+  /* One full-stage layer per game. The layer carries show/hide — its
+     transform-origin is set to the game's anchor (the box centre), so the pop-in
+     grows out of the wheel's / tray's centre. The box inside is the renderer's
+     container (BASE_W x BASE_H stage px, set by the host) and carries the placement
+     (left/top % + translate/scale), exactly like the soundboard's clips. Nothing
+     clips it: renderers may draw past the box (shadows, boards). */
+  .gm-layer{ position:absolute; left:0; top:0; width:1920px; height:1080px; display:none; }
+  .gm-layer.gm-shown{ display:block; }
+  .gm-layer.gm-in{ animation:gm-pop 350ms cubic-bezier(.2,.9,.3,1.22) both; }
+  .gm-layer.gm-out{ animation:gm-fade 350ms ease-in both; }
+  @keyframes gm-pop{ from{ opacity:0; transform:scale(.82); } to{ opacity:1; transform:scale(1); } }
+  @keyframes gm-fade{ from{ opacity:1; } to{ opacity:0; } }
+  .gm-box{
+    position:absolute; left:50%; top:50%; width:400px; height:400px;
+    transform:translate(-50%,-50%) scale(1.25); transform-origin:center center;
+  }
+</style></head>
+<body>
+<div id="stage"></div>
+
+<script id="games-logic">
+/* Pure reconcile logic: no DOM, no timers, no globals besides GamesLogic.
+   Given what a game's overlay currently shows (a "view") and the server's STATE,
+   it decides which renderer actions to run. Kept in its own <script> block so it
+   can be extracted and unit-tested in node. */
+var GamesLogic = (function () {
+  'use strict';
+
+  // The only keys a spin's `overrides` may change (spec: APPEARANCE keys). Each game
+  // has its own list (the registry's `appearance`); this is roulette's, and the default
+  // whenever a caller passes no list.
+  var APPEARANCE = ['x', 'y', 'scale', 'theme', 'red_color', 'black_color', 'green_color',
+    'result_position', 'result_details', 'show_result', 'show_history', 'history_count',
+    'show_user', 'show_bets', 'bets_max', 'sfx', 'sfx_volume',
+    'show_table', 'table_max', 'table_position', 'show_rules'];
+
+  function isObj(o) { return !!o && typeof o === 'object' && !Array.isArray(o); }
+  function has(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
+  function keysOr(keys) { return Array.isArray(keys) ? keys : APPEARANCE; }
+
+  // Shallow copy of `base` with `extra` on top (only `keys` when given).
+  // null/undefined in `extra` never clobber a base value.
+  function merge(base, extra, keys) {
+    var out = {}, k, i;
+    if (isObj(base)) for (k in base) if (has(base, k)) out[k] = base[k];
+    if (isObj(extra)) {
+      if (keys) {
+        for (i = 0; i < keys.length; i++) {
+          k = keys[i];
+          if (has(extra, k) && extra[k] != null) out[k] = extra[k];
+        }
+      } else {
+        for (k in extra) if (has(extra, k) && extra[k] != null) out[k] = extra[k];
+      }
+    }
+    return out;
+  }
+
+  // `keys` = the game's appearance keys (default: roulette's).
+  function hasOverrides(spin, keys) {
+    if (!spin || !isObj(spin.overrides)) return false;
+    keys = keysOr(keys);
+    for (var i = 0; i < keys.length; i++) {
+      if (spin.overrides[keys[i]] != null) return true;
+    }
+    return false;
+  }
+
+  // Config the renderer + container should use right now: the saved config, or the
+  // saved config with this spin's appearance overrides on top while the spin lasts.
+  function effectiveConfig(config, spin, keys) {
+    keys = keysOr(keys);
+    return hasOverrides(spin, keys) ? merge(config, spin.overrides, keys) : merge(config);
+  }
+
+  // Order-independent identity of a flat config (so "nothing changed" is detectable).
+  function keyOf(obj) {
+    var ks = Object.keys(obj || {}).sort(), parts = [];
+    for (var i = 0; i < ks.length; i++) parts.push(JSON.stringify(ks[i]) + ':' + JSON.stringify(obj[ks[i]]));
+    return '{' + parts.join(',') + '}';
+  }
+
+  // A history entry's label: roulette RESULTs have `number`; other games may only
+  // have `label` / `total` (craps has all three: number = str(total)).
+  function resultLabel(r) {
+    if (!isObj(r)) return '?';
+    var v = r.number != null ? r.number : (r.label != null ? r.label : r.total);
+    return v != null ? String(v) : '?';
+  }
+
+  function historyKey(state) {
+    var h = state && Array.isArray(state.history) ? state.history : [];
+    var last = state && isObj(state.last) && state.last.id != null ? String(state.last.id) : '';
+    var labels = [];
+    for (var i = 0; i < h.length; i++) labels.push(resultLabel(h[i]));
+    return last + '|' + h.length + '|' + labels.join(',');
+  }
+
+  // Identity of Hex's announcement (STATE.announce, "Mode B" winners card), or null when
+  // there is none. expires_in_ms counts down in every message, so it is not part of it.
+  function announceKey(a) {
+    if (!isObj(a)) return null;
+    var o = {}, k;
+    for (k in a) if (has(a, k) && k !== 'expires_in_ms') o[k] = a[k];
+    return keyOf(o);
+  }
+
+  function newView() {
+    return {
+      visible: false,       // what we show (server's STATE.visible)
+      playingId: null,      // spin id the renderer is animating / showing
+      mode: 'idle',         // idle | playing | result
+      overrideId: null,     // spin id whose overrides are applied (null = saved config)
+      appearanceKey: null,  // keyOf(effective config) last handed to the renderer/container
+      historyKey: null,     // historyKey(state) last handed to setHistory
+      tableKey: null,       // keyOf(state.table) last handed to setTable (craps, roulette)
+      announceKey: null     // announceKey(state.announce) last handed to setAnnounce (null = none)
+    };
+  }
+
+  // The renderer instance was torn down (a hidden game costs nothing): forget what
+  // it was showing so the next reconcile replays it on a fresh instance.
+  function forget(view) {
+    var v = merge(view || newView());
+    v.playingId = null; v.mode = 'idle'; v.historyKey = null; v.tableKey = null; v.announceKey = null;
+    return v;
+  }
+
+  /* reconcile(view, state, config, keys) -> {view, actions}
+     `state` is the server's STATE for this game (null = no state seen yet: only the
+     appearance can change). `keys` = the game's appearance keys (default roulette's).
+     Actions, executed in order:
+       {type:'appearance', config, deferred}  placement + setConfig (deferred: we are
+                                              fading out — apply once hidden)
+       {type:'show'} | {type:'hide', immediate:false}
+       {type:'table', table}                  setTable (only games whose STATE has a
+                                              `table`: craps, roulette; sent when it changed)
+       {type:'play', spin} | {type:'showResult', spin} | {type:'reset', deferred}
+       {type:'announce', announce}            setAnnounce (optional): Hex's own winners card,
+                                              STATE.announce, null = none; sent when it changed
+       {type:'history', results}
+     When hiding, 'hide' comes first so the fade starts before anything changes.
+     'table' comes BEFORE 'play'/'showResult' (the dice / ball leave with the table they
+     were thrown on; a newer table that arrives mid-roll / mid-spin is held by the renderer
+     until it lands) and AFTER 'reset' (always re-sent then, whatever reset() clears).
+     'announce' comes AFTER 'play'/'showResult' (the renderer holds a card that arrives
+     while the ball / dice are in the air until they land) and before 'history'; a
+     play/showResult/reset clears the renderer's card, so one that is up is re-sent then. */
+  function reconcile(view, state, config, keys) {
+    keys = keysOr(keys);
+    var v = merge(view || newView());
+    var actions = [];
+    var hasState = isObj(state);
+    var spin = hasState && isObj(state.spin) && state.spin.id != null ? state.spin : null;
+    var visible = hasState ? !!state.visible : !!v.visible;
+    var hiding = !!v.visible && !visible;
+    var showing = visible && !v.visible;
+
+    if (hiding) actions.push({ type: 'hide', immediate: false });
+
+    // 1. appearance — saved config, or config + overrides for this spin's duration
+    var eff = effectiveConfig(config, spin, keys);
+    var ak = keyOf(eff);
+    if (ak !== v.appearanceKey) {
+      actions.push({ type: 'appearance', config: eff, deferred: hiding });
+      v.appearanceKey = ak;
+    }
+    v.overrideId = hasOverrides(spin, keys) ? spin.id : null;
+    if (!hasState) return { view: v, actions: actions };
+
+    // 2. visibility (after appearance, so the pop-in starts at the right spot)
+    if (showing) actions.push({ type: 'show' });
+    v.visible = visible;
+
+    // 3. the table (bets / point / countdown) — only when it changed; placed below
+    var table = isObj(state.table) ? state.table : null;
+    var tk = table ? keyOf(table) : null;
+    var tableAct = table && tk !== v.tableKey ? { type: 'table', table: table } : null;
+    v.tableKey = tk;
+
+    // 4. the spin
+    var spinAct = false;                                       // play / showResult / reset sent
+    if (spin) {
+      if (spin.id !== v.playingId) {
+        if (tableAct) { actions.push(tableAct); tableAct = null; }   // table BEFORE play
+        if (state.state === 'spinning') {
+          actions.push({ type: 'play', spin: spin });          // seeks by elapsed_ms
+          v.mode = 'playing';
+        } else {
+          actions.push({ type: 'showResult', spin: spin });    // late join: already landed
+          v.mode = 'result';
+        }
+        v.playingId = spin.id;
+        spinAct = true;
+      } else if (state.state !== 'spinning') {
+        v.mode = 'result';                                     // same spin, landed: nothing to do
+      }
+    } else if (v.playingId != null || v.mode !== 'idle') {
+      actions.push({ type: 'reset', deferred: hiding });
+      v.playingId = null; v.mode = 'idle';
+      spinAct = true;
+      if (table) tableAct = { type: 'table', table: table };      // re-apply after reset
+    }
+    if (tableAct) actions.push(tableAct);
+
+    // 5. Hex's announcement — only when it changed, or again after play/showResult/reset
+    //    (they clear the renderer's card) while one is up
+    var ann = isObj(state.announce) ? state.announce : null;
+    var ank = announceKey(ann);
+    if (ank !== v.announceKey || (ann && spinAct)) {
+      actions.push({ type: 'announce', announce: ann });
+      v.announceKey = ank;
+    }
+
+    // 6. history strip (only landed spins, newest first) — only when it changed
+    var hk = historyKey(state);
+    if (hk !== v.historyKey) {
+      actions.push({ type: 'history', results: Array.isArray(state.history) ? state.history : [] });
+      v.historyKey = hk;
+    }
+    return { view: v, actions: actions };
+  }
+
+  // {"type":"stop"}: hide immediately, reset, drop any spin overrides.
+  function stop(view, config, keys) {
+    var v = merge(view || newView());
+    var actions = [{ type: 'hide', immediate: true }, { type: 'reset', deferred: false }];
+    v.visible = false; v.playingId = null; v.mode = 'idle'; v.overrideId = null; v.tableKey = null;
+    v.announceKey = null;
+    var eff = effectiveConfig(config, null, keys), ak = keyOf(eff);
+    if (ak !== v.appearanceKey) {
+      actions.push({ type: 'appearance', config: eff, deferred: false });
+      v.appearanceKey = ak;
+    }
+    return { view: v, actions: actions };
+  }
+
+  return {
+    APPEARANCE: APPEARANCE, merge: merge, isObj: isObj, hasOverrides: hasOverrides,
+    effectiveConfig: effectiveConfig, keyOf: keyOf, historyKey: historyKey, resultLabel: resultLabel,
+    announceKey: announceKey, newView: newView, forget: forget, reconcile: reconcile, stop: stop
+  };
+})();
+</script>
+
+<script>
+(function () {
+'use strict';
+var L = GamesLogic;
+var FADE_MS = 350;
+
+/* ---- registry ------------------------------------------------------------
+   One entry per INSTALLED game, from GET /games/api/registry (a game that is not installed has no
+   slot and no renderer here): {script, renderer, appearance, defaults, stateful}. The script must
+   register window.HexGames[id] with the renderer interface (create/setConfig/resize/play/showResult/
+   setHistory/reset/destroy, + optional setTable / setAnnounce); `renderer` is filled in once it has
+   loaded. `defaults` mirror the backend's so missing config keys fall back to the same values;
+   `appearance` = the keys a spin's `overrides` may change for that game.
+   The box is the renderer's BASE_W x BASE_H (or BASE_SIZE square) in stage px.
+   `stateful` = a round game: the renderer takes the whole STATE through setState() (see syncRound()). */
+var GAMES = {};
+
+var stage = document.getElementById('stage');
+var slots = {};          // game id -> slot (only games this source shows)
+var ws = null;
+var outbox = [];         // error reports queued while the socket is down
+
+/* ---- error reporting ----------------------------------------------------- */
+var errSeen = {}, errSeenN = 0, errBurst = 0, errBurstAt = 0;
+function errText(e) {
+  if (!e) return 'unknown error';
+  if (e.stack) return String(e.stack).split('\n').slice(0, 4).join(' | ');
+  return String(e.message || e);
+}
+function report(message) {
+  message = String(message || 'error').slice(0, 1000);
+  var now = Date.now();
+  // De-duplicate BEFORE logging: an error thrown from a renderer's RAF loop repeats
+  // every frame, and OBS copies browser-source console output into its own log.
+  if (errSeen[message] && now - errSeen[message] < 30000) return;   // same error: once per 30s
+  if (errSeenN > 100) { errSeen = {}; errSeenN = 0; }
+  errSeen[message] = now; errSeenN++;
+  if (now - errBurstAt > 60000) { errBurstAt = now; errBurst = 0; }
+  if (++errBurst > 30) return;                                      // runaway-loop guard
+  try { console.error('[games overlay] ' + message); } catch (e) {}
+  var payload = JSON.stringify({ type: 'error', message: message });
+  if (ws && ws.readyState === 1) { try { ws.send(payload); return; } catch (e) {} }
+  if (outbox.length < 20) outbox.push(payload);
+}
+window.onerror = function (msg, src, line, col, err) {
+  report(err && err.stack ? errText(err) : (msg + ' @ ' + (src || '?') + ':' + (line || 0) + ':' + (col || 0)));
+};
+window.addEventListener('unhandledrejection', function (e) {
+  report('unhandled rejection: ' + errText(e && e.reason));
+});
+
+/* ---- stage ---------------------------------------------------------------- */
+function fitStage() {
+  var s = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
+  stage.style.transform = 'scale(' + s + ')';
+}
+window.addEventListener('resize', function () {
+  fitStage();
+  eachSlot(function (slot) { resizeSlot(slot); });   // on-screen size changed → backing store
+});
+fitStage();
+
+// Own keys only: a game name from the URL or a message ("constructor", "__proto__")
+// must never resolve to something inherited from Object.prototype.
+function own(o, k) { return typeof k === 'string' && Object.prototype.hasOwnProperty.call(o, k); }
+function eachSlot(fn) { for (var id in slots) if (own(slots, id)) fn(slots[id]); }
+function num(v, def, lo, hi) {
+  var n = parseFloat(v);
+  if (!isFinite(n)) n = def;
+  return Math.max(lo, Math.min(hi, n));
+}
+
+/* ---- per-game slot -------------------------------------------------------- */
+function makeSlot(id) {
+  var layer = document.createElement('div');
+  layer.className = 'gm-layer';
+  layer.setAttribute('data-game', id);
+  stage.appendChild(layer);
+  var defaults = GAMES[id].defaults || {};
+  var slot = {
+    id: id, meta: GAMES[id], layer: layer, box: null, inst: null,
+    config: L.merge(defaults),     // saved config (defaults filled in)
+    eff: L.merge(defaults),        // effective config: config + active spin overrides
+    state: null, stateAt: 0,       // last STATE + when it arrived (performance.now)
+    view: L.newView(),
+    shown: false, fading: false, fadeTimer: 0, popUntil: 0, popTimer: 0,
+    appearanceDirty: false, resetDirty: false,   // deferred until a fade-out finishes
+    announceDirty: false,
+    gen: 0, landing: null, landTimer: 0, pendingHistory: null, history: [],
+    sizeKey: '', loadFailed: false
+  };
+  newBox(slot);
+  return slot;
+}
+
+// The container's size in stage px at scale 1: the renderer's BASE_W x BASE_H
+// (a wide craps tray), else a BASE_SIZE square (the roulette wheel), else 400.
+function baseSize(slot) {
+  var R = slot.meta.renderer;
+  var s = R && +R.BASE_SIZE, w = R && +R.BASE_W, h = R && +R.BASE_H;
+  if (!(w > 0)) w = s > 0 ? s : 400;
+  if (!(h > 0)) h = s > 0 ? s : w;
+  return { w: w, h: h };
+}
+
+// The game's appearance keys (what a spin's `overrides` may change).
+function appearanceKeys(slot) {
+  return Array.isArray(slot.meta.appearance) ? slot.meta.appearance : L.APPEARANCE;
+}
+
+// Fresh container for a renderer instance (whatever an old one left behind goes with it).
+function newBox(slot) {
+  var old = slot.box;
+  var box = document.createElement('div');
+  box.className = 'gm-box';
+  slot.layer.appendChild(box);
+  if (old && old.parentNode) old.parentNode.removeChild(old);
+  slot.box = box;
+  slot.sizeKey = '';
+  applyPlacement(slot);
+}
+
+function applyPlacement(slot) {
+  var c = slot.eff, d = slot.meta.defaults || {}, size = baseSize(slot);
+  var x = num(c.x, num(d.x, 50, 0, 100), 0, 100), y = num(c.y, num(d.y, 50, 0, 100), 0, 100);
+  var s = num(c.scale, num(d.scale, 1.25, 0.2, 5), 0.2, 5);
+  var st = slot.box.style;
+  st.width = size.w + 'px'; st.height = size.h + 'px';
+  st.left = x + '%'; st.top = y + '%';
+  st.transform = 'translate(-50%,-50%) scale(' + s + ')';
+  // The box is centred on (x%, y%) of the full-stage layer, so this origin is the
+  // box centre whatever its shape: the pop-in grows out of the wheel / tray centre.
+  slot.layer.style.transformOrigin = x + '% ' + y + '%';
+}
+
+// Guarded renderer call: optional methods are skipped, throws are reported.
+function call(slot, name, arg) {
+  var inst = slot.inst;
+  if (!inst || typeof inst[name] !== 'function') return undefined;
+  try { return inst[name](arg); }
+  catch (e) { report(slot.id + '.' + name + ': ' + errText(e)); return undefined; }
+}
+
+// Tell the renderer its on-screen size changed (backing store = on-screen px x DPR).
+// Only when it really changed: resizing a canvas clears it. Never mid pop-in, where
+// the animation's transform would be measured.
+function resizeSlot(slot, force) {
+  if (!slot.inst || !slot.shown) return;
+  var wait = slot.popUntil - performance.now();
+  if (wait > 0) {
+    clearTimeout(slot.popTimer);
+    slot.popTimer = setTimeout(function () { resizeSlot(slot, force); }, wait + 20);
+    return;
+  }
+  var r = slot.box.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  var key = Math.round(r.width * dpr) + 'x' + Math.round(r.height * dpr);
+  if (!force && key === slot.sizeKey) return;
+  slot.sizeKey = key;
+  call(slot, 'resize');
+}
+
+function applyAppearance(slot) {
+  applyPlacement(slot);
+  if (slot.inst) {
+    call(slot, 'setConfig', slot.eff);
+    resizeSlot(slot);
+  }
+}
+
+/* ---- renderer lifecycle -------------------------------------------------- */
+// Create the renderer instance (only while shown: a hidden game has none, so no RAF).
+function wake(slot) {
+  if (slot.inst) return true;
+  var R = slot.meta.renderer;
+  if (!R || typeof R.create !== 'function') return false;   // still loading (or failed: reported)
+  newBox(slot);
+  try { slot.inst = R.create(slot.box, slot.eff, { sound: true }) || null; }
+  catch (e) { slot.inst = null; report(slot.id + '.create: ' + errText(e)); }
+  if (!slot.inst) return false;
+  resizeSlot(slot, true);
+  return true;
+}
+
+// Tear the instance down once hidden: stops its RAF and audio entirely.
+function sleep(slot) {
+  clearTimeout(slot.landTimer);
+  clearTimeout(slot.popTimer);
+  slot.gen++; slot.landing = null; slot.pendingHistory = null;
+  if (!slot.inst) return;
+  call(slot, 'reset');
+  call(slot, 'destroy');
+  slot.inst = null;
+  newBox(slot);
+}
+
+/* ---- show / hide ---------------------------------------------------------- */
+function show(slot) {
+  if (slot.shown) return;
+  var layer = slot.layer;
+  slot.shown = true;
+  layer.classList.remove('gm-in', 'gm-out');
+  layer.classList.add('gm-shown');
+  slot.popUntil = 0;
+  // Create (or re-measure) the renderer before the pop-in transform applies, so the
+  // backing store is sized for the final on-screen size. Not loaded yet → rendererReady() wakes it.
+  if (wake(slot)) resizeSlot(slot);
+  void layer.offsetWidth;           // restart the animation
+  layer.classList.add('gm-in');
+  slot.popUntil = performance.now() + FADE_MS;
+}
+
+function fadeOut(slot) {
+  if (!slot.shown || slot.fading) return;
+  slot.fading = true;
+  slot.layer.classList.remove('gm-in');
+  slot.layer.classList.add('gm-out');
+  clearTimeout(slot.fadeTimer);
+  slot.fadeTimer = setTimeout(function () { slot.fading = false; finishHide(slot); }, FADE_MS + 30);
+}
+
+function finishHide(slot) {
+  clearTimeout(slot.fadeTimer);
+  slot.fading = false;
+  slot.shown = false;
+  slot.popUntil = 0;
+  slot.layer.classList.remove('gm-shown', 'gm-in', 'gm-out');
+  sleep(slot);
+  slot.resetDirty = false;                         // instance is gone anyway
+  slot.announceDirty = false;
+  if (slot.appearanceDirty) { slot.appearanceDirty = false; applyPlacement(slot); }
+  slot.view = L.forget(slot.view);
+}
+
+// A fade-out got interrupted (the game is shown again): apply what it deferred.
+// When the interrupting batch brings its own appearance (or announcement), that one
+// is newer — skip the deferred one rather than re-rendering the renderer's caches twice.
+function interruptFade(slot, batchHasAppearance, batchHasAnnounce) {
+  if (!slot.fading) return;
+  clearTimeout(slot.fadeTimer);
+  slot.fading = false;
+  slot.shown = false;               // show() restarts the pop-in from here
+  slot.layer.classList.remove('gm-out');
+  var ann = slot.state && L.isObj(slot.state.announce) ? slot.state.announce : null;
+  if (slot.resetDirty) {
+    slot.resetDirty = false;
+    doReset(slot);
+    // the batch only re-sends a table that changed: put the current one back after reset
+    if (slot.state && L.isObj(slot.state.table)) doTable(slot, slot.state.table);
+    if (ann) slot.announceDirty = true;             // reset() took Hex's card down too: put it back
+  }
+  if (slot.announceDirty) {                         // held back while fading (or cleared by reset)
+    slot.announceDirty = false;
+    if (!batchHasAnnounce) doAnnounce(slot, ann);
+  }
+  if (slot.appearanceDirty) {
+    slot.appearanceDirty = false;
+    if (!batchHasAppearance) applyAppearance(slot);
+  }
+}
+
+/* ---- action executor ------------------------------------------------------ */
+function liveSpin(slot, spin) {
+  // elapsed_ms was measured when the server built the message; add the time the
+  // state sat here (e.g. renderer still loading) so the landing stays on schedule.
+  var s = L.merge(spin);
+  var waited = slot.stateAt ? Math.max(0, performance.now() - slot.stateAt) : 0;
+  s.elapsed_ms = Math.max(0, (+spin.elapsed_ms || 0) + waited);
+  return s;
+}
+
+function landed(slot, gen) {
+  if (slot.gen !== gen) return;
+  clearTimeout(slot.landTimer);
+  slot.landing = null;
+  if (slot.pendingHistory) {
+    var h = slot.pendingHistory;
+    slot.pendingHistory = null;
+    call(slot, 'setHistory', h);
+  }
+}
+
+function doReset(slot) {
+  if (!slot.inst) return;
+  slot.gen++;
+  landed(slot, slot.gen);             // flush any held-back history
+  call(slot, 'reset');
+}
+
+function doPlay(slot, spin) {
+  if (!slot.inst) return;
+  var gen = ++slot.gen;
+  if (slot.pendingHistory) { var h = slot.pendingHistory; slot.pendingHistory = null; call(slot, 'setHistory', h); }
+  var sp = liveSpin(slot, spin);
+  slot.landing = { gen: gen, id: sp.id };
+  var p = call(slot, 'play', sp);
+  if (p && typeof p.then === 'function') {
+    p.then(function () { landed(slot, gen); },
+           function (e) {
+             // an aborted spin (reset/stop/teardown) may reject: only the live one is an error
+             if (slot.gen === gen) report(slot.id + '.play rejected: ' + errText(e));
+             landed(slot, gen);
+           });
+  }
+  // Safety net: never hold the history strip back long past the scheduled landing.
+  var left = Math.max(0, (+sp.duration_ms || 0) - sp.elapsed_ms);
+  clearTimeout(slot.landTimer);
+  slot.landTimer = setTimeout(function () { landed(slot, gen); }, left + 1500);
+}
+
+function doShowResult(slot, spin) {
+  if (!slot.inst) return;
+  slot.gen++;
+  landed(slot, slot.gen);
+  call(slot, 'showResult', liveSpin(slot, spin));
+}
+
+// Games with a table (craps: bets / point / auto-roll countdown; roulette: bets for the
+// next spin / spin countdown). The renderer itself holds a table that arrives while the
+// dice / ball are in the air until they land. auto_roll_in_ms / auto_spin_in_ms were
+// measured when the server built the message: take off the time the state sat here
+// (renderer loading, re-sent after a reset).
+var TABLE_TIMERS = ['auto_roll_in_ms', 'auto_spin_in_ms'];
+function liveTable(slot, table) {
+  var t = L.merge(table);
+  var waited = slot.stateAt ? Math.max(0, performance.now() - slot.stateAt) : 0;
+  for (var i = 0; i < TABLE_TIMERS.length; i++) {
+    var k = TABLE_TIMERS[i];
+    if (typeof t[k] === 'number' && isFinite(t[k])) t[k] = Math.max(0, Math.round(t[k] - waited));
+  }
+  return t;
+}
+
+function doTable(slot, table) {
+  if (!slot.inst || !L.isObj(table)) return;
+  call(slot, 'setTable', liveTable(slot, table));      // optional: skipped if the renderer has none
+}
+
+// Hex's own winners card (STATE.announce — "Hex does the math"); null takes it down.
+// The renderer holds a card that arrives while the ball / dice are in the air until
+// they land. expires_in_ms was measured when the server built the message: take off
+// the time the state sat here, like auto_roll_in_ms.
+function liveAnnounce(slot, a) {
+  if (!L.isObj(a)) return null;
+  var o = L.merge(a);
+  if (typeof o.expires_in_ms === 'number' && isFinite(o.expires_in_ms)) {
+    var waited = slot.stateAt ? Math.max(0, performance.now() - slot.stateAt) : 0;
+    o.expires_in_ms = Math.max(0, Math.round(o.expires_in_ms - waited));
+  }
+  return o;
+}
+
+function doAnnounce(slot, a) {
+  if (!slot.inst) return;
+  call(slot, 'setAnnounce', liveAnnounce(slot, a));    // optional: skipped if the renderer has none
+}
+
+function doHistory(slot, results) {
+  slot.history = results || [];
+  if (!slot.inst) return;
+  // The server's "landed" state can beat our own animation by a frame or two; the
+  // strip must not spoil a ball still in the air, so hold it until we land too.
+  var serverLanded = !(slot.state && slot.state.state === 'spinning');
+  if (serverLanded && slot.landing && slot.landing.gen === slot.gen) {
+    slot.pendingHistory = slot.history;
+    return;
+  }
+  call(slot, 'setHistory', slot.history);
+}
+
+function exec(slot, a) {
+  switch (a.type) {
+    case 'appearance':
+      slot.eff = a.config;
+      if (slot.fading) slot.appearanceDirty = true;   // don't move a wheel that's fading out
+      else applyAppearance(slot);
+      break;
+    case 'show': show(slot); break;
+    case 'hide': if (a.immediate) finishHide(slot); else fadeOut(slot); break;
+    case 'table': doTable(slot, a.table); break;
+    case 'play': doPlay(slot, a.spin); break;
+    case 'showResult': doShowResult(slot, a.spin); break;
+    case 'reset':
+      if (slot.fading) slot.resetDirty = true;         // keep the result up while it fades
+      else doReset(slot);
+      break;
+    case 'announce':
+      if (slot.fading) slot.announceDirty = true;      // keep the card up while it fades
+      else doAnnounce(slot, a.announce);
+      break;
+    case 'history': doHistory(slot, a.results); break;
+  }
+}
+
+function run(slot, actions) {
+  var i, interrupt = false, appearance = false, announce = false;
+  for (i = 0; i < actions.length; i++) {
+    var t = actions[i].type;
+    if (t === 'show' || (t === 'hide' && actions[i].immediate)) interrupt = true;
+    if (t === 'appearance') appearance = true;
+    if (t === 'announce') announce = true;
+  }
+  if (interrupt) interruptFade(slot, appearance, announce);
+  for (i = 0; i < actions.length; i++) {
+    try { exec(slot, actions[i]); }
+    catch (e) { report(slot.id + ' ' + actions[i].type + ': ' + errText(e)); }
+  }
+  if (!slot.inst) slot.view = L.forget(slot.view);   // nothing rendered: replay on wake
+}
+
+function sync(slot) {
+  // Shown but no instance: the renderer's create() threw last time (show() only
+  // wakes on the hidden -> shown edge). Retry on each message; replay what's current.
+  if (slot.shown && !slot.fading && !slot.inst && slot.meta.renderer && wake(slot)) {
+    slot.view = L.forget(slot.view);
+  }
+  if (slot.meta.stateful) { syncRound(slot); return; }
+  var r = L.reconcile(slot.view, slot.state, slot.config, appearanceKeys(slot));
+  slot.view = r.view;
+  run(slot, r.actions);
+}
+
+// Round games (russian, trivia): the generic reconcile only runs visibility + appearance
+// (their STATE has no spin / table / history), then the renderer gets the whole STATE,
+// its phase clock aged by the time the message sat here. The editor's Test in OBS
+// (STATE.preview {id, overrides}) rides that reconcile as a pseudo-spin, so its look
+// goes through effectiveConfig exactly like a table game's test spin overrides.
+function liveRound(slot, st) {
+  var s = L.merge(st);
+  if (L.isObj(st.game)) {
+    var g = L.merge(st.game), waited = slot.stateAt ? Math.max(0, performance.now() - slot.stateAt) : 0;
+    if (typeof g.ends_in_ms === 'number') g.ends_in_ms = Math.max(0, g.ends_in_ms - waited);
+    if (typeof g.elapsed_ms === 'number') g.elapsed_ms = g.elapsed_ms + waited;
+    s.game = g;
+  }
+  return s;
+}
+var ROUND_ACTIONS = { appearance: 1, show: 1, hide: 1 };   // the rest is setState()'s job
+function syncRound(slot) {
+  var st = slot.state;
+  var pv = st && L.isObj(st.preview) && st.preview.id != null ? { id: st.preview.id, overrides: st.preview.overrides } : null;
+  var lite = st ? { state: st.state, visible: st.visible, spin: pv, history: [] } : null;
+  var r = L.reconcile(slot.view, lite, slot.config, appearanceKeys(slot));
+  slot.view = r.view;
+  // a pseudo-spin makes reconcile ask for play / showResult / reset: not a round renderer's business
+  run(slot, r.actions.filter(function (a) { return own(ROUND_ACTIONS, a.type); }));
+  if (st && slot.inst && !slot.fading) call(slot, 'setState', liveRound(slot, st));
+}
+
+/* ---- renderer loading ------------------------------------------------------ */
+function rendererReady(slot, R) {
+  slot.meta.renderer = R;
+  applyPlacement(slot);                          // BASE_W/BASE_H (or BASE_SIZE) are known now
+  sync(slot);                                    // already shown → sync() wakes it + replays the spin
+}
+
+function loadRenderer(slot) {
+  var id = slot.id;
+  var have = window.HexGames && window.HexGames[id];
+  if (have) { rendererReady(slot, have); return; }
+  var s = document.createElement('script');
+  s.src = slot.meta.script;
+  s.onload = function () {
+    var R = window.HexGames && window.HexGames[id];
+    if (R && typeof R.create === 'function') rendererReady(slot, R);
+    else report(slot.meta.script + ' loaded but did not register HexGames.' + id);
+  };
+  s.onerror = function () {
+    if (s.parentNode) s.parentNode.removeChild(s);
+    if (!slot.loadFailed) report('could not load ' + slot.meta.script + ' — retrying');
+    slot.loadFailed = true;
+    setTimeout(function () { loadRenderer(slot); }, 5000);
+  };
+  document.head.appendChild(s);
+}
+
+/* ---- messages -------------------------------------------------------------- */
+// config / state / stop, and the registry notice (a game was added or removed: start over); anything
+// else (e.g. the games' "ledger" messages, which the server sends to panel sockets) is ignored.
+function handle(m) {
+  if (!m || typeof m !== 'object') return;
+  if (m.type === 'config') {
+    var all = L.isObj(m.config) ? m.config : {};
+    eachSlot(function (slot) {
+      slot.config = L.merge(slot.meta.defaults, L.isObj(all[slot.id]) ? all[slot.id] : {});
+      sync(slot);
+    });
+  } else if (m.type === 'state') {
+    var slot = own(slots, m.game) ? slots[m.game] : null;
+    if (!slot || !L.isObj(m.state)) return;
+    slot.state = m.state;
+    slot.stateAt = performance.now();
+    sync(slot);
+  } else if (m.type === 'stop') {
+    // {"type":"stop"} stops everything; {"type":"stop","game":id} just that game.
+    var only = typeof m.game === 'string' && m.game ? m.game : null;
+    eachSlot(function (slot) {
+      if (only && slot.id !== only) return;
+      var r = L.stop(slot.view, slot.config, appearanceKeys(slot));
+      slot.view = r.view;
+      if (slot.state) {                          // the aborted spin (and Hex's card) must not
+        var st = L.merge(slot.state);            // replay before the server's follow-up state
+        st.spin = null; st.visible = false; st.state = 'idle'; st.announce = null;
+        slot.state = st;
+      }
+      run(slot, r.actions);
+    });
+  } else if (m.type === 'registry') {
+    scheduleReload();
+  }
+}
+
+/* ---- websocket --------------------------------------------------------------- */
+function connect() {
+  var proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  var sock;
+  try { sock = new WebSocket(proto + '://' + location.host + '/games/ws/overlay'); }
+  catch (e) { setTimeout(connect, 1000); return; }
+  ws = sock;
+  sock.onopen = function () {
+    var shown = Object.keys(slots);     // only games this source really shows (?game=bogus → null)
+    try { sock.send(JSON.stringify({ type: 'hello', game: WANT.length && shown.length === 1 ? shown[0] : null })); } catch (e) {}
+    while (outbox.length && sock.readyState === 1) {
+      try { sock.send(outbox.shift()); } catch (e) { break; }
+    }
+    checkRegistry();
+  };
+  sock.onmessage = function (e) {
+    var m;
+    try { m = JSON.parse(e.data); } catch (err) { return; }
+    try { handle(m); } catch (err) { report('message ' + (m && m.type) + ': ' + errText(err)); }
+  };
+  sock.onclose = function () {
+    if (ws === sock) ws = null;
+    setTimeout(connect, 1000);
+  };
+  sock.onerror = function () { try { sock.close(); } catch (err) {} };
+}
+
+/* ---- boot ------------------------------------------------------------------- */
+// ?game=roulette limits which games this browser source shows (comma list ok).
+var WANT = [];
+try {
+  WANT = (new URLSearchParams(location.search).get('game') || '').toLowerCase()
+    .split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+} catch (e) { WANT = []; }
+// The installed games come from the server. REG_SIG remembers what this page booted with.
+var REG_SIG = '';
+function registrySig(games) { return JSON.stringify(games); }
+
+// A game was added or removed (the server says so with {"type":"registry"}): the renderers were loaded for
+// the games of that moment, so the page starts over. OBS browser sources handle that fine.
+var reloadT = 0;
+function scheduleReload() {
+  clearTimeout(reloadT);
+  reloadT = setTimeout(function () { location.reload(); }, 600);
+}
+
+// The socket (re)connected: a page that missed the notice (or whose Hexcast was restarted with other
+// games) starts over too.
+function checkRegistry() {
+  fetch('/games/api/registry', { cache: 'no-store' })
+    .then(function (r) { return r.json(); })
+    .then(function (d) { if (d && Array.isArray(d.games) && registrySig(d.games) !== REG_SIG) scheduleReload(); })
+    .catch(function () {});
+}
+
+function boot(games) {
+  REG_SIG = registrySig(games);
+  games.forEach(function (g) {
+    var ov = g && g.overlay;
+    if (!g || typeof g.key !== 'string' || !ov || !ov.script) return;
+    GAMES[g.key] = { script: ov.script, renderer: null, appearance: ov.appearance, defaults: ov.defaults,
+      stateful: !!ov.stateful };
+  });
+  WANT.forEach(function (w) { if (!own(GAMES, w)) report('unknown game "' + w + '" in ?game='); });
+  Object.keys(GAMES).forEach(function (id) {
+    if (!WANT.length || WANT.indexOf(id) >= 0) slots[id] = makeSlot(id);
+  });
+  eachSlot(loadRenderer);
+  connect();        // (with no game installed the page just stays transparent, waiting for a registry notice)
+}
+
+// Debug / test hook (devtools: HexGamesOverlay.slots.roulette).
+window.HexGamesOverlay = { GAMES: GAMES, slots: slots, handle: handle, report: report };
+
+function loadRegistry() {
+  fetch('/games/api/registry', { cache: 'no-store' })
+    .then(function (r) { return r.json(); })
+    .then(function (d) { if (!d || !Array.isArray(d.games)) throw new Error('bad registry'); return d.games; })
+    .then(boot, function () { setTimeout(loadRegistry, 3000); });   // Hexcast is still starting: ask again
+}
+loadRegistry();
+})();
+</script>
+</body></html>

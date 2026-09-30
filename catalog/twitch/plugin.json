@@ -1,0 +1,22 @@
+{
+  "id": "twitch",
+  "name": "Twitch",
+  "version": "1.0.0",
+  "description": "Chat and alert overlays for follows, subs, gift subs, bits, raids, channel-point redeems and hype trains, with a FIFO alert queue, alerts that can fire soundboard clips by name, and a !so shoutout command.",
+  "icon": "💬",
+  "color": "#a970ff",
+  "category": "Integrations",
+  "author": "UMDSmith",
+  "recommends": ["clips"],
+  "nav": {
+    "label": "Twitch",
+    "href": "/twitch",
+    "key": "twitch",
+    "order": 20,
+    "status_url": "/twitch/api/status",
+    "status_js": "nav.js"
+  },
+  "help": { "file": "help.html", "toc": [ { "id": "twitch", "label": "Twitch" }, { "id": "shoutout", "label": "Shoutouts (!so)" } ] },
+  "legacy_config": ["twitch.json", "twitch_secrets.json", "twitch_queue.json"],
+  "order": 20
+}

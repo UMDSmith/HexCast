@@ -1,0 +1,91 @@
+<section id="craps">
+<div class="card">
+  <h2>Craps <span class="tag">/games#craps</span></h2>
+  <p class="hint">A bank-craps table on the games overlay (<code>/games/overlay</code>, or
+    <code>?game=craps</code> for its own source). Chat bets <b>hexcoins</b>; bets stay on the table across
+    rolls like a casino. The <b>server</b> rolls two dice with <code>secrets.SystemRandom</code>, the overlay
+    throws them onto exactly those faces, the stickman calls it, the puck moves and every bet settles by
+    standard casino rules. Nothing can force the dice. Hexcast holds <b>no balances</b>: the bank is
+    <b>Hex</b>, whose <b>hexbank</b> takes the coins for every <b>debit</b> and pays every <b>credit</b> in
+    a numbered, persisted <b>ledger</b> — or Hex does the math itself and only tells the overlay what to show
+    (<b>Mode B</b>, further down). All endpoints return <code>{"ok": true/false, ...}</code>.</p>
+  <table class="api">
+    <tr><td>GET|POST /games/api/craps/roll</td><td>throw the dice (aliases <code>/spin</code>, <code>/play</code>) — returns the dice, <code>settlements</code> (every bet with action), <code>credits</code> per user, <code>summary</code>, <code>table</code> (+ the roll's <code>ledger</code> events with <code>wait</code>); <b>409</b> <code>{"error": "busy", "retry_in_ms", "state"}</code> while a roll is in the air, showing its result, or in cooldown</td></tr>
+    <tr><td>GET|POST /games/api/craps/bet</td><td><code>{user, bet, amount, target?}</code> or <code>{"bets": [...]}</code> (up to 200) → <code>accepted</code>, <code>rejected</code> (each with an <code>error</code>), <code>debits</code> <code>[{user, amount, bet_id, seq}]</code>, <code>table</code>. 200 if any were accepted, 400 if all were rejected, <b>409</b> <code>bets_closed</code> while the dice are in the air</td></tr>
+    <tr><td>GET|POST /games/api/craps/remove</td><td><code>{bet_id}</code> · <code>{user, bet}</code> (<code>"bet": "odds"</code> takes down just the odds) · <code>{user, all: true}</code> → <code>removed</code>, <code>credits</code> (refunds), <code>ledger</code>; contract bets answer 400, <b>409</b> <code>bets_closed</code> while the dice are in the air</td></tr>
+    <tr><td>GET /games/api/craps/table</td><td>phase, point, shooter, hand rolls, every bet, <code>exposure</code> per user, <code>bets_open</code>, <code>auto_roll_in_ms</code> (the countdown — auto-roll or <code>/timer</code>), <code>last_seq</code></td></tr>
+    <tr><td>GET /games/api/craps/user/{name}</td><td>one viewer's bets, exposure and craps session debits / credits / net</td></tr>
+    <tr><td>GET /games/api/craps/ledger?since=0&amp;limit=500</td><td>craps' ledger events with <code>seq</code> &gt; since, oldest first (limit up to 5000), plus <code>last_seq</code>, <code>oldest_seq</code> and <code>truncated</code> (the limit cut it, or older events are only in <code>config/games_ledger.jsonl</code>). The ledger is shared with roulette's table (one <code>seq</code> numbering, each event names its <code>game</code>), so gaps are normal; <code>GET /games/api/ledger</code> has every game's</td></tr>
+    <tr><td>GET|POST /games/api/craps/clear</td><td>refund every bet (reason <code>refund</code>), back to a come-out, shooter cleared, countdown stopped; 409 <code>bets_closed</code> while the dice are in the air</td></tr>
+    <tr><td>GET|POST /games/api/craps/timer · timer/cancel</td><td>the <b>roll timer</b>: start (or restart) a countdown now — <code>seconds</code> 5–300 (default <b>bet window</b>), with or without bets, auto-roll on or off; at 0 the shooter's dice go by themselves → <code>{auto_in_ms, table, state}</code>, <b>409</b> busy unless idle · stop any countdown → <code>{cancelled, table, state}</code>. A running countdown keeps the table on screen, even with <b>show when bets</b> off</td></tr>
+    <tr><td>GET /games/api/craps/validate?bet=&amp;user=&amp;amount=&amp;target=</td><td>dry run against the current table: <code>valid</code>, <code>type</code>, <code>label</code>, <code>number</code>, <code>odds_text</code>, <code>error</code>, <code>hint</code> (when an amount won't pay exactly), <code>max_odds</code></td></tr>
+    <tr><td>GET /games/api/craps/bets</td><td>bet reference: type, label, syntax, pays, when, one roll, notes + rules</td></tr>
+    <tr><td>GET /games/api/craps/last · history · history/clear</td><td>as <a href="/help/roulette">Roulette</a> — rolls newest first (in memory) + stats: totals, points set/made, seven-outs, naturals, craps, hard ways, hands, longest hand</td></tr>
+    <tr><td>GET|POST /games/api/craps/announce · announce/clear</td><td>Mode B (Hex did the math): a payouts card for the current or last roll that replaces the computed payouts board, up to <b>payouts max</b> lines shown — the same fields as <a href="/help/roulette">Roulette</a>'s, <code>currency</code> defaults to the craps <code>currency</code> setting (<code>hexcoins</code>), <b>show payouts</b> applies, <b>409</b> <code>stale</code> for an old <code>spin_id</code> · take it down now</td></tr>
+    <tr><td>GET|POST /games/api/craps/board · board/clear</td><td>Mode B: <code>{title, bets: [{user, text, amount}]}</code> — up to 100 lines, <code>user</code> ≤ 40, <code>text</code> ≤ 60, <code>amount</code> optional 0–1e12, each needs a <code>user</code> or a <code>text</code>, <code>title</code> ≤ 40 (default <code>ON THE TABLE</code>) — replaces the bets board; returns <code>{table}</code> with it as <code>display_board</code> <code>{title, bets, total}</code>. Memory only, counts for <b>show when bets</b>, allowed while the dice fly. <code>{"bets": []}</code> = nothing down (no board shown); <code>board/clear</code> or <code>{"clear": true}</code> → the table's own board again. Never touches the table's bets or the ledger</td></tr>
+    <tr><td>GET|POST /games/api/craps/show · hide · stop</td><td>as <a href="/help/roulette">Roulette</a>; <b>stop</b> in mid-roll still settles that roll</td></tr>
+    <tr><td>GET · POST /games/api/config</td><td>the <code>"craps"</code> section: roll / result / cooldown seconds, <code>currency</code>, <code>min_bet</code>, <code>max_bet</code>, <code>odds_rule</code>, <code>field_12_pays</code>, <code>auto_roll</code>, <code>bet_window_seconds</code>, clips, placement and looks</td></tr>
+  </table>
+  <h3>Roll parameters (query or JSON body)</h3>
+  <table class="api">
+    <tr><td>?user=bob</td><td>who's rolling — becomes the shooter if there isn't one</td></tr>
+    <tr><td>?wait=true</td><td>hold the response until the dice land and the roll is settled</td></tr>
+    <tr><td>?test=true</td><td>animation only: no settlement, ledger, history or clip cues</td></tr>
+    <tr><td>?duration=6</td><td>roll seconds, clamped 2.5–10 (default from Settings)</td></tr>
+    <tr><td>"bets": [...]</td><td>placed first, exactly like <code>/bet</code>; the response carries <code>placed</code></td></tr>
+    <tr><td>?x=80&amp;y=25&amp;scale=0.8</td><td>per-roll placement; POST <code>"overrides": {...}</code> takes any appearance key</td></tr>
+  </table>
+  <h3>Bet syntax (case-insensitive; spaces, _, - and ' ignored; net odds "X to 1")</h3>
+  <table class="api">
+    <tr><td>pass · passline · line · pl</td><td>pass line — 1, come-out only</td></tr>
+    <tr><td>dontpass · dp</td><td>don't pass — 1, 12 pushes, come-out only</td></tr>
+    <tr><td>come · dontcome · dc</td><td>come / don't come — 1, point phase only</td></tr>
+    <tr><td>odds · layodds · odds:6 · layodds:6</td><td>odds behind your pass / don't pass / come / don't come bet, 0% edge: true odds 4/10 2:1 · 5/9 3:2 · 6/8 6:5, lay 1:2 · 2:3 · 5:6. Limit set by <code>odds_rule</code> (default <code>"345"</code>: 3× / 4× / 5× the flat, lay 6×). Or send <code>"target": "&lt;bet_id&gt;"</code></td></tr>
+    <tr><td>place6 · p6 · 6</td><td>place 4/10 9:5 · 5/9 7:5 · 6/8 7:6 — stays up after a win, off on the come-out</td></tr>
+    <tr><td>hard8 · h8 · hardsix</td><td>hard ways 4/10 7 · 6/8 9 — stays up after a win, off on the come-out</td></tr>
+    <tr><td>field</td><td>one roll: 3 4 9 10 11 pay 1, 2 pays 2, 12 pays 3 (or 2, <code>field_12_pays</code>)</td></tr>
+    <tr><td>any7 · seven · big red · 7</td><td>one roll — 4</td></tr>
+    <tr><td>anycraps · craps · ac</td><td>one roll: 2, 3, 12 — 7</td></tr>
+    <tr><td>aces · 2 · boxcars · 12</td><td>one roll — 30</td></tr>
+    <tr><td>acedeuce · 3 · yo · 11</td><td>one roll — 15</td></tr>
+    <tr><td>horn · ce · c&amp;e</td><td>one roll: horn (multiple of 4) 2/12 27:4, 3/11 3:1 · C&amp;E (even) 2/3/12 3:1, 11 7:1</td></tr>
+  </table>
+  <h3>Hooking up the bank (hexcoins)</h3>
+  <p class="hint"><b>Placing a bet</b> — either (a) check the viewer's hexbank balance →
+    <code>POST /bet</code> → debit each accepted <code>debits[]</code> entry (if a debit then fails,
+    <code>/remove</code> that bet), or (b) debit first → <code>POST /bet</code> → credit back whatever was
+    rejected. Rejected bets and a 409 move nothing. <b>Paying out</b> — tail
+    <code>/ledger?since=&lt;last applied seq&gt;</code>, apply each event once in <code>seq</code> order,
+    and save that seq in Hex together with the hexbank change, so payouts happen exactly once across
+    restarts of either side. Skip the debits Hex already took from a <code>/bet</code> reply; take any other
+    debit (a bet placed from the panel). The tail also catches panel rolls, auto-rolls and timer rolls,
+    take-downs (<code>remove</code>) and clears (<code>refund</code>); running roulette's table too, tail
+    <code>/games/api/ledger</code> (every game) once instead. The <code>/roll?wait=true</code> reply's
+    <code>credits</code> is for announcing in chat, not for paying. The table and ledger persist in
+    <code>config/</code>; <code>seq</code> keeps counting across restarts, and a restart while the dice are in
+    the air cancels that roll (bets stay, nothing is paid). Winnings round <b>down</b> to whole coins —
+    suggest amounts that pay exactly (place 6/8 in 6s, place 4/5/9/10 in 5s, odds on 6/8 in 5s). Step-by-step
+    guide for Hex's developer, chat-command flow and sample code: <code>docs/craps.md</code>.</p>
+  <h3>Hex does the math (Mode B)</h3>
+  <p class="hint">The other way to run the money: Hexcast's table stays empty and Hex keeps the bets in its own
+    code. Take the stake in the hexbank and mirror the bets with <code>POST /board</code> → close bets and
+    <code>POST /roll</code> with <code>wait: true</code> and no bets → settle Hex's bets from <code>result</code>
+    (<code>event</code>, <code>total</code>, <code>dice</code>, <code>phase_before</code>, <code>point_before</code>) →
+    credit the hexbank → <code>POST /announce</code> the payouts with the roll's <code>id</code> as
+    <code>spin_id</code> and post the updated <code>/board</code>. The dice, puck and shooter are still Hexcast's
+    fair roll — Hex can't send dice. Never also <code>/bet</code> those bets (they'd be settled and in the ledger
+    twice); auto-roll only counts bets on Hexcast's table, so Hex rolls — or starts the roll timer
+    (<code>/timer</code>) and reads the roll it throws from <code>/last</code>; re-post the board after a Hexcast
+    restart (it's memory only). Recipe and sample code: <code>docs/craps.md</code>.</p>
+  <pre>curl "http://localhost:4747/games/api/craps/bet?user=alice&amp;bet=pass&amp;amount=100"
+curl "http://localhost:4747/games/api/craps/bet?user=alice&amp;bet=odds&amp;amount=200"
+curl "http://localhost:4747/games/api/craps/roll?user=alice&amp;wait=true"
+curl "http://localhost:4747/games/api/craps/ledger?since=0"
+curl "http://localhost:4747/games/api/craps/validate?bet=place6&amp;amount=25"
+curl -X POST http://localhost:4747/games/api/craps/bet -H "Content-Type: application/json" -d "{\"bets\":[{\"user\":\"bob\",\"bet\":\"place6\",\"amount\":60},{\"user\":\"carol\",\"bet\":\"field\",\"amount\":25}]}"
+curl -X POST http://localhost:4747/games/api/config -H "Content-Type: application/json" -d "{\"craps\":{\"auto_roll\":true,\"bet_window_seconds\":30}}"
+curl "http://localhost:4747/games/api/craps/timer?seconds=30"
+curl -X POST http://localhost:4747/games/api/craps/board -H "Content-Type: application/json" -d "{\"bets\":[{\"user\":\"alice\",\"text\":\"Pass 100 + odds 50\",\"amount\":150}]}"
+curl "http://localhost:4747/games/api/craps/announce?user=alice&amp;amount=200&amp;text=Pass%20line"</pre>
+</div>
+</section>

@@ -9,7 +9,7 @@ card it's stuffed again and climbs back up.
 
 The **server** picks every outcome; the overlay only animates it. Everything
 lives under `/games/api/russian/*`, and the game has its own tab on the Games
-panel: `/games#russian`. The header's name is yours (`title`, default
+panel: `/games#russian`. (It is an add-on of the [Games](games.md) plugin: install it from the **+** in the Games tab.) The header's name is yours (`title`, default
 **Russian Roulette**) — see [Edit Mode & branding](#edit-mode--branding).
 
 ---

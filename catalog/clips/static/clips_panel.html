@@ -1,0 +1,672 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="/static/hexcast.png">
+<link rel="stylesheet" href="/static/hexbar.css?v=2">
+<title>HexCast - Clips</title>
+<style>
+  :root{
+    /* Palette lives in hexbar.css so every page matches. */
+    --bg:var(--hb-bg); --panel:var(--hb-panel); --line:var(--hb-line); --ink:var(--hb-ink);
+    --dim:var(--hb-dim); --accent:var(--hb-accent); --good:var(--hb-good); --warn:var(--hb-warn);
+    --clips:var(--hb-clips, #1fc7a8); --mono:var(--hb-mono);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 'Segoe UI',system-ui,sans-serif;}
+  .pill{font:600 12px/1 var(--mono);padding:6px 10px;border-radius:99px;border:1px solid var(--line);color:var(--dim)}
+  .pill.on{color:var(--good);border-color:#1d4d33;background:#0e2118}
+  .pill.off{color:var(--warn);border-color:#4d3a10;background:#211a0b}
+
+  nav{display:flex;gap:4px;padding:4px 22px 0;flex-wrap:wrap}
+  nav button{background:none;border:0;border-bottom:2px solid transparent;color:var(--dim);
+             font:600 13px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;padding:10px 14px;cursor:pointer}
+  nav button.sel{color:var(--ink);border-bottom-color:var(--clips)}
+
+  main{padding:18px 22px 60px;max-width:1080px}
+  section{display:none} section.sel{display:block}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
+  .card h2{margin:0 0 4px;font-size:14px;letter-spacing:.14em;text-transform:uppercase}
+  .card p.hint{margin:0 0 14px;color:var(--dim);font-size:13px}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px}
+  label.f{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--dim);
+          letter-spacing:.06em;text-transform:uppercase;font-weight:600}
+  input,select,textarea{background:#08080c;border:1px solid var(--line);color:var(--ink);
+        border-radius:8px;padding:9px 10px;font:14px/1.3 inherit;width:100%}
+  input:focus,select:focus,textarea:focus{outline:2px solid var(--clips);outline-offset:1px;border-color:var(--clips)}
+  label.sw{flex-direction:row;align-items:center;gap:9px;text-transform:none;font-size:14px;color:var(--ink)}
+  label.sw input{width:auto}
+  textarea{font:13px/1.5 var(--mono);min-height:84px;resize:vertical}
+
+  button.act{background:var(--clips);color:#032620;border:0;border-radius:9px;padding:10px 16px;font:700 14px inherit;cursor:pointer}
+  button.act:hover{filter:brightness(1.12)}
+  button.act[disabled]{opacity:.5;cursor:default;filter:none}
+  button.sec{background:#1c1c25;color:var(--ink);border:1px solid var(--line);border-radius:9px;
+             padding:9px 14px;font:600 13px inherit;cursor:pointer}
+  button.sec:hover{border-color:var(--clips)}
+  button.sec.danger:hover{border-color:var(--accent);color:var(--accent)}
+  button.sec[disabled]{opacity:.5;cursor:default}
+  .row{display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin-top:14px}
+
+  .url{display:flex;gap:8px;align-items:center;margin:8px 0}
+  .url code,.url a{flex:1;background:#08080c;border:1px solid var(--line);border-radius:8px;
+            padding:9px 11px;font:13px var(--mono);color:var(--good);overflow:auto;white-space:nowrap;
+            text-decoration:none}
+  .url a:hover{border-color:var(--clips);text-decoration:underline}
+
+  /* now playing */
+  #np{display:flex;flex-direction:column;gap:10px}
+  #np .title{font:700 17px/1.3 inherit;min-height:22px}
+  #np .title .lbl{display:block;color:var(--dim);font:600 11px/1 var(--mono);
+                  letter-spacing:.14em;text-transform:uppercase;margin-bottom:5px}
+  #np .modechip{display:inline-block;margin-left:8px;font:600 10px/1 var(--mono);color:var(--dim);
+                border:1px solid var(--line);border-radius:99px;padding:3px 8px;vertical-align:2px;
+                letter-spacing:.08em;text-transform:uppercase}
+  #bar{height:8px;background:#08080c;border:1px solid var(--line);border-radius:99px;overflow:hidden}
+  #bar i{display:block;height:100%;width:0;background:var(--clips);border-radius:99px;transition:none}
+  #np .times{display:flex;justify-content:space-between;font:12px var(--mono);color:var(--dim)}
+
+  /* queue rows */
+  #qlist{display:flex;flex-direction:column;gap:8px}
+  .qrow{display:flex;gap:12px;align-items:center;padding:10px 12px;border:1px solid var(--line);
+        border-radius:10px;background:#101017;cursor:grab}
+  .qrow:active{cursor:grabbing}
+  .qrow.dragging{opacity:.4}
+  .qrow.playing{border-color:var(--clips)}
+  .qrow.played{opacity:.45}
+  .qrow .num{font:800 13px var(--mono);color:var(--clips);flex:0 0 44px;text-align:right}
+  .qrow .thumb{width:74px;height:42px;border-radius:6px;object-fit:cover;background:#08080c;flex:0 0 auto}
+  .qrow .meta{min-width:0;flex:1}
+  .qrow .meta .t{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .qrow .meta .t a{color:inherit;text-decoration:none}
+  .qrow .meta .t a:hover{color:var(--clips)}
+  .qrow .meta .s{color:var(--dim);font:12px var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .qrow .meta .s .err{color:var(--warn)}
+  .qrow .btns{display:flex;gap:6px;flex:0 0 auto}
+  .qrow .btns button{padding:7px 11px;font-size:12.5px}
+  .badge{display:inline-block;font:600 10px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;
+         border:1px solid var(--line);border-radius:99px;padding:2px 7px;margin-right:5px;color:var(--dim)}
+  .badge.kind{color:var(--clips);border-color:#164d43}
+  .badge.cached{color:var(--good);border-color:#1d4d33}
+  .badge.errb{color:var(--warn);border-color:#4d3a10}
+
+  code{color:var(--good);font:12.5px var(--mono)}
+  table.api{width:100%;border-collapse:collapse;font-size:13px}
+  table.api td{padding:6px 8px;border-top:1px solid var(--line);vertical-align:top}
+  table.api td:first-child{white-space:nowrap;font:12.5px var(--mono);color:var(--good)}
+
+  #log{font:12px/1.7 var(--mono);color:var(--dim);background:#08080c;border:1px solid var(--line);
+       border-radius:8px;padding:12px;max-height:240px;overflow:auto;white-space:pre-wrap}
+
+  /* channel-credit placement: the soundboard edit-mode pattern - a 16:9
+     canvas with a grid, the label dragged center-anchored in % coordinates,
+     plus the same 3x3 quick-position pad. */
+  #cr-stage{background:#050303;border:1px solid var(--line);border-radius:8px;aspect-ratio:16/9;
+            position:relative;overflow:hidden;cursor:grab;margin-top:14px;touch-action:none}
+  #cr-stage.dragging{cursor:grabbing}
+  #cr-stage .grid-ov{position:absolute;inset:0;pointer-events:none;background-image:
+      linear-gradient(to right, rgba(31,199,168,.14) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(31,199,168,.14) 1px, transparent 1px);
+    background-size:12.5% 12.5%}
+  #cr-label{position:absolute;transform:translate(-50%,-50%);white-space:nowrap;text-align:center;
+            user-select:none;cursor:grab;font-weight:600;will-change:left,top}
+  .quickpos{display:grid;grid-template-columns:repeat(3,26px);gap:2px}
+  .quickpos button{background:#1c1c25;color:var(--ink);border:1px solid var(--line);border-radius:5px;
+                   padding:2px;font-size:12px;line-height:1;min-width:0;cursor:pointer}
+  .quickpos button:hover{border-color:var(--clips)}
+  #toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,80px);background:var(--clips);
+         color:#032620;padding:11px 20px;border-radius:99px;font-weight:700;font-size:14px;
+         transition:transform .25s ease;z-index:20;max-width:80vw;text-align:center}
+  #toast.up{transform:translate(-50%,0)}
+</style></head>
+<body>
+
+<div id="hexbar" data-section="Clips"></div>
+<div id="hexbar-actions"><span class="pill" id="st-play">idle</span><span class="pill" id="st-tool">yt-dlp</span></div>
+
+<nav>
+  <button data-tab="queue" class="sel">Queue</button>
+  <button data-tab="settings">Settings</button>
+</nav>
+
+<main>
+
+<section id="tab-queue" class="sel">
+  <div class="card">
+    <h2>Now playing</h2>
+    <div id="np">
+      <div class="title"><span class="lbl">Current clip</span><span id="np-title">nothing playing</span><span class="modechip" id="np-mode" style="display:none"></span></div>
+      <div id="bar"><i id="bar-fill"></i></div>
+      <div class="times"><span id="np-pos">0:00</span><span id="np-dur">0:00</span></div>
+      <div class="row" style="margin-top:2px">
+        <button class="act" id="np-play">Play</button>
+        <button class="sec" id="np-pause" disabled>Pause</button>
+        <button class="sec" id="np-stop">Stop</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Add clips</h2>
+    <p class="hint">Paste a Twitch clip/VOD URL, a YouTube link, or a whole blob of chat spam -
+      every Twitch and YouTube link in it is picked out (<code>?t=</code> start
+      timestamps are honoured), duplicates skipped. A single URL from <b>any other
+      site yt-dlp understands</b> (Kick, Streamable, X, a direct .mp4...) works too.</p>
+    <textarea id="addbox" placeholder="https://clips.twitch.tv/... or any text containing twitch/youtube links"></textarea>
+    <div class="row"><button class="act" id="add">Add to queue</button></div>
+  </div>
+
+  <div class="card">
+    <h2>Queue</h2>
+    <p class="hint">Drag rows to reorder. Nothing auto-advances - every clip is fired by hand
+      (or by a bot via its <b>#number</b>). Played clips stay in the list, dimmed, until you clear them.</p>
+    <div id="qlist"><p class="hint">Queue is empty.</p></div>
+    <div class="row">
+      <button class="sec" id="clear-played">Clear played</button>
+      <button class="sec" id="reset-nums" title="Renumber 1..N and restart the counter - old numbers a bot may still reference stop working">Reset numbering</button>
+    </div>
+  </div>
+</section>
+
+<section id="tab-settings">
+  <div class="card">
+    <h2>Browser source</h2>
+    <p class="hint">Add as a Browser source in OBS, sized and placed where clips should appear
+      (the video letterboxes to fit). It renders <b>nothing at all</b> while idle, so it can cover
+      the whole canvas. Uncheck "Shutdown source when not visible".</p>
+    <div class="url"><a id="u-overlay" href="/clips/overlay" target="_blank" rel="noopener"></a><button class="sec" data-copy="u-overlay">Copy</button></div>
+  </div>
+
+  <div class="card">
+    <h2>Playback</h2>
+    <div class="grid">
+      <label class="f sw"><input type="checkbox" id="f-predownload">Pre-download on add (off = stream)</label>
+      <label class="f sw"><input type="checkbox" id="f-iframe_fallback">Fall back to the site's embed</label>
+      <label class="f">Master volume <span id="volpct" style="text-transform:none"></span>
+        <input type="range" id="f-volume" min="0" max="1" step="0.05"></label>
+      <label class="f sw"><input type="checkbox" id="f-level_enabled">Auto-level clip volume (needs ffmpeg)</label>
+      <label class="f">Target loudness (LUFS)
+        <input type="number" id="f-level_target" min="-40" max="-6" step="1"></label>
+    </div>
+    <div class="row"><button class="act" id="save-cfg">Save</button></div>
+    <p class="hint" style="margin-top:12px"><b>Auto-level</b> measures each clip's loudness on the server (nothing downloaded) and turns louder clips down so clips and <code>!so</code> shoutouts arrive at a consistent volume. It normalises <i>toward</i> the target — clips quieter than it are left alone, and iframe-embed fallbacks can't be adjusted. A clip that plays before it's measured (e.g. an instant shoutout) corrects itself a moment in. <code>-16</code> LUFS is a good stream level; lower is quieter.</p>
+    <p class="hint" style="margin-top:12px">Everything <b>streams straight from the source</b> by default -
+      nothing is stored. Pre-download is optional: it fetches clips/videos to <code>media/clips/</code> on add
+      for instant starts that survive expiring media URLs (files are deleted with their queue item; VODs
+      always stream). The embed fallback covers Twitch and YouTube only; the Twitch embed needs the overlay
+      loaded via a hostname Twitch accepts as <code>parent</code> (localhost works) and can't report when it ends.</p>
+  </div>
+
+  <div class="card">
+    <h2>Channel credit</h2>
+    <p class="hint">Show where the playing clip came from, drawn over the video -
+      <code>twitch.tv/channelname</code> for Twitch, <code>youtube.com/@handle</code> for YouTube
+      (pulled from the clip's metadata when it resolves). Drag the label in the preview to place it,
+      or use the position pad - same as the soundboard's edit mode.</p>
+    <div class="grid">
+      <label class="f sw"><input type="checkbox" id="cr-enabled">Show channel credit</label>
+      <label class="f sw"><input type="checkbox" id="cr-show_title">Include the clip title</label>
+      <label class="f">Font family<input type="text" id="cr-font_family" placeholder="blank = Segoe UI (Google Fonts names work)"></label>
+      <label class="f">Size (px)<input type="number" id="cr-font_size" min="8" max="200" step="1"></label>
+      <label class="f">Color<input type="color" id="cr-color" style="padding:3px;height:38px;cursor:pointer"></label>
+      <label class="f sw"><input type="checkbox" id="cr-shadow">Drop shadow (keeps it readable over video)</label>
+    </div>
+    <div id="cr-stage"><div class="grid-ov"></div><div id="cr-label"></div></div>
+    <div class="row">
+      <div class="quickpos">
+        <button data-pos="15,15" title="Top Left">&#8598;</button>
+        <button data-pos="50,15" title="Top">&#8593;</button>
+        <button data-pos="85,15" title="Top Right">&#8599;</button>
+        <button data-pos="15,50" title="Left">&#8592;</button>
+        <button data-pos="50,50" title="Center">&#9679;</button>
+        <button data-pos="85,50" title="Right">&#8594;</button>
+        <button data-pos="15,85" title="Bottom Left">&#8601;</button>
+        <button data-pos="50,85" title="Bottom">&#8595;</button>
+        <button data-pos="85,85" title="Bottom Right">&#8600;</button>
+      </div>
+      <span class="hint" style="margin:0;font-family:var(--mono)" id="cr-xy"></span>
+      <span style="flex:1"></span>
+      <button class="act" id="cr-save">Save</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>yt-dlp</h2>
+    <p class="hint">YouTube changes constantly and old yt-dlp builds stop working - if YouTube
+      items suddenly start erroring, <b>update first</b>.</p>
+    <div class="row"><button class="sec" id="upd-ytdlp">Update yt-dlp</button></div>
+  </div>
+
+  <div class="card">
+    <h2>YouTube sign-in <span class="pill" id="login-pill">not linked</span></h2>
+    <p class="hint">Optional, and <b>off until you click Link</b>. Clips are looked up anonymously.
+      Linking only helps with videos YouTube won't hand out anonymously: age-restricted,
+      members-only, or "Sign in to confirm you're not a bot".</p>
+    <p class="hint"><b>What Link does, exactly:</b> Hexcast saves the <i>name</i> of the browser you
+      pick (in <code>config/clips.json</code>) and nothing else. When an anonymous lookup is refused,
+      it re-runs yt-dlp with <code>--cookies-from-browser</code>, which reads that browser's
+      YouTube cookies from its profile on this PC at that moment. Hexcast never copies, stores or
+      sends your cookies anywhere except to YouTube, as part of that lookup. Before saving, Link
+      runs a test lookup and tells you what it found.</p>
+    <p class="hint">The link <b>stays after restarts</b> until you click <b>Unlink</b>. While linked,
+      those lookups are done as your YouTube account. This setting is separate from the one on
+      the Music page. Hexcast is local-only - never expose its port to the internet.</p>
+    <p class="hint"><b>How to link:</b> (1) Sign in to YouTube in Firefox — or in Chrome, then close Chrome completely (it locks its cookies while open). (2) Check the requirements line below shows both pieces ready. (3) Pick the browser and click <b>Link</b>; it tests everything and says what, if anything, is missing.</p>
+    <p class="hint" id="login-ready"></p>
+    <div class="grid">
+      <label class="f">Browser to link
+        <select id="login-browser">
+          <option value="firefox">Firefox</option>
+          <option value="chrome">Chrome (must be fully closed)</option>
+        </select></label>
+    </div>
+    <div class="row">
+      <button class="sec" id="login-link">Link</button>
+      <button class="sec danger" id="login-unlink">Unlink</button>
+    </div>
+    <p class="hint" id="login-msg" style="margin:12px 0 0"></p>
+  </div>
+
+  <div class="card">
+    <h2>Log</h2>
+    <div id="log"></div>
+  </div>
+</section>
+
+</main>
+<div id="toast"></div>
+
+<script>
+var CFG=null, QUEUE=[], PLAYER={state:'idle'}, playerAt=0;
+var $=function(id){ return document.getElementById(id); };
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function toast(m){
+  var t=$('toast'); t.textContent=m; t.classList.add('up');
+  clearTimeout(t._t); t._t=setTimeout(function(){ t.classList.remove('up'); }, 2600);
+}
+function copyText(s){
+  // navigator.clipboard only exists on https or localhost; over a LAN IP the
+  // hidden-textarea trick is the only thing that works.
+  if(navigator.clipboard && window.isSecureContext){
+    navigator.clipboard.writeText(s).then(function(){ toast('Copied'); },
+                                          function(){ copyFallback(s); });
+  } else {
+    copyFallback(s);
+  }
+}
+function copyFallback(s){
+  var ta=document.createElement('textarea');
+  ta.value=s; ta.style.position='fixed'; ta.style.opacity='0';
+  document.body.appendChild(ta); ta.focus(); ta.select();
+  var ok=false;
+  try{ ok=document.execCommand('copy'); }catch(e){}
+  document.body.removeChild(ta);
+  toast(ok ? 'Copied' : 'Copy failed - use the link');
+}
+function fmtDur(s){
+  if(s==null || isNaN(s)) return '?:??';
+  s=Math.max(0,Math.round(s));
+  var m=Math.floor(s/60), sec=s%60, h=Math.floor(m/60);
+  if(h) return h+':'+String(m%60).padStart(2,'0')+':'+String(sec).padStart(2,'0');
+  return m+':'+String(sec).padStart(2,'0');
+}
+
+/* ---- tabs -------------------------------------------------------------- */
+document.querySelectorAll('nav button').forEach(function(b){
+  b.onclick=function(){
+    document.querySelectorAll('nav button').forEach(function(x){ x.classList.remove('sel'); });
+    document.querySelectorAll('main section').forEach(function(x){ x.classList.remove('sel'); });
+    b.classList.add('sel');
+    $('tab-'+b.dataset.tab).classList.add('sel');
+  };
+});
+
+/* ---- queue list -------------------------------------------------------- */
+function rowHtml(e){
+  var badges='<span class="badge kind">'+e.kind+'</span>';
+  if(e.cached) badges+='<span class="badge cached">cached</span>';
+  if(e.error) badges+='<span class="badge errb" title="'+esc(e.error)+'">error</span>';
+  var sub=badges+' '+(e.duration!=null?fmtDur(e.duration):'')
+         +(e.credit?' &middot; '+esc(e.credit):'')+' &middot; '+esc(e.slug);
+  if(e.error) sub+=' <span class="err">'+esc(e.error)+'</span>';
+  var playing = PLAYER.item && PLAYER.item.id===e.id && PLAYER.state!=='idle';
+  return '<div class="qrow '+e.status+(playing?' playing':'')+'" draggable="true" data-id="'+e.id+'">'
+    + '<span class="num">#'+e.num+'</span>'
+    + (e.thumbnail?'<img class="thumb" src="'+esc(e.thumbnail)+'" alt="">':'<span class="thumb"></span>')
+    + '<div class="meta">'
+    +   '<div class="t"><a href="'+esc(e.url)+'" target="_blank" rel="noopener">'+esc(e.title||e.slug)+'</a></div>'
+    +   '<div class="s">'+sub+'</div>'
+    + '</div>'
+    + '<div class="btns">'
+    +   '<button class="act" data-play="'+e.id+'">Play</button>'
+    +   '<button class="sec" data-mark="'+e.id+'">'+(e.status==='played'?'Unplay':'Played')+'</button>'
+    +   '<button class="sec danger" data-rm="'+e.id+'">&#10005;</button>'
+    + '</div>'
+    + '</div>';
+}
+function renderQueue(){
+  var c=$('qlist');
+  if(!QUEUE.length){ c.innerHTML='<p class="hint">Queue is empty.</p>'; return; }
+  c.innerHTML=QUEUE.map(rowHtml).join('');
+}
+
+/* drag to reorder */
+var dragEl=null;
+$('qlist').addEventListener('dragstart', function(e){
+  var row=e.target.closest('.qrow'); if(!row) return;
+  dragEl=row; row.classList.add('dragging');
+  e.dataTransfer.effectAllowed='move';
+  try{ e.dataTransfer.setData('text/plain', row.dataset.id); }catch(_){}
+});
+$('qlist').addEventListener('dragover', function(e){
+  if(!dragEl) return;
+  e.preventDefault();
+  var over=e.target.closest('.qrow');
+  if(!over || over===dragEl) return;
+  var r=over.getBoundingClientRect();
+  var before=(e.clientY - r.top) < r.height/2;
+  over.parentNode.insertBefore(dragEl, before?over:over.nextSibling);
+});
+$('qlist').addEventListener('drop', function(e){ e.preventDefault(); });
+$('qlist').addEventListener('dragend', async function(){
+  if(!dragEl) return;
+  dragEl.classList.remove('dragging'); dragEl=null;
+  var order=[].map.call(document.querySelectorAll('#qlist .qrow'), function(r){ return r.dataset.id; });
+  var old=QUEUE.map(function(e){ return e.id; });
+  if(order.join()===old.join()) return;
+  await fetch('/clips/api/reorder',{method:'POST',headers:{'Content-Type':'application/json'},
+                                    body:JSON.stringify({order:order})});
+});
+
+/* row + page buttons */
+document.addEventListener('click', async function(ev){
+  var t=ev.target.closest('button'); if(!t) return;
+  if(t.dataset.copy){ copyText($(t.dataset.copy).href||$(t.dataset.copy).textContent); return; }
+  if(t.dataset.play){
+    t.disabled=true;
+    var r=await fetch('/clips/api/play/'+encodeURIComponent(t.dataset.play),{method:'POST'});
+    var d=await r.json(); t.disabled=false;
+    if(!d.ok) toast(d.error||'could not play');
+    return;
+  }
+  if(t.dataset.mark){
+    var e=QUEUE.find(function(x){ return x.id===t.dataset.mark; }); if(!e) return;
+    await fetch('/clips/api/mark',{method:'POST',headers:{'Content-Type':'application/json'},
+                                   body:JSON.stringify({ref:e.id, played:e.status!=='played'})});
+    return;
+  }
+  if(t.dataset.rm){
+    await fetch('/clips/api/queue/'+encodeURIComponent(t.dataset.rm),{method:'DELETE'});
+    return;
+  }
+});
+
+$('add').onclick=async function(){
+  var text=$('addbox').value.trim();
+  if(!text){ toast('Paste a twitch link first'); return; }
+  $('add').disabled=true;
+  var r=await fetch('/clips/api/add',{method:'POST',headers:{'Content-Type':'application/json'},
+                                      body:JSON.stringify({text:text, source:'manual'})});
+  var d=await r.json(); $('add').disabled=false;
+  if(!d.ok){ toast(d.error||'no links found'); return; }
+  $('addbox').value='';
+  toast('Added '+d.added.length+(d.skipped?' ('+d.skipped+' duplicate'+(d.skipped>1?'s':'')+' skipped)':''));
+};
+
+$('clear-played').onclick=async function(){
+  var r=await fetch('/clips/api/clear_played',{method:'POST'});
+  var d=await r.json();
+  toast(d.removed?('Removed '+d.removed+' played'):'Nothing to clear');
+};
+$('reset-nums').onclick=async function(){
+  var r=await fetch('/clips/api/reset_numbers',{method:'POST'});
+  var d=await r.json();
+  toast(d.ok?'Renumbered - next item is #'+(d.seq+1):'Reset failed');
+};
+
+/* ---- transport --------------------------------------------------------- */
+$('np-play').onclick=async function(){
+  // Resume if paused; otherwise fire the next queued item.
+  var url = PLAYER.state==='paused' ? '/clips/api/resume' : '/clips/api/play/next';
+  var r=await fetch(url,{method:'POST'});
+  var d=await r.json();
+  if(!d.ok) toast(d.error||'nothing queued');
+};
+$('np-pause').onclick=async function(){
+  var r=await fetch('/clips/api/pause',{method:'POST'});
+  var d=await r.json();
+  if(!d.ok) toast(d.error||'nothing playing');
+};
+$('np-stop').onclick=function(){ fetch('/clips/api/stop',{method:'POST'}); };
+
+function paintPlayer(){
+  var p=PLAYER, item=p.item;
+  $('np-title').textContent = item ? ('#'+item.num+' '+(item.title||item.slug)) : 'nothing playing';
+  var chip=$('np-mode');
+  if(item && p.mode){
+    chip.style.display='';
+    chip.textContent={file:'cached',mp4:'direct',hls:'vod stream',iframe:'twitch embed'}[p.mode]||p.mode;
+  } else chip.style.display='none';
+  $('np-play').disabled = p.state==='playing'||p.state==='loading';
+  $('np-play').textContent = p.state==='paused' ? 'Resume' : (p.state==='loading'?'Loading...':'Play');
+  $('np-pause').disabled = p.state!=='playing' || p.mode==='iframe';
+  var st=$('st-play');
+  st.textContent=p.state + (item&&p.state!=='idle'?(' #'+item.num):'');
+  st.className='pill'+(p.state==='playing'?' on':'');
+  renderQueue();
+}
+
+/* smooth progress between server heartbeats */
+function tick(){
+  var p=PLAYER;
+  var pos=p.position||0;
+  if(p.state==='playing') pos += (performance.now()-playerAt)/1000;
+  var dur=p.duration || (p.item&&p.item.duration) || 0;
+  if(dur&&pos>dur) pos=dur;
+  $('bar-fill').style.width = dur ? Math.min(100,(pos/dur)*100)+'%' : '0';
+  $('np-pos').textContent = (p.state==='idle') ? '0:00' : fmtDur(pos);
+  $('np-dur').textContent = dur ? fmtDur(dur) : '?:??';
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+
+/* ---- settings ---------------------------------------------------------- */
+function paintConfig(){
+  if(!CFG) return;
+  $('f-predownload').checked=!!CFG.predownload;
+  $('f-iframe_fallback').checked=!!CFG.iframe_fallback;
+  $('f-volume').value=CFG.volume;
+  $('volpct').textContent=Math.round(CFG.volume*100)+'%';
+  $('f-level_enabled').checked=!!CFG.level_enabled;
+  $('f-level_target').value=(CFG.level_target!==undefined?CFG.level_target:-16);
+  paintCredit();
+}
+$('f-volume').oninput=function(){ $('volpct').textContent=Math.round(this.value*100)+'%'; };
+$('save-cfg').onclick=async function(){
+  var r=await fetch('/clips/api/config',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({predownload:$('f-predownload').checked,
+                         iframe_fallback:$('f-iframe_fallback').checked,
+                         volume:parseFloat($('f-volume').value),
+                         level_enabled:$('f-level_enabled').checked,
+                         level_target:parseFloat($('f-level_target').value)||-16})});
+  var d=await r.json(); CFG=d.config; paintConfig(); toast('Saved');
+};
+
+/* ---- channel credit ---------------------------------------------------- */
+var CR={x:50,y:92};
+function loadFont(name){
+  if(!name) return;
+  var id='font-'+name.replace(/[^a-z0-9]/gi,'');
+  if(document.getElementById(id)) return;
+  var l=document.createElement('link');
+  l.id=id; l.rel='stylesheet';
+  l.href='https://fonts.googleapis.com/css2?family='+encodeURIComponent(name).replace(/%20/g,'+')
+        +':wght@400;500;600;700;800;900&display=swap';
+  document.head.appendChild(l);
+}
+function paintCredit(){
+  var c=(CFG&&CFG.credit)||{};
+  $('cr-enabled').checked=!!c.enabled;
+  $('cr-show_title').checked=!!c.show_title;
+  $('cr-font_family').value=c.font_family||'';
+  $('cr-font_size').value=(c.font_size==null?30:c.font_size);
+  $('cr-color').value=c.color||'#ffffff';
+  $('cr-shadow').checked=(c.shadow!==false);
+  CR.x=(c.x==null?50:c.x); CR.y=(c.y==null?92:c.y);
+  crPreview();
+}
+function crPreview(){
+  var l=$('cr-label'), st=$('cr-stage');
+  var fam=$('cr-font_family').value.trim();
+  if(fam) loadFont(fam);
+  l.style.fontFamily=fam?('"'+fam+'", "Segoe UI", system-ui, sans-serif'):"'Segoe UI',system-ui,sans-serif";
+  // The preview canvas stands in for a 1920-wide source; scale px the same
+  // way the overlay does so what you see is what OBS gets.
+  var scale=(st.getBoundingClientRect().width/1920)||1;
+  l.style.fontSize=((parseFloat($('cr-font_size').value)||30)*scale)+'px';
+  l.style.color=$('cr-color').value;
+  l.style.textShadow=$('cr-shadow').checked?'0 2px 8px rgba(0,0,0,.85), 0 0 2px rgba(0,0,0,.9)':'none';
+  l.innerHTML=($('cr-show_title').checked?'<span style="font-weight:700;opacity:.92">The clip title</span><br>':'')
+             +'twitch.tv/channelname';
+  l.style.left=CR.x+'%'; l.style.top=CR.y+'%';
+  l.style.opacity=$('cr-enabled').checked?'1':'.35';
+  $('cr-xy').textContent='x:'+Math.round(CR.x)+'% y:'+Math.round(CR.y)+'%';
+}
+['cr-enabled','cr-show_title','cr-font_family','cr-font_size','cr-color','cr-shadow'].forEach(function(id){
+  $(id).addEventListener('input', crPreview);
+});
+window.addEventListener('resize', crPreview);
+(function(){
+  var st=$('cr-stage'), l=$('cr-label'), drag=null;
+  l.addEventListener('pointerdown', function(e){
+    drag={x0:CR.x, y0:CR.y, mx:e.clientX, my:e.clientY};
+    st.classList.add('dragging');
+    try{ l.setPointerCapture(e.pointerId); }catch(_){}
+    e.preventDefault();
+  });
+  l.addEventListener('pointermove', function(e){
+    if(!drag) return;
+    var r=st.getBoundingClientRect();
+    CR.x=Math.max(0,Math.min(100, drag.x0+(e.clientX-drag.mx)/r.width*100));
+    CR.y=Math.max(0,Math.min(100, drag.y0+(e.clientY-drag.my)/r.height*100));
+    crPreview();
+  });
+  function up(e){ if(drag){ drag=null; st.classList.remove('dragging');
+    try{ l.releasePointerCapture(e.pointerId); }catch(_){} } }
+  l.addEventListener('pointerup', up);
+  l.addEventListener('pointercancel', up);
+})();
+document.querySelectorAll('.quickpos button').forEach(function(b){
+  b.onclick=function(){ var p=b.dataset.pos.split(','); CR.x=+p[0]; CR.y=+p[1]; crPreview(); };
+});
+$('cr-save').onclick=async function(){
+  var body={credit:{
+    enabled:$('cr-enabled').checked,
+    show_title:$('cr-show_title').checked,
+    font_family:$('cr-font_family').value.trim(),
+    font_size:parseFloat($('cr-font_size').value)||30,
+    color:$('cr-color').value,
+    shadow:$('cr-shadow').checked,
+    x:Math.round(CR.x*10)/10,
+    y:Math.round(CR.y*10)/10}};
+  var r=await fetch('/clips/api/config',{method:'POST',headers:{'Content-Type':'application/json'},
+                                         body:JSON.stringify(body)});
+  var d=await r.json(); CFG=d.config; toast('Saved');
+};
+
+/* ---- yt-dlp maintenance ------------------------------------------------ */
+$('upd-ytdlp').onclick=async function(){
+  var b=$('upd-ytdlp'); b.disabled=true; b.textContent='Updating…';
+  try{
+    var r=await fetch('/clips/api/update_ytdlp',{method:'POST'});
+    var d=await r.json();
+    if(d.ok) toast(d.changed?('yt-dlp updated: '+(d.old||'?')+' → '+d.version)
+                            :('yt-dlp '+d.version+' is already current'));
+    else toast(d.error||'update failed');
+  }catch(e){ toast('update failed'); }
+  b.disabled=false; b.textContent='Update yt-dlp';
+  pollStatus();
+};
+function paintReady(r){
+  var js = r.js_runtime
+    ? '\u2713 JavaScript runtime: '+r.js_runtime
+    : '\u2717 No JavaScript runtime \u2014 install Deno (winget install DenoLand.Deno), then restart Hexcast';
+  var sv = r.solver
+    ? '\u2713 Challenge-solver scripts installed'
+    : '\u2717 Challenge-solver scripts missing \u2014 click Update yt-dlp above';
+  var el=$('login-ready');
+  el.innerHTML = '<b>Requirements for signed-in lookups:</b> '+js+' &nbsp;\u00B7&nbsp; '+sv;
+  el.style.color = (r.js_runtime && r.solver) ? '' : 'var(--warn)';
+}
+function paintLogin(b){
+  var p=$('login-pill');
+  p.textContent = b ? ('linked: '+b) : 'not linked';
+  p.className = 'pill' + (b ? ' on' : '');
+  $('login-unlink').disabled = !b;
+}
+$('login-link').onclick=async function(){
+  var btn=this, b=$('login-browser').value;
+  btn.disabled=true; btn.textContent='Testing\u2026';
+  $('login-msg').textContent='Reading your '+b+' session and running a test lookup\u2026';
+  try{
+    var r=await fetch('/clips/api/login/link',{method:'POST',headers:{'Content-Type':'application/json'},
+                                               body:JSON.stringify({browser:b})});
+    var d=await r.json();
+    $('login-msg').textContent=d.message||'';
+    paintLogin(d.cookies_browser||'');
+    toast(d.ok ? 'Linked' : 'Not linked');
+  }catch(e){ $('login-msg').textContent='Link failed: '+e.message; }
+  btn.disabled=false; btn.textContent='Link';
+};
+$('login-unlink').onclick=async function(){
+  var r=await fetch('/clips/api/login/unlink',{method:'POST'});
+  var d=await r.json();
+  paintLogin(d.cookies_browser||'');
+  $('login-msg').textContent='Unlinked. Lookups are anonymous; nothing of your session is kept.';
+  toast('Unlinked');
+};
+
+/* ---- status / websocket ------------------------------------------------ */
+$('u-overlay').textContent=location.origin+'/clips/overlay';
+
+function paintStatus(s){
+  var tool=$('st-tool');
+  if(s.ytdlp){ tool.textContent='yt-dlp '+(s.ytdlp_version||'ok'); tool.className='pill on'; }
+  else { tool.textContent='yt-dlp missing'; tool.className='pill off'; }
+  if(s.cookies_browser!==undefined) paintLogin(s.cookies_browser||'');
+  if(s.signin) paintReady(s.signin);
+  if(s.log) $('log').textContent=s.log.join('\n');
+}
+async function pollStatus(){
+  try{
+    var r=await fetch('/clips/api/status');
+    if(r.ok) paintStatus(await r.json());
+  }catch(e){}
+}
+pollStatus(); setInterval(pollStatus, 5000);
+
+/* Once per page load: if YouTube is demanding a login and cookies are off,
+   point at the fix instead of leaving a cryptic error badge. */
+var cookieHintShown=false;
+function cookieHint(){
+  if(cookieHintShown || $('login-unlink').disabled===false) return;
+  if(QUEUE.some(function(e){ return /sign in|not a bot|cookies/i.test(e.error||''); })){
+    cookieHintShown=true;
+    toast('YouTube wants a login - try updating yt-dlp, or link your YouTube sign-in (Settings)');
+  }
+}
+
+function connect(){
+  var proto=location.protocol==='https:'?'wss':'ws';
+  var ws=new WebSocket(proto+'://'+location.host+'/clips/ws/panel');
+  ws.onmessage=function(e){
+    var m=JSON.parse(e.data);
+    if(m.type==='config'){ CFG=m.config; paintConfig(); }
+    else if(m.type==='queue'){ QUEUE=m.queue||[]; renderQueue(); cookieHint(); }
+    else if(m.type==='player'){ PLAYER=m.player||{state:'idle'}; playerAt=performance.now(); paintPlayer(); }
+  };
+  ws.onclose=function(){ setTimeout(connect, 1500); };
+}
+connect();
+</script>
+<script src="/static/hexbar.js?v=2"></script>
+</body></html>

@@ -9,7 +9,7 @@ next question for a streak bonus, or **cash out**.
 
 Questions come from [Open Trivia DB](https://opentdb.com) (CC BY-SA 4.0) and
 from your **lore** — your channel's own questions. Everything lives under
-`/games/api/trivia/*`, and the game has its own tab on the Games panel:
+`/games/api/trivia/*` (an add-on of the [Games](games.md) plugin - install it from the **+** in the Games tab), and the game has its own tab on the Games panel:
 `/games#trivia`.
 
 The board is yours to brand: its title (`title`, default **TRIVIA**) and what it

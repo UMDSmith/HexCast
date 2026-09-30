@@ -1,8 +1,8 @@
 <!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" href="/static/hexcast.png">
-<link rel="stylesheet" href="/static/hexbar.css">
-<title>HexCast - Help</title>
+<link rel="stylesheet" href="/static/hexbar.css?v=2">
+<title><!--HELP_TITLE--> - HexCast Help</title>
 <style>
   :root{
     --bg:var(--hb-bg); --panel:var(--hb-panel); --line:var(--hb-line); --ink:var(--hb-ink);
@@ -11,27 +11,54 @@
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 'Segoe UI',system-ui,sans-serif;}
-  main{padding:18px 22px 60px;max-width:1080px}
+  .wrap{display:flex;gap:26px;align-items:flex-start;padding:6px 22px 60px;max-width:1300px}
+  nav.side{flex:0 0 220px;position:sticky;top:12px;max-height:calc(100vh - 24px);overflow:auto;padding:4px 0}
+  nav.side h4{margin:16px 0 6px;font:800 11px/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
+  nav.side h4:first-child{margin-top:0}
+  nav.side a{display:block;padding:6px 10px;border-radius:8px;color:var(--dim);text-decoration:none;font-size:14px;font-weight:600}
+  nav.side a:hover{color:var(--ink);background:var(--hb-card,#17171f)}
+  nav.side a.sel{color:var(--ink);background:var(--panel);box-shadow:inset 3px 0 0 var(--good)}
+  main{flex:1;min-width:0;max-width:960px}
+  .crumbs{margin:0 0 12px;font-size:13px;color:var(--dim)}
+  .crumbs a{color:var(--dim);text-decoration:none}.crumbs a:hover{color:var(--ink)}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
   .card h2{margin:0 0 4px;font-size:14px;letter-spacing:.14em;text-transform:uppercase}
   .card h2 .tag{font:600 10px/1 var(--mono);letter-spacing:.08em;border:1px solid var(--line);
                 border-radius:99px;padding:3px 8px;margin-left:8px;vertical-align:2px;color:var(--dim)}
-  .card h3{margin:16px 0 4px;font-size:13px;color:var(--ink)}
+  .card h3{margin:16px 0 4px;font-size:13px;color:var(--ink);scroll-margin-top:16px}
   .card p.hint{margin:0 0 10px;color:var(--dim);font-size:13px}
+  .card a{color:var(--good)}
   code{color:var(--good);font:12.5px var(--mono)}
   pre{background:#08080c;border:1px solid var(--line);border-radius:8px;padding:12px;
       font:12.5px/1.6 var(--mono);color:var(--good);overflow:auto;margin:8px 0}
   table.api{width:100%;border-collapse:collapse;font-size:13px;margin:6px 0 4px}
   table.api td{padding:6px 8px;border-top:1px solid var(--line);vertical-align:top;color:var(--dim)}
   table.api td:first-child{white-space:nowrap;font:12.5px var(--mono);color:var(--good)}
-  .toc{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 16px}
-  .toc a{background:var(--hb-card,#17171f);border:1px solid var(--line);border-radius:99px;
-         color:var(--ink);text-decoration:none;font-size:13px;font-weight:600;padding:7px 14px}
-  .toc a:hover{border-color:var(--hb-line-hi,#35354a)}
   section{scroll-margin-top:16px}
-  /* phones: the endpoint column (and any long run of code) wraps too, so the page fits instead of
-     scrolling sideways */
-  @media (max-width:700px){
+  /* the "on this page" jump list of a long reference */
+  .jump{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 16px}
+  .jump a,.pill{background:var(--hb-card,#17171f);border:1px solid var(--line);border-radius:99px;
+         color:var(--ink);text-decoration:none;font-size:12.5px;font-weight:600;padding:5px 12px}
+  .jump a:hover{border-color:var(--hb-line-hi,#35354a)}
+  .jump b{font:800 10px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--dim);align-self:center;margin-right:2px}
+  /* the index */
+  h1{margin:6px 0 4px;font-size:24px}
+  .lead{color:var(--dim);margin:0 0 18px;max-width:720px}
+  .grp{margin:26px 0 10px;font:800 12px/1 var(--mono);letter-spacing:.18em;text-transform:uppercase;color:var(--dim)}
+  .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:12px}
+  a.hc{display:block;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;
+       color:var(--ink);text-decoration:none}
+  a.hc:hover{border-color:var(--hb-line-hi,#35354a)}
+  a.hc b{font-size:15px}
+  a.hc .tag{font:600 10px/1 var(--mono);letter-spacing:.06em;border:1px solid var(--line);border-radius:99px;
+            padding:3px 8px;margin-left:8px;color:var(--dim);vertical-align:2px}
+  a.hc p{margin:6px 0 0;color:var(--dim);font-size:13px}
+  @media (max-width:820px){
+    .wrap{flex-direction:column;gap:10px;align-items:stretch}
+    main{width:100%}
+    nav.side{position:static;flex:none;max-height:none;width:100%;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+    nav.side h4{width:100%;margin:8px 0 0}
+    nav.side a{padding:5px 10px;border:1px solid var(--line);border-radius:99px}
     .card p.hint,table.api td{overflow-wrap:anywhere}
     table.api td:first-child{white-space:normal;width:40%}
   }
@@ -40,554 +67,42 @@
 
 <div id="hexbar" data-section="Help"></div>
 
+<div class="wrap">
+<nav class="side" aria-label="Help pages">
+<!--HELP_NAV-->
+</nav>
 <main>
-
-<div class="toc">
-  <a href="#soundboard">Soundboard</a>
-  <a href="#clips">Clips</a>
-  <a href="#twitch">Twitch</a>
-  <a href="#shoutout">Shoutouts (!so)</a>
-  <a href="#music">Music</a>
-  <a href="#discord">Discord</a>
-  <a href="#countdown">Countdown</a>
-  <a href="#games">Games</a>
-  <a href="#craps">Craps</a>
-  <a href="#russian">Russian Roulette</a>
-  <a href="#trivia">Trivia</a>
-  <a href="#ticker">Ticker</a>
-  <a href="#notes">Browser notes</a>
-</div>
-
-<section id="soundboard">
-<div class="card">
-  <h2>Soundboard <span class="tag">core</span></h2>
-  <p class="hint">Trigger media from your library by name — everything a bot, hotkey deck, or
-    channel-point redeem needs is a single GET. Names are the filename without extension,
-    case-insensitive. The overlay applies each clip's saved position, scale, volume, trim
-    and chroma key automatically; query params override them for one play. Chroma keying
-    (Edit Mode → clip → Chroma key: color, 💧 eyedropper, tolerance) removes the green
-    screen per clip inside the overlay, so overlapping clips composite cleanly — drop any
-    chroma filter on the OBS source itself.</p>
-  <table class="api">
-    <tr><td>GET /api/list</td><td>every triggerable name, grouped audio / video</td></tr>
-    <tr><td>GET /api/play/{name}</td><td>play by name across both kinds (audio checked first)</td></tr>
-    <tr><td>GET /api/play/{kind}/{name}</td><td>same, but explicit — kind is <code>audio</code> or <code>video</code></td></tr>
-    <tr><td>GET /api/stop</td><td>clear all overlay visuals and stop all audio</td></tr>
-    <tr><td>GET /api</td><td>this reference as JSON</td></tr>
-  </table>
-  <h3>Per-play overrides (query params)</h3>
-  <table class="api">
-    <tr><td>?x=50&amp;y=50&amp;scale=2</td><td>position/size, video only (percent of canvas, scale factor)</td></tr>
-    <tr><td>?volume=0.5</td><td>0.0–1.0, audio and video-with-audio</td></tr>
-    <tr><td>?start=2&amp;end=5</td><td>trim window in seconds (static images use it as display time)</td></tr>
-  </table>
-  <pre>curl http://localhost:4747/api/play/airhorn
-curl "http://localhost:4747/api/play/video/cheer?x=80&amp;y=20&amp;scale=2&amp;end=3"
-curl http://localhost:4747/api/stop</pre>
-</div>
-</section>
-
-<section id="clips">
-<div class="card">
-  <h2>Clips <span class="tag">/clips</span></h2>
-  <p class="hint">A hand-fired queue of Twitch clips/VODs, YouTube videos, or any single
-    yt-dlp-supported URL. Nothing auto-advances. Everything streams from the source unless
-    pre-download is enabled. <code>{ref}</code> is a <b>#number</b>, item id, exact clip slug,
-    or <code>next</code> (first still-queued item). All endpoints return
-    <code>{"ok": true/false, ...}</code>.</p>
-  <p class="hint"><b>Auto-level clip volume</b> (Settings tab) measures each clip's loudness on the
-    server with ffmpeg (nothing downloaded) and turns louder clips down so clips and <code>!so</code>
-    shoutouts arrive at a consistent volume (target default <code>-16</code> LUFS). It normalises toward
-    the target — quieter clips are left alone, iframe fallbacks use master volume only.</p>
-  <table class="api">
-    <tr><td>GET /clips/api/queue</td><td>full queue + player state as JSON</td></tr>
-    <tr><td>GET /clips/api/add?url=...</td><td>add a URL (returns the entry incl. its number); POST <code>{"text": "..."}</code> to extract every link from a blob</td></tr>
-    <tr><td>GET /clips/api/play/{ref}</td><td>play an item</td></tr>
-    <tr><td>GET /clips/api/pause · resume · toggle · stop</td><td>transport; Stop clears the overlay without marking the item played</td></tr>
-    <tr><td>GET /clips/api/status</td><td>player state, current item, queue counts</td></tr>
-    <tr><td>GET /clips/api/remove/{ref}</td><td>remove an item (also DELETE /clips/api/queue/{ref})</td></tr>
-    <tr><td>POST /clips/api/reset_numbers</td><td>renumber the queue 1..N and restart the counter</td></tr>
-    <tr><td>GET /clips/api/shoutout/{channel}?count=2</td><td>play random clips from a Twitch channel back to back, ephemerally (never queued or saved)</td></tr>
-  </table>
-  <p class="hint">Numbers are never reused, so a bot's <code>!playclip 7</code> can't fire the
-    wrong thing after removals — that's why the counter only climbs until you reset it.
-    Played items dim but stay listed until <b>Clear played</b> on the Queue tab.</p>
-  <pre>curl "http://localhost:4747/clips/api/add?url=https://clips.twitch.tv/SomeSlug"
-curl http://localhost:4747/clips/api/play/7
-curl http://localhost:4747/clips/api/play/next</pre>
-</div>
-</section>
-
-<section id="twitch">
-<div class="card">
-  <h2>Twitch <span class="tag">/twitch</span></h2>
-  <p class="hint">Chat overlay, alert overlay with a FIFO queue, and chat-command handling.
-    Alerts can fire any soundboard clip by name — set it in the Clip column of the Alerts
-    table on the Twitch panel.</p>
-  <table class="api">
-    <tr><td>GET /twitch/api/status</td><td>connection state, signed-in user, granted scopes, log</td></tr>
-    <tr><td>GET /twitch/api/queue</td><td>the alert queue (playing + waiting)</td></tr>
-    <tr><td>POST /twitch/api/queue/skip · clear</td><td>skip the current alert / drop the whole queue</td></tr>
-    <tr><td>POST /twitch/api/test/chat</td><td><code>{"text": "..."}</code> — fake a chat line (runs commands like <code>!so</code> as the broadcaster)</td></tr>
-    <tr><td>POST /twitch/api/test/event</td><td><code>{"kind": "follow"}</code> — fire a sample alert</td></tr>
-  </table>
-  <h3>Feeding a bot</h3>
-  <p class="hint">Set <b>Forward URL</b> on the Connection tab and every chat message and alert is
-    POSTed there as JSON — <code>{"type": "chat", "user": {...}, "flags": {"mod": true, ...},
-    "text": "..."}</code> for chat, <code>{"type": "event", "kind": "raid", ...}</code> for alerts.</p>
-</div>
-</section>
-
-<section id="shoutout">
-<div class="card">
-  <h2>Shoutouts <span class="tag">!so</span></h2>
-  <p class="hint">You or a mod types <code>!so channelname</code> (or <code>@channelname</code>) in
-    your own chat, and three things happen:</p>
-  <table class="api">
-    <tr><td>1 — official shoutout</td><td>the real Twitch <code>/shoutout</code> banner (Twitch only accepts these while you're live)</td></tr>
-    <tr><td>2 — chat line</td><td>posted from your account; template configurable with <code>{name}</code>, <code>{login}</code>, <code>{url}</code></td></tr>
-    <tr><td>3 — their clips</td><td>two random clips from their channel play back to back on the Clips overlay — ephemeral, nothing queued or saved. Stop, or manually playing anything, cancels the rest</td></tr>
-  </table>
-  <p class="hint">The chat-side parts need the <code>moderator:manage:shoutouts</code> and
-    <code>user:write:chat</code> scopes — if you signed in before those existed, reconnect once in
-    the Twitch panel. Without any sign-in the clips still play; only the chat messages are skipped
-    (the Twitch panel log says exactly which piece did what).</p>
-  <p class="hint">Settings: <code>config/twitch.json</code> → <code>"shoutout"</code> —
-    <code>on</code>, <code>command</code> (default <code>!so</code>), <code>who</code>
-    (<code>mods</code> or <code>broadcaster</code>), <code>native</code>, <code>message</code>,
-    <code>clip</code>, <code>clip_count</code> (1–5). Dry-run with <code>!so somechannel</code> in
-    the Twitch panel's test-chat box, or call
-    <code>GET /clips/api/shoutout/{channel}</code> directly.</p>
-</div>
-</section>
-
-<section id="music">
-<div class="card">
-  <h2>Music <span class="tag">/ytm</span></h2>
-  <p class="hint">Now-playing overlay with two sources, chosen with <b>Music source</b> on the panel:
-    the <b>YouTube Music Desktop App</b> (via its companion server), or <b>local files</b> from a
-    mapped folder played through the overlay itself (OBS captures the audio).</p>
-  <table class="api">
-    <tr><td>GET /ytm/api/nowplaying</td><td>one plain-text line: <code>Title - Artist (Album)</code> — made for a chat bot's <code>!song</code> (reflects the active source)</td></tr>
-    <tr><td>GET /ytm/api/nowplaying.json</td><td>the full state as JSON</td></tr>
-    <tr><td>GET /ytm/api/status</td><td>connection + pairing state</td></tr>
-    <tr><td>POST /ytm/api/command</td><td><code>{"command": "next"}</code> — routed to whichever source is active</td></tr>
-  </table>
-  <h3>YouTube Music commands</h3>
-  <p class="hint"><code>playPause</code>, <code>play</code>, <code>pause</code>, <code>next</code>,
-    <code>previous</code>, <code>volumeUp</code>, <code>volumeDown</code>, <code>setVolume</code> (0–100),
-    <code>mute</code>, <code>unmute</code>, <code>seekTo</code>, <code>shuffle</code>,
-    <code>repeatMode</code>, <code>toggleLike</code>, <code>toggleDislike</code>,
-    <code>playQueueIndex</code>, <code>changeVideo</code> — so a channel-point redeem can skip a track.</p>
-  <p class="hint">A <b>Forward URL</b> on the panel POSTs the full state on every track change, and
-    <b>Clip on track change</b> fires a soundboard clip by name through <code>/api/play/{name}</code>.</p>
-  <h3>Local files</h3>
-  <p class="hint">On the <b>Local library</b> tab: pick a folder (<b>Browse…</b> uses an in-panel
-    file browser that works from any device), then browse/search and build a queue. <b>Add this folder
-    (+ subfolders)</b> queues thousands at once server-side; the queue list is virtualised so huge queues
-    stay smooth. Save a queue as a <b>playlist</b> (JSON) and load/append it later. <b>▸</b> previews a
-    track in the panel only (not the stream). The visualiser reacts to the real audio via Web Audio in the
-    overlay. Transport uses the same <code>/ytm/api/command</code>.</p>
-  <table class="api">
-    <tr><td>GET /ytm/library/status</td><td>index progress (root, count, ready/indexing)</td></tr>
-    <tr><td>GET /ytm/library/browse?path= · search?q=</td><td>one folder level · filename/folder search</td></tr>
-    <tr><td>GET /ytm/fs/list?path=</td><td>host drives/folders, for the folder picker</td></tr>
-    <tr><td>GET /ytm/queue/state · items?offset=&amp;limit=</td><td>lightweight state · a window of items</td></tr>
-    <tr><td>POST /ytm/queue/add|add-folder|remove|move|clear|play</td><td>queue edits</td></tr>
-    <tr><td>GET /ytm/playlists · POST /ytm/playlists/save|load|rename|delete</td><td>named playlists</td></tr>
-    <tr><td>GET /ytm/localfile/{id} · localart/{id}</td><td>audio (HTTP Range for seeking) · cover art</td></tr>
-  </table>
-</div>
-</section>
-
-<section id="discord">
-<div class="card">
-  <h2>Discord <span class="tag">/discord</span></h2>
-  <p class="hint">Voice-reactive overlay — everyone in your current voice channel, lighting up as
-    they speak, using Discord avatars or per-person uploaded idle/talking images. Configuration is
-    panel-driven; the useful HTTP surface is small:</p>
-  <table class="api">
-    <tr><td>GET /discord/api/status</td><td>connection state, current channel, participants</td></tr>
-    <tr><td>GET /discord/avatar/{user_id}</td><td>server-cached avatar proxy (what the overlay uses)</td></tr>
-    <tr><td>POST /discord/api/test/user</td><td>inject a fake participant / toggle their speaking — style the overlay without being in a call</td></tr>
-  </table>
-  <h3>Overlay query params</h3>
-  <p class="hint">Any saved layout setting can be overridden per browser source:
-    <code>layout</code> (row/column/grid/free), <code>grid_columns</code>, <code>size</code>,
-    <code>spacing</code>, <code>align</code>, <code>show_names</code>, <code>name_size</code>,
-    <code>name_color</code>, <code>shape</code>, <code>dim</code>, <code>dim_pairs</code>,
-    <code>desaturate</code>, <code>bounce</code>, <code>hide_muted</code>, <code>mute_badge</code> —
-    booleans take 0/1, e.g. <code>/discord/overlay?layout=column&amp;size=96&amp;show_names=0</code>.</p>
-</div>
-</section>
-
-<section id="countdown">
-<div class="card">
-  <h2>Countdown <span class="tag">/countdown</span></h2>
-  <p class="hint">Styleable countdown timer overlay — count down a fixed duration or to a clock
-    time. The server owns the remaining time and streams it to the overlay, so clock skew never
-    matters. <b>Media cues</b> can fire any number of soundboard clips, each anchored to its own
-    countdown threshold — set a clip to <b>end</b> at a point (e.g. intro music finishing exactly
-    at 0:00, timed backwards from the clip's length) or to <b>start</b> at a point. Clips play on
-    the soundboard overlay, honouring their saved trim/volume/cooldown, so keep both browser
-    sources in the scene.</p>
-  <table class="api">
-    <tr><td>GET /countdown/api/status</td><td>connected overlay count + timer snapshot</td></tr>
-    <tr><td>GET /countdown/api/config</td><td>full config as JSON</td></tr>
-    <tr><td>POST /countdown/api/config</td><td>merge-and-save any subset of config keys</td></tr>
-    <tr><td>POST /countdown/api/timer</td><td><code>{"action": "start"}</code> — also <code>pause</code>, <code>resume</code>, <code>reset</code>; start accepts an optional <code>"seconds"</code> for an ad-hoc duration</td></tr>
-  </table>
-  <h3>Media cues config</h3>
-  <p class="hint">Posted as a <code>media_cues</code> array (replaces the whole list). Each entry:
-    <code>enabled</code> (bool), <code>kind</code> (<code>audio</code> | <code>video</code>),
-    <code>name</code> (clip name), <code>anchor</code> (<code>end</code> = clip finishes at the
-    threshold, timed backwards from its length; <code>start</code> = clip fires at the threshold),
-    <code>offset</code> (seconds remaining at the threshold; <code>0</code> = at zero). Read when
-    the timer starts — pause cancels pending cues, resume re-arms them. The legacy single-cue keys
-    (<code>media_enabled</code>/<code>media_kind</code>/<code>media_name</code>/<code>media_end_offset</code>)
-    are still migrated automatically.</p>
-  <pre>curl -X POST http://localhost:4747/countdown/api/timer -H "Content-Type: application/json" -d "{\"action\":\"start\",\"seconds\":90}"
-curl -X POST http://localhost:4747/countdown/api/config -H "Content-Type: application/json" -d "{\"media_cues\":[{\"enabled\":true,\"kind\":\"audio\",\"name\":\"intro\",\"anchor\":\"end\",\"offset\":0}]}"</pre>
-</div>
-</section>
-
-<section id="games">
-<div class="card">
-  <h2>Games <span class="tag">/games</span></h2>
-  <p class="hint">A bot-driven <b>roulette</b> wheel overlay (<code>/games/overlay</code>, 1920×1080,
-    <b>Control audio via OBS</b> on for the built-in ball sounds). A spin pops the wheel in, launches the
-    ball, and it bounces and settles in the pocket the <b>server</b> picked with
-    <code>secrets.SystemRandom</code> — uniformly over the 38 pockets of an American double-zero wheel. The overlay
-    only animates that result; nothing can force one. Placement works like the soundboard's Edit Mode.
-    Optional <b>bets</b> sent with a spin come back resolved at standard odds for a bot to pay out — or chat's
-    bets wait on the <b>table</b> for the next spin, shown on an "on the table" board while a <b>spin timer</b>
-    counts down (<b>NEXT SPIN 0:12</b>), and at zero the wheel spins by itself and the winnings go through the
-    <b>ledger</b> craps uses. <b>Launch/landing clips</b> play on the soundboard overlay. <code>{game}</code> is
-    <code>roulette</code> here (Craps has its own card below). All endpoints return
-    <code>{"ok": true/false, ...}</code>.</p>
-  <table class="api">
-    <tr><td>GET|POST /games/api/roulette/spin</td><td>start a spin (alias <code>/play</code>) — returns the result, resolved bets and <code>lands_at</code>, plus the table's <code>settlements</code>, <code>credits</code>, <code>table_summary</code> and <code>table</code> (+ the spin's <code>ledger</code> events with <code>wait</code>); <b>409</b> <code>{"error": "busy", "retry_in_ms", "state"}</code> while a spin is spinning, showing its result, or in cooldown</td></tr>
-    <tr><td>GET|POST /games/api/roulette/bet</td><td>on the table for the next spin: <code>{user, bet, amount}</code> or <code>{"bets": [...]}</code> (up to 200; whole coins, <code>min_bet</code>, <code>max_bet</code> per bet line; the same user + bet adds to that line) → <code>accepted</code> (with <code>action</code> <code>new</code> / <code>add</code>), <code>rejected</code> (each with an <code>error</code>), <code>debits</code> <code>[{user, amount, bet_id, seq, reason}]</code>, <code>table</code>. 200 if any were accepted, 400 if all were rejected, <b>409</b> <code>bets_closed</code> while the ball is in the air</td></tr>
-    <tr><td>GET|POST /games/api/roulette/remove</td><td><code>{bet_id}</code> · <code>{user, bet}</code> · <code>{user, all: true}</code> → <code>removed</code> (each with its <code>refund</code>), <code>credits</code>, <code>ledger</code> (reason <code>remove</code>), <code>table</code>; 400 when nothing matches, <b>409</b> <code>bets_closed</code> while the ball is in the air</td></tr>
-    <tr><td>GET /games/api/roulette/table</td><td>every bet (<code>id</code>, <code>user</code>, <code>bet</code>, <code>label</code>, <code>type</code>, <code>numbers</code>, <code>odds</code>, <code>amount</code>, <code>pays</code>), <code>exposure</code> per user, <code>total_on_table</code>, <code>bets_open</code>, <code>auto_spin_in_ms</code> (the countdown, <code>null</code> when none), <code>last_seq</code>, <code>display_board</code></td></tr>
-    <tr><td>GET /games/api/roulette/user/{name}</td><td>one viewer's table bets, exposure and roulette session debits / credits / net</td></tr>
-    <tr><td>GET|POST /games/api/roulette/clear</td><td>refund every table bet (reason <code>refund</code>) and stop the countdown; 409 <code>bets_closed</code> while the ball is in the air</td></tr>
-    <tr><td>GET|POST /games/api/roulette/timer</td><td>start (or restart) the countdown now: <code>seconds</code> 5–300 (default <b>bet window</b>), with or without bets, auto-spin on or off; at 0 the wheel spins by itself with everything on the table → <code>{auto_in_ms, table, state}</code>; <b>409</b> busy unless idle. The same route works for craps</td></tr>
-    <tr><td>GET|POST /games/api/roulette/timer/cancel</td><td>stop any countdown (auto-spin's or the timer's); nothing spins → <code>{cancelled, table, state}</code></td></tr>
-    <tr><td>GET /games/api/roulette/ledger?since=0&amp;limit=500</td><td>roulette's ledger events with <code>seq</code> &gt; since, oldest first (limit up to 5000): <code>debit</code> <code>bet</code> / <code>add</code>, <code>credit</code> <code>win</code> (stake + winnings) / <code>remove</code> / <code>refund</code>; plus <code>last_seq</code> (of every game — gaps are craps events), <code>oldest_seq</code> and <code>truncated</code></td></tr>
-    <tr><td>GET /games/api/ledger?since=0&amp;game=</td><td>the shared ledger: every game's events in one stream, each with its <code>game</code>; <code>game=roulette</code> or <code>craps</code> for one</td></tr>
-    <tr><td>GET|POST /games/api/roulette/board · board/clear</td><td>Mode B: Hex's own "on the table" board before the spin — <code>{title, bets: [{user, text, amount}]}</code>, the same fields as craps' board (below) — shown instead of the table's bets (up to <b>table lines</b>; <b>show table</b> applies); returns <code>{table}</code> with it as <code>display_board</code>. Memory only, allowed while the ball flies; never touches bets or the ledger</td></tr>
-    <tr><td>GET /games/api/roulette/last</td><td>last committed spin and its result</td></tr>
-    <tr><td>GET|POST /games/api/roulette/announce</td><td>display only, for a bot that did its own math (Mode B): a winners card for the current or last spin — <code>{title, lines: [{user, amount, text}], empty_text, seconds, spin_id, currency}</code> — that replaces the computed winners list (up to <b>bets max</b> lines; <b>show bets</b> applies); held until the ball lands. <b>409</b> <code>{"error": "stale", "spin_id"}</code> when <code>spin_id</code> isn't the current (or last) spin; 400 on bad JSON, when <code>lines</code> isn't a list, or when no usable line and no <code>empty_text</code> was sent (<code>"lines": []</code> alone is fine — it shows <code>No winners</code>)</td></tr>
-    <tr><td>GET|POST /games/api/roulette/announce/clear</td><td>take the card down now (the next spin clears it too)</td></tr>
-    <tr><td>GET /games/api/roulette/history?limit=20</td><td>recent spins (newest first) + stats: colour/odd-even/low-high counts, per-number counts, hot, cold, streak</td></tr>
-    <tr><td>POST /games/api/roulette/history/clear</td><td>clear history and stats (GET works too)</td></tr>
-    <tr><td>GET /games/api/roulette/validate?bet=...</td><td>parse a bet: <code>valid</code>, <code>type</code>, <code>label</code>, <code>numbers</code>, <code>odds</code> or <code>error</code></td></tr>
-    <tr><td>GET /games/api/roulette/bets</td><td>bet-type reference: syntax examples, odds</td></tr>
-    <tr><td>GET|POST /games/api/roulette/show · hide</td><td>put the idle wheel on / off screen (hide answers 409 while the ball is rolling)</td></tr>
-    <tr><td>GET|POST /games/api/stop</td><td>abort every animation and hide everything, stop every countdown; a spin already started still goes into history (and settles the table)</td></tr>
-    <tr><td>GET /games/api/status</td><td>connected overlay count + each game's state (roulette's carries its <code>table</code>)</td></tr>
-    <tr><td>GET · POST /games/api/config</td><td>full config as JSON · merge-and-save <code>{"roulette": {...}}</code> — the table's keys: <code>currency</code>, <code>min_bet</code>, <code>max_bet</code>, <code>auto_spin</code>, <code>bet_window_seconds</code>, <code>show_when_bets</code>, <code>show_table</code>, <code>table_max</code>, <code>table_position</code></td></tr>
-    <tr><td>GET /games/api</td><td>this reference as JSON</td></tr>
-  </table>
-  <h3>Spin parameters (query or JSON body — body wins)</h3>
-  <table class="api">
-    <tr><td>?user=bob</td><td>up to 40 chars, shown as an <code>@user spins</code> caption</td></tr>
-    <tr><td>?duration=12</td><td>spin seconds, clamped 4–30 (default from Settings)</td></tr>
-    <tr><td>?wait=true</td><td>hold the response until the ball lands (adds <code>"landed": true</code>)</td></tr>
-    <tr><td>?test=true</td><td>kept out of history/stats, no soundboard clip cues, the table's bets untouched</td></tr>
-    <tr><td>?bet=red&amp;amount=100</td><td>one bet (<code>user</code> becomes its user); POST <code>"bets": [{"user", "bet", "amount"}]</code> for up to 200</td></tr>
-    <tr><td>?x=80&amp;y=25&amp;scale=0.8</td><td>per-spin placement; POST <code>"overrides": {...}</code> takes any appearance key (theme, colours, result/history/bets display, sfx)</td></tr>
-  </table>
-  <h3>Two ways to run the money</h3>
-  <p class="hint"><b>Mode A — Hexcast does the math</b>, two routes: send <code>bets</code> with the spin and
-    credit each bet's <code>returned</code> (no ledger), <i>or</i> put the bets on the <b>table</b> with
-    <code>/bet</code> and pay from the <b>ledger</b> (the durable route, like craps) — never the same bet from both.
-    <b>Mode B — your bot does the math</b> (here that's <b>Hex</b>, whose own code keeps everyone's coins in its
-    <b>hexbank</b>): keep the bets in the bot, spin with <code>wait=true</code> and no bets (or start the
-    <code>/timer</code> and show the bets with <code>/board</code>), work out the payouts from <code>result</code>,
-    pay from the hexbank, then <code>POST /announce</code> the winners with the spin's <code>id</code> as
-    <code>spin_id</code>. Either way the pocket is Hexcast's fair spin — a bot can't send a result, and announce
-    and board only change what the screen says (never the result, bets, ledger, history or stats).</p>
-  <h3>Announce fields (query or JSON body — body wins)</h3>
-  <table class="api">
-    <tr><td>"lines": [{user, amount, text}]</td><td>up to 50 kept; each needs a <code>user</code> or a <code>text</code> (unusable lines are skipped); <code>[]</code> = nobody won. <code>user</code> ≤ 40 chars, cleaned like a spin's user (leading <code>@</code> dropped); <code>text</code> ≤ 60; <code>amount</code> optional, any finite number up to ±1e12 — shown <code>+200</code> green, <code>−50</code> red, <code>0</code> dim. Query shorthand for one line: <code>?user=alice&amp;amount=200&amp;text=Red</code></td></tr>
-    <tr><td>title · empty_text</td><td>≤ 40 chars, default <code>WINNERS</code> · ≤ 60 chars, default <code>No winners</code> (shown when there are no lines)</td></tr>
-    <tr><td>currency</td><td>≤ 24 chars, shown after each amount; default the game's <code>currency</code> setting (<code>hexcoins</code> unless changed); <code>""</code> for none</td></tr>
-    <tr><td>seconds</td><td>1–120; default the rest of the result phase, or <b>result seconds</b> when the game isn't spinning or in <code>result</code>. Posted while the ball is in the air, it counts from the landing. The game stays on screen that long (unless hidden or stopped)</td></tr>
-    <tr><td>spin_id</td><td>the current spin (in the air / showing its result), or the last committed one when there's none — also the default without it; any other id → <b>409</b> <code>stale</code></td></tr>
-  </table>
-  <p class="hint">Reply: <code>{"ok": true, "announce": {id, spin_id, title, lines, empty_text, currency, expires_in_ms}, "state": {...}}</code>.
-    Every game's state carries the card as <code>announce</code> (<code>null</code> when none); the server takes it
-    down when <code>seconds</code> run out, and a new spin clears it.</p>
-  <h3>Bet syntax (case-insensitive, net odds "X to 1")</h3>
-  <table class="api">
-    <tr><td>17 · 0 · 00</td><td>straight — 35</td></tr>
-    <tr><td>split:17-20 · 17/20</td><td>split — 17; two numbers touching on the table, plus zero splits <code>0/1 0/2 00/2 00/3 0/00</code></td></tr>
-    <tr><td>street:13 · 13/14/15</td><td>street — 11</td></tr>
-    <tr><td>0/1/2 · 0/00/2 · 00/2/3</td><td>trio — 11 (also with a <code>trio:</code> prefix)</td></tr>
-    <tr><td>corner:17 · 17/18/20/21</td><td>corner — 8 (lowest number of a 2×2 block, not in column 3 or the last row)</td></tr>
-    <tr><td>basket · 0/00/1/2/3</td><td>basket — 6 (also <code>topline</code>, <code>five</code>); there is no first-four bet</td></tr>
-    <tr><td>line:13 · line:13-18</td><td>six line — 5 (also <code>sixline:13</code> or the six bare numbers)</td></tr>
-    <tr><td>d1 · 2nd12 · 25-36</td><td>dozen — 2 (also <code>dozen1</code>, <code>1st12</code>, <code>1-12</code>, …)</td></tr>
-    <tr><td>col1 · col2 · col3</td><td>column — 2 (also <code>column1</code>, <code>c1</code>)</td></tr>
-    <tr><td>red · black · odd · even · low · high</td><td>even money — 1 (lose on 0 and 00); also <code>r</code>, <code>b</code>, <code>1-18</code>, <code>19-36</code>, <code>manque</code>, <code>passe</code></td></tr>
-  </table>
-  <p class="hint">Each bet comes back with <code>valid</code>, <code>type</code>, <code>label</code>,
-    <code>numbers</code>, <code>odds</code>, <code>win</code>, <code>payout</code> (net: win
-    <code>amount × odds</code>, loss <code>-amount</code>) and <code>returned</code> (win
-    <code>amount × (odds + 1)</code>, loss 0). Invalid bets never block the spin: <code>valid: false</code>
-    with an <code>error</code> and the stake as <code>returned</code> — except a bad <code>amount</code>
-    (negative, not a number, over 1e12), which comes back as <code>0</code>. Hexcast keeps no balances — your bot
-    credits <code>returned</code>. Full guide, config keys and bot recipes: <code>docs/games.md</code>.</p>
-  <h3>Table &amp; spin timer (hexcoins)</h3>
-  <p class="hint">The durable Mode A route, the same as craps': bets wait on Hexcast's table, one-spin bets that can
-    come down until the ball is thrown; bets are closed only while it's in the air (<b>409</b>
-    <code>bets_closed</code>). <b>The countdown:</b> with <b>auto-spin</b> on (<code>auto_spin</code>), the first bet
-    starts a <b>bet window</b> countdown (<code>bet_window_seconds</code>, default 20), and it starts again after each
-    spin while bets are down; <code>/timer</code> starts one any time, even with no bets. At zero the wheel spins like
-    a <code>/spin</code> with every bet on the table. Any spin (test ones too), <b>Stop</b>, <code>/timer/cancel</code>
-    and <code>/clear</code> stop either kind; the last bet coming down or auto-spin switched off stop only auto-spin's.
-    While a countdown runs, the wheel stays on screen (unless hidden). At the landing each winning bet gets one ledger
-    <code>credit</code> <code>win</code> (stake + winnings, <code>roll_id</code> = the spin's id) and every bet leaves
-    the table; losers have no event (the stake was the debit). A restart in mid-air cancels that spin — the bets ride
-    on the next; <code>test</code> spins never touch the table.</p>
-  <p class="hint"><b>Hex's side (Mode A, table):</b> check the viewer's hexbank balance → <code>POST /bet</code> →
-    debit each <code>debits[]</code> entry and mark its <code>seq</code> done (a failed debit: <code>/remove</code>
-    that <code>bet_id</code>). Start rounds with <code>/timer</code> (or auto-spin). Pay by tailing
-    <code>/games/api/ledger?since=&lt;last applied seq&gt;</code> — every game in one tail — applying each event once
-    in <code>seq</code> order (credits <code>win</code>, <code>remove</code>, <code>refund</code>; debits Hex didn't
-    take itself, like a bet from the panel), saving that seq together with the hexbank change. Announce from
-    <code>/roulette/last</code> (<code>result</code>, <code>credits</code>), never pay from it.
-    <b>Mode B with the timer:</b> Hex keeps its bets → <code>POST /timer</code> → <code>POST /board</code> after every
-    bet → close bets at zero (or as soon as a spin starts) → wait for a new spin <code>id</code> on
-    <code>/roulette/last</code> → settle from its <code>result</code> → <code>POST /announce</code> and an empty
-    <code>/board</code>. Recipes and sample code: <code>docs/games.md</code> → Table &amp; spin timer.</p>
-  <p class="hint"><b>Hooking up the bank (Hex's hexbank, Mode A, bets on the spin call):</b> collect bets in Hex's own
-    betting window, check each bet's text with <code>/validate</code> and its amount in Hex (a positive whole number
-    ≤ 1e12), debit the stake, spin once with <code>"bets": [{user, bet, amount}]</code> and <code>wait=true</code>,
-    then credit every bet's <code>returned</code>. <b>409</b> busy: nothing spun, keep the stakes and retry after
-    <code>retry_in_ms</code>; a <b>Stop</b> mid-spin still commits it, so pay as normal; <code>test</code> spins
-    never count. This route has <b>no ledger</b> — mark each spin <code>id</code> + bet index paid, and pay from
-    the reply promptly: <code>/history</code> (each spin with its resolved bets) is memory only, the last 200,
-    emptied on restart. Step by step: <code>docs/games.md</code> → Hooking up the bank.</p>
-  <pre>curl "http://localhost:4747/games/api/roulette/spin?user=bob&amp;bet=red&amp;amount=100&amp;wait=true"
-curl "http://localhost:4747/games/api/roulette/validate?bet=split:17/20"
-curl -X POST http://localhost:4747/games/api/roulette/spin -H "Content-Type: application/json" -d "{\"wait\":true,\"bets\":[{\"user\":\"alice\",\"bet\":\"17\",\"amount\":10},{\"user\":\"bob\",\"bet\":\"odd\",\"amount\":50}]}"
-curl "http://localhost:4747/games/api/roulette/bet?user=alice&amp;bet=red&amp;amount=100"
-curl -X POST http://localhost:4747/games/api/roulette/bet -H "Content-Type: application/json" -d "{\"bets\":[{\"user\":\"bob\",\"bet\":\"split:17/20\",\"amount\":25},{\"user\":\"carol\",\"bet\":\"17\",\"amount\":10}]}"
-curl "http://localhost:4747/games/api/roulette/timer?seconds=30"
-curl "http://localhost:4747/games/api/roulette/remove?user=bob&amp;bet=split:17/20"
-curl "http://localhost:4747/games/api/ledger?since=0"
-curl -X POST http://localhost:4747/games/api/roulette/board -H "Content-Type: application/json" -d "{\"bets\":[{\"user\":\"alice\",\"text\":\"Red\",\"amount\":100}]}"
-curl -X POST http://localhost:4747/games/api/roulette/announce -H "Content-Type: application/json" -d "{\"lines\":[{\"user\":\"alice\",\"amount\":850,\"text\":\"Split 17/20\"}],\"empty_text\":\"House wins\",\"currency\":\"hexcoins\"}"
-curl -X POST http://localhost:4747/games/api/config -H "Content-Type: application/json" -d "{\"roulette\":{\"auto_spin\":true,\"bet_window_seconds\":30}}"
-curl -X POST http://localhost:4747/games/api/config -H "Content-Type: application/json" -d "{\"roulette\":{\"spin_seconds\":12,\"cooldown_seconds\":30}}"</pre>
-</div>
-</section>
-
-<section id="craps">
-<div class="card">
-  <h2>Craps <span class="tag">/games#craps</span></h2>
-  <p class="hint">A bank-craps table on the games overlay (<code>/games/overlay</code>, or
-    <code>?game=craps</code> for its own source). Chat bets <b>hexcoins</b>; bets stay on the table across
-    rolls like a casino. The <b>server</b> rolls two dice with <code>secrets.SystemRandom</code>, the overlay
-    throws them onto exactly those faces, the stickman calls it, the puck moves and every bet settles by
-    standard casino rules. Nothing can force the dice. Hexcast holds <b>no balances</b>: the bank is
-    <b>Hex</b>, whose <b>hexbank</b> takes the coins for every <b>debit</b> and pays every <b>credit</b> in
-    a numbered, persisted <b>ledger</b> — or Hex does the math itself and only tells the overlay what to show
-    (<b>Mode B</b>, below). All endpoints return <code>{"ok": true/false, ...}</code>.</p>
-  <table class="api">
-    <tr><td>GET|POST /games/api/craps/roll</td><td>throw the dice (aliases <code>/spin</code>, <code>/play</code>) — returns the dice, <code>settlements</code> (every bet with action), <code>credits</code> per user, <code>summary</code>, <code>table</code> (+ the roll's <code>ledger</code> events with <code>wait</code>); <b>409</b> <code>{"error": "busy", "retry_in_ms", "state"}</code> while a roll is in the air, showing its result, or in cooldown</td></tr>
-    <tr><td>GET|POST /games/api/craps/bet</td><td><code>{user, bet, amount, target?}</code> or <code>{"bets": [...]}</code> (up to 200) → <code>accepted</code>, <code>rejected</code> (each with an <code>error</code>), <code>debits</code> <code>[{user, amount, bet_id, seq}]</code>, <code>table</code>. 200 if any were accepted, 400 if all were rejected, <b>409</b> <code>bets_closed</code> while the dice are in the air</td></tr>
-    <tr><td>GET|POST /games/api/craps/remove</td><td><code>{bet_id}</code> · <code>{user, bet}</code> (<code>"bet": "odds"</code> takes down just the odds) · <code>{user, all: true}</code> → <code>removed</code>, <code>credits</code> (refunds), <code>ledger</code>; contract bets answer 400, <b>409</b> <code>bets_closed</code> while the dice are in the air</td></tr>
-    <tr><td>GET /games/api/craps/table</td><td>phase, point, shooter, hand rolls, every bet, <code>exposure</code> per user, <code>bets_open</code>, <code>auto_roll_in_ms</code> (the countdown — auto-roll or <code>/timer</code>), <code>last_seq</code></td></tr>
-    <tr><td>GET /games/api/craps/user/{name}</td><td>one viewer's bets, exposure and craps session debits / credits / net</td></tr>
-    <tr><td>GET /games/api/craps/ledger?since=0&amp;limit=500</td><td>craps' ledger events with <code>seq</code> &gt; since, oldest first (limit up to 5000), plus <code>last_seq</code>, <code>oldest_seq</code> and <code>truncated</code> (the limit cut it, or older events are only in <code>config/games_ledger.jsonl</code>). The ledger is shared with roulette's table (one <code>seq</code> numbering, each event names its <code>game</code>), so gaps are normal; <code>GET /games/api/ledger</code> has every game's</td></tr>
-    <tr><td>GET|POST /games/api/craps/clear</td><td>refund every bet (reason <code>refund</code>), back to a come-out, shooter cleared, countdown stopped; 409 <code>bets_closed</code> while the dice are in the air</td></tr>
-    <tr><td>GET|POST /games/api/craps/timer · timer/cancel</td><td>the <b>roll timer</b>: start (or restart) a countdown now — <code>seconds</code> 5–300 (default <b>bet window</b>), with or without bets, auto-roll on or off; at 0 the shooter's dice go by themselves → <code>{auto_in_ms, table, state}</code>, <b>409</b> busy unless idle · stop any countdown → <code>{cancelled, table, state}</code>. A running countdown keeps the table on screen, even with <b>show when bets</b> off</td></tr>
-    <tr><td>GET /games/api/craps/validate?bet=&amp;user=&amp;amount=&amp;target=</td><td>dry run against the current table: <code>valid</code>, <code>type</code>, <code>label</code>, <code>number</code>, <code>odds_text</code>, <code>error</code>, <code>hint</code> (when an amount won't pay exactly), <code>max_odds</code></td></tr>
-    <tr><td>GET /games/api/craps/bets</td><td>bet reference: type, label, syntax, pays, when, one roll, notes + rules</td></tr>
-    <tr><td>GET /games/api/craps/last · history · history/clear</td><td>as roulette — rolls newest first (in memory) + stats: totals, points set/made, seven-outs, naturals, craps, hard ways, hands, longest hand</td></tr>
-    <tr><td>GET|POST /games/api/craps/announce · announce/clear</td><td>Mode B (Hex did the math): a payouts card for the current or last roll that replaces the computed payouts board, up to <b>payouts max</b> lines shown — the same fields as roulette's (above), <code>currency</code> defaults to the craps <code>currency</code> setting (<code>hexcoins</code>), <b>show payouts</b> applies, <b>409</b> <code>stale</code> for an old <code>spin_id</code> · take it down now</td></tr>
-    <tr><td>GET|POST /games/api/craps/board · board/clear</td><td>Mode B: <code>{title, bets: [{user, text, amount}]}</code> — up to 100 lines, <code>user</code> ≤ 40, <code>text</code> ≤ 60, <code>amount</code> optional 0–1e12, each needs a <code>user</code> or a <code>text</code>, <code>title</code> ≤ 40 (default <code>ON THE TABLE</code>) — replaces the bets board; returns <code>{table}</code> with it as <code>display_board</code> <code>{title, bets, total}</code>. Memory only, counts for <b>show when bets</b>, allowed while the dice fly. <code>{"bets": []}</code> = nothing down (no board shown); <code>board/clear</code> or <code>{"clear": true}</code> → the table's own board again. Never touches the table's bets or the ledger</td></tr>
-    <tr><td>GET|POST /games/api/craps/show · hide · stop</td><td>as roulette; <b>stop</b> in mid-roll still settles that roll</td></tr>
-    <tr><td>GET · POST /games/api/config</td><td>the <code>"craps"</code> section: roll / result / cooldown seconds, <code>currency</code>, <code>min_bet</code>, <code>max_bet</code>, <code>odds_rule</code>, <code>field_12_pays</code>, <code>auto_roll</code>, <code>bet_window_seconds</code>, clips, placement and looks</td></tr>
-  </table>
-  <h3>Roll parameters (query or JSON body)</h3>
-  <table class="api">
-    <tr><td>?user=bob</td><td>who's rolling — becomes the shooter if there isn't one</td></tr>
-    <tr><td>?wait=true</td><td>hold the response until the dice land and the roll is settled</td></tr>
-    <tr><td>?test=true</td><td>animation only: no settlement, ledger, history or clip cues</td></tr>
-    <tr><td>?duration=6</td><td>roll seconds, clamped 2.5–10 (default from Settings)</td></tr>
-    <tr><td>"bets": [...]</td><td>placed first, exactly like <code>/bet</code>; the response carries <code>placed</code></td></tr>
-    <tr><td>?x=80&amp;y=25&amp;scale=0.8</td><td>per-roll placement; POST <code>"overrides": {...}</code> takes any appearance key</td></tr>
-  </table>
-  <h3>Bet syntax (case-insensitive; spaces, _, - and ' ignored; net odds "X to 1")</h3>
-  <table class="api">
-    <tr><td>pass · passline · line · pl</td><td>pass line — 1, come-out only</td></tr>
-    <tr><td>dontpass · dp</td><td>don't pass — 1, 12 pushes, come-out only</td></tr>
-    <tr><td>come · dontcome · dc</td><td>come / don't come — 1, point phase only</td></tr>
-    <tr><td>odds · layodds · odds:6 · layodds:6</td><td>odds behind your pass / don't pass / come / don't come bet, 0% edge: true odds 4/10 2:1 · 5/9 3:2 · 6/8 6:5, lay 1:2 · 2:3 · 5:6. Limit set by <code>odds_rule</code> (default <code>"345"</code>: 3× / 4× / 5× the flat, lay 6×). Or send <code>"target": "&lt;bet_id&gt;"</code></td></tr>
-    <tr><td>place6 · p6 · 6</td><td>place 4/10 9:5 · 5/9 7:5 · 6/8 7:6 — stays up after a win, off on the come-out</td></tr>
-    <tr><td>hard8 · h8 · hardsix</td><td>hard ways 4/10 7 · 6/8 9 — stays up after a win, off on the come-out</td></tr>
-    <tr><td>field</td><td>one roll: 3 4 9 10 11 pay 1, 2 pays 2, 12 pays 3 (or 2, <code>field_12_pays</code>)</td></tr>
-    <tr><td>any7 · seven · big red · 7</td><td>one roll — 4</td></tr>
-    <tr><td>anycraps · craps · ac</td><td>one roll: 2, 3, 12 — 7</td></tr>
-    <tr><td>aces · 2 · boxcars · 12</td><td>one roll — 30</td></tr>
-    <tr><td>acedeuce · 3 · yo · 11</td><td>one roll — 15</td></tr>
-    <tr><td>horn · ce · c&amp;e</td><td>one roll: horn (multiple of 4) 2/12 27:4, 3/11 3:1 · C&amp;E (even) 2/3/12 3:1, 11 7:1</td></tr>
-  </table>
-  <h3>Hooking up the bank (hexcoins)</h3>
-  <p class="hint"><b>Placing a bet</b> — either (a) check the viewer's hexbank balance →
-    <code>POST /bet</code> → debit each accepted <code>debits[]</code> entry (if a debit then fails,
-    <code>/remove</code> that bet), or (b) debit first → <code>POST /bet</code> → credit back whatever was
-    rejected. Rejected bets and a 409 move nothing. <b>Paying out</b> — tail
-    <code>/ledger?since=&lt;last applied seq&gt;</code>, apply each event once in <code>seq</code> order,
-    and save that seq in Hex together with the hexbank change, so payouts happen exactly once across
-    restarts of either side. Skip the debits Hex already took from a <code>/bet</code> reply; take any other
-    debit (a bet placed from the panel). The tail also catches panel rolls, auto-rolls and timer rolls,
-    take-downs (<code>remove</code>) and clears (<code>refund</code>); running roulette's table too, tail
-    <code>/games/api/ledger</code> (every game) once instead. The <code>/roll?wait=true</code> reply's
-    <code>credits</code> is for announcing in chat, not for paying. The table and ledger persist in
-    <code>config/</code>; <code>seq</code> keeps counting across restarts, and a restart while the dice are in
-    the air cancels that roll (bets stay, nothing is paid). Winnings round <b>down</b> to whole coins —
-    suggest amounts that pay exactly (place 6/8 in 6s, place 4/5/9/10 in 5s, odds on 6/8 in 5s). Step-by-step
-    guide for Hex's developer, chat-command flow and sample code: <code>docs/craps.md</code>.</p>
-  <h3>Hex does the math (Mode B)</h3>
-  <p class="hint">The other way to run the money: Hexcast's table stays empty and Hex keeps the bets in its own
-    code. Take the stake in the hexbank and mirror the bets with <code>POST /board</code> → close bets and
-    <code>POST /roll</code> with <code>wait: true</code> and no bets → settle Hex's bets from <code>result</code>
-    (<code>event</code>, <code>total</code>, <code>dice</code>, <code>phase_before</code>, <code>point_before</code>) →
-    credit the hexbank → <code>POST /announce</code> the payouts with the roll's <code>id</code> as
-    <code>spin_id</code> and post the updated <code>/board</code>. The dice, puck and shooter are still Hexcast's
-    fair roll — Hex can't send dice. Never also <code>/bet</code> those bets (they'd be settled and in the ledger
-    twice); auto-roll only counts bets on Hexcast's table, so Hex rolls — or starts the roll timer
-    (<code>/timer</code>) and reads the roll it throws from <code>/last</code>; re-post the board after a Hexcast
-    restart (it's memory only). Recipe and sample code: <code>docs/craps.md</code>.</p>
-  <pre>curl "http://localhost:4747/games/api/craps/bet?user=alice&amp;bet=pass&amp;amount=100"
-curl "http://localhost:4747/games/api/craps/bet?user=alice&amp;bet=odds&amp;amount=200"
-curl "http://localhost:4747/games/api/craps/roll?user=alice&amp;wait=true"
-curl "http://localhost:4747/games/api/craps/ledger?since=0"
-curl "http://localhost:4747/games/api/craps/validate?bet=place6&amp;amount=25"
-curl -X POST http://localhost:4747/games/api/craps/bet -H "Content-Type: application/json" -d "{\"bets\":[{\"user\":\"bob\",\"bet\":\"place6\",\"amount\":60},{\"user\":\"carol\",\"bet\":\"field\",\"amount\":25}]}"
-curl -X POST http://localhost:4747/games/api/config -H "Content-Type: application/json" -d "{\"craps\":{\"auto_roll\":true,\"bet_window_seconds\":30}}"
-curl "http://localhost:4747/games/api/craps/timer?seconds=30"
-curl -X POST http://localhost:4747/games/api/craps/board -H "Content-Type: application/json" -d "{\"bets\":[{\"user\":\"alice\",\"text\":\"Pass 100 + odds 50\",\"amount\":150}]}"
-curl "http://localhost:4747/games/api/craps/announce?user=alice&amp;amount=200&amp;text=Pass%20line"</pre>
-</div>
-</section>
-
-<section id="russian">
-<div class="card">
-  <h2>Russian Roulette <span class="tag">/games#russian</span></h2>
-  <p class="hint">A side-on revolver and a stuffed dummy with a name tag on the games overlay (<code>/games/overlay</code>, or
-    <code>?game=russian</code>). Pull k loads k bullets and re-spins (chance k/6); chat bets the dummy <b>survives</b>
-    (the stake rides and grows from pull to pull) or goes <b>bang</b> this pull — all against the bank (your bot), through
-    the shared <b>ledger</b>. 30 s to bet, 20 s between pulls, 3 pulls; no bets ends the game. The dummy's
-    <code>dummy_user</code> (the volunteer) gets 5% of the bank's net win. Placement, look and the header's title
-    (<code>title</code>, your branding) live in the Games panel's Edit Mode. Details: <code>docs/russian_roulette.md</code>.</p>
-  <table class="api">
-    <tr><td>GET|POST /games/api/russian/start</td><td><code>{dummy, dummy_user, rounds, seconds, test}</code> — start a game; <code>test</code> writes nothing to the ledger; 409 while one runs</td></tr>
-    <tr><td>GET|POST /games/api/russian/bet</td><td><code>{user, side: survive|bang, amount}</code> → <code>debits</code>, <code>player</code>; 409 <code>bets_closed</code> outside a betting window</td></tr>
-    <tr><td>GET|POST /games/api/russian/cashout</td><td><code>{user}</code> → the survive stake's value now (ledger <code>credit</code>, reason <code>cashout</code>)</td></tr>
-    <tr><td>GET|POST /games/api/russian/remove</td><td><code>{user, side?}</code> — take back what went down in this window (<code>refund</code>)</td></tr>
-    <tr><td>GET|POST /games/api/russian/dummy</td><td><code>{dummy, dummy_user}</code> — before the first pull, or for the next game</td></tr>
-    <tr><td>GET|POST /games/api/russian/next</td><td>end the current phase now (alias <code>/pull</code>)</td></tr>
-    <tr><td>GET /games/api/russian/table · user/{name} · ledger · history · bets</td><td>the STATE · one player · this game's ledger events · finished games + stats · rules + odds</td></tr>
-    <tr><td>GET|POST /games/api/russian/stop</td><td>end the game: a pull in progress counts, bang bets refunded, survive stakes cashed out</td></tr>
-    <tr><td>GET|POST /games/api/russian/preview</td><td><code>{overrides, seconds}</code> — Edit Mode's Test in OBS: the scene on screen for a few seconds with that look (<code>STATE.preview</code>); never touches the game · <code>/preview/clear</code></td></tr>
-  </table>
-  <pre>curl -X POST http://localhost:4747/games/api/russian/start -H "Content-Type: application/json" -d "{\"dummy\":\"Bob\",\"dummy_user\":\"bob\"}"
-curl "http://localhost:4747/games/api/russian/bet?user=alice&amp;side=survive&amp;amount=100"
-curl "http://localhost:4747/games/api/russian/cashout?user=alice"</pre>
-</div>
-</section>
-
-<section id="trivia">
-<div class="card">
-  <h2>Trivia <span class="tag">/games#trivia</span></h2>
-  <p class="hint">A game-show quiz on the games overlay (<code>?game=trivia</code>). Chat bets <b>before</b> each question
-    (only its number, category and difficulty show), then answers A–E; everyone may answer, only bets are paid. Right
-    answers pay ×1.5 / ×2 / ×3 by difficulty, +10% per question won in a row; winners <b>ride</b> or <b>cash out</b>
-    (no choice = cashed out). 15 questions from Open Trivia DB and your own lore questions, never repeated in a night.
-    The board's title (<code>title</code>, "TRIVIA") and the name of your own questions (<code>lore_label</code>,
-    "Channel Lore") are your branding: set them in the Games panel's Edit Mode or Settings. Details: <code>docs/trivia.md</code>.</p>
-  <table class="api">
-    <tr><td>GET|POST /games/api/trivia/start</td><td><code>{questions, difficulty, category, lore, seconds, test}</code> — 409 while one runs, 503 when no question could be had</td></tr>
-    <tr><td>GET|POST /games/api/trivia/bet</td><td><code>{user, amount}</code> — a stake on the next question (ledger <code>debit</code>)</td></tr>
-    <tr><td>GET|POST /games/api/trivia/answer</td><td><code>{user, answer}</code> — <code>A</code>–<code>E</code>, <code>1</code>–<code>5</code> or the option text; the last answer counts</td></tr>
-    <tr><td>GET|POST /games/api/trivia/ride · cashout</td><td><code>{user}</code> — let a win ride · take it (<code>credit</code>)</td></tr>
-    <tr><td>GET|POST /games/api/trivia/next</td><td>end the current phase now</td></tr>
-    <tr><td>GET|POST /games/api/trivia/lore · lore/remove</td><td>your own questions: list · add <code>{question, correct, incorrect[], difficulty, category}</code> or <code>{"questions": [...]}</code> · delete <code>{id}</code></td></tr>
-    <tr><td>GET /games/api/trivia/bank · categories · POST asked/clear</td><td>question pool + asked list · OpenTDB categories · a new night</td></tr>
-    <tr><td>GET /games/api/trivia/table · user/{name} · ledger · history</td><td>the STATE (the answer only from the reveal on) · one player · ledger events · finished games</td></tr>
-    <tr><td>GET|POST /games/api/trivia/stop</td><td>end the game: stakes refunded, winnings cashed out</td></tr>
-    <tr><td>GET|POST /games/api/trivia/preview</td><td><code>{overrides, seconds}</code> — Edit Mode's Test in OBS: the board on screen for a few seconds with that look; never touches the game · <code>/preview/clear</code></td></tr>
-  </table>
-  <pre>curl -X POST http://localhost:4747/games/api/trivia/start
-curl "http://localhost:4747/games/api/trivia/bet?user=alice&amp;amount=100"
-curl "http://localhost:4747/games/api/trivia/answer?user=alice&amp;answer=B"
-curl "http://localhost:4747/games/api/trivia/ride?user=alice"</pre>
-</div>
-</section>
-
-<section id="ticker">
-<div class="card">
-  <h2>Ticker <span class="tag">/ticker</span></h2>
-  <p class="hint">A news-style scrolling ticker overlay (<code>/ticker/overlay</code>, 1920×1080) that you
-    place anywhere with the panel's drag box. What scrolls is a list of <b>feeds</b>. Each feed is a named
-    list of lines led by its label badge, and feeds scroll in order. A line with a <code>key</code> is unique
-    in its feed, so writing the same key again updates it in place, which suits things like everyone's
-    hexcoin balance. The overlay takes the next line from the live list as each one scrolls off, so
-    changes land mid-scroll. New lines jump the queue. Every call below works as a GET with query
-    parameters or as a POST with JSON. Details: <code>docs/ticker.md</code>.</p>
-  <table class="api">
-    <tr><td>GET|POST /ticker/api/say?text=…&amp;ttl=60</td><td>one-off line in the <code>announce</code> feed. It scrolls next and is gone after <code>ttl</code> seconds (default: the announce feed's <code>ttl</code>, else 60; <code>0</code> keeps it). Optional <code>color</code>.</td></tr>
-    <tr><td>GET|POST /ticker/api/feed/{name}/add</td><td><code>text</code>, or <code>key</code> and/or <code>value</code>; optional <code>color</code>, <code>ttl</code>, <code>first=1</code>. With a <code>key</code> it upserts. Creates the feed if it's new.</td></tr>
-    <tr><td>GET|POST /ticker/api/feed/{name}/set</td><td>same as <code>add</code>, e.g. <code>?key=alice&amp;value=1300</code></td></tr>
-    <tr><td>POST /ticker/api/feed/{name}</td><td>create or update a feed. Settings you send change; the rest are kept: <code>label</code>, <code>template</code> (<code>{key}</code> <code>{value}</code> <code>{text}</code>), <code>sort</code> (<code>none</code>|<code>value_desc</code>|<code>value_asc</code>|<code>key</code>|<code>newest</code>), <code>limit</code>, <code>ttl</code> (seconds each new line lasts; <code>0</code> = forever, and a line's own <code>ttl</code> wins), <code>color</code>, <code>enabled</code>, <code>source</code>. <code>items</code> (strings or objects) or <code>values</code> (<code>{"alice":1300}</code>) replaces the lines.</td></tr>
-    <tr><td>GET|POST /ticker/api/feed/{name}/remove</td><td>by <code>id</code>, <code>key</code> or exact <code>text</code></td></tr>
-    <tr><td>GET|POST /ticker/api/feed/{name}/clear · enable?on=0|1 · refresh · delete</td><td>empty it · take it on/off air · poll its URL source now · remove it</td></tr>
-    <tr><td>GET /ticker/api/feed/{name} · /ticker/api/feeds</td><td>one feed or every feed, with each feed's rendered lines</td></tr>
-    <tr><td>POST /ticker/api/feeds/order</td><td><code>{"order": ["announce","balances","news"]}</code></td></tr>
-    <tr><td>GET /ticker/api/items</td><td>exactly what is scrolling right now</td></tr>
-    <tr><td>GET|POST /ticker/api/show · hide</td><td>show or hide the whole ticker</td></tr>
-    <tr><td>GET /ticker/api/status</td><td>overlays connected, <code>visible</code>, feed and line counts</td></tr>
-    <tr><td>GET|POST /ticker/api/config</td><td>style: merge-and-save any subset of keys</td></tr>
-  </table>
-  <p class="hint">A feed can also pull its lines from a JSON URL on a timer. The URL can return a list of
-    strings, a list of objects, or a <code>{"key": value}</code> object, and <code>path</code>,
-    <code>key_field</code> and <code>value_field</code> pick what to read. Or write
-    <code>config/ticker_feeds.json</code> directly; it's reloaded within a second.</p>
-  <pre>curl "http://localhost:4747/ticker/api/feed/balances/set?key=alice&amp;value=1300"
-curl -X POST http://localhost:4747/ticker/api/feed/balances -H "Content-Type: application/json" -d "{\"label\":\"HEXBANK\",\"sort\":\"value_desc\",\"limit\":20,\"values\":{\"alice\":1300,\"bob\":250}}"
-curl "http://localhost:4747/ticker/api/say?text=Raffle%20closes%20soon&amp;ttl=90"</pre>
-</div>
-</section>
-
-<section id="notes">
-<div class="card">
-  <h2>Browser notes</h2>
-  <h3>Sound in a browser tab</h3>
-  <p class="hint">Browsers block <b>unmuted</b> autoplay in normal tabs until you've interacted with
-    the page. If a clip starts silent, the overlay shows a "muted by the browser" pill — one click
-    anywhere fixes the whole tab session. Permanent fix: <b>Firefox</b> — address-bar permissions
-    icon → Autoplay → <b>Allow Audio and Video</b>. <b>Chrome</b> — padlock → Site settings →
-    Sound → <b>Allow</b> (Chrome also learns from regular use). Permissions apply to the whole
-    host and port, every page under it. OBS browser sources allow unmuted autoplay natively and
-    are never affected.</p>
-  <h3>OBS browser sources</h3>
-  <p class="hint">For every overlay: uncheck <b>Shutdown source when not visible</b> and
-    <b>Refresh browser when scene becomes active</b>. Overlays reconnect on their own and restyle
-    live when you save settings in a panel. If a re-upload doesn't repaint, right-click the source
-    → Interact → Ctrl+Shift+R.</p>
-  <h3>No authentication</h3>
-  <p class="hint">Every endpoint above is open to anyone who can reach the port — that's what makes
-    bots one-line simple. Keep HexCast on a trusted LAN and never expose it to the internet.</p>
-</div>
-</section>
-
+<!--HELP_CRUMBS-->
+<!--HELP_BODY-->
 </main>
-<script src="/static/hexbar.js"></script>
+</div>
+
+<script>
+/* Old links (/help#craps) still land on the right page. */
+(function () {
+  var map = /*HELP_ANCHORS*/{};
+  var h = location.hash.slice(1);
+  if (location.pathname.replace(/\/$/, '') === '/help' && h && map[h]) location.replace('/help/' + map[h] + '#' + h);
+})();
+/* "On this page": a row of links to the headings of a long reference. */
+(function () {
+  var hs = document.querySelectorAll('main .card h3');
+  if (hs.length < 3 || document.querySelector('main .grp')) return;
+  var box = document.createElement('div'); box.className = 'jump';
+  box.innerHTML = '<b>On this page</b>';
+  var used = {};
+  hs.forEach(function (h) {
+    var id = h.id || h.textContent.toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'part';
+    while (used[id]) id += '-2';
+    used[id] = 1; h.id = id;
+    var a = document.createElement('a'); a.href = '#' + id;
+    a.textContent = h.textContent.replace(/\s*\(.*$/, '').trim().slice(0, 34);
+    box.appendChild(a);
+  });
+  var first = document.querySelector('main section');
+  if (first) first.parentNode.insertBefore(box, first);
+  if (location.hash) { var t = document.getElementById(location.hash.slice(1)); if (t) t.scrollIntoView(); }
+})();
+</script>
+<script src="/static/hexbar.js?v=2"></script>
 </body></html>

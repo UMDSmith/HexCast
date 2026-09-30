@@ -1,0 +1,38 @@
+<section id="music">
+<div class="card">
+  <h2>Music <span class="tag">/ytm</span></h2>
+  <p class="hint">Now-playing overlay with two sources, chosen with <b>Music source</b> on the panel:
+    the <b>YouTube Music Desktop App</b> (via its companion server), or <b>local files</b> from a
+    mapped folder played through the overlay itself (OBS captures the audio).</p>
+  <table class="api">
+    <tr><td>GET /ytm/api/nowplaying</td><td>one plain-text line: <code>Title - Artist (Album)</code> — made for a chat bot's <code>!song</code> (reflects the active source)</td></tr>
+    <tr><td>GET /ytm/api/nowplaying.json</td><td>the full state as JSON</td></tr>
+    <tr><td>GET /ytm/api/status</td><td>connection + pairing state</td></tr>
+    <tr><td>POST /ytm/api/command</td><td><code>{"command": "next"}</code> — routed to whichever source is active</td></tr>
+  </table>
+  <h3>YouTube Music commands</h3>
+  <p class="hint"><code>playPause</code>, <code>play</code>, <code>pause</code>, <code>next</code>,
+    <code>previous</code>, <code>volumeUp</code>, <code>volumeDown</code>, <code>setVolume</code> (0–100),
+    <code>mute</code>, <code>unmute</code>, <code>seekTo</code>, <code>shuffle</code>,
+    <code>repeatMode</code>, <code>toggleLike</code>, <code>toggleDislike</code>,
+    <code>playQueueIndex</code>, <code>changeVideo</code> — so a channel-point redeem can skip a track.</p>
+  <p class="hint">A <b>Forward URL</b> on the panel POSTs the full state on every track change, and
+    <b>Clip on track change</b> fires a soundboard clip by name through <code>/api/play/{name}</code>.</p>
+  <h3>Local files</h3>
+  <p class="hint">On the <b>Local library</b> tab: pick a folder (<b>Browse…</b> uses an in-panel
+    file browser that works from any device), then browse/search and build a queue. <b>Add this folder
+    (+ subfolders)</b> queues thousands at once server-side; the queue list is virtualised so huge queues
+    stay smooth. Save a queue as a <b>playlist</b> (JSON) and load/append it later. <b>▸</b> previews a
+    track in the panel only (not the stream). The visualiser reacts to the real audio via Web Audio in the
+    overlay. Transport uses the same <code>/ytm/api/command</code>.</p>
+  <table class="api">
+    <tr><td>GET /ytm/library/status</td><td>index progress (root, count, ready/indexing)</td></tr>
+    <tr><td>GET /ytm/library/browse?path= · search?q=</td><td>one folder level · filename/folder search</td></tr>
+    <tr><td>GET /ytm/fs/list?path=</td><td>host drives/folders, for the folder picker</td></tr>
+    <tr><td>GET /ytm/queue/state · items?offset=&amp;limit=</td><td>lightweight state · a window of items</td></tr>
+    <tr><td>POST /ytm/queue/add|add-folder|remove|move|clear|play</td><td>queue edits</td></tr>
+    <tr><td>GET /ytm/playlists · POST /ytm/playlists/save|load|rename|delete</td><td>named playlists</td></tr>
+    <tr><td>GET /ytm/localfile/{id} · localart/{id}</td><td>audio (HTTP Range for seeking) · cover art</td></tr>
+  </table>
+</div>
+</section>

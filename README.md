@@ -16,7 +16,8 @@ Anyone who can reach the port can:
 - trigger any media into your stream,
 - **upload arbitrary files** to your machine (the upload endpoint accepts files and writes them to disk),
 - **delete any media** in your library,
-- enumerate your entire library via the API.
+- enumerate your entire library via the API,
+- **install, update or remove plugins** from the catalog (the **+** tab) — which downloads the Python packages a plugin needs.
 
 There is no rate limiting and no input gating beyond file-extension checks. Do
 **not** port-forward this, do **not** put it on a public VPS, and do **not**
@@ -27,21 +28,28 @@ assume "nobody knows the URL" protects you.
 - On a LAN, with a firewall rule restricting the port to your local subnet.
 - If you genuinely need remote access, put it behind a reverse proxy (nginx/Caddy) that enforces authentication and TLS, on a private network or VPN — that's on you to set up correctly.
 
-The optional integrations store secrets under `config/` (a Twitch OAuth token +
+The plugins store their secrets under `config/` (a Twitch OAuth token +
 client secret, a YouTube Music pairing token, a Discord RPC token). Keep that
-folder out of git and keep the port on your LAN.
+folder out of git and keep the port on your LAN. A plugin is code that runs on your
+PC with your permissions: install the ones that ship with Hexcast, and add a
+[remote catalog](docs/plugins.md#catalogs) only if you trust whoever runs it.
 
 ---
 
 ## What can Hexcast do?
 
 At its core, Hexcast is a **soundboard + media launcher** that drives a single
-set of OBS browser-source overlays from a web control panel. On top of that core
-sit seven optional **integration tabs** — Twitch, Music, Discord, Clips,
-Countdown, Games, and Ticker — each self-contained, each with its own overlay and
-settings panel, each reachable from a button in the control panel's top bar.
-Turn on as many or as few as you like; none of them changes how the soundboard
-behaves.
+set of OBS browser-source overlays from a web control panel. **That is all you
+get on a fresh download** — one tab, **Soundboard**, and a **+** next to it.
+
+Everything else is a **plugin** you add with one click from that **+** tab:
+Twitch, Music, Discord, Clips, Countdown, Games and Ticker. Each is
+self-contained, with its own overlay and settings panel, and gets its own tab in
+the top bar once installed. Add as many or as few as you like; none of them
+changes how the soundboard behaves, and a plugin you never install costs you
+nothing — not even its Python packages. **Games** goes one level further: each
+game (Roulette, Craps, Russian Roulette, Trivia) is its own add-on, installed from
+the **+** inside the Games tab. See [docs/plugins.md](docs/plugins.md).
 
 Everything runs on your own machine and streams to OBS over your LAN.
 
@@ -69,13 +77,13 @@ name over a simple HTTP **[Bot API](#bot-api)** — great for chat bots and
 stream-deck buttons.
 
 > **This `/overlay` is where every soundboard clip plays — including clips fired
-> by the other tabs** (Twitch alerts, Countdown cues, a Music track-change clip,
+> by plugins** (Twitch alerts, Countdown cues, a Music track-change clip,
 > Games launch/landing clips).
-> Those integrations trigger the soundboard rather than drawing on their own
+> Those plugins trigger the soundboard rather than drawing on their own
 > overlays, so keep the base `/overlay` source in your scene alongside whatever
-> integration overlays you're using.
+> plugin overlays you're using.
 
-### 💬 Twitch
+### 💬 Twitch *(plugin)*
 
 **What it does.** Adds a **chat overlay** and an **alert overlay** for follows,
 subs, gift subs, bits, raids, channel-point redeems, and hype trains, with a
@@ -92,7 +100,7 @@ Twitch EventSub and renders the overlays. It can also POST every event to a
 forward URL if you want your own bot or a model reacting to chat.
 See [docs/twitch.md](docs/twitch.md).
 
-### 🎵 Music
+### 🎵 Music *(plugin)*
 
 **What it does.** A now-playing overlay — album art, live progress, an accent
 colour pulled from the artwork, and an audio visualiser — from one of **two
@@ -117,7 +125,7 @@ that browser's YouTube cookies on this PC for that lookup, so it's done as your
 account. Stays linked across restarts until **Unlink**. Separate from the Clips
 link. Details: [docs/music.md](docs/music.md#youtube-sign-in-optional).
 
-### 🎙️ Discord
+### 🎙️ Discord *(plugin)*
 
 **What it does.** A voice-reactive overlay: everyone in your current Discord
 voice channel appears in OBS and lights up as they speak — using Discord avatars
@@ -127,7 +135,7 @@ or custom PNGTuber-style idle/talking image pairs.
 no server-side token setup beyond authorizing once.
 See [docs/discord.md](docs/discord.md).
 
-### 🎬 Clips
+### 🎬 Clips *(plugin)*
 
 **What it does.** Queue up Twitch clip/VOD links — paste a single URL or a whole
 blob of chat — then fire them **one at a time** to a full-window overlay (no
@@ -150,7 +158,7 @@ browser's *name* is saved, cookies are read by yt-dlp at lookup time and only
 when YouTube refuses anonymously. Stays linked until **Unlink**. Details:
 [docs/clips.md](docs/clips.md#youtube-sign-in-optional).
 
-### ⏱️ Countdown
+### ⏱️ Countdown *(plugin)*
 
 **What it does.** A fully styleable countdown timer overlay — count down a fixed
 duration or to a wall-clock time — positioned on a 1920×1080 stage like the chat
@@ -165,7 +173,7 @@ computed against that timer and fired through the soundboard. **Those clips play
 on the base soundboard overlay (`/overlay`), not the countdown overlay** — keep
 both browser sources in your scene. See [docs/countdown.md](docs/countdown.md).
 
-### 🎰 Games
+### 🎰 Games *(plugin, with one add-on per game)*
 
 **What it does.** Bot-driven casino games on stream, each on its own tab of
 the Games panel and placed with the same **Edit Mode** as the soundboard:
@@ -228,7 +236,7 @@ Every bet in every game is against the bank (the bot), paid through the same
 ledger; Hexcast never reads chat — your bot turns chat commands into API calls,
 so any AI vtuber's bot can run them.
 
-### 📰 Ticker
+### 📰 Ticker *(plugin)*
 
 **What it does.** A news-style scrolling ticker that you place anywhere on the
 1920×1080 stage by dragging a box over a live preview. You can style every part
@@ -253,7 +261,7 @@ watched and reloaded within a second, or from a polled JSON URL. See
 
 - **Python 3.10+** (uses modern type-union syntax).
 - **OBS Studio 28+** with browser-source support.
-- **Deno** — *optional*, only for the YouTube sign-in on the Music and Clips pages (signed-in lookups make yt-dlp solve a JavaScript challenge). Windows: `winget install DenoLand.Deno`; Node or Bun also work if already installed. yt-dlp itself and its solver scripts (`yt-dlp-ejs`) install automatically with the other requirements.
+- **Deno** — *optional*, only for the YouTube sign-in in the Music and Clips plugins (signed-in lookups make yt-dlp solve a JavaScript challenge). Windows: `winget install DenoLand.Deno`; Node or Bun also work if already installed. yt-dlp itself and its solver scripts (`yt-dlp-ejs`) install automatically with the other requirements.
 - **ffmpeg** — *optional but recommended*. It powers gif/webp → mp4 conversion, thumbnails, media-duration/audio probing, and the Music tab's local tag/cover-art reading. Hexcast runs without it, but animated GIFs won't be seekable, thumbnails won't generate, the 🔊 audio badge won't appear, and local music shows filenames only.
 
 ### Install — the easy way
@@ -289,9 +297,23 @@ Leave the launcher window open while you stream; close it to stop Hexcast.
 3. **Control audio via OBS:** ON (routes sound through your mixer). **Shutdown source when not visible:** OFF (otherwise the websocket dies). **Refresh when scene becomes active:** OFF.
 4. Select the source and press **Ctrl+F** to fit.
 
-Each integration adds its own browser source (e.g. `/ytm/overlay`,
+Each plugin you add brings its own browser source (e.g. `/ytm/overlay`,
 `/twitch/chat`, `/countdown/overlay`, `/games/overlay`, `/ticker/overlay`); its panel shows the
 exact URL.
+
+### Add plugins
+
+Open the control panel and click the **+** tab in the top bar. Every plugin is a card:
+press **Install** and it downloads what it needs (a progress log shows what it's doing), starts,
+and its tab appears — **no restart**. Some plugins need another one and bring it along
+(Music and Clips share a small *yt-dlp helpers* plugin). Later, each card offers **Update**
+(when a newer copy is available), **Turn off** and **Remove** — removing keeps your settings,
+so adding the plugin back picks up where you left off.
+
+Games: install **Games**, open its tab, and click the **+** at the end of *its* tabs to pick the
+games you want. Prefer a terminal? `python hexcast.py plugins list` / `install twitch music` /
+`update --all` / `remove clips`. Everything about plugins — including how to write your own — is in
+[docs/plugins.md](docs/plugins.md).
 
 ### Install — advanced / manual
 
@@ -304,25 +326,31 @@ pip install -r requirements.txt
 python hexcast.py
 ```
 
-All seven integrations work from the main install — their dependencies are
-already included. The only separate optional extra is the **"react to real
-audio" visualiser**, which needs `numpy` + `soundcard`:
-`pip install -r requirements-ytm-audio.txt`.
+That installs just the core. Add plugins from the **+** tab, or from the command line — each one
+installs its own Python packages, so nothing is downloaded for a plugin you don't use:
 
-Each integration is just two lines in `hexcast.py` after the `/media` mount
-(e.g. `from twitch import attach_twitch` then `attach_twitch(app, PORT)`, and
-the same shape for `ytmusic`, `discord_reactive`, `clips`, `countdown`,
-`games`, `ticker`). Delete a pair to disable that module.
+```bash
+python hexcast.py plugins list
+python hexcast.py plugins install twitch music discord
+python hexcast.py plugins install games games_roulette games_craps games_russian games_trivia
+python hexcast.py plugins install --all
+```
+
+The one separate optional extra is the Music plugin's **"react to real audio" visualiser**, which needs
+`numpy` + `soundcard`: `pip install -r plugins/music/requirements-audio.txt`.
 
 ### Install — Docker
 
 ```bash
 docker build -t hexcast:latest .          # add --platform linux/amd64|arm64|arm/v7 to cross-build
-mkdir -p ./hexcast-media/audio ./hexcast-media/video
-docker run -d --name hexcast -p 4747:4747 -v ./hexcast-media:/app/media hexcast:latest
+mkdir -p ./hexcast-media/audio ./hexcast-media/video ./hexcast-config
+docker run -d --name hexcast -p 4747:4747 -v ./hexcast-media:/app/media -v ./hexcast-config:/app/config hexcast:latest
 ```
 
-The image bundles ffmpeg. The `-v` mount persists your library. Control panel at
+The image bundles ffmpeg. The `-v` mounts persist your library and your settings. The image starts with just the
+soundboard; **bake in the plugins you use** so they survive a rebuild or a new container:
+`docker build --build-arg PLUGINS="twitch music games games_roulette" -t hexcast:latest .` (`PLUGINS=all` for everything).
+Plugins added from the **+** tab inside a running container live only in that container. Control panel at
 `http://localhost:4747/`; OBS source at `http://<your-machine-ip>:4747/overlay`.
 For a registry multiarch push: `docker buildx build --platform
 linux/amd64,linux/arm64,linux/arm/v7 -t your-registry/hexcast:latest --push .`.
@@ -335,29 +363,36 @@ linux/amd64,linux/arm64,linux/arm/v7 -t your-registry/hexcast:latest --push .`.
 
 ### Upgrading
 
-Your library (`media/`) and all settings/secrets (`config/`) are git-ignored, so
+Your library (`media/`), all settings/secrets (`config/`) and the plugins you installed (`plugins/`) are git-ignored, so
 updating never touches them. The top bar of every panel shows your version; when
 a newer release is out it turns green and reads **• update**.
 
 - **Git:** `git pull`, then run the launcher.
-- **ZIP:** download the latest from **`< > Code`** and extract over your existing folder (keep `media/` and `config/`), then run the launcher.
+- **ZIP:** download the latest from **`< > Code`** and extract over your existing folder (keep `media/`, `config/` and `plugins/`), then run the launcher.
 - **Docker:** `git pull && docker build -t hexcast:latest . && docker stop hexcast && docker rm hexcast`, then re-run the `docker run …` command above.
 
 The launcher notices when requirements changed and re-installs automatically —
 no manual `pip` to remember.
+
+**Plugins update on your say-so.** An update brings a newer copy of the plugin folder into `catalog/`, but what
+runs is the installed copy in `plugins/` — a plugin's card shows **Update** when the catalog has something newer, and
+pressing it swaps the files and restarts just that plugin, so nothing changes in the middle of a stream.
+
+**Coming from a version without plugins?** Nothing to do: the first start keeps every tab you were already using (it
+looks for their settings in `config/` and installs those plugins for you). A tab you never configured is one click away in **+**.
 
 ### Uninstalling
 
 Hexcast is self-contained — everything lives inside its folder.
 
 1. Stop it (close the launcher window, or `docker stop hexcast && docker rm hexcast && docker rmi hexcast:latest`).
-2. Delete the `hexcast` folder — the app, its `.venv`, your `media/`, and `config/` all live there; nothing is installed elsewhere. (Back up `media/` and `config/` first if you want to keep them.)
+2. Delete the `hexcast` folder — the app, its `.venv`, your `media/`, `config/` and installed `plugins/` all live there; nothing is installed elsewhere. (Back up `media/` and `config/` first if you want to keep them.)
 3. Remove the browser source(s) you added in OBS.
 4. Optional: uninstall Python and ffmpeg if you added them only for Hexcast.
 
 ### Caveats
 
-- **Security:** LAN-only, no auth — see the **⚠️ Security** warning at the top. Integration tokens live under `config/`; keep it private.
+- **Security:** LAN-only, no auth — see the **⚠️ Security** warning at the top. Plugin tokens live under `config/`; keep it private.
 - **ffmpeg** is optional but strongly recommended (see above for what you lose without it).
 - **Local music playback** happens in the OBS overlay browser source, so open `/ytm/overlay` (in OBS or a browser) to actually hear it; the panel's **▸ Preview** is a local audition only. Playback is limited to codecs the browser engine supports (MP3, M4A/AAC, OGG/Opus, FLAC, WAV all work; exotic formats like WMA may not).
 
@@ -583,21 +618,19 @@ The overlay is canvas-agnostic (percentage-based), so the same setup works at
 
 ```
 hexcast/
-├── hexcast.py                 # the server (soundboard core)
-├── twitch.py                  # optional Twitch integration
-├── ytmusic.py                 # optional Music integration (YouTube Music source)
-├── localmusic.py              # optional Music integration (local-file player, shares the Music tab)
-├── discord_reactive.py        # optional Discord voice-reactive integration
-├── clips.py                   # optional Twitch clip player integration
-├── countdown.py               # optional countdown timer integration
-├── games.py                   # optional games integration (roulette, craps)
-├── ticker.py                  # optional scrolling ticker integration
-├── static/                    # control panel + every overlay/panel (HTML/CSS/JS)
-│   └── games/                 # game renderers shared by the games overlay + panel (roulette.js, craps.js)
-│                              #   + the Craps panel tab (craps_panel.js)
-├── docs/                      # per-integration docs: twitch, music, discord, clips, countdown, games, craps, ticker
-├── config/                    # tokens, playlists, integration settings, games tables + ledger (gitignored)
-├── requirements*.txt          # core + per-integration dependency lists
+├── hexcast.py                 # the server: the soundboard + the plugin host (the core)
+├── hexcast_core/              # the plugin system (manifest, installer, store API)
+├── static/                    # the core's web files: control panel, top bar, the + store page, help
+├── catalog/                   # every plugin that ships with Hexcast — what the + tab installs from
+│   ├── twitch/  music/  discord/  clips/  countdown/  ticker/  ytdlp/
+│   └── games/  games_roulette/  games_craps/  games_russian/  games_trivia/
+│                              #   each: plugin.json, its Python, static/ (panel + overlay), help.html, requirements.txt
+├── plugins/                   # the plugins you installed (a copy of their catalog folder; gitignored)
+├── docs/                      # plugins.md + one doc per plugin: twitch, music, discord, clips, countdown, games, craps, ticker …
+├── tools/                     # build_catalog.py (make a remote plugin catalog)
+├── tests/                     # pytest suite for the plugin system
+├── config/                    # settings, tokens, playlists, games tables + ledger (gitignored)
+├── requirements.txt           # the core's packages only — each plugin brings its own
 ├── start.sh / start.bat       # launchers
 └── media/                     # auto-created: audio/ and video/
 ```
@@ -623,7 +656,8 @@ can hand-edit the JSON; the watcher ignores `.json` writes.
 ## Links
 
 - **Repository & downloads:** <https://github.com/UMDSmith/hexcast>
-- **Integration docs:** [Twitch](docs/twitch.md) · [Music](docs/music.md) · [Discord](docs/discord.md) · [Clips](docs/clips.md) · [Countdown](docs/countdown.md) · [Games](docs/games.md) · [Craps](docs/craps.md) · [Ticker](docs/ticker.md)
+- **Plugins:** [how plugins work & how to write one](docs/plugins.md)
+- **Plugin docs:** [Twitch](docs/twitch.md) · [Music](docs/music.md) · [Discord](docs/discord.md) · [Clips](docs/clips.md) · [Countdown](docs/countdown.md) · [Games & Roulette](docs/games.md) · [Craps](docs/craps.md) · [Russian Roulette](docs/russian_roulette.md) · [Trivia](docs/trivia.md) · [Ticker](docs/ticker.md)
 - **License:** MIT — see [LICENSE](LICENSE)
 
 <p align="center">

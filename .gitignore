@@ -3,6 +3,12 @@
 # overlay setting live here. Never commit this folder.
 config/
 
+# --- installed plugins ------------------------------------------------------
+# Plugins are copied here from catalog/ when you install them (the + tab); what
+# ships with Hexcast is catalog/. Keep the folder, not what is installed in it.
+plugins/*
+!plugins/.gitkeep
+
 # --- media library ---------------------------------------------------------
 # Keep the folder structure, not the contents.
 media/*

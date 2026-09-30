@@ -1,0 +1,20 @@
+<section id="discord">
+<div class="card">
+  <h2>Discord <span class="tag">/discord</span></h2>
+  <p class="hint">Voice-reactive overlay — everyone in your current voice channel, lighting up as
+    they speak, using Discord avatars or per-person uploaded idle/talking images. Configuration is
+    panel-driven; the useful HTTP surface is small:</p>
+  <table class="api">
+    <tr><td>GET /discord/api/status</td><td>connection state, current channel, participants</td></tr>
+    <tr><td>GET /discord/avatar/{user_id}</td><td>server-cached avatar proxy (what the overlay uses)</td></tr>
+    <tr><td>POST /discord/api/test/user</td><td>inject a fake participant / toggle their speaking — style the overlay without being in a call</td></tr>
+  </table>
+  <h3>Overlay query params</h3>
+  <p class="hint">Any saved layout setting can be overridden per browser source:
+    <code>layout</code> (row/column/grid/free), <code>grid_columns</code>, <code>size</code>,
+    <code>spacing</code>, <code>align</code>, <code>show_names</code>, <code>name_size</code>,
+    <code>name_color</code>, <code>shape</code>, <code>dim</code>, <code>dim_pairs</code>,
+    <code>desaturate</code>, <code>bounce</code>, <code>hide_muted</code>, <code>mute_badge</code> —
+    booleans take 0/1, e.g. <code>/discord/overlay?layout=column&amp;size=96&amp;show_names=0</code>.</p>
+</div>
+</section>

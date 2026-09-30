@@ -1,0 +1,21 @@
+<section id="notes">
+<div class="card">
+  <h2>Browser notes</h2>
+  <h3>Sound in a browser tab</h3>
+  <p class="hint">Browsers block <b>unmuted</b> autoplay in normal tabs until you've interacted with
+    the page. If a clip starts silent, the overlay shows a "muted by the browser" pill — one click
+    anywhere fixes the whole tab session. Permanent fix: <b>Firefox</b> — address-bar permissions
+    icon → Autoplay → <b>Allow Audio and Video</b>. <b>Chrome</b> — padlock → Site settings →
+    Sound → <b>Allow</b> (Chrome also learns from regular use). Permissions apply to the whole
+    host and port, every page under it. OBS browser sources allow unmuted autoplay natively and
+    are never affected.</p>
+  <h3>OBS browser sources</h3>
+  <p class="hint">For every overlay: uncheck <b>Shutdown source when not visible</b> and
+    <b>Refresh browser when scene becomes active</b>. Overlays reconnect on their own and restyle
+    live when you save settings in a panel. If a re-upload doesn't repaint, right-click the source
+    → Interact → Ctrl+Shift+R.</p>
+  <h3>No authentication</h3>
+  <p class="hint">Every endpoint above is open to anyone who can reach the port — that's what makes
+    bots one-line simple. Keep HexCast on a trusted LAN and never expose it to the internet.</p>
+</div>
+</section>

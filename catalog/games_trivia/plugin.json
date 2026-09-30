@@ -1,0 +1,24 @@
+{
+  "id": "games_trivia",
+  "name": "Trivia",
+  "version": "1.0.0",
+  "parent": "games",
+  "description": "A game-show board: chat bets before each question, answers A-E, and winners ride or cash out. Questions come from Open Trivia DB and your own channel lore.",
+  "icon": "❓",
+  "color": "#4c8dff",
+  "category": "Games",
+  "author": "UMDSmith",
+  "help": {
+    "file": "help.html",
+    "toc": [
+      {
+        "id": "trivia",
+        "label": "Trivia"
+      }
+    ]
+  },
+  "legacy_config": [
+    "games.json"
+  ],
+  "order": 40
+}

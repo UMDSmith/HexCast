@@ -1,0 +1,767 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="/static/hexcast.png">
+<link rel="stylesheet" href="/static/hexbar.css?v=2">
+<title>HexCast - Ticker</title>
+<style>
+  :root{
+    --bg:var(--hb-bg); --panel:var(--hb-panel); --line:var(--hb-line); --ink:var(--hb-ink);
+    --dim:var(--hb-dim); --accent:var(--hb-accent); --good:var(--hb-good); --warn:var(--hb-warn);
+    --mono:var(--hb-mono);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.5 'Segoe UI',system-ui,-apple-system,sans-serif;}
+  main{padding:18px 22px 60px;max-width:1180px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
+  .card h2{margin:0 0 4px;font-size:14px;letter-spacing:.14em;text-transform:uppercase}
+  .card h3{margin:16px 0 6px;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
+  .card p.hint{margin:0 0 14px;color:var(--dim);font-size:13px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px}
+  label.f{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--dim);
+          letter-spacing:.06em;text-transform:uppercase;font-weight:600}
+  input,select,textarea{background:#08080c;border:1px solid var(--line);color:var(--ink);
+        border-radius:8px;padding:9px 10px;font:14px/1.3 inherit;width:100%}
+  input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:var(--accent)}
+  input[type=color]{padding:3px;height:38px;cursor:pointer}
+  input[type=range]{padding:0}
+  label.sw{flex-direction:row;align-items:center;gap:9px;text-transform:none;font-size:14px;color:var(--ink)}
+  label.sw input{width:auto}
+  button.act{background:var(--accent);color:#fff;border:0;border-radius:9px;padding:10px 16px;
+             font:700 14px inherit;cursor:pointer}
+  button.act:hover{filter:brightness(1.12)}
+  button.sec{background:#1c1c25;color:var(--ink);border:1px solid var(--line);border-radius:9px;
+             padding:9px 14px;font:600 13px inherit;cursor:pointer}
+  button.sec:hover{border-color:var(--accent)}
+  button.danger:hover{border-color:#ff5a5a;color:#ff8a8a}
+  button.sm{padding:5px 9px;font-size:12px}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  .row{display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin-top:14px}
+  .url{display:flex;gap:8px;align-items:center;margin:8px 0}
+  .url a{flex:1;background:#08080c;border:1px solid var(--line);border-radius:8px;
+            padding:9px 11px;font:13px var(--mono);color:var(--good);overflow:auto;white-space:nowrap;
+            text-decoration:none}
+  .url a:hover{border-color:var(--accent);text-decoration:underline}
+  .pill{font:700 11px var(--mono);letter-spacing:.08em;text-transform:uppercase;padding:3px 9px;
+        border-radius:99px;border:1px solid var(--line);color:var(--dim)}
+  .pill.on{color:var(--good);border-color:var(--good)}
+  .pill.warn{color:var(--warn);border-color:var(--warn)}
+  #toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,80px);background:var(--accent);
+         color:#fff;padding:11px 20px;border-radius:99px;font-weight:700;font-size:14px;
+         transition:transform .25s ease;z-index:20}
+  #toast.up{transform:translate(-50%,0)}
+
+  /* placement editor with the live overlay behind it */
+  #pl-stage{position:relative;width:100%;aspect-ratio:16/9;background:
+      repeating-linear-gradient(0deg,#0c0c11 0 39px,#141420 39px 40px),
+      repeating-linear-gradient(90deg,#0c0c11 0 39px,#141420 39px 40px),#0a0a0e;
+    border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-top:12px;touch-action:none;user-select:none}
+  #pl-stage iframe{position:absolute;inset:0;width:100%;height:100%;border:0;pointer-events:none;background:transparent}
+  .pl-box{position:absolute;box-sizing:border-box;border:2px dashed #4ea1ff;border-radius:5px;cursor:move;
+    background:rgba(78,161,255,.06);font:700 11px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:#8dc4ff}
+  .pl-box .tag{position:absolute;top:-17px;left:0;pointer-events:none;background:#0a0a0e;padding:2px 5px;border-radius:3px}
+  .pl-box .h{position:absolute;width:14px;height:14px;background:#fff;border:1px solid #222;border-radius:3px;z-index:3}
+  .pl-box .h.nw{left:-7px;top:-7px;cursor:nwse-resize}
+  .pl-box .h.ne{right:-7px;top:-7px;cursor:nesw-resize}
+  .pl-box .h.sw{left:-7px;bottom:-7px;cursor:nesw-resize}
+  .pl-box .h.se{right:-7px;bottom:-7px;cursor:nwse-resize}
+  .presets{display:flex;gap:6px;flex-wrap:wrap}
+  .geo{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:12px}
+  @media (max-width:560px){ .geo{grid-template-columns:repeat(2,minmax(0,1fr))} }
+
+  /* feeds */
+  .feed{border:1px solid var(--line);border-radius:10px;background:#0c0c11;margin-bottom:14px}
+  .feed.off{opacity:.62}
+  .feed-h{display:flex;gap:10px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .feed-h .nm{font:800 15px var(--mono)}
+  .feed-h .sp{flex:1}
+  .feed-b{padding:12px 14px}
+  .feed .dirty{display:none}
+  .feed.is-dirty .dirty{display:inline-block}
+  .feed .remote{display:none}
+  .feed.is-remote .remote{display:inline-block}
+  table.items{width:100%;border-collapse:collapse;margin-top:10px}
+  table.items th{font:600 11px inherit;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);
+                 text-align:left;padding:4px 6px}
+  table.items td{padding:3px 4px;vertical-align:middle}
+  table.items input{padding:6px 8px;font-size:13px}
+  table.items td.x{width:34px}
+  table.items td.exp{width:92px;color:var(--dim);font:12px var(--mono);white-space:nowrap}
+  table.items col.c-text{width:auto}
+  .items-wrap{max-height:360px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:2px 4px}
+  .items-wrap:has(tbody:empty){display:none}
+  details.src{margin-top:12px;border:1px solid var(--line);border-radius:8px;padding:8px 12px}
+  details.src summary{cursor:pointer;color:var(--dim);font-size:13px;font-weight:600}
+  .srcstat{font:12px var(--mono);color:var(--dim);margin-top:8px}
+  .srcstat.err{color:#ff8a8a}
+  pre.api{background:#08080c;border:1px solid var(--line);border-radius:8px;padding:12px;
+          font:12.5px/1.55 var(--mono);color:#cfd3ff;overflow:auto;white-space:pre}
+</style></head>
+<body>
+<div id="hexbar" data-section="Ticker" data-key="ticker"></div>
+
+<main>
+  <div class="card">
+    <h2>OBS browser source</h2>
+    <p class="hint">Add this as a Browser source in OBS (1920×1080). It scales to whatever size you give it.</p>
+    <div class="url"><a id="u-overlay" target="_blank" rel="noopener"></a><button class="sec" id="copy-overlay">Copy</button></div>
+    <div class="row">
+      <span class="pill" id="vis-pill">—</span>
+      <span class="pill" id="ov-pill">—</span>
+      <span style="flex:1"></span>
+      <button class="act" id="btn-show">Show</button>
+      <button class="sec" id="btn-hide">Hide</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Placement &amp; live preview</h2>
+    <p class="hint">This is the real overlay, live. Drag the dashed box to move the ticker, grab a corner to resize it, or type exact numbers below (bar height is in 1080p pixels). Every setting on this page applies as you change it; there's no Save button for the look.</p>
+    <div class="presets">
+      <button class="sec sm" data-preset="bottom">Bottom strip</button>
+      <button class="sec sm" data-preset="top">Top strip</button>
+      <button class="sec sm" data-preset="lower">Lower third</button>
+      <button class="sec sm" data-preset="corner">Bottom-left box</button>
+    </div>
+    <div class="geo">
+      <label class="f">Left (%)<input type="number" id="g-x" min="0" max="100" step="0.1"></label>
+      <label class="f">Top (%)<input type="number" id="g-y" min="0" max="100" step="0.1"></label>
+      <label class="f">Width (%)<input type="number" id="g-w" min="1" max="100" step="0.1"></label>
+      <label class="f">Bar height (px)<input type="number" id="g-h" min="11" max="1080" step="1"></label>
+    </div>
+    <div id="pl-stage">
+      <iframe id="preview" title="Ticker preview"></iframe>
+      <div class="pl-box" id="pl-box"><span class="tag">Ticker</span><i class="h nw"></i><i class="h ne"></i><i class="h sw"></i><i class="h se"></i></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Announce</h2>
+    <p class="hint">Send a one-off line. It goes to the <b>announce</b> feed, scrolls next, and drops off after the time you pick (0 = stays until you remove it).</p>
+    <div class="row" style="margin-top:0">
+      <input type="text" id="say-text" placeholder="e.g. Raffle closes in 5 minutes!" style="flex:1 1 320px;width:auto">
+      <label class="f" style="flex:0 0 120px">Seconds<input type="number" id="say-ttl" min="0" max="86400" step="1" value="60"></label>
+      <label class="f" style="flex:0 0 80px">Color<input type="color" id="say-color" value="#ffd23f"></label>
+      <label class="f sw" style="flex:0 0 auto;align-self:flex-end;margin-bottom:9px"><input type="checkbox" id="say-usecolor"> use color</label>
+      <button class="act" id="say-send" style="align-self:flex-end">Send</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Feeds</h2>
+    <p class="hint">A feed is a named list of lines. Enabled feeds scroll in this order, each one led by its label.
+      Lines with a <b>key</b> are unique within their feed, so the bot can update them in place (for example <code>key=alice&amp;value=1300</code>).
+      A line with no text is built from the feed's <b>template</b>, using <code>{key}</code> and <code>{value}</code>.
+      A feed can also pull its lines from a JSON URL.
+      Anything the bot changes shows up here live.</p>
+    <div id="feeds"></div>
+    <div class="row">
+      <input type="text" id="new-name" placeholder="new feed name, e.g. balances" style="flex:0 1 280px;width:auto">
+      <button class="sec" id="new-feed">+ New feed</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Scrolling</h2>
+    <div class="grid" id="g-scroll"></div>
+  </div>
+
+  <div class="card">
+    <h2>Text</h2>
+    <div class="grid" id="g-text"></div>
+  </div>
+
+  <div class="card">
+    <h2>Bar</h2>
+    <p class="hint"><b>Bar opacity</b> sets how see-through the background is. <b>Ticker opacity</b> fades the whole ticker, text included.</p>
+    <div class="grid" id="g-bar"></div>
+  </div>
+
+  <div class="card">
+    <h2>API for bots</h2>
+    <p class="hint">Every call works as a plain GET with query parameters, or as a POST with the same fields in JSON. Feed names are 1–40 characters of a–z, 0–9, <code>_</code> or <code>-</code>. A feed is created the first time something writes to it. Full reference: <a href="/help/ticker" style="color:var(--good)">Help → Ticker</a>.</p>
+    <pre class="api" id="api"></pre>
+  </div>
+</main>
+
+<div id="toast">Saved</div>
+<script src="/static/hexbar.js?v=2"></script>
+<script>
+var $ = function(id){ return document.getElementById(id); };
+var CFG = null;
+var FEEDS = [];
+var ORIGIN = location.origin;
+
+// ---- toast + copy ------------------------------------------------------
+var _toastT = null;
+function toast(msg){
+  var t = $('toast'); t.textContent = msg; t.classList.add('up');
+  clearTimeout(_toastT); _toastT = setTimeout(function(){ t.classList.remove('up'); }, 1600);
+}
+function copyText(str){
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(str).then(function(){ toast('Copied'); }, function(){ _copyFallback(str); });
+  } else { _copyFallback(str); }
+}
+function _copyFallback(str){
+  var ta = document.createElement('textarea'); ta.value = str;
+  ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta);
+  ta.focus(); ta.select();
+  try{ document.execCommand('copy'); toast('Copied'); }catch(e){ toast('Copy failed'); }
+  document.body.removeChild(ta);
+}
+function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+async function api(path, body){
+  var r = await fetch(path, body === undefined ? {} : {method:'POST', headers:{'Content-Type':'application/json'},
+                                                       body: JSON.stringify(body)});
+  var d = {}; try{ d = await r.json(); }catch(e){}
+  if(!r.ok || d.ok === false) throw new Error(d.detail || d.error || ('HTTP ' + r.status));
+  return d;
+}
+
+// ---- style fields ------------------------------------------------------
+var SCROLL_FIELDS = [
+  ['speed','Speed (px/sec)',{t:'range',min:10,max:600,step:5}],
+  ['direction','Direction',{t:'sel',opts:[['left','Right → left'],['right','Left → right']]}],
+  ['gap','Gap between lines (px)',{t:'num',min:0,max:400,step:2}],
+  ['separator','Separator',{t:'text',ph:'• | ★ ◆ (blank = none)'}],
+  ['separator_color','Separator color',{t:'color'}],
+  ['show_labels','Show feed labels',{t:'check'}],
+  ['label_bg','Label background',{t:'color'}],
+  ['label_color','Label text',{t:'color'}],
+  ['title','Pinned title',{t:'text',ph:'e.g. HEXBANK (blank = none)'}],
+  ['title_bg','Title background',{t:'color'}],
+  ['title_color','Title text',{t:'color'}],
+  ['hide_when_empty','Hide when nothing to show',{t:'check'}]
+];
+var TEXT_FIELDS = [
+  ['font_family','Font family (Google Fonts)',{t:'text',ph:'Inter'}],
+  ['font_size','Size (px)',{t:'num',min:8,max:300,step:1}],
+  ['font_weight','Weight',{t:'sel',opts:[['400','400'],['500','500'],['600','600'],['700','700'],['800','800'],['900','900']]}],
+  ['letter_spacing','Letter spacing (px)',{t:'num',min:-10,max:40,step:0.5}],
+  ['text_color','Color',{t:'color'}],
+  ['uppercase','UPPERCASE',{t:'check'}],
+  ['shadow','Drop shadow',{t:'check'}],
+  ['outline','Outline',{t:'check'}],
+  ['outline_color','Outline color',{t:'color'}],
+  ['outline_width','Outline width (px)',{t:'num',min:0,max:20,step:0.5}]
+];
+var BAR_FIELDS = [
+  ['bg_style','Background',{t:'sel',opts:[['none','None (text only)'],['solid','Solid'],['gradient','Gradient'],['glass','Glass blur']]}],
+  ['bg_color','Bar color',{t:'color'}],
+  ['bg_opacity','Bar opacity',{t:'range',min:0,max:1,step:0.01}],
+  ['bg_color2','Gradient 2nd color',{t:'color'}],
+  ['bg_gradient_angle','Gradient angle (deg)',{t:'num',min:0,max:360,step:1}],
+  ['bg_blur','Glass blur (px)',{t:'num',min:0,max:40,step:1}],
+  ['border_color','Border color',{t:'color'}],
+  ['border_width','Border width (px)',{t:'num',min:0,max:20,step:1}],
+  ['radius','Corner radius (px)',{t:'num',min:0,max:200,step:1}],
+  ['pad_x','Inner padding (px)',{t:'num',min:0,max:200,step:1}],
+  ['fade_edges','Fade edges (px)',{t:'num',min:0,max:400,step:5}],
+  ['opacity','Ticker opacity',{t:'range',min:0,max:1,step:0.01}]
+];
+var ALL_FIELDS = SCROLL_FIELDS.concat(TEXT_FIELDS, BAR_FIELDS);
+
+function fieldHTML(key, label, spec){
+  var id = 'f-' + key;
+  if(spec.t === 'check') return '<label class="f sw"><input type="checkbox" id="' + id + '"> ' + label + '</label>';
+  var inner;
+  if(spec.t === 'sel'){
+    inner = '<select id="' + id + '">' + spec.opts.map(function(o){
+      return '<option value="' + o[0] + '">' + o[1] + '</option>'; }).join('') + '</select>';
+  } else if(spec.t === 'color'){
+    inner = '<input type="color" id="' + id + '">';
+  } else if(spec.t === 'num'){
+    inner = '<input type="number" id="' + id + '" min="' + spec.min + '" max="' + spec.max + '" step="' + spec.step + '">';
+  } else if(spec.t === 'range'){
+    inner = '<div style="display:flex;gap:8px;align-items:center"><input type="range" id="' + id + '" min="' + spec.min +
+            '" max="' + spec.max + '" step="' + spec.step + '"><span id="' + id + '-v" style="font:12px var(--mono);min-width:38px;color:var(--ink)"></span></div>';
+  } else {
+    inner = '<input type="text" id="' + id + '"' + (spec.ph ? ' placeholder="' + esc(spec.ph) + '"' : '') + '>';
+  }
+  return '<label class="f">' + label + inner + '</label>';
+}
+function renderGrid(host, fields){
+  host.innerHTML = fields.map(function(f){ return fieldHTML(f[0], f[1], f[2]); }).join('');
+}
+function showRange(key){ var v = $('f-' + key + '-v'); if(v) v.textContent = $('f-' + key).value; }
+function setField(key, spec, val){
+  var el = $('f-' + key); if(!el) return;
+  if(spec.t === 'check') el.checked = !!val;
+  else el.value = (val == null ? '' : val);
+  if(spec.t === 'range') showRange(key);
+}
+function getField(key, spec){
+  var el = $('f-' + key); if(!el) return undefined;
+  if(spec.t === 'check') return el.checked;
+  if(spec.t === 'num' || spec.t === 'range'){ var n = parseFloat(el.value); return isNaN(n) ? 0 : n; }
+  return el.value;
+}
+
+// ---- placement box -----------------------------------------------------
+function _clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
+function _setGeo(el, x, y, w, h){ el.style.left=x+'%'; el.style.top=y+'%'; el.style.width=w+'%'; el.style.height=h+'%'; }
+var PLACE = {};
+function makeBox(el, cb, done){
+  var stage = el.parentElement;
+  function geo(){ return { x:parseFloat(el.style.left), y:parseFloat(el.style.top),
+                           w:parseFloat(el.style.width), h:parseFloat(el.style.height) }; }
+  function pct(e){ var r=stage.getBoundingClientRect();
+    return { mx:(e.clientX-r.left)/r.width*100, my:(e.clientY-r.top)/r.height*100 }; }
+  var mode=null, corner='', start=null, g0=null, MIN=2;
+  function down(e, m, cn){ mode=m; corner=cn||''; start=pct(e); g0=geo();
+    try{ el.setPointerCapture(e.pointerId); }catch(_){} e.preventDefault(); e.stopPropagation(); }
+  el.addEventListener('pointerdown', function(e){ if(!e.target.classList.contains('h')) down(e,'move'); });
+  el.querySelectorAll('.h').forEach(function(hd){
+    hd.addEventListener('pointerdown', function(e){ down(e,'resize', hd.className.split(' ')[1]); });
+  });
+  el.addEventListener('pointermove', function(e){
+    if(!mode) return;
+    var p=pct(e), dx=p.mx-start.mx, dy=p.my-start.my;
+    var x=g0.x, y=g0.y, w=g0.w, h=g0.h;
+    if(mode==='move'){
+      x=_clamp(g0.x+dx, 0, 100-g0.w); y=_clamp(g0.y+dy, 0, 100-g0.h);
+    } else {
+      if(corner.indexOf('w')>=0){ var nx=_clamp(g0.x+dx, 0, g0.x+g0.w-MIN); w=g0.w+(g0.x-nx); x=nx; }
+      if(corner.indexOf('e')>=0){ w=_clamp(g0.w+dx, MIN, 100-g0.x); }
+      if(corner.indexOf('n')>=0){ var ny=_clamp(g0.y+dy, 0, g0.y+g0.h-MIN); h=g0.h+(g0.y-ny); y=ny; }
+      if(corner.indexOf('s')>=0){ h=_clamp(g0.h+dy, MIN, 100-g0.y); }
+    }
+    _setGeo(el, x, y, w, h); cb(x, y, w, h);
+  });
+  function up(e){ if(mode){ mode=null; try{ el.releasePointerCapture(e.pointerId); }catch(_){} done(); } }
+  el.addEventListener('pointerup', up);
+  el.addEventListener('pointercancel', up);
+}
+// exact-number inputs under the presets; height is shown in 1080p px
+var STAGE_H = 1080;
+function syncGeo(){
+  [['g-x', PLACE.box_x], ['g-y', PLACE.box_y], ['g-w', PLACE.box_w],
+   ['g-h', PLACE.box_h * STAGE_H / 100]].forEach(function(p){
+    var el = $(p[0]);
+    if(el && document.activeElement !== el && p[1] != null && !isNaN(p[1]))
+      el.value = p[0] === 'g-h' ? Math.round(p[1]) : +(+p[1]).toFixed(1);
+  });
+}
+function placeBox(){ _setGeo($('pl-box'), PLACE.box_x, PLACE.box_y, PLACE.box_w, PLACE.box_h); syncGeo(); }
+function geoInput(){
+  var x = parseFloat($('g-x').value), y = parseFloat($('g-y').value),
+      w = parseFloat($('g-w').value), hp = parseFloat($('g-h').value);
+  if(!isNaN(w)) PLACE.box_w = _clamp(w, 1, 100);
+  if(!isNaN(x)) PLACE.box_x = _clamp(x, 0, 100 - PLACE.box_w);
+  if(!isNaN(hp)){
+    var h = _clamp(hp / STAGE_H * 100, 1, 100);
+    // a bar sitting on the bottom edge grows upward so it stays on the edge
+    var onBottom = PLACE.box_y + PLACE.box_h >= 99.5 && this && this.id === 'g-h';
+    if(onBottom) PLACE.box_y = 100 - h;
+    PLACE.box_h = h;
+  }
+  if(!isNaN(y) && !(this && this.id === 'g-h')) PLACE.box_y = y;
+  PLACE.box_y = _clamp(PLACE.box_y, 0, 100 - PLACE.box_h);
+  _setGeo($('pl-box'), PLACE.box_x, PLACE.box_y, PLACE.box_w, PLACE.box_h);
+  if(this && this.id === 'g-h') $('g-y').value = +PLACE.box_y.toFixed(1);
+  applySoon();
+}
+var PRESETS = {
+  bottom: {box_x:0, box_y:92, box_w:100, box_h:6, radius:0},
+  top:    {box_x:0, box_y:0,  box_w:100, box_h:6, radius:0},
+  lower:  {box_x:4, box_y:80, box_w:70,  box_h:7},
+  corner: {box_x:2, box_y:88, box_w:40,  box_h:7}
+};
+
+// ---- config load / collect / live apply ---------------------------------
+function loadConfig(cfg){
+  CFG = cfg;
+  ALL_FIELDS.forEach(function(f){ setField(f[0], f[2], cfg[f[0]]); });
+  PLACE = {box_x:+cfg.box_x, box_y:+cfg.box_y, box_w:+cfg.box_w, box_h:+cfg.box_h};
+  placeBox();
+  reflectVisible(cfg.visible);
+}
+function collectConfig(){
+  var out = {};
+  ALL_FIELDS.forEach(function(f){ out[f[0]] = getField(f[0], f[2]); });
+  out.font_weight = parseInt(out.font_weight, 10) || 700;
+  out.box_x = +PLACE.box_x.toFixed(2); out.box_y = +PLACE.box_y.toFixed(2);
+  out.box_w = +PLACE.box_w.toFixed(2); out.box_h = +PLACE.box_h.toFixed(2);
+  return out;
+}
+var _applyT = null;
+function applySoon(){
+  clearTimeout(_applyT);
+  _applyT = setTimeout(applyNow, 250);
+}
+async function applyNow(){
+  clearTimeout(_applyT);
+  try{ var d = await api('/ticker/api/config', collectConfig()); CFG = d.config; }
+  catch(e){ toast('Save failed: ' + e.message); }
+}
+function reflectVisible(on){
+  $('vis-pill').textContent = on ? 'visible' : 'hidden';
+  $('vis-pill').className = 'pill ' + (on ? 'on' : 'warn');
+}
+
+// ---- feeds ---------------------------------------------------------------
+var CARDS = {};   // feed name -> card element
+function fmtExp(it){
+  if(it.expires_at == null) return '';
+  var s = Math.round(it.expires_at - Date.now()/1000);
+  return s > 0 ? 'ends ' + (s >= 90 ? Math.round(s/60) + 'm' : s + 's') : 'ending';
+}
+function itemRow(it){
+  it = it || {};
+  var tr = document.createElement('tr');
+  tr.dataset.id = it.id || '';
+  tr.dataset.exp = it.expires_at == null ? '' : it.expires_at;
+  tr.innerHTML =
+    '<td><input class="i-text" placeholder="text (blank = use the template)"></td>' +
+    '<td style="width:150px"><input class="i-key" placeholder="key"></td>' +
+    '<td style="width:120px"><input class="i-value" placeholder="value"></td>' +
+    '<td style="width:100px"><input class="i-color" placeholder="#color"></td>' +
+    '<td class="exp"></td>' +
+    '<td class="x"><button type="button" class="sec sm danger" title="Remove">✕</button></td>';
+  tr.querySelector('.i-text').value = it.text || '';
+  tr.querySelector('.i-key').value = it.key || '';
+  tr.querySelector('.i-value').value = it.value == null ? '' : it.value;
+  tr.querySelector('.i-color').value = it.color || '';
+  tr.querySelector('.exp').textContent = fmtExp(it);
+  tr.querySelector('.exp').dataset.exp = tr.dataset.exp;
+  return tr;
+}
+function feedCard(f){
+  var card = document.createElement('div');
+  card.className = 'feed';
+  card.dataset.name = f.name;
+  card.innerHTML =
+    '<div class="feed-h">' +
+      '<span class="nm"></span>' +
+      '<label class="f sw"><input type="checkbox" class="k-enabled"> On air</label>' +
+      '<span class="pill k-count"></span>' +
+      '<span class="pill warn dirty">unsaved</span>' +
+      '<span class="pill warn remote" title="The bot or API changed this feed while you were editing it">changed elsewhere</span>' +
+      '<span class="sp"></span>' +
+      '<button type="button" class="sec sm k-up" title="Move up">▲</button>' +
+      '<button type="button" class="sec sm k-down" title="Move down">▼</button>' +
+    '</div>' +
+    '<div class="feed-b">' +
+      '<div class="grid">' +
+        '<label class="f">Label (badge before its lines)<input class="k-label" placeholder="e.g. 💰 HEXBANK"></label>' +
+        '<label class="f">Template (lines with no text)<input class="k-template" placeholder="{key}: {value}"></label>' +
+        '<label class="f">Sort<select class="k-sort">' +
+          '<option value="none">As added</option><option value="value_desc">Value, high → low</option>' +
+          '<option value="value_asc">Value, low → high</option><option value="key">Key / text A → Z</option>' +
+          '<option value="newest">Newest first</option></select></label>' +
+        '<label class="f">Show at most (0 = all)<input type="number" class="k-limit" min="0" max="500" step="1"></label>' +
+        '<label class="f" title="Every line added to this feed scrolls for this long, then drops off. A bot can still send its own ttl per line.">Each new line lasts (min, 0 = forever)<input type="number" class="k-ttl" min="0" max="10080" step="any"></label>' +
+        '<label class="f">Line color (blank = text color)<input class="k-color" placeholder="#ffd23f"></label>' +
+      '</div>' +
+      '<div class="items-wrap"><table class="items"><thead><tr><th>Text</th><th>Key</th><th>Value</th><th>Color</th><th></th><th></th></tr></thead><tbody></tbody></table></div>' +
+      '<div class="row">' +
+        '<button type="button" class="sec sm k-additem">+ Line</button>' +
+        '<button type="button" class="sec sm k-paste">+ Paste lines</button>' +
+      '</div>' +
+      '<div class="k-pastebox" style="display:none;margin-top:10px">' +
+        '<textarea class="k-pastetext" rows="4" placeholder="One line per row. &quot;key = value&quot; rows become keyed lines."></textarea>' +
+        '<div class="row" style="margin-top:6px"><button type="button" class="sec sm k-pasteadd">Add these</button></div>' +
+      '</div>' +
+      '<details class="src"><summary>Pull lines from a URL (optional)</summary>' +
+        '<p class="hint" style="margin:8px 0 10px">Hexcast fetches this URL on a timer and replaces this feed\'s lines with what comes back. It can return a list of strings, a list of objects, or a <code>{"key": value}</code> object (for example <code>{"alice": 1200, "bob": 50}</code>). It can also be a path on this server, starting with <code>/</code>.</p>' +
+        '<div class="grid">' +
+          '<label class="f" style="grid-column:1/-1">URL<input class="s-url" placeholder="https://example.com/balances.json"></label>' +
+          '<label class="f">Every (seconds)<input type="number" class="s-interval" min="5" max="86400" step="1"></label>' +
+          '<label class="f">JSON path<input class="s-path" placeholder="e.g. data.users (blank = top)"></label>' +
+          '<label class="f">Key field<input class="s-key_field" placeholder="auto: key/name/user"></label>' +
+          '<label class="f">Value field<input class="s-value_field" placeholder="auto: value/balance/coins"></label>' +
+          '<label class="f">Text field<input class="s-text_field" placeholder="(optional) whole line"></label>' +
+        '</div>' +
+        '<div class="row"><button type="button" class="sec sm k-poll">Poll now</button></div>' +
+        '<div class="srcstat"></div>' +
+      '</details>' +
+      '<div class="row">' +
+        '<button type="button" class="act k-save">Save feed</button>' +
+        '<button type="button" class="sec k-revert">Discard edits</button>' +
+        '<span style="flex:1"></span>' +
+        '<button type="button" class="sec danger k-clear">Clear lines</button>' +
+        '<button type="button" class="sec danger k-delete">Delete feed</button>' +
+      '</div>' +
+    '</div>';
+  var q = function(sel){ return card.querySelector(sel); };
+  function dirty(){ card.classList.add('is-dirty'); }
+  card.addEventListener('input', function(e){ if(!e.target.classList.contains('k-pastetext')) dirty(); });
+  card.addEventListener('change', function(e){
+    if(e.target.classList.contains('k-enabled')){
+      // On air flips immediately; it isn't an "edit"
+      api('/ticker/api/feed/' + f.name + '/enable', {on: e.target.checked})
+        .then(function(){ toast(f.name + (e.target.checked ? ' on air' : ' off air')); })
+        .catch(function(err){ toast(err.message); });
+    }
+  });
+  q('.k-additem').onclick = function(){ q('tbody').appendChild(itemRow({})); dirty(); q('tbody').lastChild.querySelector('input').focus(); };
+  q('.k-paste').onclick = function(){ var b = q('.k-pastebox'); b.style.display = b.style.display === 'none' ? '' : 'none'; };
+  q('.k-pasteadd').onclick = function(){
+    var lines = q('.k-pastetext').value.split(/\r?\n/).map(function(s){ return s.trim(); }).filter(Boolean);
+    lines.forEach(function(ln){
+      var m = ln.match(/^([^=]{1,80}?)\s*=\s*(.+)$/);
+      q('tbody').appendChild(itemRow(m ? {key: m[1].trim(), value: m[2].trim()} : {text: ln}));
+    });
+    q('.k-pastetext').value = ''; q('.k-pastebox').style.display = 'none';
+    if(lines.length) dirty();
+  };
+  q('tbody').addEventListener('click', function(e){
+    if(e.target.tagName === 'BUTTON'){ e.target.closest('tr').remove(); dirty(); }
+  });
+  q('.k-save').onclick = function(){ saveFeed(card); };
+  q('.k-revert').onclick = function(){
+    card.classList.remove('is-dirty', 'is-remote');
+    var cur = FEEDS.filter(function(x){ return x.name === f.name; })[0];
+    if(cur) fillCard(card, cur); else { card.remove(); delete CARDS[f.name]; }
+  };
+  q('.k-clear').onclick = function(){
+    api('/ticker/api/feed/' + f.name + '/clear', {}).then(function(d){
+      card.classList.remove('is-dirty', 'is-remote'); toast('Cleared ' + d.removed + ' line' + (d.removed === 1 ? '' : 's'));
+    }).catch(function(err){ toast(err.message); });
+  };
+  var delArmed = null;
+  q('.k-delete').onclick = function(){
+    var b = q('.k-delete');
+    if(!delArmed){
+      b.textContent = 'Click again to delete';
+      delArmed = setTimeout(function(){ delArmed = null; b.textContent = 'Delete feed'; }, 3000);
+      return;
+    }
+    clearTimeout(delArmed); delArmed = null;
+    api('/ticker/api/feed/' + f.name + '/delete', {}).then(function(){
+      card.remove(); delete CARDS[f.name]; toast('Deleted ' + f.name);
+    }).catch(function(err){ toast(err.message); });
+  };
+  q('.k-up').onclick = function(){ moveFeed(f.name, -1); };
+  q('.k-down').onclick = function(){ moveFeed(f.name, +1); };
+  q('.k-poll').onclick = async function(){
+    if(card.classList.contains('is-dirty')) await saveFeed(card);
+    api('/ticker/api/feed/' + f.name + '/refresh', {}).then(function(d){
+      toast(d.ok ? 'Pulled ' + d.count + ' lines' : 'Source error');
+    }).catch(function(err){ toast(err.message); });
+  };
+  fillCard(card, f);
+  return card;
+}
+function fillCard(card, f){
+  var q = function(sel){ return card.querySelector(sel); };
+  q('.nm').textContent = f.name;
+  q('.k-enabled').checked = !!f.enabled;
+  card.classList.toggle('off', !f.enabled);
+  q('.k-count').textContent = f.items.length + ' line' + (f.items.length === 1 ? '' : 's');
+  q('.k-label').value = f.label || '';
+  q('.k-template').value = f.template || '';
+  q('.k-sort').value = f.sort || 'none';
+  q('.k-limit').value = f.limit || 0;
+  q('.k-ttl').value = f.ttl ? +(f.ttl / 60).toFixed(2) : 0;
+  q('.k-color').value = f.color || '';
+  var tb = q('tbody'); tb.innerHTML = '';
+  f.items.forEach(function(it){ tb.appendChild(itemRow(it)); });
+  var s = f.source || {};
+  ['url','interval','path','key_field','value_field','text_field'].forEach(function(k){
+    q('.s-' + k).value = s[k] == null ? '' : s[k];
+  });
+  if(s.url && !card.querySelector('details.src').open && !card._srcOpened){
+    card.querySelector('details.src').open = true; card._srcOpened = true;
+  }
+  var st = f.source_status, stEl = q('.srcstat');
+  if(!s.url){ stEl.textContent = ''; stEl.className = 'srcstat'; }
+  else if(st && st.last_error){ stEl.textContent = 'Last poll failed: ' + st.last_error; stEl.className = 'srcstat err'; }
+  else if(st && st.last_ok){ stEl.textContent = 'Last poll OK at ' + new Date(st.last_ok*1000).toLocaleTimeString() + ' — ' + st.count + ' lines'; stEl.className = 'srcstat'; }
+  else { stEl.textContent = 'Not polled yet'; stEl.className = 'srcstat'; }
+}
+function collectFeed(card){
+  var q = function(sel){ return card.querySelector(sel); };
+  var items = [];
+  card.querySelectorAll('tbody tr').forEach(function(tr){
+    var it = {
+      text: tr.querySelector('.i-text').value.trim(),
+      key: tr.querySelector('.i-key').value.trim(),
+      value: tr.querySelector('.i-value').value.trim(),
+      color: tr.querySelector('.i-color').value.trim()
+    };
+    if(!it.text && !it.key && !it.value) return;
+    if(tr.dataset.id) it.id = tr.dataset.id;
+    if(tr.dataset.exp) it.expires_at = parseFloat(tr.dataset.exp);
+    items.push(it);
+  });
+  var src = {};
+  ['url','interval','path','key_field','value_field','text_field'].forEach(function(k){ src[k] = q('.s-' + k).value.trim(); });
+  return {
+    label: q('.k-label').value.trim(),
+    template: q('.k-template').value || '{key}: {value}',
+    sort: q('.k-sort').value,
+    limit: parseInt(q('.k-limit').value, 10) || 0,
+    ttl: Math.max(0, Math.round((parseFloat(q('.k-ttl').value) || 0) * 60)),
+    color: q('.k-color').value.trim(),
+    enabled: q('.k-enabled').checked,
+    source: src,
+    items: items
+  };
+}
+async function saveFeed(card){
+  var name = card.dataset.name;
+  try{
+    await api('/ticker/api/feed/' + name, collectFeed(card));
+    card.classList.remove('is-dirty', 'is-remote');
+    toast('Saved ' + name);
+  }catch(e){ toast('Save failed: ' + e.message); }
+}
+async function moveFeed(name, delta){
+  var order = FEEDS.map(function(f){ return f.name; });
+  var i = order.indexOf(name), j = i + delta;
+  if(i < 0 || j < 0 || j >= order.length) return;
+  order.splice(j, 0, order.splice(i, 1)[0]);
+  try{ await api('/ticker/api/feeds/order', {order: order}); }catch(e){ toast(e.message); }
+}
+function onFeeds(feeds){
+  FEEDS = feeds || [];
+  var host = $('feeds');
+  var seen = {};
+  FEEDS.forEach(function(f){
+    seen[f.name] = true;
+    var card = CARDS[f.name];
+    if(!card){ card = CARDS[f.name] = feedCard(f); }
+    else if(card.classList.contains('is-dirty')){
+      // someone else changed it while we edit: keep our edits, flag it
+      if(JSON.stringify(f.items) !== card._lastItems) card.classList.add('is-remote');
+      card.querySelector('.k-enabled').checked = !!f.enabled;
+      card.classList.toggle('off', !f.enabled);
+    }
+    else fillCard(card, f);
+    card._lastItems = JSON.stringify(f.items);
+    host.appendChild(card);     // (re)appending keeps the server's order
+  });
+  Object.keys(CARDS).forEach(function(n){
+    if(!seen[n] && !CARDS[n].classList.contains('is-dirty')){ CARDS[n].remove(); delete CARDS[n]; }
+  });
+  if(!FEEDS.length && !host.children.length){
+    host.innerHTML = '<p class="hint" id="nofeeds">No feeds yet. Create one below, or let the bot write one.</p>';
+  } else if($('nofeeds')) $('nofeeds').remove();
+}
+setInterval(function(){   // tick the "ends 42s" countdowns
+  document.querySelectorAll('td.exp').forEach(function(td){
+    var e = td.dataset.exp; if(!e) return;
+    td.textContent = fmtExp({expires_at: parseFloat(e)});
+  });
+}, 1000);
+
+// ---- status pill ---------------------------------------------------------
+async function pollStatus(){
+  try{
+    var s = await (await fetch('/ticker/api/status')).json();
+    $('ov-pill').textContent = s.overlays + ' overlay' + (s.overlays === 1 ? '' : 's') + ' · ' + s.items + ' scrolling';
+    $('ov-pill').className = 'pill ' + (s.overlays > 0 ? 'on' : '');
+    reflectVisible(s.visible);
+  }catch(e){}
+}
+setInterval(pollStatus, 3000);
+
+// ---- API cheat sheet -------------------------------------------------------
+function renderApi(){
+  var b = ORIGIN + '/ticker/api';
+  $('api').textContent = [
+    '# one-off announcement (scrolls next, gone after 60 s; ttl=0 keeps it)',
+    'GET  ' + b + '/say?text=Raffle%20closes%20soon&ttl=60',
+    '',
+    '# add a line to a feed (the feed is created if it is new)',
+    'GET  ' + b + '/feed/news/add?text=New%20emotes%20are%20live',
+    '',
+    '# keyed upsert: sends the same key again to update that line in place',
+    'GET  ' + b + '/feed/balances/set?key=alice&value=1300',
+    '',
+    '# replace a whole feed at once, e.g. every balance (sorted high to low, top 20)',
+    'POST ' + b + '/feed/balances',
+    '     {"label":"💰 HEXBANK","template":"{key} {value}","sort":"value_desc","limit":20,',
+    '      "values":{"alice":1300,"bob":250,"carol":9001}}',
+    '',
+    '# replace with plain lines',
+    'POST ' + b + '/feed/news   {"items":["Line one","Line two"]}',
+    '',
+    '# every new line in a feed lasts 10 minutes (ttl in seconds, 0 = forever);',
+    '# a line can still send its own ttl, and ttl=0 on a line keeps just that one',
+    'POST ' + b + '/feed/news   {"ttl":600}',
+    '',
+    '# remove a line (by id, key or exact text) · clear · delete · on/off',
+    'GET  ' + b + '/feed/balances/remove?key=bob',
+    'GET  ' + b + '/feed/news/clear        GET ' + b + '/feed/news/delete',
+    'GET  ' + b + '/feed/news/enable?on=0',
+    '',
+    '# show / hide the whole ticker · read what is scrolling right now',
+    'GET  ' + b + '/show    GET ' + b + '/hide    GET ' + b + '/items',
+    '',
+    '# or write config/ticker_feeds.json directly; the overlay picks it up within a second'
+  ].join('\n');
+}
+
+// ---- wiring --------------------------------------------------------------
+function connect(){
+  var proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  var ws = new WebSocket(proto + '://' + location.host + '/ticker/ws/panel');
+  ws.onmessage = function(e){
+    var m; try{ m = JSON.parse(e.data); }catch(err){ return; }
+    if(m.type === 'config'){
+      if(!CFG) loadConfig(m.config);        // load once; don't clobber edits in progress
+      else reflectVisible(m.config.visible);
+    }
+    else if(m.type === 'feeds') onFeeds(m.feeds);
+  };
+  ws.onclose = function(){ setTimeout(connect, 1500); };
+  ws.onerror = function(){ try{ ws.close(); }catch(err){} };
+}
+
+renderGrid($('g-scroll'), SCROLL_FIELDS);
+renderGrid($('g-text'), TEXT_FIELDS);
+renderGrid($('g-bar'), BAR_FIELDS);
+['g-scroll','g-text','g-bar'].forEach(function(id){
+  $(id).addEventListener('input', function(e){
+    if(e.target.type === 'range') showRange(e.target.id.slice(2));
+    applySoon();
+  });
+  $(id).addEventListener('change', applySoon);
+});
+makeBox($('pl-box'), function(x,y,w,h){ PLACE.box_x=x; PLACE.box_y=y; PLACE.box_w=w; PLACE.box_h=h; syncGeo(); }, applyNow);
+['g-x','g-y','g-w','g-h'].forEach(function(id){
+  $(id).addEventListener('input', geoInput);
+  $(id).addEventListener('blur', function(){ setTimeout(syncGeo, 0); });
+});
+document.querySelectorAll('[data-preset]').forEach(function(b){
+  b.onclick = function(){
+    var p = PRESETS[b.dataset.preset];
+    PLACE = {box_x:p.box_x, box_y:p.box_y, box_w:p.box_w, box_h:p.box_h};
+    placeBox();
+    if(p.radius != null) setField('radius', {t:'num'}, p.radius);
+    applyNow();
+  };
+});
+$('btn-show').onclick = function(){ api('/ticker/api/show', {}).then(function(){ reflectVisible(true); }); };
+$('btn-hide').onclick = function(){ api('/ticker/api/hide', {}).then(function(){ reflectVisible(false); }); };
+$('say-send').onclick = function(){
+  var text = $('say-text').value.trim();
+  if(!text){ toast('Type something first'); return; }
+  var body = {text: text, ttl: parseInt($('say-ttl').value, 10) || 0};
+  if($('say-usecolor').checked) body.color = $('say-color').value;
+  api('/ticker/api/say', body).then(function(){ $('say-text').value = ''; toast('Announced'); })
+    .catch(function(err){ toast(err.message); });
+};
+$('say-text').addEventListener('keydown', function(e){ if(e.key === 'Enter') $('say-send').click(); });
+$('new-feed').onclick = function(){
+  var name = $('new-name').value.trim().toLowerCase();
+  if(!/^[a-z0-9_-]{1,40}$/.test(name)){ toast('Use 1–40 of a–z, 0–9, _ or -'); return; }
+  if(CARDS[name]){ toast(name + ' already exists'); return; }
+  api('/ticker/api/feed/' + name, {items: []}).then(function(){ $('new-name').value = ''; toast('Created ' + name); })
+    .catch(function(err){ toast(err.message); });
+};
+$('new-name').addEventListener('keydown', function(e){ if(e.key === 'Enter') $('new-feed').click(); });
+$('copy-overlay').onclick = function(){ copyText(ORIGIN + '/ticker/overlay'); };
+$('u-overlay').textContent = ORIGIN + '/ticker/overlay';
+$('u-overlay').href = ORIGIN + '/ticker/overlay';
+$('preview').src = '/ticker/overlay?preview=1';
+renderApi();
+
+fetch('/ticker/api/config').then(function(r){ return r.json(); }).then(function(cfg){ if(!CFG) loadConfig(cfg); });
+connect();
+pollStatus();
+</script></body></html>

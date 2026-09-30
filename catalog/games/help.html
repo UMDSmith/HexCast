@@ -1,0 +1,28 @@
+<section id="games">
+<div class="card">
+  <h2>Games <span class="tag">/games</span></h2>
+  <p class="hint">Bot-driven games on stream. Each game is an <b>add-on</b> you install from the <b>+</b> inside the
+    Games tab, gets its own tab there, and draws on its own layer of one OBS browser source
+    (<code>/games/overlay</code>, 1920×1080, <b>Control audio via OBS</b> on for the built-in sounds; add
+    <code>?game=roulette</code> to a source to show just that game). The <b>server</b> picks every outcome with
+    <code>secrets.SystemRandom</code> — the overlay only animates the result and nothing can force one. Hexcast
+    never holds a balance: the channel's bot is the bank, and a numbered, persisted <b>ledger</b> tells it exactly what to
+    take and pay, even across restarts. Every game has its own help page (see <b>Games</b> in the sidebar), and only the games
+    you have installed are listed. All endpoints return <code>{"ok": true/false, ...}</code>.</p>
+  <table class="api">
+    <tr><td>GET /games/api</td><td>this reference as JSON — the installed games and their routes</td></tr>
+    <tr><td>GET /games/api/registry</td><td>the installed games: title, tab order and the scripts their panel and overlay load</td></tr>
+    <tr><td>GET /games/api/status</td><td>connected overlay count + each installed game's state</td></tr>
+    <tr><td>GET · POST /games/api/config</td><td>full config as JSON · merge-and-save <code>{"&lt;game&gt;": {...}}</code>; a game that is not installed keeps its saved settings for when it comes back</td></tr>
+    <tr><td>GET|POST /games/api/stop</td><td>abort every animation and hide everything, stop every countdown; a spin already started still goes into history (and settles the table)</td></tr>
+    <tr><td>GET /games/api/ledger?since=0&amp;game=</td><td>the shared ledger: every game's coin movements in one stream, each event with its <code>game</code>; <code>game=</code> for one</td></tr>
+    <tr><td>GET|POST /games/api/{game}/stop · show · hide</td><td>the same actions for one game (hide answers 409 while it is spinning)</td></tr>
+    <tr><td>WS /games/ws/overlay · /games/ws/panel</td><td>live <code>config</code> / <code>state</code> / <code>stop</code> / <code>registry</code> messages; panel sockets also get <code>{"type":"ledger","game":...,"events":[...]}</code></td></tr>
+  </table>
+  <p class="hint">Games are installed one by one from the <b>+</b> inside the Games tab, or from a terminal:
+    <code>python hexcast.py plugins install games_roulette games_craps games_russian games_trivia</code>. Removing one keeps its
+    settings and its table file; bets that are still down come back with it. Launch and landing <b>clips</b> play on the
+    soundboard overlay (<code>/overlay</code>), so keep both browser sources in the scene. Full guide:
+    <code>docs/games.md</code>.</p>
+</div>
+</section>

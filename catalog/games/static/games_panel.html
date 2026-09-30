@@ -1,0 +1,565 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="/static/hexcast.png">
+<link rel="stylesheet" href="/static/hexbar.css?v=2">
+<title>HexCast - Games</title>
+<style>
+  :root{
+    --bg:var(--hb-bg); --panel:var(--hb-panel); --line:var(--hb-line); --ink:var(--hb-ink);
+    --dim:var(--hb-dim); --accent:var(--hb-accent); --good:var(--hb-good); --warn:var(--hb-warn);
+    --mono:var(--hb-mono);
+    /* The soundboard's edit-mode palette (control.html), mapped onto the hexbar variables
+       so the Edit Mode toggle + placement modal match it pixel for pixel. */
+    --card:var(--hb-card); --border:var(--hb-line); --border-hover:var(--hb-line-hi);
+    --text:var(--hb-ink); --muted:var(--hb-muted);
+    --red:var(--hb-accent); --red-soft:var(--hb-accent-soft); --red-deep:#8c1f1a;
+    --amber:var(--hb-warn); --amber-soft:#ffc95c;
+    --gold:var(--hb-games, #d4af37);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.5 'Segoe UI',system-ui,-apple-system,sans-serif;}
+  /* game sub-tabs — same bar as the Twitch / Music / Discord panels */
+  #gtabs{display:flex;gap:4px;padding:4px 22px 0;flex-wrap:wrap}
+  #gtabs button{background:none;border:0;border-bottom:2px solid transparent;color:var(--dim);
+             font:600 13px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;
+             padding:10px 14px;cursor:pointer}
+  #gtabs button.sel{color:var(--ink);border-bottom-color:var(--accent)}
+  section.gtab{display:none} section.gtab.sel{display:block}
+  /* the "+" tab (the game store) sits last, like the top bar's */
+  #gtabs button.plus{font-size:17px;font-weight:700;padding:8px 14px}
+  #gtabs button.plus:hover{color:var(--good)}
+  #gtabs button.plus.sel{color:var(--good);border-bottom-color:var(--good)}
+  .gstore-lead{margin:0 0 6px;color:var(--dim);max-width:70ch}
+  .gempty{display:none;margin:6px 0 4px;padding:14px 16px;border:1px dashed var(--hb-line-hi);border-radius:12px;
+          background:var(--panel);max-width:70ch}
+  .gempty.on{display:block}
+  .gempty b{color:var(--ink)}
+  .gnote{padding:14px 16px;border:1px dashed var(--hb-line-hi);border-radius:12px;color:var(--dim);max-width:70ch}
+
+  main{padding:18px 22px 60px;max-width:1080px}
+  /* The game renderers' own DOM lives in a .gstage (the live mirrors, the editors' previews)
+     and must look there exactly as on the OBS overlay, a bare page: the panel's generic
+     rules that could match it (.row, .last, .bar, .lock, .pos/.neg, .card h2 ...) skip it
+     with :not(:where(.gstage *)) (same specificity as before), and the stage resets what
+     its content would inherit / get from *{box-sizing} to the overlay's defaults. */
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
+  .card h2:not(:where(.gstage *)){margin:0 0 4px;font-size:14px;letter-spacing:.14em;text-transform:uppercase}
+  .card h2:not(:where(.gstage *)) .pill{margin-left:8px;vertical-align:2px;letter-spacing:.04em}
+  .card h3:not(:where(.gstage *)){margin:16px 0 4px;font-size:13px;color:var(--ink)}
+  .card p.hint:not(:where(.gstage *)){margin:0 0 14px;color:var(--dim);font-size:13px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px}
+  label.f{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--dim);
+          letter-spacing:.06em;text-transform:uppercase;font-weight:600}
+  main input,main select,main textarea{background:#08080c;border:1px solid var(--line);color:var(--ink);
+        border-radius:8px;padding:9px 10px;font:14px/1.3 inherit;width:100%}
+  main input:focus,main select:focus,main textarea:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:var(--accent)}
+  main input[type=range]{padding:0;border:0;background:transparent;accent-color:var(--accent)}
+  main input[type=range]:focus{outline:none}
+  label.sw{flex-direction:row;align-items:center;gap:9px;text-transform:none;font-size:14px;color:var(--ink)}
+  label.sw input{width:auto}
+  button.act{background:var(--accent);color:#fff;border:0;border-radius:9px;padding:10px 16px;
+             font:700 14px inherit;cursor:pointer}
+  button.act:hover{filter:brightness(1.12)}
+  button.sec{background:#1c1c25;color:var(--ink);border:1px solid var(--line);border-radius:9px;
+             padding:9px 14px;font:600 13px inherit;cursor:pointer}
+  button.sec:hover{border-color:var(--accent)}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  .row:not(:where(.gstage *)){display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin-top:14px}
+  .url{display:flex;gap:8px;align-items:center;margin:8px 0}
+  .url a{flex:1;background:#08080c;border:1px solid var(--line);border-radius:8px;
+            padding:9px 11px;font:13px var(--mono);color:var(--good);overflow:auto;white-space:nowrap;
+            text-decoration:none}
+  .url a:hover{border-color:var(--accent);text-decoration:underline}
+  #toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,calc(100% + 30px));background:var(--accent);
+         color:#fff;padding:11px 20px;border-radius:99px;font-weight:700;font-size:14px;
+         transition:transform .25s ease;z-index:200;max-width:calc(100vw - 32px);text-align:center}
+  #toast.up{transform:translate(-50%,0)}
+  .pill{font:600 12px/1 var(--mono);padding:6px 10px;border-radius:99px;border:1px solid var(--line);color:var(--dim)}
+  .pill.on{color:var(--good);border-color:#1d4d33;background:#0e2118}
+  .pill.off{color:var(--warn);border-color:#4d3a10;background:#211a0b}
+  code{color:var(--good);font:12.5px var(--mono)}
+  pre{background:#08080c;border:1px solid var(--line);border-radius:8px;padding:12px;
+      font:12.5px/1.6 var(--mono);color:var(--good);overflow:auto;margin:8px 0}
+  table.api{width:100%;border-collapse:collapse;font-size:13px;margin:6px 0 4px}
+  table.api td{padding:6px 8px;border-top:1px solid var(--line);vertical-align:top;color:var(--dim)}
+  table.api td:first-child{white-space:nowrap;font:12.5px var(--mono);color:var(--good)}
+  .tscroll{overflow-x:auto}
+  .kv{font-size:11px;color:var(--dim);letter-spacing:.08em;text-transform:uppercase;font-weight:600;margin-bottom:6px}
+
+  /* ---- hexbar actions: the soundboard's buttons (control.html), verbatim look ---- */
+  .editmode-btn{background:var(--card);border:1px solid var(--border);color:var(--text);
+                padding:6px 10px;font-size:13px;border-radius:6px;cursor:pointer;line-height:normal}
+  button.editmode-btn{font-family:inherit;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  button.editmode-btn:hover{border-color:var(--border-hover)}
+  button.editmode-btn:active{transform:translateY(1px)}
+  .editmode-btn:hover{background:#2a1c1c}
+  a.editmode-btn{text-decoration:none;display:inline-block}
+  body.edit-mode #editmode{background:#3a2a18;border-color:var(--amber);color:var(--amber-soft)}
+  #stopall{background:#3a1414;border-color:var(--red-deep);color:var(--red-soft);font-weight:600}
+  #stopall:hover{background:#4a1a1a;border-color:var(--red)}
+  #stopall:active{background:#5a2020;transform:translateY(1px)}
+
+  /* ---- game card + live mirror (every game's tab builds on these) ---- */
+  .game{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);gap:18px;align-items:start}
+  .mirror{position:relative;width:100%;aspect-ratio:16/9;background:
+      repeating-linear-gradient(0deg,#0c0c11 0 39px,#141420 39px 40px),
+      repeating-linear-gradient(90deg,#0c0c11 0 39px,#141420 39px 40px),#0a0a0e;
+    border:1px solid var(--line);border-radius:8px;overflow:hidden;user-select:none}
+  .gstage{position:absolute;left:0;top:0;width:1920px;height:1080px;transform-origin:0 0;pointer-events:none;
+          font:16px/normal serif;color:#000;letter-spacing:normal;word-spacing:normal;text-transform:none;
+          text-align:start;text-indent:0;white-space:normal;text-shadow:none}
+  :where(.gstage *){box-sizing:content-box}
+  .gwheel{position:absolute;left:50%;top:50%;transform-origin:center center;will-change:transform,left,top;pointer-events:auto}
+  .gwheel.empty{border:6px dashed rgba(255,176,32,.55);border-radius:50%}
+  .mirror .gwheel{pointer-events:none;transition:opacity .35s ease}
+  .mirror .gwheel.off{opacity:.22}
+  .mtag{position:absolute;top:8px;left:8px;font:700 10px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;
+        padding:5px 8px;border-radius:99px;border:1px solid var(--line);background:rgba(10,10,14,.8);color:var(--dim);pointer-events:none}
+  .mtag.on{color:var(--good);border-color:#1d4d33;background:rgba(14,33,24,.85)}
+  .pmsg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;
+        padding:16px;color:var(--dim);font-size:13px;pointer-events:none}
+  .readout{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+  .tagt{font:700 10px/1 var(--mono);letter-spacing:.1em;padding:3px 6px;border-radius:99px;border:1px solid #4d3a10;color:var(--warn);margin-left:6px}
+  .edit-only{display:none}
+  body.edit-mode .edit-only{display:inline-block}
+  body.edit-mode .mirror::after{content:"✎ Click to edit placement";position:absolute;left:0;right:0;bottom:0;
+        padding:14px 8px 7px;text-align:center;font-size:12px;font-weight:600;color:var(--amber-soft);
+        background:linear-gradient(transparent,rgba(0,0,0,.8));pointer-events:none}
+
+  /* ---- side-by-side cards, bars, notes (the roulette-only parts are in roulette_panel.js) ---- */
+  .two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;margin-bottom:16px}
+  .two > .card{margin-bottom:0}
+  .bar:not(:where(.gstage *)){display:flex;height:10px;border-radius:99px;overflow:hidden;background:#0c0c11;border:1px solid var(--line)}
+  .note{font-size:12px;color:var(--dim)}
+
+  /* ---- bet tester ---- */
+  .ex{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+  .ex button{padding:4px 9px;font:600 12px var(--mono);border-radius:99px;background:#1c1c25;color:var(--ink);
+             border:1px solid var(--line);cursor:pointer}
+  .ex button:hover{border-color:var(--accent)}
+  .bout{margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#0c0c11;
+        font-size:13px;min-height:44px}
+  .bout .none{color:var(--dim)}
+  .bout .ok{color:var(--good);font-weight:700}
+  .bout .bad{color:var(--warn);font-weight:700}
+  .bout .odds{font:700 13px var(--mono);color:var(--gold)}
+  .bres{margin-top:6px;font-size:13px}
+  .bres b{font:800 11px/1 var(--mono);letter-spacing:.1em;padding:3px 7px;border-radius:99px;margin-right:6px}
+  .bres.win b{background:#0e2118;color:var(--good);border:1px solid #1d4d33}
+  .bres.lose b{background:#2a1414;color:var(--red-soft);border:1px solid var(--red-deep)}
+  .bres.void b{background:#211a0b;color:var(--warn);border:1px solid #4d3a10}
+  .bres .m{font:12px var(--mono);color:var(--ink)}
+  .bres .u,.bres .e{color:var(--dim);font-size:12px}
+
+  /* ---- tables (bets on the table, players, history) ---- */
+  table.tb{width:100%;border-collapse:collapse;font-size:13px}
+  table.tb th{text-align:left;font:600 10.5px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--dim);
+              padding:4px 8px 6px;border-bottom:1px solid var(--line);white-space:nowrap}
+  table.tb td{padding:6px 8px;border-top:1px solid var(--line);vertical-align:middle}
+  table.tb td.num,table.tb th.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+  table.tb td.act{text-align:right;white-space:nowrap}
+
+  /* ---- ledger tables (the round games' tabs; roulette's own parts are in roulette_panel.js) ---- */
+  table.lg{width:100%;border-collapse:collapse;font-size:12.5px}
+  table.lg th{position:sticky;top:0;z-index:1;background:var(--panel);text-align:left;font:600 10.5px var(--mono);
+              letter-spacing:.08em;text-transform:uppercase;color:var(--dim);padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+  table.lg td{padding:5px 8px;border-top:1px solid var(--line);white-space:nowrap;color:var(--ink)}
+  table.lg td.num,table.lg th.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
+  table.lg td.dim{color:var(--dim)}
+  table.lg td.wrap{white-space:normal;overflow-wrap:anywhere;min-width:90px}
+  table.lg td.mono{font-family:var(--mono);font-size:12px}
+  table.lg tr.fresh td{animation:lg-flash 1.8s ease-out}
+  @keyframes lg-flash{from{background:#2c2610}to{background:transparent}}
+
+  /* ---- Hex display ("Hex does the math": Hex's own cards; also used by the craps tab) ---- */
+  main textarea.dlines{font:13px/1.45 var(--mono);resize:vertical;min-height:92px}
+  .dnow{margin-top:10px;font-size:13px;color:var(--dim);overflow-wrap:anywhere}
+  .dnow b{color:var(--ink)}
+  .bout pre.dio{margin:8px 0 0;padding:8px 10px;font-size:12px;line-height:1.5;white-space:pre-wrap;
+                overflow-wrap:anywhere;max-height:220px;overflow:auto}
+  .bout pre.dio .q{color:#9ab}
+
+  /* ---- settings ---- */
+  .rng{display:flex;align-items:center;gap:10px}
+  .rng b{font:600 12px var(--mono);color:var(--ink);min-width:40px;text-align:right}
+  .dirty{font-size:12px;color:var(--warn)}
+
+
+  @media (max-width: 860px){
+    .game,.two{grid-template-columns:1fr}
+  }
+  @media (max-width: 560px){
+    main{padding:14px 12px 60px}
+    .card{padding:14px}
+    table.api tr{display:block;border-top:1px solid var(--line);padding:5px 0}
+    table.api td{display:block;border-top:0;padding:2px 8px}
+    table.api td:first-child{white-space:normal;word-break:break-word}
+    table.lg .opt,table.tb .opt{display:none}
+  }
+
+  /* ---- editor modal: the soundboard's openEditor() (control.html), same rules ---- */
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+                   display: flex; align-items: center; justify-content: center; z-index: 100;
+                   padding: 20px; font: 14px/normal system-ui, -apple-system, sans-serif; color: var(--text); }
+  .modal { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+           padding: 16px; max-width: 720px; width: 100%; max-height: 90vh; overflow-y: auto;
+           box-shadow: 0 10px 40px rgba(0,0,0,0.6); display: flex; flex-direction: column; gap: 10px; }
+  :where(.modal) button { background: var(--card); border: 1px solid var(--border); color: var(--text);
+           padding: 10px 12px; font-size: 13px; border-radius: 6px; cursor: pointer;
+           text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+           font-family: inherit; }
+  :where(.modal) button:hover { background: #2a1e1e; border-color: var(--border-hover); }
+  :where(.modal) button:active { background: #341f1f; transform: translateY(1px); }
+  .modal-header { display: flex; justify-content: space-between; align-items: center;
+                  margin-bottom: 4px; }
+  .modal-header .title { font-size: 15px; font-weight: 600; color: var(--red-soft); }
+  .modal-header .close { background: transparent; border: none; color: var(--muted);
+                         font-size: 22px; cursor: pointer; padding: 0 4px; }
+  .modal-header .close:hover { color: var(--text); }
+  .canvas-preview { background: #050303; border: 1px solid var(--border); border-radius: 6px;
+                    aspect-ratio: 16/9; position: relative; overflow: hidden; cursor: grab; flex: 0 0 auto; }
+  .canvas-preview.dragging { cursor: grabbing; }
+  .canvas-preview .grid-overlay {
+    position: absolute; inset: 0; pointer-events: none;
+    background-image:
+      linear-gradient(to right, rgba(120,30,30,0.18) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(120,30,30,0.18) 1px, transparent 1px);
+    background-size: 12.5% 12.5%;
+  }
+  .canvas-preview .gwheel { touch-action: none; user-select: none; }
+  .editor-controls { display: flex; flex-direction: column; gap: 8px; }
+  .editor-row { display: flex; align-items: center; gap: 10px; }
+  .editor-row.wrap { flex-wrap: wrap; }
+  .editor-row label { min-width: 60px; font-size: 12px; color: var(--muted); }
+  .editor-row label.tog { min-width: 0; display: inline-flex; align-items: center; gap: 5px;
+                          font-size: 13px; color: var(--text); cursor: pointer; white-space: nowrap; }
+  .editor-row input[type=range] { flex: 1; }
+  .editor-row input[type=text], .editor-row input[type=number] {
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; padding: 5px 7px; font-family: inherit; font-size: 13px;
+    flex: 1; min-width: 0;
+  }
+  .editor-row input[type=number] { max-width: 120px; flex: 0 0 120px; }
+  .editor-row select {
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; padding: 5px 7px; font-family: inherit; font-size: 13px;
+    flex: 1; min-width: 0;
+  }
+  .editor-row.wrap select { flex: 1 1 170px; }
+  .editor-row input[type=color] {
+    flex: 0 0 44px; height: 26px; padding: 2px;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 4px; cursor: pointer;
+  }
+  .editor-row input[type=color].dflt { opacity: .45; }
+  .editor-row .pick { flex: 0 0 auto; padding: 3px 9px; font-size: 13px; min-width: 0; }
+  .editor-row .value { font-family: ui-monospace, monospace; font-size: 12px;
+                       color: var(--red-soft); min-width: 56px; text-align: right; }
+  .quick-positions { display: grid; grid-template-columns: repeat(3, 26px); gap: 2px; }
+  .quick-positions button { padding: 2px; font-size: 12px; min-width: 0;
+                            text-align: center; line-height: 1; }
+  .modal-actions { display: flex; justify-content: space-between; gap: 6px;
+                   padding-top: 8px; border-top: 1px solid var(--border); }
+  .modal-actions .left, .modal-actions .right { display: flex; gap: 6px; }
+  .modal-actions .reset { background: #2a1818; color: var(--muted); border-color: var(--border); }
+  .modal-actions .reset:hover { background: #3a1818; color: var(--red-soft); }
+  .modal-actions .save { background: #2a3a1f; border-color: #3f5028; color: #c5e0a0; }
+  .modal-actions .save:hover { background: #344b28; }
+  .modal-actions .test { background: #3a2a18; border-color: var(--amber); color: var(--amber-soft); }
+  .modal-actions .test:hover { background: #5a4520; }
+  .modal-actions .preview { background: #1f2a3a; border-color: #2a3a52; color: #9ab; }
+  .modal-actions .preview:hover { background: #2a3a52; border-color: #3a4a68; color: #cde; }
+  .modal-actions .preview.playing { background: #4a2020; border-color: var(--red); color: var(--red-soft); }
+  @media (max-width: 560px){
+    .modal-overlay { padding: 10px; }
+    .modal-actions { flex-wrap: wrap; }
+  }
+</style></head>
+<body>
+<div id="hexbar" data-section="Games" data-key="games"></div>
+<div id="hexbar-actions">
+  <a class="editmode-btn" id="openoverlay" href="/games/overlay" target="_blank" rel="noopener" title="Open the OBS browser-source overlay in a new tab (this is the URL to paste into OBS)">↗ Overlay</a>
+  <button class="editmode-btn" id="stopall" title="Abort any game animation and hide everything (a spin or roll already started still counts)">⏹ Stop</button>
+  <button class="editmode-btn" id="editmode" title="Turn on, then click a game's card to place and style it">Edit Mode</button>
+</div>
+<script src="/static/hexbar.js?v=2"></script>
+
+<!-- One tab per installed game, built from GET /games/api/registry (see the script below); the "+" tab
+     is the game store: every game is its own add-on, installed from there. -->
+<nav id="gtabs">
+  <button data-tab="__store" class="plus" title="Add games" aria-label="Add games">+</button>
+</nav>
+
+<main>
+<!-- A game's section is added here as <section class="gtab" id="tab-KEY">; its panel script fills it. -->
+<section class="gtab" id="tab-__store">
+  <p class="gstore-lead">Each game is its own add-on: install the ones you want.</p>
+  <div class="gempty" id="gempty"><b>No games installed yet</b> — pick one below.</div>
+  <div id="gstore"></div>
+</section>
+</main>
+
+<div id="toast">Saved</div>
+<datalist id="clip-list"></datalist>
+<script src="/static/plugin_store.js"></script>
+<script src="/plugins/games/static/panel_common.js"></script>
+<script src="/plugins/games/static/round_common.js"></script>
+<script>
+var $ = function(id){ return document.getElementById(id); };
+var GP = window.GamesPage;   // panel_common.js: esc, toast, copyText, loadClipList, api, rawReq, busyToast, display
+
+/* ---------- Edit Mode + Stop (page-level) ---------- */
+// Edit Mode only toggles body.edit-mode; each game's tab reacts to that class itself.
+var editMode = false;
+$('editmode').onclick = function(){
+  editMode = !editMode;
+  document.body.classList.toggle('edit-mode', editMode);
+  this.textContent = editMode ? '✓ Edit Mode' : 'Edit Mode';
+};
+$('stopall').onclick = async function(){ if(await GP.api('POST', '/games/api/stop')) GP.toast('stopped'); };
+
+/* ---------- the games' tabs ---------- */
+// The tabs come from GET /games/api/registry: one per installed game, in its `order`, then the "+" tab
+// (the game store). For each game this page adds the tab button and section#tab-KEY, loads the game's
+// renderer script (overlay.script, window.HexGames[KEY]) and then its panel script (panel_js). The panel
+// script builds its own markup into the section and registers
+//   window.GamePanels[KEY] = { onConfig(config), onState(state), onStop(game), onLedger(events),
+//                              onLink(bool), onTab(key), onRemove() }        (all optional).
+// The panel socket below dispatches to them: `config` to every panel, `state` and `ledger` to the game they
+// are about. The last config / state / link are kept in GamesPage.last so a panel that registers after the
+// socket connected can catch up. GamesPage.registry is the latest registry list (games in tab order),
+// GamesPage.gameScript(key) a game's renderer script URL.
+window.GamePanels = window.GamePanels || {};
+var GP_LAST = { config: null, states: {}, link: null };
+GP.last = GP_LAST;
+GP.registry = [];
+function rendererOf(g){ return (g && g.overlay && g.overlay.script) || null; }
+GP.gameScript = function(key){
+  for(var i = 0; i < GP.registry.length; i++) if(GP.registry[i].key === key) return rendererOf(GP.registry[i]);
+  return null;
+};
+function gpCall(p, fn, arg){
+  if(p && typeof p[fn] === 'function'){
+    try{ p[fn](arg); }catch(e){ console.error('[games] panel ' + fn + ' failed:', e); }
+  }
+}
+function gpEach(fn, arg){ Object.keys(window.GamePanels).forEach(function(k){ gpCall(window.GamePanels[k], fn, arg); }); }
+
+/* ---------- game sub-tabs ---------- */
+// One tab per game plus the "+" store tab; /games#craps opens straight to a game. Returns false for an unknown key.
+var STORE = '__store';
+function showTab(key){
+  var btn = document.querySelector('#gtabs button[data-tab="' + String(key).replace(/[^\w-]/g, '') + '"]');
+  if(!btn) return false;
+  document.querySelectorAll('#gtabs button').forEach(function(b){ b.classList.toggle('sel', b === btn); });
+  document.querySelectorAll('section.gtab').forEach(function(s){ s.classList.toggle('sel', s.id === 'tab-' + key); });
+  gpEach('onTab', key);
+  return true;
+}
+function currentTab(){
+  var b = document.querySelector('#gtabs button.sel');
+  return b ? b.dataset.tab : null;
+}
+
+/* ---------- the registry: tabs come and go without a reload ---------- */
+var nav = $('gtabs'), main = document.querySelector('main'), plusBtn = nav.querySelector('button.plus'), storeSec = $('tab-' + STORE);
+var TABS = {};            // game key -> { info, btn, sec, scripts: [<script> elements], dead }
+var ADDED = [];           // [{key, at}]: the tabs added lately (which add-on did the store just install?)
+var WANT = null;          // {id, at}: the store just installed this add-on: open its tab once it shows up
+var _regLoaded = false, _regBusy = false, _regAgain = false, _regWaiters = [];
+
+function validKey(k){ return typeof k === 'string' && /^[\w-]+$/.test(k); }
+// GET /games/api/registry, applied as a diff. Several calls at once (a socket message + the store's
+// callback) share one request; one made while a request is in flight runs once more afterwards.
+function loadRegistry(){
+  return new Promise(function(resolve){
+    _regWaiters.push(resolve);
+    if(_regBusy){ _regAgain = true; return; }
+    _regBusy = true;
+    (function run(){
+      _regAgain = false;
+      fetch('/games/api/registry', { cache: 'no-store' })
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+          if(!d || d.ok === false || !Array.isArray(d.games)) throw new Error('bad registry');
+          applyRegistry(d.games);
+          return true;
+        })
+        .catch(function(e){ console.error('[games] registry:', e); return false; })
+        .then(function(ok){
+          if(_regAgain){ run(); return; }
+          _regBusy = false;
+          var w = _regWaiters; _regWaiters = [];
+          w.forEach(function(f){ f(ok); });
+          if(!ok && !_regLoaded) setTimeout(loadRegistry, 2500);   // the server is still starting
+        });
+    })();
+  });
+}
+
+function applyRegistry(games){
+  var first = !_regLoaded;
+  _regLoaded = true;
+  var list = games.filter(function(g){ return g && validKey(g.key); });
+  var byKey = {};
+  list.forEach(function(g){ byKey[g.key] = g; });
+  GP.registry = list;
+  var was = currentTab();
+  // gone, or its scripts changed (an update): the tab goes; a changed game is added again below
+  Object.keys(TABS).forEach(function(k){
+    var e = TABS[k], g = byKey[k];
+    if(!g || e.info.panel_js !== g.panel_js || rendererOf(e.info) !== rendererOf(g)) removeGame(k);
+  });
+  list.forEach(function(g){
+    if(TABS[g.key]){ TABS[g.key].info = g; TABS[g.key].btn.textContent = g.title || g.key; }
+    else addGame(g);
+  });
+  orderTabs(list);
+  // which tab is showing now?
+  $('gempty').classList.toggle('on', !list.length);
+  var first_key = list.length ? list[0].key : STORE;
+  if(!list.length) showTab(STORE);                                // nothing to show but the store
+  else if(first){ var h = location.hash.slice(1); if(!(h && showTab(h))) showTab(first_key); }
+  else if(!currentTab()) showTab(was && TABS[was] ? was : first_key);   // the tab we were on was rebuilt (an update) or is gone
+  selectWanted();
+}
+
+function orderTabs(list){
+  var want = list.map(function(g){ return g.key; });
+  var have = Array.prototype.map.call(nav.querySelectorAll('button[data-tab]'), function(b){ return b.dataset.tab; });
+  have.pop();                                                     // the "+" is always last
+  if(want.join() === have.join()) return;
+  want.forEach(function(k){ nav.insertBefore(TABS[k].btn, plusBtn); });
+}
+
+function addGame(g){
+  var btn = document.createElement('button');
+  btn.setAttribute('data-tab', g.key);
+  btn.textContent = g.title || g.key;
+  nav.insertBefore(btn, plusBtn);
+  var sec = document.createElement('section');
+  sec.className = 'gtab';
+  sec.id = 'tab-' + g.key;
+  main.insertBefore(sec, storeSec);
+  var e = TABS[g.key] = { info: g, btn: btn, sec: sec, scripts: [], dead: false };
+  ADDED.push({ key: g.key, at: Date.now() });
+  if(ADDED.length > 20) ADDED.shift();
+  // renderer first (the panel reads window.HexGames[KEY] while it builds its live mirror), then the panel
+  var todo = [];
+  if(rendererOf(g)) todo.push(rendererOf(g));
+  if(g.panel_js) todo.push(g.panel_js);
+  else sec.innerHTML = '<div class="gnote">This game has no control panel.</div>';
+  (function next(){
+    var url = todo.shift();
+    if(e.dead) return;
+    if(!url){
+      if(sec.classList.contains('sel')) gpCall(window.GamePanels[g.key], 'onTab', g.key);   // (it missed the onTab of its own selection)
+      syncGame(g.key);
+      return;
+    }
+    var s = document.createElement('script');
+    s.src = url;
+    s.onload = next;
+    s.onerror = function(){
+      if(e.dead) return;
+      if(url === g.panel_js) sec.innerHTML = '<div class="gnote">Could not load the panel of ' + GP.esc(g.title || g.key) + ' (' + GP.esc(url) + ').</div>';
+      else console.error('[games] could not load ' + url);
+      next();
+    };
+    e.scripts.push(s);
+    document.body.appendChild(s);
+  })();
+}
+
+// A game that appears while the page is open gets no `config` / `state` from the socket (those are sent when it
+// connects): read them once, so its tab does not sit on defaults / "offline" until the first change (and Save
+// settings can never write defaults over the settings the server restored for it).
+function syncGame(key){
+  var haveCfg = GP_LAST.config && GP_LAST.config[key], haveState = GP_LAST.states[key];
+  if(haveCfg && haveState) return;
+  Promise.all([haveCfg ? null : GP.rawReq('GET', '/games/api/config'), haveState ? null : GP.rawReq('GET', '/games/api/status')]).then(function(r){
+    if(!TABS[key]) return;                                             // removed meanwhile
+    var c = r[0] && r[0].ok && r[0].d.config, s = r[1] && r[1].ok && r[1].d.games && r[1].d.games[key];
+    if(c && !(GP_LAST.config && GP_LAST.config[key])){ GP_LAST.config = c; gpCall(window.GamePanels[key], 'onConfig', c); }
+    if(s && !GP_LAST.states[key]){ GP_LAST.states[key] = s; gpCall(window.GamePanels[key], 'onState', s); }
+  });
+}
+
+function removeGame(key){
+  var e = TABS[key];
+  if(!e) return;
+  e.dead = true;
+  gpCall(window.GamePanels[key], 'onRemove');
+  e.sec.classList.remove('sel');            // a detached section must not look shown to a leftover timer
+  delete window.GamePanels[key];
+  delete GP_LAST.states[key];
+  if(window.HexGames) delete window.HexGames[key];   // a game added again later loads its renderer afresh
+  e.scripts.forEach(function(s){ if(s.parentNode) s.parentNode.removeChild(s); });
+  e.btn.remove();
+  e.sec.remove();
+  delete TABS[key];
+}
+
+// The store's `installed` names the add-on's plugin id (games_craps); the tab is that game's key (craps).
+function selectWanted(){
+  if(!WANT) return;
+  if(Date.now() - WANT.at > 30000){ WANT = null; return; }
+  var hit = null;
+  GP.registry.forEach(function(g){
+    if(g.key === WANT.id || g.plugin === WANT.id || 'games_' + g.key === WANT.id) hit = g.key;
+  });
+  if(!hit) ADDED.forEach(function(a){ if(a.at >= WANT.at - 10000 && TABS[a.key]) hit = a.key; });
+  if(!hit) return;
+  WANT = null;
+  if(showTab(hit)) history.replaceState(null, '', '#' + hit);
+}
+
+nav.addEventListener('click', function(e){
+  var b = e.target.closest('button[data-tab]');
+  if(b && showTab(b.dataset.tab)) history.replaceState(null, '', '#' + b.dataset.tab);
+});
+window.addEventListener('hashchange', function(){ showTab(location.hash.slice(1)); });
+
+/* ---------- the "+" tab: the game store ---------- */
+// The same widget as the main "+" page, listing the add-ons of Games. A change (install, remove, turn off ...)
+// makes the server announce a new registry; re-reading it here too just makes it immediate.
+if(window.HexStore){
+  HexStore.mount($('gstore'), { parent: 'games', noun: 'game', onChange: function(what, id){
+    if(what === 'installed') WANT = { id: id, at: Date.now() };
+    loadRegistry().then(selectWanted);
+  } });
+} else {
+  $('gstore').innerHTML = '<div class="gnote">The game store did not load (plugin_store.js).</div>';
+}
+
+/* ---------- panel WebSocket (spec §6) ---------- */
+function connect(){
+  var proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  var ws;
+  try{ ws = new WebSocket(proto + '://' + location.host + '/games/ws/panel'); }
+  catch(e){ setTimeout(connect, 1000); return; }
+  ws.onopen = function(){ GP_LAST.link = true; gpEach('onLink', true); loadRegistry(); };   // (a game may have come or gone while we were offline)
+  ws.onmessage = function(e){
+    var m; try{ m = JSON.parse(e.data); }catch(err){ return; }
+    if(!m) return;
+    if(m.type === 'config'){ GP_LAST.config = m.config; gpEach('onConfig', m.config); }
+    else if(m.type === 'state'){
+      if(m.game){ GP_LAST.states[m.game] = m.state; gpCall(window.GamePanels[m.game], 'onState', m.state); }
+    }
+    else if(m.type === 'stop') gpEach('onStop', m.game);   // {"type":"stop"[,"game"]}: each panel checks whether it is meant
+    else if(m.type === 'ledger' && m.game){   // one message per game: each tab only ever sees its own events
+      gpCall(window.GamePanels[m.game], 'onLedger', m.events || []);
+    }
+    else if(m.type === 'registry') loadRegistry();   // {"type":"registry","revision":n}: a game was added / removed
+  };
+  ws.onclose = function(){ GP_LAST.link = false; gpEach('onLink', false); setTimeout(connect, 1000); };
+  ws.onerror = function(){ try{ ws.close(); }catch(err){} };
+}
+
+/* ---------- wiring ---------- */
+loadRegistry();
+GP.loadClipList();
+connect();
+</script>
+</body></html>

@@ -1,0 +1,11 @@
+{
+  "id": "ytdlp",
+  "name": "yt-dlp helpers",
+  "version": "1.0.0",
+  "description": "The shared YouTube/Twitch link resolver used by Clips and Music: finds and runs yt-dlp, and handles the optional YouTube browser sign-in. No tab of its own - it is installed automatically with the plugins that need it.",
+  "icon": "🔗",
+  "category": "Libraries",
+  "author": "UMDSmith",
+  "hidden": true,
+  "legacy_config": []
+}

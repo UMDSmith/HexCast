@@ -4,6 +4,9 @@ A news-style scrolling ticker overlay. You can place it anywhere on the screen,
 style it however you like, and feed it from the panel, a bot, a JSON file or a
 JSON URL.
 
+Ticker is a plugin: open the **+** tab, find **Ticker** and press **Install** (or
+`python hexcast.py plugins install ticker`).
+
 - **Panel:** `http://<host>:4747/ticker`
 - **OBS browser source:** `http://<host>:4747/ticker/overlay` (1920×1080; it
   scales to any size)

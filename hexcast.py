@@ -2,18 +2,30 @@
 """
 Hexcast: dead-simple folder-watching soundboard & clip overlay for OBS.
 
-Drop media into ./media/{sounds,gifs,videos}/, then:
-    python soundboard.py
+Drop media into ./media/{audio,video}/, then:
+    python hexcast.py
 
 Control panel:       http://localhost:4747/
 OBS browser source:  http://localhost:4747/overlay
 
+This file is the core: the soundboard and the plugin host. Everything else (Twitch,
+Music, Discord, Clips, Countdown, Games, Ticker ...) is a plugin, installed from the (+)
+tab of the control panel or with `python hexcast.py plugins install <id>`.
+See docs/plugins.md.
+
 Dependencies:
-    pip install fastapi "uvicorn[standard]" watchdog httpx python-multipart
+    pip install -r requirements.txt
 
 Per-gif positioning: each gif can have a sidecar .json with {"x":50,"y":50,"scale":3.0}.
 Use the Edit Mode toggle in the control panel to drag-position visually.
 """
+
+import sys
+
+# `python hexcast.py plugins ...` manages plugins from the terminal and never starts the server.
+if __name__ == "__main__" and sys.argv[1:2] == ["plugins"]:
+    from hexcast_core.cli import main as _plugins_cli
+    sys.exit(_plugins_cli(sys.argv[2:]))
 
 import asyncio
 import time
@@ -30,6 +42,10 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
+from hexcast_core import Installer, PluginHost, PluginService, build_router
+from hexcast_core import backgrounds as overlay_backgrounds
+from hexcast_core import migrate as plugin_migrate
+from hexcast_core.staticfiles import RevalidatingStaticFiles
 from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -505,10 +521,17 @@ async def lifespan(app: FastAPI):
     obs = Observer()
     obs.schedule(WatchHandler(), str(MEDIA_DIR), recursive=True)
     obs.start()
+    try:
+        await plugin_service.repair_pending()  # plugins whose Python packages went missing
+    except Exception:
+        log.exception("plugins: restoring missing packages failed")
+    if plugin_host.catalog.remote_urls:        # configured plugin indexes: fetch in the background (never blocks start-up)
+        asyncio.get_running_loop().create_task(asyncio.to_thread(plugin_host.catalog.refresh_remote, 6.0, True))
 
     print(f"\n  ==== Hexcast {VERSION} ====")
     print(f"  Control panel:       http://localhost:{PORT}/")
     print(f"  OBS browser source:  http://localhost:{PORT}/overlay")
+    print(f"  Add plugins:         http://localhost:{PORT}/plugins   (the + tab)")
     print(f"  Audio root:          {AUDIO_DIR}")
     print(f"  Video root:          {VIDEO_DIR}")
     print(f"  Error log:           {LOG_FILE}")
@@ -517,13 +540,17 @@ async def lifespan(app: FastAPI):
     print(f"\n  ! No authentication — keep this on a trusted LAN behind a firewall.")
     print(f"    Do NOT expose this to the internet.\n")
     yield
+    try:
+        await plugin_host.shutdown()           # let the plugins close their sockets
+    except Exception:
+        log.exception("plugins: shutdown failed")
     obs.stop()
     obs.join()
 
 
 app = FastAPI(lifespan=lifespan)
 app.mount("/media", StaticFiles(directory=str(MEDIA_DIR)), name="media")
-app.mount("/static", StaticFiles(directory=str(ROOT / "static")), name="static")
+app.mount("/static", RevalidatingStaticFiles(directory=str(ROOT / "static")), name="static")   # re-checked on every load, so an upgrade shows at once
 
 
 # ---- version / update check ------------------------------------------------
@@ -558,50 +585,6 @@ async def api_version():
     latest = await _latest_version()
     update = bool(latest and VERSION != "dev" and _parse_ver(latest) > _parse_ver(VERSION))
     return {"version": VERSION, "latest": latest, "update_available": update}
-
-from twitch import attach_twitch
-attach_twitch(app, PORT)
-
-from ytmusic import attach_ytm
-attach_ytm(app, PORT)
-
-from countdown import attach_countdown
-attach_countdown(app, PORT)
-
-# Discord Reactive is optional: skip quietly if the module file is gone, but
-# say why if it's present and only its dependencies are missing.
-try:
-    from discord_reactive import attach_discord
-    attach_discord(app, PORT)
-except ImportError as exc:
-    if getattr(exc, "name", "") != "discord_reactive":
-        print(f"  Discord module found but not loaded ({exc}) — "
-              f"pip install -r requirements-discord.txt", flush=True)
-
-# Clips is optional too: skip quietly if the module file is gone.
-try:
-    from clips import attach_clips
-    attach_clips(app, PORT)
-except ImportError as exc:
-    if getattr(exc, "name", "") != "clips":
-        print(f"  Clips module found but not loaded ({exc})", flush=True)
-
-# Games is optional too: skip quietly if the module file is gone.
-try:
-    from games import attach_games
-    attach_games(app, PORT)
-except ImportError as exc:
-    if getattr(exc, "name", "") != "games":
-        print(f"  Games module found but not loaded ({exc})", flush=True)
-
-# Ticker is optional too: skip quietly if the module file is gone.
-try:
-    from ticker import attach_ticker
-    attach_ticker(app, PORT)
-except ImportError as exc:
-    if getattr(exc, "name", "") != "ticker":
-        print(f"  Ticker module found but not loaded ({exc})", flush=True)
-
 
 # ---- HTML (inlined) --------------------------------------------------------
 
@@ -643,12 +626,6 @@ async def control_page():
 @app.get("/overlay", response_class=HTMLResponse)
 async def overlay_page():
     return overlay_html()
-
-
-@app.get("/help", response_class=HTMLResponse)
-async def help_page():
-    """One page documenting every module's API and chat commands."""
-    return _read_static("help.html")
 
 
 @app.get("/index")
@@ -1031,6 +1008,37 @@ async def ws_control(ws: WebSocket):
         pass
     finally:
         control_clients.discard(ws)
+
+
+# ---- plugins ----------------------------------------------------------------
+# Everything that is not the soundboard is a plugin. This block goes last on purpose:
+# the core's own routes are registered first, so a plugin can never shadow them.
+plugin_host = PluginHost(app, PORT, root=ROOT, media_dir=MEDIA_DIR)
+plugin_installer = Installer(plugin_host)
+plugin_service = PluginService(plugin_host, plugin_installer, STATIC_DIR)
+app.include_router(build_router(plugin_service))          # /plugins, /api/plugins/*, /help
+app.include_router(overlay_backgrounds.build_router(MEDIA_DIR))   # /api/backgrounds: pictures for overlays
+
+# Nothing about plugins may stop the soundboard from starting: each step reports and moves on.
+def _plugin_step(what: str, fn) -> None:
+    try:
+        fn()
+    except Exception as exc:                                # a read-only folder, a corrupt file ...
+        log.exception("plugins: %s failed", what)
+        print(f"  [!] plugins: {what} failed ({type(exc).__name__}: {exc}) - see hexcast.log", flush=True)
+
+
+_plugin_step("cleanup", plugin_installer.clean_trash)
+_plugin_step("upgrade check", lambda: plugin_migrate.run(plugin_host, plugin_installer))   # keep an old install's tabs
+if os.getenv("HEXCAST_DEV", "").strip().lower() in ("1", "true", "yes", "on"):   # developers: catalog edits show up on restart
+    _plugin_step("dev sync", lambda: plugin_installer.sync_from_catalog(lambda m: print(f"  [dev] {m}", flush=True)))
+_plugin_step("start", plugin_host.load_all)
+if plugin_host.settings.problem:
+    print(f"  [!] {plugin_host.settings.problem}", flush=True)
+for _pid in plugin_host.loaded:
+    print(f"  plugin: {_pid}", flush=True)
+for _pid, _why in plugin_host.errors.items():
+    print(f"  [!] plugin '{_pid}' is not running: {_why}", flush=True)
 
 
 if __name__ == "__main__":

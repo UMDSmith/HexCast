@@ -1,5 +1,10 @@
 # Games — bot-driven overlay games (Roulette)
 
+> **A plugin with add-ons.** This page documents the Games plugin and its first game, **Roulette** (the `games_roulette`
+> add-on). Craps, Russian Roulette and Trivia are add-ons too - see [Craps](craps.md),
+> [Russian Roulette](russian_roulette.md) and [Trivia](trivia.md) - and all of them are installed from the **+** inside
+> the Games tab. Only the games you install have a tab, an overlay layer and API routes.
+
 A home for games your chat — or a bot — can play on stream. The first one is
 **Roulette**: trigger a spin from the panel or with one HTTP call and a casino
 wheel pops onto the stream. The wheel spins, the ball is launched the other
@@ -81,26 +86,17 @@ there's nothing to configure.
 
 ## Install
 
-Copy `games.py` next to `hexcast.py`, and these files into `static/`:
+Games is a plugin, and each game is an **add-on** of it, so you install only what you play:
 
-```
-static/games_panel.html
-static/games_overlay.html
-static/games/roulette.js
-```
+1. Open the **+** tab in the top bar, find **Games** and press **Install**. A **Games** tab appears.
+2. In the Games tab, click the **+** at the end of its own tab strip. Pick a game - **Roulette**, **Craps**,
+   **Russian Roulette**, **Trivia** - and press **Install**. Its tab appears at once.
 
-`hexcast.py` already mounts the module when the file is present — like Clips
-it's optional, so if `games.py` is missing it's skipped quietly. If you're
-wiring it into your own copy by hand, it's the same two lines as the other
-integrations, after `app.mount("/media", ...)`:
+From a terminal: `python hexcast.py plugins install games games_roulette games_craps games_russian games_trivia`
+(add only the games you want). There are no extra Python packages.
 
-```python
-from games import attach_games
-attach_games(app, PORT)
-```
-
-Restart Hexcast; new routes only appear after a restart. There are no extra
-dependencies.
+Removing a game keeps its settings (`config/games.json`) and its table file, so putting it back brings everything
+back - including bets that were still down. Take bets off the table first if you don't want them to wait.
 
 ---
 
@@ -2167,7 +2163,7 @@ Hexcast: no auth, keep it on the LAN.
 ## Troubleshooting
 
 **`/games` or the API gives a 404.** The module loads at startup — restart
-Hexcast after adding `games.py`, and check the console output for errors.
+Hexcast after installing the plugin, and check the console output for errors.
 
 **The wheel never shows up in OBS.** Hover the Games dot in the top bar: "no
 overlay connected" means the browser source isn't connected

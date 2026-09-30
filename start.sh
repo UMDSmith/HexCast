@@ -55,7 +55,7 @@ else
 fi
 
 # 4. Safety net: confirm the key packages import; repair once if not.
-if ! "$VENVPY" -c "import fastapi, uvicorn, httpx, socketio, websockets" >/dev/null 2>&1; then
+if ! "$VENVPY" -c "import fastapi, uvicorn, httpx, websockets, watchdog" >/dev/null 2>&1; then
     echo "  Some components are missing - repairing..."
     "$VENVPY" -m pip install -r requirements.txt
     cp -f requirements.txt ".venv/requirements.lock"
@@ -64,5 +64,6 @@ fi
 echo
 echo "  Starting Hexcast - leave this running while you stream."
 echo "  Control panel:  http://localhost:4747/"
+echo "  Add Twitch, Music, Games and more from the + tab of the control panel."
 echo
 exec "$VENVPY" hexcast.py
