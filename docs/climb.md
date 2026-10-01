@@ -173,6 +173,17 @@ at least one climb ends the game as `complete`.
 
 ## The soul and the show
 
+**The look.** The pit and the soul are drawn in a dark-fantasy style: layered rock
+lit like a normal map (warm lava from below, cold fill from above, cracks, strata,
+bones and skulls set into the wall, rusted chains), a blurred far cave for depth,
+heat haze over the lava, drifting ash and embers. The soul is a gaunt, emaciated
+man (ribs, collarbones, sinews that stand out when he strains, five-fingered hands
+that curl round the holds, a tattered loincloth, a face that goes from weary to
+strained to terrified to relieved) with a faint ghostly glow, a wisp trail, soft
+shadows on the wall and dust shaken off the holds. Only the looks are
+serious: the acting (slips, dangles, grabs, falls, speech bubbles) is still the joke,
+and none of it touches the script or the outcome.
+
 Each climb has its own soul: the name comes from `/start` (`soul`, several names
 separated by commas = one per climb) or the `soul_name` setting, else a
 built-in list (Gary, Kevin, Brenda, Steve…); every soul has its own skin tone

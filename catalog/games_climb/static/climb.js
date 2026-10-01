@@ -119,12 +119,12 @@
 
   // soul looks: skin colours and gear (the server picks indexes per climb)
   var SKINS = [
-    { a: '#8d8a8e', b: '#4a4450', belly: '#b9b4b6' },      // ashen
-    { a: '#8f9068', b: '#4a4c36', belly: '#bcba90' },      // sallow
-    { a: '#7f8ea0', b: '#404c5c', belly: '#b0bccd' },      // blue-grey
-    { a: '#a08585', b: '#5a4243', belly: '#cdaea9' },      // flayed
-    { a: '#a89a72', b: '#5a5036', belly: '#d3c79e' },      // bone-yellow
-    { a: '#7d9181', b: '#3f5047', belly: '#abbead' }       // grave-green
+    { a: '#a39fa4', b: '#575160', belly: '#cfc9cb' },      // ashen
+    { a: '#a6a77a', b: '#56583f', belly: '#d3d1a4' },      // sallow
+    { a: '#93a3b8', b: '#47566a', belly: '#c4d0e0' },      // blue-grey
+    { a: '#b89a98', b: '#65494b', belly: '#e0c2bc' },      // flayed
+    { a: '#bdae84', b: '#625839', belly: '#e6dab0' },      // bone-yellow
+    { a: '#92a997', b: '#44574c', belly: '#bfd1c2' }       // grave-green
   ];
   var GEARS = ['none', 'tie', 'hardhat', 'headband', 'glasses', 'party', 'bow', 'scarf'];
 
@@ -286,7 +286,7 @@
   // An emaciated damned man, drawn from a pose (limb targets in screen px) with two-bone IK: tapered limbs shaded across
   // their width (cool fill from above, a warm lava rim from below), a ribcage and clavicles, five-fingered hands that curl
   // round their holds, a tattered loincloth, a gaunt face whose expression follows the mood. The comedy is in the acting.
-  var SOUL = { a1: 25, a2: 23, l1: 33, l2: 33, shX: 18, shY: -42, hipX: 8, headY: -66 };
+  var SOUL = { a1: 25, a2: 23, l1: 30, l2: 30, shX: 18, shY: -42, hipX: 8, headY: -66 };
   var INK = '#1a0c10';
 
   function ik(sx, sy, tx, ty, l1, l2, side) {
@@ -342,11 +342,17 @@
     }
     c.restore();
   }
-  function joint(c, x, y, r, sk, L) {
-    var g = c.createRadialGradient(x - r * 0.3, y - r * 0.4, 0.5, x, y, r * 1.15);
-    g.addColorStop(0, sk.hi); g.addColorStop(0.55, sk.a); g.addColorStop(1, sk.b);
-    c.fillStyle = g; c.beginPath(); c.arc(x, y, r, 0, TAU); c.fill(); c.strokeStyle = 'rgba(14,6,9,.5)'; c.lineWidth = 0.9; c.stroke();
-    c.strokeStyle = rimCol(L, 0.5); c.lineWidth = 1.1; c.beginPath(); c.arc(x, y, r * 0.86, 0.35, Math.PI - 0.35); c.stroke();
+  function joint(c, x, y, r, sk, L, soft) {
+    // soft = a muscle cap that blends into the limb (shoulders); otherwise just the bony highlight of an elbow / knee
+    if (soft) {
+      var g = c.createRadialGradient(x - r * 0.3, y - r * 0.5, 0.5, x, y, r * 1.2);
+      g.addColorStop(0, sk.hi); g.addColorStop(0.6, sk.a); g.addColorStop(1, sk.b);
+      c.fillStyle = g; c.beginPath(); c.arc(x, y, r, 0, TAU); c.fill();
+      c.strokeStyle = rimCol(L, 0.45); c.lineWidth = 1; c.beginPath(); c.arc(x, y, r * 0.85, 0.5, Math.PI - 0.5); c.stroke();
+      return;
+    }
+    c.fillStyle = 'rgba(235,222,205,.16)'; c.beginPath(); c.ellipse(x - r * 0.1, y - r * 0.2, r * 0.7, r * 0.55, 0, 0, TAU); c.fill();
+    c.strokeStyle = 'rgba(14,6,9,.32)'; c.lineWidth = 1; c.beginPath(); c.arc(x, y, r * 0.8, 0.6, Math.PI - 0.6); c.stroke();
   }
 
   // a hand: palm, four fingers of three phalanges and a thumb. grip 1 = curled round the hold, 0 = open and spread
@@ -364,13 +370,8 @@
         pa += cs * grip * (0.5 + 0.38 * j);
         px += Math.cos(pa) * lens[i] * fr[j]; py += Math.sin(pa) * lens[i] * fr[j]; pts.push([px, py]);
       }
-      for (var pass = 0; pass < 2; pass++) {
-        for (j = 0; j < 3; j++) {
-          c.strokeStyle = pass ? (j === 2 ? sk.b : sk.a) : 'rgba(14,6,9,.75)'; c.lineWidth = (3.1 - j * 0.5) + (pass ? 0 : 1.1);
-          c.beginPath(); c.moveTo(pts[j][0], pts[j][1]); c.lineTo(pts[j + 1][0], pts[j + 1][1]); c.stroke();
-        }
-      }
-      c.strokeStyle = rimCol(L, 0.55); c.lineWidth = 0.9; c.beginPath(); c.moveTo(pts[0][0], pts[0][1] + cs * 1.2); c.lineTo(pts[1][0], pts[1][1] + cs * 1.2); c.lineTo(pts[2][0], pts[2][1] + cs * 1.1); c.stroke();
+      c.beginPath(); c.moveTo(pts[0][0], pts[0][1]); c.lineTo(pts[1][0], pts[1][1]); c.lineTo(pts[2][0], pts[2][1]); c.lineTo(pts[3][0], pts[3][1]);
+      c.strokeStyle = 'rgba(14,6,9,.75)'; c.lineWidth = 3.7; c.stroke(); c.strokeStyle = sk.a; c.lineWidth = 2.6; c.stroke();
       if (grip > 0.5) { c.fillStyle = 'rgba(235,222,205,.35)'; c.beginPath(); c.arc(pts[1][0], pts[1][1] - cs * 1.2, 1, 0, TAU); c.fill(); }
     }
     var tp = [[2.4, -4.2 * cs]], ta = -cs * (0.5 - 0.5 * grip) - 0.25 * cs;
@@ -403,6 +404,7 @@
   // the ribcage and shoulders: collarbones, sternum, curved ribs with dark gaps, a sunken belly, hip bones
   function torso(c, sk, L, t) {
     var br = Math.sin(t / 640) * 0.5, sx = SOUL.shX;
+    c.save(); c.scale(1.12, 1);
     c.beginPath();
     c.moveTo(-5, -47); c.quadraticCurveTo(-12, -46, -sx - 3, -42.5); c.quadraticCurveTo(-sx - 5, -40, -16.5, -33);
     c.quadraticCurveTo(-15, -22, -11.5, -12); c.quadraticCurveTo(-13, -5, -14.5, 0);
@@ -423,7 +425,7 @@
       // ribs: curved bands, a dark gap above each and a lit lower edge
       for (var i = 0; i < 6; i++) {
         var ry = -37 + i * 4.4 + br, w = 14.5 - i * 0.9 + (i > 3 ? -1 : 0), dr = 4 + i * 0.4;
-        c.strokeStyle = 'rgba(12,4,7,' + (0.5 - i * 0.03) + ')'; c.lineWidth = 2.1;
+        c.strokeStyle = 'rgba(12,4,7,' + (0.36 - i * 0.025) + ')'; c.lineWidth = 2;
         c.beginPath(); c.moveTo(sd * 2.2, ry - 1); c.quadraticCurveTo(sd * w * 0.7, ry - 2.2, sd * w, ry + dr); c.stroke();
         c.strokeStyle = 'rgba(' + L.glow + ',' + (0.26 * L.rim + 0.05) + ')'; c.lineWidth = 1.1;
         c.beginPath(); c.moveTo(sd * 2.4, ry + 1.2); c.quadraticCurveTo(sd * w * 0.7, ry - 0.2, sd * w, ry + dr + 1.6); c.stroke();
@@ -437,15 +439,14 @@
     c.strokeStyle = 'rgba(12,4,7,.4)'; c.lineWidth = 1; c.beginPath(); c.moveTo(0.9, -43); c.lineTo(0.9, -24); c.stroke();
     c.fillStyle = 'rgba(12,4,7,.28)'; c.beginPath(); c.ellipse(0, -13, 5.8, 8, 0, 0, TAU); c.fill();                // sunken belly
     c.fillStyle = 'rgba(12,4,7,.45)'; c.beginPath(); c.arc(0, -10, 0.9, 0, TAU); c.fill();
-    c.restore();
+    c.restore(); c.restore();
   }
 
   // a ragged loincloth with fold shading, a rope belt and torn strips that sway
   function loincloth(c, sk, L, t) {
     var sw = Math.sin(t / 700) * 1.6;
     c.save();
-    c.beginPath(); c.moveTo(-15, -4); c.lineTo(15, -4); c.lineTo(16, 6); c.lineTo(12.5, 15 + sw * 0.3); c.lineTo(9, 9); c.lineTo(5.5, 19 + sw); c.lineTo(1.5, 10); c.lineTo(-2.5, 17 + sw * 0.6);
-    c.lineTo(-6.5, 8); c.lineTo(-10.5, 18 + sw * 0.4); c.lineTo(-13, 9); c.lineTo(-16.5, 13); c.closePath();
+    c.beginPath(); c.moveTo(-16, -4); c.lineTo(16, -4); c.lineTo(17.5, 7); c.lineTo(14, 13 + sw * 0.3); c.lineTo(10.5, 9.5); c.lineTo(6, 16 + sw * 0.8); c.lineTo(1, 10.5); c.lineTo(-4, 15 + sw * 0.5); c.lineTo(-9, 10); c.lineTo(-13, 14 + sw * 0.3); c.lineTo(-17.5, 8); c.closePath();
     var g = c.createLinearGradient(-15, -4, 15, 14);
     g.addColorStop(0, '#8d806a'); g.addColorStop(0.5, '#6b5f4c'); g.addColorStop(1, '#3f362b');
     c.fillStyle = g; c.fill(); c.lineWidth = 1; c.strokeStyle = 'rgba(14,6,9,.7)'; c.stroke();
@@ -489,9 +490,9 @@
     for (i = 0; i < 2; i++) {
       var ft = o.feet && o.feet[i] ? loc(o.feet[i]) : { x: hip[i].x * 1.3 + (i ? 2 : -2), y: 58 + Math.sin(t / 380 + i * 2) * 1.5 };
       Lm = ik(hip[i].x, hip[i].y, ft.x, ft.y - 4, SOUL.l1, SOUL.l2, i ? 1 : -1);
-      seg(c, hip[i].x, hip[i].y, Lm.ex, Lm.ey, 12.5, 8.4, sk, L, { bulge: 0.5 + 0.5 * eff });
-      seg(c, Lm.ex, Lm.ey, Lm.hx, Lm.hy, 8.4, 5, sk, L, { tendons: eff * 0.6 });
-      joint(c, Lm.ex, Lm.ey, 5, sk, L);
+      seg(c, hip[i].x, hip[i].y, Lm.ex, Lm.ey, 17, 11.4, sk, L, { bulge: 0.5 + 0.5 * eff });
+      seg(c, Lm.ex, Lm.ey, Lm.hx, Lm.hy, 11.4, 6.6, sk, L, { tendons: eff * 0.6 });
+      joint(c, Lm.ex, Lm.ey, 4.3, sk, L);
       var fa = Math.atan2(Lm.hy - Lm.ey, Lm.hx - Lm.ex) - Math.PI / 2;
       foot(c, Lm.hx, Lm.hy + 1, o.feet && o.feet[i] ? fa * 0.25 : fa * 0.5, sk, L, o.feet && o.feet[i] ? 0.9 : 0.4);
     }
@@ -519,9 +520,9 @@
       var hd = o.hands && o.hands[i] ? loc(o.hands[i]) : { x: sh[i].x * 1.5, y: sh[i].y + 46 };
       var ddx = hd.x - sh[i].x, ddy = hd.y - sh[i].y, dl = Math.sqrt(ddx * ddx + ddy * ddy) || 1, reach = Math.min(10, dl * 0.25);      // the hand extends past the wrist
       Lm = ik(sh[i].x, sh[i].y, hd.x - ddx / dl * reach, hd.y - ddy / dl * reach, SOUL.a1, SOUL.a2, i ? 1 : -1);
-      seg(c, sh[i].x, sh[i].y, Lm.ex, Lm.ey, 8.2, 6.4, sk, L, { bulge: 0.4 + 0.8 * eff });
-      seg(c, Lm.ex, Lm.ey, Lm.hx, Lm.hy, 6.4, 4.6, sk, L, { tendons: 0.3 + 0.7 * eff });
-      joint(c, Lm.ex, Lm.ey, 3.9, sk, L); joint(c, sh[i].x, sh[i].y, 4.6, sk, L);
+      seg(c, sh[i].x, sh[i].y, Lm.ex, Lm.ey, 10.2, 7.8, sk, L, { bulge: 0.4 + 0.8 * eff });
+      seg(c, Lm.ex, Lm.ey, Lm.hx, Lm.hy, 7.8, 5.4, sk, L, { tendons: 0.3 + 0.7 * eff });
+      joint(c, Lm.ex, Lm.ey, 3.6, sk, L); joint(c, sh[i].x, sh[i].y, 6.2, sk, L, true);
       var ha = Math.atan2(Lm.hy - Lm.ey, Lm.hx - Lm.ex);
       hand(c, Lm.hx, Lm.hy, ha, o.grip ? o.grip[i] : 0.5, sk, L, i ? 1 : -1);
     }
@@ -548,7 +549,7 @@
     c.strokeStyle = 'rgba(14,6,9,' + (0.25 + 0.35 * eff) + ')'; c.lineWidth = 1.1; c.lineCap = 'round';
     [-1, 1].forEach(function (sd) { c.beginPath(); c.moveTo(sd * 3.8, hy + 9); c.quadraticCurveTo(sd * 3, -52, sd * 1, -44.5); c.stroke(); });
     c.fillStyle = 'rgba(12,4,7,.35)'; c.beginPath(); c.ellipse(0, -52, 4.6, 5, 0, 0, TAU); c.fill();
-    c.save(); c.translate(0, hy + bob);
+    c.save(); c.translate(0, hy + bob); c.scale(1.2, 1.2);
     if (o.headTilt) c.rotate(o.headTilt);
     // hair: a few lank strands
     c.strokeStyle = 'rgba(24,16,16,.9)'; c.lineWidth = 1.1;
@@ -833,6 +834,8 @@
         p.mood = 'strain'; p.mouth = 0.25 + eff * 0.6; p.look = { x: 0.2, y: -0.8 };
         p.sweat = clamp(tl.max ? lvl / Math.max(20, tl.max * 0.9) : 0.2, 0, 0.9) * 0.9;
         p.y += Math.sin(u * Math.PI) * -3;
+        var par = (Math.floor(lvl + 0.001) & 1) ? 1 : -1, shift = Math.sin(clamp(u * 1.25, 0, 1) * Math.PI);       // weight over the planted side, then across
+        p.x += par * shift * 3.2; p.lean = (p.lean || 0) + par * shift * 0.035;
         p.line = 'effort';
         return p;
       }
@@ -933,8 +936,9 @@
         p.feet = [lerpPt(p.feet[0], { x: px - 24 + Math.sin(T / 60) * 12, y: py - 36 + Math.cos(T / 50) * 8 }, sl),
                   lerpPt(p.feet[1], { x: px + 22 + Math.cos(T / 66) * 12, y: py - 34 + Math.sin(T / 55) * 8 }, sl)];
         p.grip = [1, 1]; p.mood = u < 0.9 ? 'scared' : 'strain'; p.mouth = 0.9; p.sweat = 1;
-        p.look = { x: 0, y: 0.5 }; p.lean = Math.sin(T / 45) * 0.05 * sl; p.line = 'slip';
-        p.x += Math.sin(T / 40) * 1.6 * sl;
+        var sw2 = u > 0.5 ? Math.sin((u - 0.5) * 17) * Math.exp(-(u - 0.5) * 4.2) : 0;                      // the dangle: a damped swing from the hands
+        p.look = { x: 0, y: 0.5 }; p.lean = Math.sin(T / 45) * 0.03 * sl + sw2 * 0.22; p.line = 'slip';
+        p.x += Math.sin(T / 40) * 1.2 * sl + sw2 * 9; p.y += -Math.abs(sw2) * 3;
         return p;
       }
       case 'bat': {
@@ -1281,7 +1285,8 @@
 
   function skull(c, x, y, r, th, rot) {
     c.save(); c.translate(x, y); c.rotate(rot || 0);
-    c.fillStyle = th.bone; c.strokeStyle = 'rgba(30,10,10,.8)'; c.lineWidth = 2;
+    var sg = c.createLinearGradient(0, -r, 0, r * 1.2); sg.addColorStop(0, shade(th.bone, 0.8)); sg.addColorStop(0.6, th.bone); sg.addColorStop(1, mixc(th.bone2, 'rgb(' + th.glow + ')', 0.35));
+    c.fillStyle = sg; c.strokeStyle = 'rgba(30,10,10,.7)'; c.lineWidth = 1.4;
     c.beginPath(); c.ellipse(0, -r * 0.1, r, r * 0.92, 0, 0, TAU); c.fill(); c.stroke();
     c.beginPath(); rr(c, -r * 0.55, r * 0.55, r * 1.1, r * 0.62, r * 0.18); c.fill(); c.stroke();
     c.fillStyle = '#1b0a0c';
@@ -1326,7 +1331,7 @@
     var slab = Math.pow(fb, 1.6) * 0.9 - (fb > 0.9 ? (fb - 0.9) * 8 : 0);                    // each bed leans out and ends in a lip
     var n = vn(wx * 0.011, wy * 0.011) * 0.9 + vn(wx * 0.034, wy * 0.034) * 0.42 + vn(wx * 0.09, wy * 0.09) * 0.16;
     var r = 1 - Math.abs(2 * vn(wx * 0.017 + 50, wy * 0.013 + 7) - 1), crack = Math.pow(r, 9) * 1.1;
-    return slab * 0.42 + n * 1.15 - crack;
+    return slab * 0.2 + n * 1.3 - crack;
   }
   function bakeRock(inst, idx) {
     var th = inst.th, H = inst.H, W2 = VW >> 1, H2 = CH >> 1, top = (idx + 1) * CH, cv = mkCanvas(W2, H2), c = cv.getContext('2d');
@@ -1376,14 +1381,21 @@
       c.lineWidth = 1.5 + rnd() * 3; c.strokeStyle = dark ? 'rgba(0,0,0,.22)' : 'rgba(255,230,210,.07)';
       c.beginPath(); for (x = 0; x <= VW; x += 10) { var yv = ly + Math.sin(x * 0.02 + ph) * amp + Math.sin(x * 0.07 + ph * 2) * amp * 0.4; if (x) c.lineTo(x, yv); else c.moveTo(x, yv); } c.stroke();
     }
-    // boulders
+    // boulders: no outlines - lit from below by the lava, a cast shadow up the wall, a few chips
     for (i = 0; i < 12; i++) {
-      var bx = rnd() * VW, by = rnd() * CH, br = 14 + rnd() * 34, lvl = (top - by) / LV, bc = strataColor(th, lvl, H);
-      blob(c, bx, by, br, rnd);
-      var bg = c.createLinearGradient(bx - br, by - br, bx + br, by + br);
-      bg.addColorStop(0, shade(bc, 1.45)); bg.addColorStop(0.55, shade(bc, 1.05)); bg.addColorStop(1, shade(bc, 0.6));
-      c.fillStyle = bg; c.fill(); c.lineWidth = 2.2; c.strokeStyle = 'rgba(0,0,0,.45)'; c.stroke();
-      c.fillStyle = 'rgba(255,240,220,.1)'; c.beginPath(); c.ellipse(bx - br * 0.3, by - br * 0.35, br * 0.38, br * 0.2, -0.5, 0, TAU); c.fill();
+      var bx = rnd() * VW, by = rnd() * CH, br = 14 + rnd() * 34, lvl = (top - by) / LV, bc = strataColor(th, lvl, H), lk = 0.25 + 0.75 * Math.exp(-Math.max(0, lvl) / 18);
+      c.save(); c.translate(3, -br * 0.22); blob(c, bx, by, br * 1.04, mulberry(i * 31 + idx)); c.fillStyle = 'rgba(0,0,0,.3)'; c.fill(); c.restore();
+      var rr0 = mulberry(i * 31 + idx); blob(c, bx, by, br, rr0);
+      var bg = c.createLinearGradient(bx, by - br, bx, by + br * 0.9);
+      bg.addColorStop(0, shade(bc, 0.5)); bg.addColorStop(0.5, shade(bc, 0.95)); bg.addColorStop(1, mixc(shade(bc, 1.3), 'rgb(' + th.glow + ')', 0.42 * lk));
+      c.fillStyle = bg; c.fill(); c.lineWidth = 1.2; c.strokeStyle = 'rgba(0,0,0,.35)'; c.stroke();
+      c.save(); c.clip();
+      var sg2 = c.createRadialGradient(bx - br * 0.4, by - br * 0.5, 2, bx - br * 0.4, by - br * 0.5, br * 0.9); sg2.addColorStop(0, 'rgba(170,190,230,.14)'); sg2.addColorStop(1, 'rgba(170,190,230,0)');
+      c.fillStyle = sg2; c.fillRect(bx - br * 1.5, by - br * 1.5, br * 3, br * 3);
+      c.strokeStyle = 'rgba(0,0,0,.4)'; c.lineWidth = 1.4; c.beginPath(); c.moveTo(bx - br * 0.3, by - br * 0.6); c.lineTo(bx - br * 0.05, by - br * 0.1); c.lineTo(bx + br * 0.25, by + br * 0.3); c.stroke();
+      for (var sp3 = 0; sp3 < 10; sp3++) { c.fillStyle = 'rgba(0,0,0,.18)'; c.fillRect(bx + (rnd() - 0.5) * br * 1.6, by + (rnd() - 0.5) * br * 1.2, 1.5, 1.5); }
+      c.restore();
+      c.strokeStyle = 'rgba(' + th.glow + ',' + (0.4 * lk) + ')'; c.lineWidth = 2; c.beginPath(); c.ellipse(bx, by, br * 0.95, br * 0.82, 0, 0.45, Math.PI - 0.45); c.stroke();
     }
     // cracks (the low ones glow)
     for (i = 0; i < 8; i++) {
@@ -1432,15 +1444,19 @@
 
   // ---- little props used by the routes and the scene
   function slab(c, x, y, w, h, th, tone, rnd) {
-    // a rock ledge: top face lit, front face dark, chipped corners; (x, y) = middle of the top edge
+    // a rock ledge: the top face catches the cold light, the front falls into shadow and its underside glows from the lava
     var x0 = x - w / 2, x1 = x + w / 2;
+    c.save(); c.translate(0, 3); c.beginPath(); c.moveTo(x0 + 3, y - 3); c.lineTo(x1 - 4, y - 4); c.lineTo(x1 + 1, y + 2); c.lineTo(x1 - 6, y + h); c.lineTo(x0 + 9, y + h - 1); c.lineTo(x0 - 2, y + 4); c.closePath();
+    c.fillStyle = 'rgba(0,0,0,.28)'; c.fill(); c.restore();
     c.beginPath();
     c.moveTo(x0 + 3, y - 3); c.lineTo(x1 - 4, y - 4); c.lineTo(x1 + 1, y + 2); c.lineTo(x1 - 6, y + h);
     c.lineTo(x0 + 9, y + h - 1); c.lineTo(x0 - 2, y + 4); c.closePath();
     var g = c.createLinearGradient(0, y - 4, 0, y + h);
-    g.addColorStop(0, shade(tone, 1.65)); g.addColorStop(0.28, shade(tone, 1.3)); g.addColorStop(0.3, shade(tone, 0.8)); g.addColorStop(1, shade(tone, 0.42));
-    c.fillStyle = g; c.fill(); c.lineWidth = 2.4; c.strokeStyle = 'rgba(10,2,4,.85)'; c.stroke();
-    c.strokeStyle = 'rgba(255,240,220,.28)'; c.lineWidth = 1.5; c.beginPath(); c.moveTo(x0 + 8, y - 1.5); c.lineTo(x1 - 10, y - 2.5); c.stroke();
+    g.addColorStop(0, shade(tone, 1.55)); g.addColorStop(0.26, shade(tone, 1.2)); g.addColorStop(0.3, shade(tone, 0.62)); g.addColorStop(0.8, shade(tone, 0.4)); g.addColorStop(1, mixc(shade(tone, 0.7), 'rgb(' + th.glow + ')', 0.5));
+    c.fillStyle = g; c.fill(); c.lineWidth = 1.4; c.strokeStyle = 'rgba(10,2,4,.7)'; c.stroke();
+    c.strokeStyle = 'rgba(200,215,245,.3)'; c.lineWidth = 1.2; c.beginPath(); c.moveTo(x0 + 8, y - 1.5); c.lineTo(x1 - 10, y - 2.5); c.stroke();
+    c.strokeStyle = 'rgba(0,0,0,.35)'; c.lineWidth = 1; c.beginPath(); c.moveTo(x0 + w * 0.3, y + 2); c.lineTo(x0 + w * 0.34, y + h * 0.7); c.moveTo(x0 + w * 0.7, y + 3); c.lineTo(x0 + w * 0.66, y + h * 0.55); c.stroke();
+    c.strokeStyle = 'rgba(' + th.glow + ',.4)'; c.lineWidth = 1.3; c.beginPath(); c.moveTo(x0 + 10, y + h - 1.5); c.lineTo(x1 - 8, y + h - 2); c.stroke();
   }
   function knob(c, x, y, r, tone) {
     c.beginPath(); c.ellipse(x, y, r, r * 0.85, 0, 0, TAU);
@@ -1450,10 +1466,13 @@
   }
   function link(c, x, y, ang, w, h, th, flat) {
     c.save(); c.translate(x, y); c.rotate(ang);
-    c.lineWidth = 5.4; c.strokeStyle = 'rgba(10,2,4,.9)';
+    c.lineWidth = 5.6; c.strokeStyle = 'rgba(6,2,4,.9)';
     c.beginPath(); rr(c, -w / 2, -h / 2, w, h, Math.min(w, h) / 2.2); c.stroke();
-    c.lineWidth = 3.2; c.strokeStyle = th.iron; c.beginPath(); rr(c, -w / 2, -h / 2, w, h, Math.min(w, h) / 2.2); c.stroke();
-    c.lineWidth = 1.2; c.strokeStyle = th.ironHi; c.beginPath(); c.moveTo(-w / 2 + 3, -h / 2 + 2); c.lineTo(w / 2 - 6, -h / 2 + 2); c.stroke();
+    var g = c.createLinearGradient(0, -h / 2, 0, h / 2); g.addColorStop(0, th.ironHi); g.addColorStop(0.4, th.iron); g.addColorStop(0.75, shade(th.iron, 0.5)); g.addColorStop(1, mixc(th.iron, 'rgb(' + th.glow + ')', 0.55));
+    c.lineWidth = 3.4; c.strokeStyle = g; c.beginPath(); rr(c, -w / 2, -h / 2, w, h, Math.min(w, h) / 2.2); c.stroke();
+    c.lineWidth = 1; c.strokeStyle = 'rgba(255,255,255,.28)'; c.beginPath(); c.moveTo(-w / 2 + 3, -h / 2 + 1.4); c.lineTo(w / 2 - 6, -h / 2 + 1.4); c.stroke();
+    var hs = Math.round(Math.abs(x * 7 + y * 3)) % 7;                      // rust
+    c.fillStyle = 'rgba(122,58,26,.55)'; c.fillRect(-w / 2 + hs, -h / 2 + 3, 2.2, 1.8); c.fillRect(w / 2 - 3 - hs * 0.4, h / 2 - 4, 1.8, 2.2);
     c.restore();
   }
   function rivet(c, x, y, r, th) {
@@ -1703,6 +1722,13 @@
     // bright crest
     c.strokeStyle = th.lava2; c.lineWidth = 3; c.globalAlpha = 0.85; c.beginPath();
     for (x = 0; x <= VW; x += 10) { var yy = ys + wave(x, T) + 1; if (x) c.lineTo(x, yy); else c.moveTo(x, yy); } c.stroke(); c.globalAlpha = 1;
+    // the bloom: lava light spilling up the pit (additive)
+    c.save(); c.globalCompositeOperation = 'lighter';
+    var bg2 = c.createLinearGradient(0, ys - 300, 0, ys + 10); bg2.addColorStop(0, 'rgba(' + th.glow + ',0)'); bg2.addColorStop(1, 'rgba(' + th.glow + ',.34)');
+    c.fillStyle = bg2; c.fillRect(0, Math.max(0, ys - 300), VW, Math.min(VH, 310));
+    var bg3 = c.createRadialGradient(VW * 0.45, ys, 10, VW * 0.45, ys, 360); bg3.addColorStop(0, 'rgba(255,200,120,.24)'); bg3.addColorStop(1, 'rgba(255,120,40,0)');
+    c.fillStyle = bg3; c.fillRect(0, Math.max(0, ys - 360), VW, 400);
+    c.restore();
     // darker crust floating on it
     for (var i = 0; i < 9; i++) {
       var r = hash(i * 31), bx = ((r * 900 + T * (6 + i % 3 * 2) / 1000 * (i % 2 ? 1 : -1)) % (VW + 160) + VW + 160) % (VW + 160) - 80, by = ys + 22 + (i % 4) * 34 + hash(i) * 20;
@@ -2123,9 +2149,25 @@
   };
 
   // what the soul is dragged into / the things around him in the last beats (cause of the fall, flailing bits ...)
+  // a puff of dust and grit where he hits something (age in ms)
+  function dustPuff(c, x, y, age, seed) {
+    if (age < 0 || age > 900) return;
+    var f = age / 900, i;
+    for (i = 0; i < 7; i++) {
+      var r1 = hash(seed * 7 + i), a = (i / 7) * Math.PI + (r1 - 0.5) * 0.5 + Math.PI, d = (10 + 38 * easeOut(f)) * (0.6 + r1), rad = 7 + 12 * f + r1 * 6;
+      var px = x + Math.cos(a) * d * 1.3, py = y + Math.sin(a) * d * 0.55 - 6 * f, g = c.createRadialGradient(px, py, 1, px, py, rad);
+      g.addColorStop(0, 'rgba(170,150,132,' + (0.5 * (1 - f)).toFixed(3) + ')'); g.addColorStop(1, 'rgba(170,150,132,0)');
+      c.fillStyle = g; c.fillRect(px - rad, py - rad, rad * 2, rad * 2);
+    }
+  }
+
   DRAW.soulFx = function (I, c, sc, pose, sp, T) {
     var fx = pose.fx, th = I.th, tl = sc.tl, tms = sc.tms;
     if (!fx) return;
+    if (fx.type === 'fall' && fx.style === 'bonk' && fx.bonk && fx.u <= fx.imp + 0.1) {
+      var bk = fx.bonk; if (bk.k > 0 || bk.f > 0.2) dustPuff(c, sp.x, sp.y + 34, bk.f * 430, bk.k + 3);
+    }
+    if (fx.type === 'fall' && fx.stars) dustPuff(c, sp.x, sp.y + 12, (fx.u - fx.imp) * 5000, 9);
     if (fx.type === 'hand') {
       var hp = W2S(I, fx.x, fx.y), from = W2S(I, -92, tl.beats[tl.index(tms)].lv * LV - 8);
       if (fx.gone < 1) drawBoneHand(c, th, from.x, from.y, hp.x, hp.y, 0.3 + fx.held * 0.7, T);
@@ -2628,7 +2670,16 @@
     var lo = Math.floor((cam.y - (VH - ANCHOR_Y) - 30) / CH), hi = Math.floor((cam.y + ANCHOR_Y + 30) / CH);
     for (i = lo; i <= hi; i++) {
       if (i < -2 || i * CH > H * LV + 60) continue;
-      c.drawImage(this._chunk(i), 0, ANCHOR_Y - ((i + 1) * CH - cam.y) - 0.5, VW, CH + 1);
+      var cvk = this._chunk(i), dy0 = ANCHOR_Y - ((i + 1) * CH - cam.y) - 0.5, lysH = ANCHOR_Y - (LAVA_Y - cam.y);
+      if (lysH > 30 && lysH < VH + 120 && dy0 < lysH && dy0 + CH + 1 > lysH - 130) {      // heat haze: the rock above the lava shimmers
+        var ya = Math.max(dy0, lysH - 130), yb = Math.min(dy0 + CH + 1, lysH + 4), yy, sc2 = cvk.height / (CH + 1);
+        if (ya > dy0) c.drawImage(cvk, 0, 0, cvk.width, (ya - dy0) * sc2, 0, dy0, VW, ya - dy0);
+        for (yy = ya; yy < yb; yy += 10) {
+          var hf = 1 - (lysH - yy) / 130, ha = 2.4 * hf * hf * (hf > 0 ? 1 : 0), hd = Math.sin(yy * 0.15 + T / 230) * ha + Math.sin(yy * 0.06 - T / 400) * ha * 0.6, hh2 = Math.min(10, yb - yy);
+          c.drawImage(cvk, 0, (yy - dy0) * sc2, cvk.width, hh2 * sc2, hd - 3, yy, VW + 6, hh2);
+        }
+        if (yb < dy0 + CH + 1) c.drawImage(cvk, 0, (yb - dy0) * sc2, cvk.width, cvk.height - (yb - dy0) * sc2, 0, yb, VW, dy0 + CH + 1 - yb);
+      } else c.drawImage(cvk, 0, dy0, VW, CH + 1);
     }
     DRAW.top(this, c, sc, T);
     DRAW.torches(this, c, sc, T);
@@ -2641,9 +2692,11 @@
     // the soul
     var sp = W2S(this, pose.x, pose.y);
     this.soulScreen = sp;
+    if (!pose.gone && !pose.hidden) this._ghost(c, sc, pose, sp, T);
     if (DRAW.finaleBack) DRAW.finaleBack(this, c, sc, T);
     this._drawSoul(c, sc, pose, sp, T);
     DRAW.soulFx(this, c, sc, pose, sp, T);
+    if (!pose.gone && !pose.hidden) this._dust(c, sc, pose, sp, T);
     if (DRAW.finaleFront) DRAW.finaleFront(this, c, sc, T);
     // talk
     this._bubbles(c, sc, pose, sp, T);
@@ -2683,7 +2736,7 @@
     var o = { soot: pose.soot || 0, x: sp.x, y: sp.y, s: 1, rot: pose.rot || 0, lean: pose.lean || 0, hands: pose.hands ? [S(pose.hands[0]), S(pose.hands[1])] : null,
       feet: pose.feet ? [S(pose.feet[0]), S(pose.feet[1])] : null, grip: pose.grip, look: pose.look, mood: pose.mood, mouth: pose.mouth, sweat: pose.sweat,
       blink: blink, skin: soul.skin, gear: soul.gear, t: T, halo: pose.halo, tailWag: pose.tailWag, headTilt: pose.headTilt,
-      glow: self.th.glow, rim: clamp(0.18 + 0.95 * Math.exp(-Math.max(0, sc.level) / 15), 0, 1) };
+      glow: self.th.glow, rim: clamp(0.34 + 0.8 * Math.exp(-Math.max(0, sc.level || 0) / 18), 0, 1) };
     c.save();
     if (pose.lava) {                                      // sunk to the neck: only what is above the surface shows
       var ys = ANCHOR_Y - (LAVA_Y - self.cam.y);
@@ -2695,6 +2748,66 @@
     }
     drawSoul(c, o);
     c.restore();
+  };
+
+
+  // The ghost of him: a cold glow, a wisp trail behind his chest, soft shadows on the wall, dust trickling off the holds.
+  P._ghost = function (c, sc, pose, sp, T) {
+    var self = this, tr = this.trail || (this.trail = []), last = tr[tr.length - 1], i;
+    if (!last || T - last.t > 28) tr.push({ x: pose.x, y: pose.y + 18, t: T });
+    while (tr.length && (T - tr[0].t > 850 || tr.length > 48)) tr.shift();
+    var eff = pose.mood === 'strain' || pose.mood === 'scared' || pose.mood === 'ouch' ? 1 : 0.4, th = this.th;
+    // shadows: light comes from the lava below, so he throws a soft shadow up the wall
+    c.save();
+    var sg = c.createRadialGradient(sp.x + 8, sp.y - 34, 4, sp.x + 8, sp.y - 34, 52);
+    sg.addColorStop(0, 'rgba(6,2,4,.4)'); sg.addColorStop(1, 'rgba(6,2,4,0)');
+    c.save(); c.translate(sp.x + 8, sp.y - 34); c.scale(0.62, 1.35); c.translate(-(sp.x + 8), -(sp.y - 34)); c.fillStyle = sg; c.fillRect(sp.x - 50, sp.y - 90, 120, 120); c.restore();
+    c.lineCap = 'round';
+    for (i = 0; i < 2; i++) {
+      var hnd = i ? pose.hands && pose.hands[1] : pose.hands && pose.hands[0]; if (!hnd) continue;
+      var hs = { x: LANE_X + hnd.x - this.cam.x, y: ANCHOR_Y - (hnd.y - this.cam.y) };
+      c.strokeStyle = 'rgba(6,2,4,.1)'; c.lineWidth = 12; c.beginPath(); c.moveTo(sp.x + (i ? 24 : -12), sp.y - 46); c.lineTo(hs.x + 6, hs.y - 8); c.stroke();
+    }
+    c.restore();
+    // ghostly glow and wisps (additive)
+    c.save(); c.globalCompositeOperation = 'lighter';
+    var ag = c.createRadialGradient(sp.x, sp.y - 24, 6, sp.x, sp.y - 24, 70);
+    ag.addColorStop(0, 'rgba(150,200,255,' + (0.1 + 0.05 * eff) + ')'); ag.addColorStop(1, 'rgba(150,200,255,0)');
+    c.fillStyle = ag; c.fillRect(sp.x - 70, sp.y - 94, 140, 140);
+    c.lineCap = 'round';
+    for (i = 3; i < tr.length; i += 3) {
+      var a0 = tr[i - 3], a1 = tr[i], age = (T - a1.t) / 850, al = Math.pow(1 - age, 2) * 0.22;
+      var p0 = W2S(self, a0.x, a0.y), p1 = W2S(self, a1.x, a1.y);
+      var seglen = Math.abs(p1.x - p0.x) + Math.abs(p1.y - p0.y);
+      if (seglen > 160 || seglen < 2.5 || al < 0.01) continue;
+      al *= Math.min(1, seglen / 9);
+      var wob = Math.sin(T / 190 + i * 0.7) * 4 * age;
+      c.strokeStyle = 'rgba(165,210,255,' + al.toFixed(3) + ')'; c.lineWidth = 2 + 6 * (1 - age);
+      c.beginPath(); c.moveTo(p0.x + wob, p0.y); c.lineTo(p1.x + wob, p1.y); c.stroke();
+    }
+    for (i = 0; i < 2; i++) {                                         // wisps curling up off his shoulders
+      var ph = ((T / 2600) + i * 0.33) % 1, wx = sp.x + (i - 1) * 16 + Math.sin(T / 500 + i * 2) * 5, wy = sp.y - 52 - ph * 70;
+      c.strokeStyle = 'rgba(175,215,255,' + (0.2 * (1 - ph) * (1 - ph)).toFixed(3) + ')'; c.lineWidth = 2.4 * (1 - ph) + 0.6;
+      c.beginPath(); c.moveTo(wx, sp.y - 52 - ph * 40); c.bezierCurveTo(wx + 9 * Math.sin(T / 330 + i), wy + 20, wx - 9 * Math.sin(T / 410 + i), wy + 8, wx + 4, wy); c.stroke();
+    }
+    c.restore();
+  };
+
+  // dust shaken loose from the holds, more when he strains
+  P._dust = function (c, sc, pose, sp, T) {
+    var anchors = [], i, j, eff = pose.mood === 'strain' || pose.mood === 'scared' ? 1 : 0.35;
+    if (!sc.tl || pose.fx && pose.fx.type === 'fall') return;
+    if (pose.hands) for (i = 0; i < 2; i++) if (pose.hands[i]) anchors.push(pose.hands[i]);
+    if (pose.feet) for (i = 0; i < 2; i++) if (pose.feet[i]) anchors.push(pose.feet[i]);
+    for (i = 0; i < anchors.length; i++) {
+      var a = W2S(this, anchors[i].x, anchors[i].y);
+      for (j = 0; j < 3; j++) {
+        var h0 = hash(i * 17 + j * 5 + 3), ph = ((T / 1100) + h0) % 1, al = (1 - ph) * 0.34 * eff;
+        if (al < 0.02) continue;
+        c.fillStyle = 'rgba(176,156,134,' + al.toFixed(3) + ')';
+        c.beginPath(); c.arc(a.x + (h0 - 0.5) * 12 + Math.sin(T / 300 + i + j) * 3, a.y + 6 + ph * ph * 46, 0.9 + ph * 1.8, 0, TAU); c.fill();
+      }
+    }
   };
 
   P._bubbles = function (c, sc, pose, sp, T) {
@@ -2733,6 +2846,18 @@
       var rad = 1.2 + r3 * 2.6;
       c.fillStyle = 'rgba(' + th.glow + ',' + clamp(al, 0, 1) * 0.35 + ')'; c.beginPath(); c.arc(px, py, rad * 3, 0, TAU); c.fill();
       c.fillStyle = r3 > 0.5 ? th.lava1 : th.lava2; c.globalAlpha = clamp(al, 0, 1); c.beginPath(); c.arc(px, py, rad, 0, TAU); c.fill(); c.globalAlpha = 1;
+    }
+    // ash drifting down: near flakes are big and soft (out of focus), far ones small and sharp
+    for (i = 0; i < 26; i++) {
+      var q1 = hash(i * 11 + 101), q2 = hash(i * 11 + 102), q3 = hash(i * 11 + 103), q4 = hash(i * 11 + 104), near = q3 > 0.7;
+      var sp2 = 14 + q2 * 22, span2 = VH * 1.3, par2 = near ? 1.15 : 0.55 + q3 * 0.3;
+      var ax = ((q1 * VW + Math.sin(T / 1300 + i * 2.1) * 26 + T * 0.004 * (q4 - 0.3)) % VW + VW) % VW;
+      var ay = (((q4 * span2 + T * sp2 / 1000 - cam.y * par2 * 0.5) % span2) + span2) % span2 - VH * 0.15;
+      var ar = near ? 3.2 + q2 * 2.4 : 1 + q2 * 1.4, aa = (near ? 0.16 : 0.3) * smooth(0, 50, ay + 20) * smooth(0, 50, VH - ay);
+      if (aa < 0.01) continue;
+      c.save(); c.translate(ax, ay); c.rotate(T / 700 * (q1 - 0.5) + i);
+      c.fillStyle = 'rgba(' + (near ? '120,108,104' : '170,160,154') + ',' + aa.toFixed(3) + ')';
+      c.beginPath(); c.ellipse(0, 0, ar, ar * 0.55, 0, 0, TAU); c.fill(); c.restore();
     }
   };
 
@@ -3487,7 +3612,11 @@
       c.restore();
     }
     for (i = 0; i < 12; i++) { c.fillStyle = 'rgba(' + th.glow + ',' + (0.3 + rnd() * 0.5) + ')'; c.beginPath(); c.arc(rnd() * VW, rnd() * CH, 1 + rnd() * 2.2, 0, TAU); c.fill(); }
-    return cv;
+    // depth of field: the far cave is out of focus (the sharp copy underneath keeps the edges of the piece opaque)
+    var cv2 = mkCanvas(cv.width, cv.height), c2 = cv2.getContext('2d');
+    c2.drawImage(cv, 0, 0);
+    try { c2.filter = 'blur(' + (3.4 * k).toFixed(1) + 'px)'; c2.drawImage(cv, 0, 0); c2.filter = 'none'; } catch (e) {}
+    return cv2;
   }
 
   DRAW.far = function (I, c, sc, T) {
