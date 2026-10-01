@@ -6,7 +6,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-GAMES = ["games_roulette", "games_craps", "games_russian", "games_trivia"]
+GAMES = ["games_roulette", "games_craps", "games_russian", "games_trivia", "games_hexfall", "games_climb", "games_blackjack"]
 
 
 def install_all(w):
@@ -25,14 +25,14 @@ def test_all_games_register_in_tab_order(real_world):
     assert set(real_world.host.loaded) == {"games", *GAMES}, real_world.host.errors
     c = TestClient(real_world.app)
     reg = c.get("/games/api/registry").json()
-    assert [g["key"] for g in reg["games"]] == ["roulette", "craps", "russian", "trivia"]
+    assert [g["key"] for g in reg["games"]] == ["roulette", "craps", "russian", "trivia", "hexfall", "climb", "blackjack"]
     for g in reg["games"]:
         assert g["plugin"] == f"games_{g['key']}"
         assert g["overlay"]["script"].startswith(f"/plugins/games_{g['key']}/static/{g['key']}.js")
         assert g["panel_js"].startswith(f"/plugins/games_{g['key']}/static/{g['key']}_panel.js")
         assert g["overlay"]["appearance"] and g["overlay"]["defaults"]
-    assert [g["key"] for g in reg["games"] if g["overlay"]["stateful"]] == ["russian", "trivia"]
-    assert set(c.get("/games/api/status").json()["games"]) == {"roulette", "craps", "russian", "trivia"}
+    assert [g["key"] for g in reg["games"] if g["overlay"]["stateful"]] == ["russian", "trivia", "hexfall", "climb", "blackjack"]
+    assert set(c.get("/games/api/status").json()["games"]) == {"roulette", "craps", "russian", "trivia", "hexfall", "climb", "blackjack"}
 
 
 def test_every_script_the_pages_name_is_served(real_world):
@@ -46,7 +46,7 @@ def test_every_script_the_pages_name_is_served(real_world):
     for page in ("/games", "/games/overlay"):
         html = c.get(page).text
         urls += re.findall(r'src="(/plugins/games/static/[\w./-]+\.js\?v=\d+)"', html)
-        assert not re.search(r'id="tab-(roulette|craps|russian|trivia)"', html), page   # no game is hard-wired into a page
+        assert not re.search(r'id="tab-(roulette|craps|russian|trivia|hexfall|climb|blackjack)"', html), page   # no game is hard-wired into a page
     assert any("panel_common.js" in u for u in urls) and any("round_common.js" in u for u in urls)
     for u in urls:
         r = c.get(u)
@@ -61,7 +61,7 @@ def test_games_host_alone_has_no_games(real_world):
     assert c.get("/games/api/status").json()["games"] == {}
     assert c.get("/games/api/roulette/spin").status_code == 404          # unknown game
     api = c.get("/games/api").json()
-    assert api["games"] == [] and not any(g in api for g in ("roulette", "craps", "russian", "trivia"))
+    assert api["games"] == [] and not any(g in api for g in ("roulette", "craps", "russian", "trivia", "hexfall", "climb", "blackjack"))
     assert all("/roulette/" not in e for e in api["examples"])           # roulette examples only when roulette is there
     assert c.get("/games").status_code == 200 and c.get("/games/overlay").status_code == 200
 
@@ -138,10 +138,10 @@ def test_api_index_lists_only_installed_games(real_world):
     install_all(real_world)
     c = TestClient(real_world.app)
     api = c.get("/games/api").json()
-    assert api["games"] == ["roulette", "craps", "russian", "trivia"] or set(api["games"]) == {"roulette", "craps", "russian", "trivia"}
-    for g in ("roulette", "craps", "russian", "trivia"):
+    assert api["games"] == ["roulette", "craps", "russian", "trivia", "hexfall", "climb", "blackjack"] or set(api["games"]) == {"roulette", "craps", "russian", "trivia", "hexfall", "climb", "blackjack"}
+    for g in ("roulette", "craps", "russian", "trivia", "hexfall", "climb", "blackjack"):
         assert isinstance(api[g], dict) and api[g]
-    assert set(api["appearance_keys"]) == {"roulette", "craps", "russian", "trivia"}
+    assert set(api["appearance_keys"]) == {"roulette", "craps", "russian", "trivia", "hexfall", "climb", "blackjack"}
     assert any("roulette" in e for e in api["examples"])
 
 
