@@ -2169,6 +2169,7 @@
       '.hcl-h small{font-size:20px;color:var(--hcl-dim);margin-left:4px;text-shadow:none}',
       '.hcl-best{font-size:15px;color:var(--hcl-dim);margin:2px 0 12px}',
       '.hcl-best b{color:var(--hcl-ink)}',
+      '.hcl-wv,.hcl-wv b{color:var(--hcl-accent)}',
       '.hcl-next{display:flex;flex-direction:column;gap:6px;margin-top:2px;overflow:hidden}',
       '.hcl-nf{display:flex;align-items:baseline;justify-content:space-between;gap:6px;padding:5px 8px;border-radius:9px;background:rgba(255,255,255,.06);border-left:4px solid var(--hcl-accent);font-size:14px}',
       '.hcl-nf.passed{border-left-color:var(--hcl-good);opacity:.75} .hcl-nf.lost{border-left-color:#8a8590;opacity:.5;text-decoration:line-through}',
@@ -2255,7 +2256,7 @@
         '<div class="hcl-title"><span class="hcl-name"></span><span class="hcl-sub"></span></div>' +
         '<div class="hcl-box hcl-timer"><b></b><span></span></div>' +
         '<div class="hcl-box hcl-meter"><div class="hcl-gauge"><div class="hcl-gtop">ESCAPE</div><div class="hcl-fill"></div><div class="hcl-ticks"></div><div class="hcl-dot"></div></div>' +
-          '<div class="hcl-read"><div class="lbl">Height</div><div class="hcl-h"><span class="hcl-hv">0</span><small>/ 100</small></div><div class="hcl-best">best <b class="hcl-bv">0</b></div>' +
+          '<div class="hcl-read"><div class="lbl">Height</div><div class="hcl-h"><span class="hcl-hv">0</span><small>/ 100</small></div><div class="hcl-best">best <b class="hcl-bv">0</b><span class="hcl-wv"></span></div>' +
           '<div class="lbl hcl-nl">Next flags</div><div class="hcl-next"></div></div></div>' +
         '<div class="hcl-box hcl-players"><h4 class="hcl-ph">On the line</h4><div class="hcl-pb"></div></div>' +
         '<div class="hcl-test"></div>' +
@@ -2265,7 +2266,7 @@
     var q = this.ui.querySelector.bind(this.ui);
     this.el = { name: q('.hcl-name'), sub: q('.hcl-sub'), timer: q('.hcl-timer'), tlabel: q('.hcl-timer b'), tval: q('.hcl-timer span'),
       meter: q('.hcl-meter'), fill: q('.hcl-fill'), ticks: q('.hcl-ticks'), dot: q('.hcl-dot'), gauge: q('.hcl-gauge'), gtop: q('.hcl-gtop'),
-      hv: q('.hcl-hv'), hmax: q('.hcl-h small'), bv: q('.hcl-bv'), next: q('.hcl-next'), nl: q('.hcl-nl'), players: q('.hcl-players'),
+      hv: q('.hcl-hv'), hmax: q('.hcl-h small'), bv: q('.hcl-bv'), worth: q('.hcl-wv'), next: q('.hcl-next'), nl: q('.hcl-nl'), players: q('.hcl-players'),
       ph: q('.hcl-ph'), pb: q('.hcl-pb'), rules: q('.hcl-rules'), banner: q('.hcl-banner'), test: q('.hcl-test') };
   };
 
@@ -2601,6 +2602,8 @@
     if (this.keys.hv !== hv) { this.keys.hv = hv; this.el.hv.textContent = hv; }
     var bv = String(best);
     if (this.keys.bv !== bv) { this.keys.bv = bv; this.el.bv.textContent = bv; }
+    var mults = (g && g.mults) || idle.mults || null, worth = mults && best > 0 && mults[best - 1] ? mults[best - 1] : 0;   // what a bet on his best height pays
+    this._set('worth', this.el.worth, worth ? ' · pays <b>' + mult(worth) + '</b>' : '');
     this._set('hmax', this.el.hmax, '/ ' + H);
     var ms = sc.markers || [], ticks = '', rows = [], i;
     for (i = 0; i < ms.length; i++) {
@@ -3136,6 +3139,11 @@
     return s;
   }
   function multAt(s, h, edgePct) { return Math.max(1, Math.floor(100 * (1 - clamp(+edgePct || 0, 0, 25) / 100) / s[h] + 1e-6) / 100); }
+  function multsOf(H, escapePct, edgePct) {
+    var s = survivalCurve(H, escapePct), out = [];
+    for (var h = 1; h <= H; h++) out.push(multAt(s, h, edgePct));
+    return out;
+  }
   function ladderOf(H, escapePct, edgePct) {
     var s = survivalCurve(H, escapePct), seen = {}, out = [];
     [0.05, 0.1, 0.2, 0.3, 0.45, 0.6, 0.8, 1].forEach(function (f) {
@@ -3208,9 +3216,9 @@
     return wholeState({
       id: gid, test: false, phase: 'betting', ends_in_ms: ms, phase_ms: ms, elapsed_ms: 0, climb: 1, climbs: Math.max(1, Math.round(+c.climbs || 1)),
       height: H, soul: { name: name, seed: 11, skin: 1, gear: 2 }, edge_pct: edge, escape_pct: esc_, script: null, markers: markers, players: plist,
-      at_risk: plist.reduce(function (a, p) { return a + p.stake; }, 0), odds: odds, last: null, results: [], outcome: null, summary: null,
+      at_risk: plist.reduce(function (a, p) { return a + p.stake; }, 0), odds: odds, mults: multsOf(H, esc_, edge), last: null, results: [], outcome: null, summary: null,
       currency: cur, min_bet: c.min_bet || 1, max_bet: c.max_bet || 0, max_bets: 5, commands_text: c.commands_text || ''
-    }, { height: H, climbs: Math.max(1, Math.round(+c.climbs || 1)), soul: { name: name }, odds: odds, currency: cur });
+    }, { height: H, climbs: Math.max(1, Math.round(+c.climbs || 1)), soul: { name: name }, odds: odds, mults: multsOf(H, esc_, edge), currency: cur });
   }
 
   // ▶ Preview: the last seconds of the bet window -> the climb (a local script) -> the result card -> the game-over card.

@@ -186,9 +186,11 @@ sausage grinder, a demon's giant hand) come from the beat that uses them.
 The show is paced by the bets: the soul climbs slowly and with effort near a
 height somebody bet on, quickly when the next flag is far away; every bet is a
 **flag** on the wall, with the name of the player(s), that turns green when he
-reaches it and grey when he falls short of it. A height meter, the multiplier
-of the flags near him, a result card and a winners list round it off; the
-overlay's own sounds (WebAudio, `sfx`, `sfx_volume`) go with each beat.
+reaches it and grey when he falls short of it. A height meter ("best 39 · pays
+×2.81": what a bet on his best height pays), the multiplier of the next flags, a
+result card and a winners list round it off (net winnings: a ×1.00 bet shows
+"stake back"); the overlay's own sounds (WebAudio, `sfx`, `sfx_volume`) go with
+each beat. Before the climb the camera takes a trip up the wall past the flags.
 
 **Falls** (`style`): bonking off every ledge on the way down · a very long "oh
 no" and a splash · straight into a cauldron · flicked off by a hex demon · into
@@ -288,6 +290,7 @@ OBS is up, else `null`.
   "players": [{"user": "alice", "stake": 250, "bets": [{"height": 40, "amount": 200, "mult": 2.91, "pays": 582}, "..."]}],
   "at_risk": 450,
   "odds": [{"height": 5, "chance_pct": 89.8, "mult": 1.05}, "..."],       // the overlay's payout ladder
+  "mults": [1.0, 1.0, 1.01, 1.03, "...", 47.5],  // the multiplier of EVERY height 1..height (the HUD's "best 39 · pays ×2.81")
   "script": null,                   // the climb's script while climbing / result / over (above)
   "last": {"climb": 1, "max": 37, "escaped": false, "cause": "bat", "style": "cauldron", "soul": "Gary",
            "winners": [{"user": "alice", "height": 20, "amount": 50, "mult": 1.54, "pays": 77}, "..."],

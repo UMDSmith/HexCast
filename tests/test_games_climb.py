@@ -10,7 +10,6 @@ import shutil
 import subprocess
 import sys
 from fractions import Fraction
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -301,6 +300,23 @@ def test_scripts_have_variety_and_every_gag(w):
     esc = climb.build_script(100, 100, [10, 100], 5)
     assert esc["beats"][-1]["ev"] == "escape" and esc["escaped"]
     assert {"ready", "climb", "escape"} <= {b["ev"] for b in esc["beats"]}
+
+
+def test_a_soul_that_hardly_left_the_ground_falls_in_a_sensible_way(w):
+    climb = w.climb
+    seen = {0: ([], []), 2: ([], []), 3: ([], [])}
+    for seed in range(600):
+        for best in seen:
+            sc = climb.build_script(100, best, [1, 2, 5], seed)
+            seen[best][0].append(sc["cause"])
+            seen[best][1].append(sc["style"])
+            assert sc["max"] == best and sc["beats"][-1]["ev"] == "fall"
+    assert "tired" not in seen[0][0] + seen[2][0] and "tired" in seen[3][0]                 # not tired before he has climbed anything
+    assert "umbrella" not in seen[0][1] + seen[2][1] + seen[3][1]                           # nothing to float down from (up to 3 levels)
+    assert set(seen[0][1]) == set(climb.CL_STYLES) - {"umbrella"}                           # every other fall works from the ground
+    assert {c for c in climb.CL_CAUSES if c != "tired"} <= set(seen[0][0])
+    high = {climb.build_script(100, 4, [1], seed)["style"] for seed in range(600)}
+    assert "umbrella" in high
 
 
 def test_the_climb_slows_near_flags_and_hurries_when_they_are_far(w):
@@ -759,6 +775,9 @@ def test_states_show_what_the_overlay_needs(w, monkeypatch):
     assert [p["user"] for p in gv["players"]] == ["al", "bo"] and gv["players"][1]["bets"][0] == {"height": 12, "amount": 5, "mult": 1.24, "pays": 6}
     assert gv["odds"][0]["height"] < gv["odds"][-1]["height"] == 100 and gv["odds"][-1]["mult"] == 47.5
     assert g.table_bets() == [{"user": "al", "amount": 100}, {"user": "bo", "amount": 25}]
+    table = {row["height"]: row["mult"] for row in g.bets_payload()["table"]}                 # the same numbers three ways
+    assert gv["mults"] == [table[h] for h in range(1, 101)] and gv["mults"][39] == m40["mult"] and gv["mults"][99] == 47.5
+    assert g.state_view()["idle"]["mults"] == gv["mults"]
     to_phase(g, "climbing")
     gv = g.state_view()["game"]
     assert gv["phase"] == "climbing" and gv["script"]["max"] == 33 and [m["height"] for m in gv["markers"]] == [12, 40]

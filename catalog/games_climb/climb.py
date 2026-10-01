@@ -47,7 +47,7 @@ import random
 import re
 import secrets
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from fractions import Fraction
 from pathlib import Path
 from typing import Any, Iterable
@@ -113,6 +113,7 @@ class ClimbModel:
     escape_pct: float
     fail: tuple[int, ...]            # fail[i-1]: parts per billion that he falls trying to make level i
     nums: tuple[int, ...]            # nums[h] = prod_{i<=h} (1e9 - fail[i-1]);  S(h) = nums[h] / 1e9**h
+    _memo: dict = field(default_factory=dict, compare=False, hash=False, repr=False)   # (the numbers are big: work them out once)
 
     def survival(self, h: int) -> Fraction:
         """S(h): the chance his best height is at least h (S(0) = 1)."""
@@ -121,20 +122,28 @@ class ClimbModel:
     def mult_cents(self, h: int, keep: Fraction) -> int:
         """The multiplier of height h in whole cents (x1.00 = 100): (1 - edge) / S(h), rounded
         down, never below the stake back."""
-        cents = (100 * keep.numerator * CL_PPB ** h) // (keep.denominator * self.nums[h])
-        return max(100, int(cents))
+        key = (h, keep.numerator, keep.denominator)
+        cents = self._memo.get(key)
+        if cents is None:
+            cents = max(100, int((100 * keep.numerator * CL_PPB ** h) // (keep.denominator * self.nums[h])))
+            if len(self._memo) < 4096:
+                self._memo[key] = cents
+        return cents
 
     def mult(self, h: int, keep: Fraction) -> float:
         return self.mult_cents(h, keep) / 100
 
     def chance(self, h: int) -> float:
-        return float(self.survival(h))
+        v = self._memo.get(h)
+        if v is None:
+            v = self._memo[h] = self.nums[h] / CL_PPB ** h          # (int / int is correctly rounded, whatever the size)
+        return v
 
     def table(self, keep: Fraction) -> list[dict]:
         out = []
         for h in range(1, self.height + 1):
-            s = self.survival(h)
-            out.append({"height": h, "chance": round(float(s), 6), "chance_pct": round(float(s) * 100, 4),
+            c = self.chance(h)
+            out.append({"height": h, "chance": round(c, 6), "chance_pct": round(c * 100, 4),
                         "mult": self.mult_cents(h, keep) / 100})
         return out
 
@@ -196,6 +205,13 @@ def cl_ladder(height: int, escape_pct: float, edge_pct: float) -> list[dict]:
     hs = sorted({max(1, min(model.height, int(round(model.height * f)))) for f in
                  (0.05, 0.1, 0.2, 0.3, 0.45, 0.6, 0.8, 1.0)})
     return [{"height": h, "chance_pct": round(model.chance(h) * 100, 2), "mult": model.mult(h, keep)} for h in hs]
+
+
+def cl_mults(height: int, escape_pct: float, edge_pct: float) -> list[float]:
+    """The multiplier of every height 1..height (what the overlay reads for "a bet on his height pays ...")."""
+    model = climb_model(height, escape_pct)
+    keep = cl_keep(edge_pct)
+    return [model.mult_cents(h, keep) / 100 for h in range(1, model.height + 1)]
 
 
 def parse_names(raw: Any) -> list[str]:
@@ -348,8 +364,11 @@ def build_script(height: int, reached: int, bet_heights: Iterable[int], seed: in
     escaped = best >= big_h
     bets = sorted({int(h) for h in bet_heights if 1 <= int(h) <= big_h})
     bet_set = set(bets)
-    cause = None if escaped else rng.choices(CL_CAUSES, CL_CAUSE_WEIGHTS)[0]
-    style = None if escaped else rng.choices(CL_STYLES, CL_STYLE_WEIGHTS)[0]
+    # (a soul that has hardly left the ground is not tired yet and has nowhere to float down from)
+    causes = [(c, w) for c, w in zip(CL_CAUSES, CL_CAUSE_WEIGHTS) if not (c == "tired" and best < 3)]
+    styles = [(s, w) for s, w in zip(CL_STYLES, CL_STYLE_WEIGHTS) if not (s == "umbrella" and best < 4)]
+    cause = None if escaped else rng.choices([c for c, _ in causes], [w for _, w in causes])[0]
+    style = None if escaped else rng.choices([s for s, _ in styles], [w for _, w in styles])[0]
     top = big_h if escaped else min(big_h, best + 14)
     routes = _plan_routes(rng, top, best, cause)
     slots = _plan_events(rng, best, bets, routes)
@@ -610,13 +629,14 @@ class SoulClimb(RoundGame):
         return {"height": b["height"], "amount": b["amount"], "mult": cents / 100,
                 "pays": cl_pay(b["amount"], cents, self.g.get("max_payout") or 0)}
 
-    def _player(self, user: str) -> dict:
-        model, keep = self._model(), self._keep()
+    def _player(self, user: str, model: ClimbModel | None = None, keep: Fraction | None = None) -> dict:
+        model, keep = model or self._model(), keep or self._keep()
         bets = [self._bet_view(model, keep, b) for b in sorted(self._mine(user), key=lambda b: b["height"])]
         return {"user": user, "stake": sum(b["amount"] for b in bets), "bets": bets}
 
     def players_view(self) -> list[dict]:
-        rows = [self._player(u) for u in self.g["bets"]]
+        model, keep = self._model(), self._keep()
+        rows = [self._player(u, model, keep) for u in self.g["bets"]]
         rows.sort(key=lambda p: (-p["stake"], p["user"].lower()))
         return rows
 
@@ -639,7 +659,9 @@ class SoulClimb(RoundGame):
     def table_bets(self) -> list[dict]:
         if self.g is None:
             return []
-        return [{"user": p["user"], "amount": p["stake"]} for p in self.players_view()]
+        rows = [{"user": u, "amount": sum(b["amount"] for b in bs)} for u, bs in self.g["bets"].items()]
+        rows.sort(key=lambda r: (-r["amount"], r["user"].lower()))
+        return rows
 
     # ---- API actions -------------------------------------------------------------
 
@@ -884,6 +906,7 @@ class SoulClimb(RoundGame):
                 "markers": self.markers() if live else g["marks"],
                 "players": players, "at_risk": sum(p["stake"] for p in players),
                 "odds": cl_ladder(g["height"], g["escape_pct"], g["edge_pct"]),
+                "mults": cl_mults(g["height"], g["escape_pct"], g["edge_pct"]),
                 "last": g["last"], "results": list(g["results"]), "outcome": g.get("outcome"),
                 "summary": g.get("summary"), "currency": g["currency"], "min_bet": cfg["min_bet"],
                 "max_bet": cfg["max_bet"], "max_bets": CL_BETS_PER_PLAYER, "commands_text": cfg["commands_text"]}
@@ -893,6 +916,7 @@ class SoulClimb(RoundGame):
         names = parse_names(cfg["soul_name"]) or list(CL_SOULS)
         return {"height": cfg["max_height"], "climbs": cfg["climbs"], "soul": {"name": names[0]},
                 "odds": cl_ladder(cfg["max_height"], cfg["escape_pct"], cfg["house_edge_pct"]),
+                "mults": cl_mults(cfg["max_height"], cfg["escape_pct"], cfg["house_edge_pct"]),
                 "currency": cfg["currency"]}
 
     def bets_payload(self) -> dict:
@@ -1043,7 +1067,8 @@ API_DOC = {
                 "409 bets_closed outside the betting window",
     "remove":   "GET|POST /games/api/climb/remove   {user, height?}: take back this window's bets (refund)",
     "next":     "GET|POST /games/api/climb/next   end the current phase now (close the bets, finish the climb)",
-    "table":    "GET /games/api/climb/table   the STATE (game: phase, climb, markers, players, script, last, summary)",
+    "table":    "GET /games/api/climb/table   the STATE (game: phase, climb, markers, players, mults, script, last, "
+                "summary)",
     "user":     "GET /games/api/climb/user/{name}",
     "ledger":   "GET /games/api/climb/ledger?since=0   reasons: bet, add, win, refund",
     "bets":     "GET /games/api/climb/bets   rules + the table of every height: chance S(h) and multiplier",
