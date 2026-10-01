@@ -1,0 +1,26 @@
+<section id="climb">
+<div class="card">
+  <h2>Soul Climb <span class="tag">/games#climb</span></h2>
+  <p class="hint">A little damned soul climbs out of a hell pit on the games overlay (<code>/games/overlay</code>, or
+    <code>?game=climb</code>), and chat bets on <b>how high</b> he gets: a bet is a <code>height</code> from 1 to the top of
+    the pit and an <code>amount</code>. If his best height reaches (or passes) the guess the bet pays its <b>multiplier</b>,
+    if he falls first the stake is lost; the top of the pit is the escape, the jackpot. All against the bank (your bot),
+    through the shared <b>ledger</b>. Up to 5 bets per player per climb, 30 s to bet, 1-3 climbs a game; no bets ends the
+    game. The server rolls every climb with a cryptographic RNG from a published survival model (every height's chance and
+    multiplier: <code>GET /games/api/climb/bets</code>); the demons, bats, near falls and funny falls are only dressing and
+    can't change the outcome. Placement, look and the header's title (<code>title</code>, your branding) live in the Games
+    panel's Edit Mode. Details: <code>docs/climb.md</code>.</p>
+  <table class="api">
+    <tr><td>GET|POST /games/api/climb/start</td><td><code>{soul, climbs, seconds, test}</code> — start a game (<code>soul</code>: a name, or several separated by commas: one per climb); <code>test</code> writes nothing to the ledger; 409 while one runs</td></tr>
+    <tr><td>GET|POST /games/api/climb/bet</td><td><code>{user, amount, height}</code> → <code>mult</code>, <code>pays</code>, <code>debits</code>, <code>player</code>; the same height again adds; 409 <code>bets_closed</code> outside a betting window</td></tr>
+    <tr><td>GET|POST /games/api/climb/remove</td><td><code>{user, height?}</code> — take back what went down in this window (<code>refund</code>)</td></tr>
+    <tr><td>GET|POST /games/api/climb/next</td><td>end the current phase now (close the bets, finish the climb)</td></tr>
+    <tr><td>GET /games/api/climb/table · user/{name} · ledger · history · bets · validate</td><td>the STATE · one player · this game's ledger events · finished games + stats · rules + the table of every height (chance, multiplier) · dry-run a bet</td></tr>
+    <tr><td>GET|POST /games/api/climb/stop</td><td>end the game: a climb already decided counts (winners are paid), an open window is refunded</td></tr>
+    <tr><td>GET|POST /games/api/climb/preview</td><td><code>{overrides, seconds}</code> — Edit Mode's Test in OBS: the scene on screen for a few seconds with that look (<code>STATE.preview</code>); never touches the game · <code>/preview/clear</code></td></tr>
+  </table>
+  <pre>curl -X POST http://localhost:4747/games/api/climb/start -H "Content-Type: application/json" -d "{\"soul\":\"Gary\"}"
+curl "http://localhost:4747/games/api/climb/bet?user=alice&amp;height=40&amp;amount=100"
+curl "http://localhost:4747/games/api/climb/bets"</pre>
+</div>
+</section>

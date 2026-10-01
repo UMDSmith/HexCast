@@ -1,0 +1,21 @@
+{
+  "id": "games_climb",
+  "name": "Soul Climb",
+  "version": "1.0.0",
+  "parent": "games",
+  "description": "A little damned soul climbs out of a hell pit. Chat bets on how HIGH he gets: reach the guessed height and the bet pays its multiplier, fall first and the stake is lost. Wobbly ledges, taunting demons, bats, a skeleton hand and a lot of funny falls - the top of the pit is the jackpot.",
+  "icon": "🧗",
+  "color": "#e8601c",
+  "category": "Games",
+  "author": "UMDSmith",
+  "help": {
+    "file": "help.html",
+    "toc": [
+      {
+        "id": "climb",
+        "label": "Soul Climb"
+      }
+    ]
+  },
+  "order": 60
+}
