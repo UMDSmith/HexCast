@@ -1182,6 +1182,27 @@ def test_the_panel_script_gives_every_control_of_its_cards_a_different_id():
     assert len(ids) == len(set(ids)), sorted({i for i in ids if ids.count(i) > 1})
 
 
+def test_the_overlay_has_hexs_skeleton_hand_and_no_cartoon_dealer_and_names_are_never_cut_short():
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent / "catalog" / "games_blackjack"
+    js = (root / "static" / "blackjack.js").read_text(encoding="utf-8")
+    assert "drawHexHand" in js and "'S TABLE" in js
+    for gone in ("drawDealer", "_drawAvatar", "visor", "eyeshade", "headY"):
+        assert gone not in js, gone
+    assert "visor" not in (root / "static" / "blackjack_panel.js").read_text(encoding="utf-8")
+    # a seat's name is only ever cut when it is 20+ characters long (and only after the plate and the font gave all they can)
+    assert "name.length >= 20" in js and "_plateWidths" in js
+
+
+def test_hexs_table_talk_is_written_from_hex(t):
+    says = t.bj.SAYS
+    assert set(says) >= {"open", "next", "shuffle", "deal", "insurance", "peek_bj", "peek_ok", "action", "more", "dealer",
+                         "bust", "house", "players", "closed"}
+    assert all(lines and all(isinstance(x, str) and x for x in lines) for lines in says.values())
+    t.start(seats=3)
+    assert t.view()["say"]["text"] in says["open"]
+
+
 def test_it_registers_as_a_games_add_on_at_order_70(real_world):
     w = real_world
     w.installer.install("games")

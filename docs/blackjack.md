@@ -1,7 +1,8 @@
 # Blackjack — Hex deals a Vegas shoe game to chat's coins
 
-A half-moon felt table with **Hex** behind it as the dealer, a shoe on one side
-and a discard tray on the other. Chat sits down at up to **14 seats** (the rest
+A half-moon felt table dealt by **Hex**: all you see of him at the table is his
+skeleton hand, reaching in from the top of the screen (Hex himself is on stream
+but not on the table), with a shoe on one side and a discard tray on the other. Chat sits down at up to **14 seats** (the rest
 wait in a queue), bets against the **bank** (your bot and its coin bank), and
 plays standard Vegas blackjack from chat commands: hit, stand, double, split,
 insurance, surrender. Everybody plays **at the same time**: each action round
@@ -319,7 +320,7 @@ Answer in chat from the reply: `bet` says the seat, or `queued` with the
 | `card_ms` | 240 | the time a card takes out of the shoe (100–800) |
 | `idle_windows` | 3 | betting windows in a row with nobody betting close the table |
 | `currency` | hexcoins | the name after amounts (your bot's coin), ≤ 24 characters |
-| `dealer_name` | Hex | ≤ 24 characters |
+| `dealer_name` | Hex | the name on the rail plaque: `<NAME>'S TABLE` (≤ 24 characters) |
 | `commands_text` | "" | a line in the limits panel, e.g. `!bj 100 · !hit · !stand · !double · !split` |
 | `deal_clip` · `blackjack_clip` · `win_clip` | "" | soundboard clips (play on the base `/overlay`) |
 | `title` | "Blackjack" | the plaque on the rail — your branding (≤ 32 characters) ✓ |
@@ -342,7 +343,7 @@ Turn on **Edit Mode** (the hexbar) and click the Blackjack card (or its
 games. The real table on a 16:9 preview of the 1920×1080 stage, fed a sample
 hand in progress, so you place what the stream will really show. Drag it (or
 use the 3×3 quick grid), **Scale** 0.2–5, **Theme**, **Title**, the rules on the
-felt, the shoe and tray, Hex's table talk, the waiting list board and how many
+felt, the shoe and tray, Hex's table talk (his captions, a little wicked), the waiting list board and how many
 it names, sound and volume — all live in the preview. **▶ Preview** plays a
 local demo hand (bets → deal → a few action rounds with a split and a double →
 Hex plays → payouts, about 25 s; you can keep dragging while it plays);
@@ -357,16 +358,20 @@ default. Set it in Edit Mode (to see it live) or in the tab's Settings card.
 
 ### On screen
 
-Hex stands behind the table (a visor with the Hexcast hex on it, a bow tie and
-a name plate on the rail), the shoe at one corner and the discard tray at the
-other, a chip rack on each side of the status pill. The rules are printed on
+Hex's skeleton hand (bony, faintly glowing, in a suit sleeve with a hex-patterned
+cuff) reaches in from the top of the screen: it flicks each card out to its
+seat, turns the hole card over, sweeps the losing chips to the bank and pushes
+the payouts out, and rests beside the dealer's cards between jobs. The shoe sits
+at one corner and the discard tray at the other, a chip rack on each side of the
+status pill, and the plaque on the rail reads **HEX'S TABLE** (setting
+`dealer_name`). The rules are printed on
 the felt in an arc. Each seat has a betting circle, a name plate with its
 number, a chip stack with denominations (a double puts a second stack beside
 the first, marked ×2), and its cards fanned above it with a total badge
 (`SOFT 17`, `BUST 24`, `BLACKJACK`) and, in an action round, the choice the
 player has made (`HIT`, `STAND`, `DOUBLE`, `SPLIT`); the plates of the seats
 that haven't chosen yet glow. A split puts its hands side by side (two rows
-for three or four). Cards fly out of the shoe, flip as they land, the dealer's
+for three or four). Seat plates show the full name (the plate widens, then the font shrinks; only a name of 20+ characters that still doesn't fit is cut with "…"). Cards fly out of the shoe, flip as they land, the dealer's
 hole card turns over, losing hands dim and bust ones shake, winners glow and
 throw sparkles, and at the end of the hand every card is swept into the tray.
 Between hands the held seats show an `ANTE UP · 100` prompt with the last bet.

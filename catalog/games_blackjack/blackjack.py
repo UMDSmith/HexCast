@@ -95,21 +95,20 @@ _OUTCOMES = {"closed": "Table closed", "idle": "Nobody left at the table - close
 
 # Hex's table talk: a small pool per moment (cosmetic - the server picks so every overlay agrees)
 SAYS = {
-    "open": ["Place your bets, folks.", "The table is open - ante up.", "Welcome to the felt. Bets, please."],
-    "next": ["Next hand - ante up to keep your seat.", "Place your bets. Seats are held for a moment.",
-             "New hand coming - bet again to stay."],
-    "shuffle": ["Shuffling up a fresh shoe.", "New shoe - cards are being shuffled.", "Fresh cards coming out."],
-    "deal": ["Good luck, everyone.", "Cards are out.", "Here we go."],
-    "insurance": ["I'm showing an ace - insurance?", "Ace up. Insurance pays 2 to 1.", "Ace. Anyone want insurance?"],
-    "peek_bj": ["Blackjack. Better luck next hand.", "Dealer has blackjack.", "Ouch - blackjack for the house."],
-    "peek_ok": ["No blackjack. Play on.", "Nothing there. Your move.", "No dealer blackjack."],
-    "action": ["Hit or stand? Make your move.", "Your move, everyone.", "Decisions, decisions."],
-    "more": ["Another round - hit or stand?", "Still in it? Make your move.", "More cards, or are you done?"],
-    "dealer": ["Dealer plays.", "Let's see what I've got.", "Turning my card."],
-    "bust": ["Dealer busts! Pay the table.", "I bust - everybody standing wins.", "Over 21. The house pays."],
-    "house": ["The house takes this one.", "Better luck next hand.", "House wins this round."],
-    "players": ["Pay the winners.", "Nicely played.", "The table takes this one."],
-    "closed": ["The table is closed. Thanks for playing.", "That's the game. Thanks, everyone."],
+    "open": ["Sit. Wager. See what it costs you.", "The table is open. Bring your coins.", "Come closer, mortals. Place your bets."],
+    "next": ["Again? Bet to keep your seat.", "Your seat is warm. Ante up or lose it.", "Another round, another sin. Bet."],
+    "shuffle": ["Shuffling a fresh shoe. No cheating, I promise.", "New cards. Same fate.", "The deck is reborn."],
+    "deal": ["Here come the cards. Try not to pray.", "Good luck. You will need it.", "Cards are out."],
+    "insurance": ["An ace. Care to bet against my luck?", "Ace up. Insure your soul?", "Ace. Insurance pays 2 to 1. Tempting."],
+    "peek_bj": ["Blackjack. Delicious.", "Twenty-one for the house. Thank you.", "Oh dear. Blackjack. For me."],
+    "peek_ok": ["No blackjack. Play on, if you dare.", "Nothing there. Your move.", "Not this time. Hit or stand."],
+    "action": ["Hit or stand? Choose wisely.", "Your move. All of you. Now.", "Decide. I'm patient. Mostly."],
+    "more": ["Another round. Still brave?", "Still in it? Decide.", "More cards, or are you done?"],
+    "dealer": ["My turn.", "Let's see what I'm hiding.", "Turning my card. Slowly."],
+    "bust": ["I bust? Fine. Take your winnings. For now.", "Over 21. The house pays. Reluctantly.", "A rare mercy. Enjoy it."],
+    "house": ["The house takes this one.", "Your coins are mine now.", "Better luck next hand. Or not."],
+    "players": ["Fine. Collect your winnings.", "You win. How tiresome.", "The table takes this one. Savor it."],
+    "closed": ["The table is closed. Until we meet again.", "That's the game. Run along, mortals."],
 }
 
 

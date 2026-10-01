@@ -130,7 +130,7 @@
       ['card_ms', 'Deal speed (ms per card)', 'int', [100, 800]],
       ['idle_windows', 'Empty windows before it closes', 'int', [1, 50], 'Betting windows in a row with nobody betting close the table'],
       ['currency', 'Currency', 'text', 24],
-      ['dealer_name', 'Dealer name', 'text', 24],
+      ['dealer_name', 'Name on the table plate', 'text', 24, 'Shown as NAME\'S TABLE on the rail (default HEX\'S TABLE)'],
       ['commands_text', 'Commands line on the overlay', 'text', 120, 'Your bot\'s commands, e.g. !bj 100 · !hit · !stand · !double · !split'],
       ['title', 'Title on the table', 'text', 32, 'Your branding: the plaque on the rail (Edit Mode can preview it)'],
       ['hide_when_idle', 'Hide between games', 'bool'],
@@ -278,7 +278,7 @@
     // ---- the editor ----
     rulesExtra: function (P) {
       return '<label class="tog"><input type="checkbox" id="' + P + 'show_shoe"> shoe & tray</label>' +
-        '<label class="tog"><input type="checkbox" id="' + P + 'show_captions"> dealer talk</label>';
+        '<label class="tog"><input type="checkbox" id="' + P + 'show_captions"> Hex\'s talk</label>';
     },
     extraChecks: ['show_shoe', 'show_captions'],
     sample: function (c, gid, ms) {

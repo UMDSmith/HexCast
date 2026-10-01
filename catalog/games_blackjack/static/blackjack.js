@@ -61,28 +61,28 @@
       rail1: '#5a371f', rail2: '#2c180b', railHi: 'rgba(255,220,170,.30)', trim: '#e6c06c', trimDim: 'rgba(230,192,108,.50)',
       ink: '#f8f0da', inkDim: 'rgba(248,240,218,.72)', accent: '#f0c75e', accent2: '#8f6bff',
       plate1: '#2f4a40', plate2: '#14261f', plateInk: '#fff7df', plateEdge: '#e6c06c',
-      backA: '#33237c', backB: '#150d3e', backHex: 'rgba(255,255,255,.30)', glow: 0, visor: '#2f9d66'
+      backA: '#33237c', backB: '#150d3e', backHex: 'rgba(255,255,255,.30)', glow: 0
     },
     neon: {
       feltA: '#141a2c', feltB: '#0a0e1a', feltC: '#04060d', hex: 'rgba(0,240,255,.075)', hexHi: 'rgba(255,60,190,.22)',
       rail1: '#20243a', rail2: '#0a0c16', railHi: 'rgba(120,200,255,.35)', trim: '#00f0ff', trimDim: 'rgba(0,240,255,.50)',
       ink: '#f4fbff', inkDim: 'rgba(214,236,255,.72)', accent: '#ff3fb4', accent2: '#00f0ff',
       plate1: '#1b2038', plate2: '#0a0d1c', plateInk: '#eaffff', plateEdge: '#ff3fb4',
-      backA: '#3a0f4f', backB: '#10061c', backHex: 'rgba(0,240,255,.42)', glow: 1, visor: '#12b5c8'
+      backA: '#3a0f4f', backB: '#10061c', backHex: 'rgba(0,240,255,.42)', glow: 1
     },
     midnight: {
       feltA: '#1c4a8c', feltB: '#102f5f', feltC: '#081b3a', hex: 'rgba(255,255,255,.060)', hexHi: 'rgba(160,200,255,.20)',
       rail1: '#2d2f3a', rail2: '#12131a', railHi: 'rgba(210,220,255,.30)', trim: '#c9d6ee', trimDim: 'rgba(201,214,238,.50)',
       ink: '#f1f5ff', inkDim: 'rgba(222,232,255,.72)', accent: '#9ec2ff', accent2: '#ffd36b',
       plate1: '#26385a', plate2: '#0f1a30', plateInk: '#f4f8ff', plateEdge: '#c9d6ee',
-      backA: '#2a3d86', backB: '#101a46', backHex: 'rgba(255,255,255,.30)', glow: 0, visor: '#3f7fd6'
+      backA: '#2a3d86', backB: '#101a46', backHex: 'rgba(255,255,255,.30)', glow: 0
     },
     royal: {
       feltA: '#7a1a43', feltB: '#4c0f2a', feltC: '#2a0617', hex: 'rgba(255,220,160,.060)', hexHi: 'rgba(255,220,160,.20)',
       rail1: '#3d2a12', rail2: '#1c1206', railHi: 'rgba(255,225,150,.34)', trim: '#f1cf6e', trimDim: 'rgba(241,207,110,.52)',
       ink: '#fff3d6', inkDim: 'rgba(255,243,214,.74)', accent: '#f6d674', accent2: '#c58bff',
       plate1: '#5a2540', plate2: '#2a0f1d', plateInk: '#fff3d6', plateEdge: '#f1cf6e',
-      backA: '#6a1d4a', backB: '#2a0a1f', backHex: 'rgba(255,226,150,.38)', glow: 0, visor: '#c8963a'
+      backA: '#6a1d4a', backB: '#2a0a1f', backHex: 'rgba(255,226,150,.38)', glow: 0
     }
   };
   var C_WIN = '#59e08c', C_LOSE = '#ff6a60', C_PUSH = '#d4dbea', C_BJ = '#ffd54a', C_BUST = '#ff5047';
@@ -437,7 +437,7 @@
   // ------------------------------------------------------------------ the table (geometry)
   var T = { left: 60, right: 1860, top: 232, sideY: 560, cx: 960, rx: 900, ry: 490, rail: 38, corner: 76 };
   var SEAT_E = { cx: 960, cy: 500, rx: 840, ry: 400 };       // the seats' arc
-  var DEALER = { x: 960, cardY: 424, plateY: 252, headY: 98, bannerY: 308, cw: 100, ch: 140, dx: 62 };
+  var DEALER = { x: 960, cardY: 424, plateY: 252, bannerY: 308, cw: 100, ch: 140, dx: 62 };
   var SHOE_XY = { x: 1535, y: 408 }, TRAY_XY = { x: 407, y: 408 };
 
   // the table outline inset by `i` px (a "D": a straight edge for the dealer, a half ellipse for the players)
@@ -634,95 +634,73 @@
     rrect(c, x - w / 2, y + h - 18, w, 18, 5); c.fillStyle = 'rgba(20,24,30,.55)'; c.fill();
     c.restore();
   }
-
-  // ------------------------------------------------------------------ Hex, the dealer
-  // A bust: vest, bow tie, a green eyeshade with the hexagon on it. (cx, cy) = the middle of the head; s = scale.
-  // st: {blink 0..1, mouth 0..1 (open), smile 0..1, brow -1..1, look -1..1}
-  function drawDealer(c, cx, cy, s, st, th) {
-    st = st || {};
-    c.save(); c.translate(cx, cy); c.scale(s, s);
-    var i, skin = '#e9bd98', skinD = '#c98f6a';
-    // jacket
-    c.beginPath(); c.moveTo(-190, 260); c.bezierCurveTo(-186, 170, -160, 118, -96, 104); c.lineTo(-34, 90); c.lineTo(34, 90);
-    c.lineTo(96, 104); c.bezierCurveTo(160, 118, 186, 170, 190, 260); c.closePath();
-    var jg = c.createLinearGradient(0, 90, 0, 260); jg.addColorStop(0, '#2b2e3c'); jg.addColorStop(1, '#101118');
-    c.fillStyle = jg; c.fill(); c.lineWidth = 2; c.strokeStyle = 'rgba(255,255,255,.14)'; c.stroke();
-    // shirt
-    c.beginPath(); c.moveTo(-36, 88); c.lineTo(36, 88); c.lineTo(0, 232); c.closePath();
-    var sg = c.createLinearGradient(-36, 90, 36, 230); sg.addColorStop(0, '#ffffff'); sg.addColorStop(1, '#d9dce6');
-    c.fillStyle = sg; c.fill();
-    // vest
-    c.beginPath(); c.moveTo(-104, 108); c.lineTo(-36, 94); c.lineTo(0, 196); c.lineTo(36, 94); c.lineTo(104, 108);
-    c.lineTo(100, 262); c.lineTo(-100, 262); c.closePath();
-    var vg = c.createLinearGradient(-100, 100, 100, 260); vg.addColorStop(0, '#34304a'); vg.addColorStop(1, '#14121f');
-    c.fillStyle = vg; c.fill(); c.lineWidth = 2; c.strokeStyle = rgba('#e6c06c', 0.5); c.stroke();
-    for (i = 0; i < 3; i++) { c.beginPath(); c.arc(0, 150 + i * 28, 5, 0, TAU); c.fillStyle = '#e6c06c'; c.fill(); c.lineWidth = 1; c.strokeStyle = 'rgba(0,0,0,.5)'; c.stroke(); }
-    // a hex pin on the lapel
-    hexPath(c, -62, 140, 9, Math.PI / 6); c.fillStyle = '#e6c06c'; c.fill(); c.lineWidth = 1.4; c.strokeStyle = 'rgba(0,0,0,.6)'; c.stroke();
-    // neck
-    c.beginPath(); c.moveTo(-22, 50); c.lineTo(-22, 92); c.quadraticCurveTo(0, 104, 22, 92); c.lineTo(22, 50); c.closePath();
-    var ng = c.createLinearGradient(0, 50, 0, 100); ng.addColorStop(0, skinD); ng.addColorStop(1, '#b57e5a');
-    c.fillStyle = ng; c.fill();
-    // collar
-    c.beginPath(); c.moveTo(-26, 82); c.lineTo(-2, 100); c.lineTo(-30, 118); c.closePath(); c.fillStyle = '#fff'; c.fill(); c.lineWidth = 1; c.strokeStyle = 'rgba(0,0,0,.25)'; c.stroke();
-    c.beginPath(); c.moveTo(26, 82); c.lineTo(2, 100); c.lineTo(30, 118); c.closePath(); c.fillStyle = '#fff'; c.fill(); c.stroke();
-    // bow tie
-    var bt = '#b8233b';
-    c.beginPath(); c.moveTo(0, 100); c.quadraticCurveTo(-18, 84, -40, 90); c.quadraticCurveTo(-34, 104, -40, 118); c.quadraticCurveTo(-18, 116, 0, 104); c.closePath();
-    c.fillStyle = bt; c.fill(); c.lineWidth = 1.4; c.strokeStyle = 'rgba(0,0,0,.45)'; c.stroke();
-    c.beginPath(); c.moveTo(0, 100); c.quadraticCurveTo(18, 84, 40, 90); c.quadraticCurveTo(34, 104, 40, 118); c.quadraticCurveTo(18, 116, 0, 104); c.closePath();
-    c.fill(); c.stroke();
-    c.beginPath(); c.ellipse(0, 102, 8, 10, 0, 0, TAU); c.fillStyle = shade(bt, -0.2); c.fill(); c.stroke();
-    // ears
-    c.fillStyle = skinD;
-    c.beginPath(); c.ellipse(-52, 8, 9, 14, 0, 0, TAU); c.fill(); c.beginPath(); c.ellipse(52, 8, 9, 14, 0, 0, TAU); c.fill();
-    // head
-    c.beginPath(); c.ellipse(0, 0, 52, 62, 0, 0, TAU);
-    var hg = c.createRadialGradient(-16, -22, 8, 0, 4, 76); hg.addColorStop(0, '#f6d2b2'); hg.addColorStop(0.7, skin); hg.addColorStop(1, '#cf9a74');
-    c.fillStyle = hg; c.fill(); c.lineWidth = 1.5; c.strokeStyle = 'rgba(90,50,30,.35)'; c.stroke();
-    // hair
-    c.beginPath(); c.moveTo(-52, -4); c.bezierCurveTo(-60, -50, -34, -72, 0, -72); c.bezierCurveTo(34, -72, 60, -50, 52, -4);
-    c.bezierCurveTo(46, -26, 30, -40, 0, -42); c.bezierCurveTo(-30, -40, -46, -26, -52, -4); c.closePath();
-    c.fillStyle = '#2a1b14'; c.fill();
-    // the eyeshade: strap, then the translucent visor with the hexagon
-    c.lineCap = 'round'; c.lineWidth = 7; c.strokeStyle = '#17171d';
-    c.beginPath(); c.moveTo(-54, -22); c.quadraticCurveTo(0, -50, 54, -22); c.stroke();
-    var vis = th && th.visor ? th.visor : '#2f9d66';
-    c.beginPath(); c.moveTo(-68, -6); c.quadraticCurveTo(0, -56, 68, -6); c.quadraticCurveTo(0, -20, -68, -6); c.closePath();
-    var vgr = c.createLinearGradient(0, -48, 0, -10); vgr.addColorStop(0, rgba(shade(vis, 0.25).indexOf('#') === 0 ? vis : vis, 0.95)); vgr.addColorStop(1, rgba(vis, 0.7));
-    c.fillStyle = vgr; c.fill(); c.lineWidth = 2; c.strokeStyle = 'rgba(0,0,0,.55)'; c.stroke();
-    hexPath(c, 0, -27, 11, Math.PI / 6); c.fillStyle = '#f0c75e'; c.fill(); c.lineWidth = 1.6; c.strokeStyle = '#6b4a00'; c.stroke();
-    c.lineWidth = 1.2; c.beginPath(); c.moveTo(0, -27); c.lineTo(0, -37.5); c.moveTo(0, -27); c.lineTo(-9.1, -21.7); c.moveTo(0, -27); c.lineTo(9.1, -21.7); c.stroke();
-    // eyes
-    var blink = clamp(st.blink || 0, 0, 1), look = clamp(st.look || 0, -1, 1);
-    for (var e = -1; e <= 1; e += 2) {
-      var ex = e * 21, ey = 10;
-      c.beginPath(); c.ellipse(ex, ey, 11, 7.5 * (1 - blink * 0.92), 0, 0, TAU); c.fillStyle = '#fbfbf8'; c.fill();
-      c.lineWidth = 1.2; c.strokeStyle = 'rgba(60,30,20,.55)'; c.stroke();
-      if (blink < 0.7) {
-        c.beginPath(); c.arc(ex + look * 3.5, ey + 0.5, 4.8, 0, TAU); c.fillStyle = '#3a2418'; c.fill();
-        c.beginPath(); c.arc(ex + look * 3.5 - 1.4, ey - 1.6, 1.5, 0, TAU); c.fillStyle = 'rgba(255,255,255,.9)'; c.fill();
-      }
-      // brows
-      var br = clamp(st.brow || 0, -1, 1);
-      c.lineWidth = 4.2; c.strokeStyle = '#2a1b14';
-      c.beginPath(); c.moveTo(ex - e * 12, -4 - br * 2 + e * 1.5 * (br > 0 ? -1 : 1)); c.lineTo(ex + e * 11, -3 - br * 8 * (br > 0 ? 1 : 0.6) + e * 0);
-      c.stroke();
+  // ------------------------------------------------------------------ Hex's hand
+  // Hex is on stream himself: at the table there is only his skeleton hand, reaching in from the top of the screen out of a
+  // suit sleeve with a hex-patterned cuff. (tx, ty) = where the fingertips point; sc = size.
+  // pose: {spread 0..1 (fingers apart), curl 0..1 (fingers drawn in), pinch 0..1 (thumb meets index)}
+  var BONE = '#ece6d3', BONE_D = '#a79f86', BONE_O = '#2f2a20';
+  function boneCap(c, x0, y0, x1, y1, w) {
+    c.lineCap = 'round';
+    c.strokeStyle = BONE_O; c.lineWidth = w + 2.6; c.beginPath(); c.moveTo(x0, y0); c.lineTo(x1, y1); c.stroke();
+    c.strokeStyle = BONE; c.lineWidth = w; c.beginPath(); c.moveTo(x0, y0); c.lineTo(x1, y1); c.stroke();
+    c.strokeStyle = 'rgba(255,255,255,.55)'; c.lineWidth = Math.max(1, w * 0.28); c.beginPath(); c.moveTo(x0, y0 - w * 0.18); c.lineTo(x1, y1 - w * 0.18); c.stroke();
+  }
+  function knuckle(c, x, y, r) {
+    c.beginPath(); c.arc(x, y, r, 0, TAU); c.fillStyle = BONE; c.fill(); c.lineWidth = 1.6; c.strokeStyle = BONE_O; c.stroke();
+    c.beginPath(); c.arc(x - r * 0.25, y - r * 0.3, r * 0.35, 0, TAU); c.fillStyle = 'rgba(255,255,255,.7)'; c.fill();
+  }
+  function finger(c, bx, by, ang, lens, w, bend) {
+    var x = bx, y = by, a = ang, i, pts = [[x, y]];
+    for (i = 0; i < lens.length; i++) { a += bend * (i === 0 ? 0.6 : 1); x += Math.cos(a) * lens[i]; y += Math.sin(a) * lens[i]; pts.push([x, y]); }
+    for (i = 0; i < lens.length; i++) boneCap(c, pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1], w * (1 - i * 0.14));
+    for (i = 0; i < pts.length; i++) knuckle(c, pts[i][0], pts[i][1], w * (i === pts.length - 1 ? 0.5 : 0.66));
+  }
+  var FINGERS = [[-19, [27, 19, 14]], [-6.5, [31, 21, 15]], [6.5, [28, 19, 14]], [19, [22, 15, 12]]];
+  function drawHexHand(c, tx, ty, sc, pose, th, t, vis) {
+    sc *= 1.25;
+    var ax = 960 + (tx - 960) * 0.3, ay = -90, L = 118 * sc;
+    var dx = tx - ax, dy = ty - ay, len = Math.hypot(dx, dy) || 1, ux = dx / len, uy = dy / len, ang = Math.atan2(dy, dx);
+    var wx = tx - ux * L, wy = ty - uy * L, nx = -uy, ny = ux, cuffW = 36 * sc;
+    var spread = pose.spread || 0, curl = pose.curl || 0, pinch = pose.pinch || 0, i;
+    var glow = th.accent && th.accent.charAt(0) === '#' ? th.accent : '#e6c06c';
+    c.save();
+    if (vis != null) c.globalAlpha = vis;
+    // the sleeve: a long dark suit sleeve from beyond the top of the screen, crimson pinstripe
+    var wa = 30 * sc + 12, wb = cuffW * 0.9;
+    c.beginPath();
+    c.moveTo(ax + nx * wa, ay + ny * wa); c.lineTo(wx + nx * wb, wy + ny * wb); c.lineTo(wx - nx * wb, wy - ny * wb); c.lineTo(ax - nx * wa, ay - ny * wa); c.closePath();
+    var sg = c.createLinearGradient(ax, ay, wx, wy); sg.addColorStop(0, '#0b0910'); sg.addColorStop(1, '#241a26');
+    c.shadowColor = 'rgba(0,0,0,.55)'; c.shadowBlur = 18; c.shadowOffsetY = 8;
+    c.fillStyle = sg; c.fill(); c.shadowBlur = 0; c.shadowOffsetY = 0;
+    c.lineWidth = 2; c.strokeStyle = 'rgba(214,52,66,.75)'; c.stroke();
+    c.strokeStyle = 'rgba(214,52,66,.38)'; c.lineWidth = 1.2;
+    for (i = -1; i <= 1; i += 2) { c.beginPath(); c.moveTo(ax + nx * wa * 0.45 * i, ay + ny * wa * 0.45 * i); c.lineTo(wx + nx * wb * 0.45 * i, wy + ny * wb * 0.45 * i); c.stroke(); }
+    // the hand, in its own frame: the wrist at the origin, the fingers along +x
+    c.translate(wx, wy); c.rotate(ang); c.scale(sc, sc);
+    // the cuff: a band with a row of glowing hexagons and a hex link
+    c.save();
+    rrect(c, -34, -cuffW / sc - 3, 40, 2 * cuffW / sc + 6, 7);
+    var cg = c.createLinearGradient(-34, 0, 6, 0); cg.addColorStop(0, '#1d1522'); cg.addColorStop(1, '#0e0a12'); c.fillStyle = cg; c.fill();
+    c.lineWidth = 2; c.strokeStyle = 'rgba(214,52,66,.9)'; c.stroke();
+    c.shadowColor = glow; c.shadowBlur = 10; c.lineWidth = 1.6; c.strokeStyle = glow;
+    for (i = -1; i <= 1; i++) { hexPath(c, -14, i * 17, 7.5, Math.PI / 6); c.stroke(); }
+    hexPath(c, -14, 0, 4, Math.PI / 6); c.fillStyle = glow; c.fill();
+    c.restore();
+    // glow of the bones
+    c.shadowColor = 'rgba(176,150,255,.85)'; c.shadowBlur = 12;
+    // the palm: the wrist bones, the metacarpals, a rounded outline
+    for (i = 0; i < 4; i++) {
+      var by = FINGERS[i][0] * 1.0, cx0 = 4 + (i % 2) * 3, cy0 = by * 0.35;
+      boneCap(c, cx0, cy0, 56, by * 1.02, 8.4 - (i === 3 ? 1.2 : 0));
     }
-    // nose and cheeks
-    c.lineWidth = 2; c.strokeStyle = 'rgba(120,70,45,.5)'; c.beginPath(); c.moveTo(-3, 18); c.quadraticCurveTo(-8, 30, 0, 32); c.quadraticCurveTo(7, 32, 4, 26); c.stroke();
-    c.fillStyle = 'rgba(230,110,100,.22)'; c.beginPath(); c.arc(-34, 30, 8, 0, TAU); c.fill(); c.beginPath(); c.arc(34, 30, 8, 0, TAU); c.fill();
-    // mouth
-    var sm = clamp(st.smile == null ? 0.6 : st.smile, 0, 1), op = clamp(st.mouth || 0, 0, 1);
-    c.beginPath(); c.moveTo(-16, 42);
-    c.quadraticCurveTo(0, 42 + 6 + sm * 12 + op * 10, 16, 42);
-    if (op > 0.05) { c.quadraticCurveTo(0, 42 - 1 + op * 3, -16, 42); c.closePath(); c.fillStyle = '#6b1f26'; c.fill(); }
-    c.lineWidth = 2.6; c.strokeStyle = '#7a3a2c'; c.lineCap = 'round'; c.stroke();
-    if (op > 0.15) {
-      c.fillStyle = '#fff'; c.fillRect(-9, 42 + 0.5, 18, 3.2);
+    for (i = 0; i < 3; i++) knuckle(c, 6 + i * 7, -11 + i * 11, 7);
+    // fingers: spread fans them out, curl draws them in, the index goes to the thumb on a pinch
+    for (i = 0; i < 4; i++) {
+      var f = FINGERS[i], fa = (i - 1.5) * spread * 0.2, kc = curl * (1 - i * 0.06) + (i === 0 ? pinch * 0.5 : 0), lens = f[1].map(function (v) { return v * (1 - 0.5 * kc); });
+      finger(c, 56, f[0] * 1.02, fa + (i === 0 ? pinch * 0.2 : 0), lens, 7.4, kc * 0.5);
     }
-    // a glint on the forehead / cheek
-    c.fillStyle = 'rgba(255,255,255,.10)'; c.beginPath(); c.ellipse(-20, -2, 14, 20, -0.4, 0, TAU); c.fill();
+    // the thumb
+    finger(c, 12, -22, -0.85 + pinch * 0.62 - spread * 0.1, [25, 21], 8, 0.18 - pinch * 0.1);
     c.restore();
   }
 
@@ -1065,27 +1043,60 @@
     c.restore();
   };
 
-  // ---- Hex
-  P._drawAvatar = function (c, g, el, t) {
-    var th = this.th, st = { smile: 0.62 }, bp = t % 4300;
-    st.blink = bp < 150 ? Math.sin(bp / 150 * Math.PI) : 0;
-    var speaking = g && this.cfg.show_captions && g.say && now() - this.sayAt < 3400;
-    st.mouth = speaking ? 0.35 + 0.6 * Math.abs(Math.sin(t / 95)) * (0.6 + 0.4 * Math.sin(t / 310)) : 0;
-    st.look = Math.sin(t / 2300) * 0.3;
-    if (g && g.deal && (g.phase === 'dealing' || g.phase === 'resolve')) {
-      var kk = Math.floor((el - g.deal.t0) / Math.max(60, g.deal.step));
-      var o = g.deal.order && g.deal.order[clamp(kk, 0, g.deal.order.length - 1)];
-      if (o && o[0] > 0 && this.lay.seats[o[0] - 1]) st.look = clamp((this.lay.seats[o[0] - 1].x - 960) / 640, -1, 1);
+  // ---- Hex's hand: where it is, what it is doing
+  P._handRest = function (t) { return { x: 1228, y: 452, spread: 0.32 + 0.1 * Math.sin(t / 700), curl: 0.12, pinch: 0 }; };
+  P._handTarget = function (g, el, t) {
+    var lay = this.lay, rest = this._handRest(t);
+    if (!g) return rest;
+    var d = g.deal, ph = g.phase, i, n;
+    function seatPt(sn) { var A = lay.seats[sn - 1]; return A ? { x: A.x, y: A.y - lay.R - 13 - lay.ch * 0.8 } : null; }
+    function dealerPt(j) {
+      var cn = (g.dealer && g.dealer.cards ? g.dealer.cards.length : 2) || 2, dx = cn > 5 ? Math.max(34, (560 - DEALER.cw) / (cn - 1)) : DEALER.dx;
+      return { x: DEALER.x - (DEALER.cw + (cn - 1) * dx) / 2 + j * dx + DEALER.cw / 2, y: DEALER.cardY - 36 };
     }
-    if (g && g.phase === 'dealer' && g.dealer && g.dealer.bust && el > 1400) { st.brow = 1; st.mouth = 0.8; st.smile = 0.1; }
-    else if (g && g.phase === 'settle' && g.last) { st.smile = g.last.net < 0 ? 0.2 : 1; st.brow = g.last.net < 0 ? 0.8 : 0; }
-    // a soft light behind him
-    c.save();
-    var lg = c.createRadialGradient(960, 120, 20, 960, 130, 190);
-    lg.addColorStop(0, rgba(th.accent.charAt(0) === '#' ? th.accent : '#f0c75e', 0.28)); lg.addColorStop(1, 'rgba(0,0,0,0)');
-    c.fillStyle = lg; c.fillRect(740, 0, 440, 260);
-    c.restore();
-    drawDealer(c, DEALER.x, DEALER.headY + Math.sin(t / 900) * 1.6, 1.12, st, th);
+    if (d && (ph === 'dealing' || ph === 'resolve' || ph === 'dealer')) {
+      if (ph === 'dealing' && d.shuffle > 0 && el < d.shuffle + 200) {
+        var sp = 0.5 + 0.5 * Math.sin(el / 260);
+        return { x: lerp(TRAY_XY.x + 90, SHOE_XY.x - 130, sp), y: lerp(TRAY_XY.y, SHOE_XY.y, sp), spread: 0.1, curl: 0.5, pinch: 0.45 };
+      }
+      n = d.order ? d.order.length : 0;
+      var step = Math.max(60, d.step), kk = Math.floor((el - d.t0) / step);
+      if (ph === 'dealer' && el < d.t0 + 320) {            // the hole card: reach, pinch, turn it over
+        var hp = dealerPt(1), u = clamp((el - (d.t0 - 200)) / 500, 0, 1);
+        return { x: hp.x, y: hp.y, spread: 0.1, curl: 0.35, pinch: Math.sin(Math.PI * u) };
+      }
+      if (n && kk >= 0 && kk < n) {
+        var o = d.order[kk], pt = o[0] === 0 ? dealerPt(o[2]) : seatPt(o[0]);
+        if (pt) return { x: pt.x, y: pt.y, spread: 0.25, curl: 0.25, pinch: clamp(1 - (el - (d.t0 + kk * step)) / 240, 0, 1) };
+      }
+      if (n && kk < 0) { var f0 = d.order[0], p0 = f0[0] === 0 ? dealerPt(0) : seatPt(f0[0]); if (p0) return { x: p0.x, y: p0.y, spread: 0.3, curl: 0.2, pinch: 0 }; }
+      return rest;
+    }
+    if (ph === 'settle' && g.seats) {
+      var rows = [];
+      for (i = 0; i < g.seats.length; i++) {
+        var s = g.seats[i], net = 0, any = false;
+        if (!s || !s.hands) continue;
+        s.hands.forEach(function (h) { if (h.result) { any = true; net += h.result.net; } });
+        if (any) rows.push({ n: i + 1, net: net });
+      }
+      var slot = clamp(2600 / Math.max(1, rows.length), 150, 520), idx = Math.floor((el - 400) / slot);
+      if (el >= 400 && idx >= 0 && idx < rows.length) {
+        var row = rows[idx], A = lay.seats[row.n - 1], u2 = clamp((el - 400 - idx * slot) / slot, 0, 1);
+        var spot = { x: A.x, y: A.y + lay.R * 0.5 }, ctr = { x: 960, y: DEALER.bannerY + 70 };
+        var from = row.net < 0 ? spot : ctr, to = row.net < 0 ? ctr : spot, e = row.net < 0 ? easeIn(u2) : easeOut(u2);
+        return { x: lerp(from.x, to.x, e), y: lerp(from.y, to.y, e), spread: 0.04, curl: 0, pinch: 0 };     // a flat hand: it sweeps / pushes
+      }
+      return rest;
+    }
+    if (ph === 'action' || ph === 'insurance') { rest.spread = 0.3 + 0.25 * Math.abs(Math.sin(t / 380)); rest.curl = 0.1 + 0.25 * Math.abs(Math.sin(t / 380 + 1)); }
+    return rest;
+  };
+  P._drawHand = function (c, g, el, t) {
+    var tg = this._handTarget(g, el, t), h = this.hand, dt = Math.min(100, t - this.lastT0), a = 1 - Math.exp(-dt / (g && g.phase === 'settle' ? 60 : 95));
+    if (!h) h = this.hand = { x: tg.x, y: tg.y - 160, spread: 0.3, curl: 0.1, pinch: 0 };
+    h.x += (tg.x - h.x) * a; h.y += (tg.y - h.y) * a; h.spread += (tg.spread - h.spread) * a; h.curl += (tg.curl - h.curl) * a; h.pinch += (tg.pinch - h.pinch) * Math.min(1, a * 1.8);
+    drawHexHand(c, h.x, h.y + Math.sin(t / 900) * 2, clamp(this.lay.S / 150, 0.72, 1.1), h, this.th, t, null);
   };
 
   P._banner = function (c, g, el, t) {
@@ -1131,13 +1142,13 @@
     c.restore();
   };
 
-  // the dealer's table talk
+  // Hex's table talk
   P._bubble = function (c, g, t) {
     if (!this.cfg.show_captions || !g || !g.say) return;
     var age = now() - this.sayAt, dur = 4600;
     if (age > dur) return;
     var a = clamp(Math.min(age / 250, (dur - age) / 400), 0, 1), th = this.th;
-    var text = (this.cfg.dealer_name || 'Hex') + ' says: ' + g.say.text;
+    var text = g.say.text;
     c.save(); c.globalAlpha = a;
     c.font = 'italic 700 21px ' + SERIF;
     var maxW = 330, words = text.split(' '), lines = [], cur = '';
@@ -1148,12 +1159,12 @@
     if (cur) lines.push(cur);
     lines = lines.slice(0, 3);
     var w = 0; for (i = 0; i < lines.length; i++) w = Math.max(w, c.measureText(lines[i]).width);
-    var h = lines.length * 27 + 22, bw = w + 34, x1 = 790, x0 = x1 - bw, y0 = 62 - (lines.length - 1) * 4 + 8 * (1 - a);
+    var h = lines.length * 27 + 22, bw = w + 34, x1 = 872, x0 = x1 - bw, y0 = 62 - (lines.length - 1) * 4 + 8 * (1 - a);
     c.shadowColor = 'rgba(0,0,0,.4)'; c.shadowBlur = 14; c.shadowOffsetY = 5;
-    rrect(c, x0, y0, bw, h, 16); c.fillStyle = 'rgba(255,252,242,.97)'; c.fill();
+    rrect(c, x0, y0, bw, h, 16); c.fillStyle = 'rgba(26,10,20,.95)'; c.fill(); c.lineWidth = 2; c.strokeStyle = 'rgba(214,52,66,.9)'; c.stroke();
     c.beginPath(); c.moveTo(x1 - 2, y0 + h * 0.5 - 10); c.lineTo(x1 + 30, y0 + h * 0.5 + 16); c.lineTo(x1 - 2, y0 + h * 0.5 + 14); c.closePath(); c.fill();
     c.shadowBlur = 0; c.shadowOffsetY = 0;
-    c.fillStyle = '#2a2118'; c.textAlign = 'left'; c.textBaseline = 'middle';
+    c.fillStyle = '#ffe3dc'; c.textAlign = 'left'; c.textBaseline = 'middle';
     for (i = 0; i < lines.length; i++) c.fillText(lines[i], x0 + 17, y0 + 11 + 13.5 + i * 27);
     c.restore();
   };
@@ -1251,7 +1262,33 @@
   };
 
   // ---- seats
-  P._plate = function (c, x, y, w, h, name, seatN, mode, t) {
+  // How wide each seat's name plate is: as wide as its name needs (the font only shrinks when the room runs out),
+  // within the room its neighbours' plates leave. Cached per set of names.
+  P._plateWidths = function (c, g) {
+    var lay = this.lay, seats = g.seats, n = seats.length, ph = lay.plateH, base = lay.plateW, i, pass;
+    var key = lay.n + '|' + seats.map(function (s) { return s && s.user ? s.user + (s.leaving ? '!' : '') : ''; }).join('|');
+    if (this.pwKey === key && this.pw) return this.pw;
+    var w = [];
+    c.save(); c.font = '800 ' + Math.round(ph * 0.56) + 'px ' + SANS;
+    for (i = 0; i < n; i++) {
+      var s = seats[i];
+      w.push(s && s.user ? Math.max(base, Math.ceil(c.measureText(s.user + (s.leaving ? ' · leaving' : '')).width + ph * 1.0 + 9)) : base);
+      w[i] = Math.min(w[i], Math.max(base, Math.round(lay.S * 1.7)));
+    }
+    c.restore();
+    for (pass = 0; pass < 6; pass++) {
+      for (i = 0; i < n - 1; i++) {
+        var A = lay.seats[i], B = lay.seats[i + 1];
+        if (Math.abs(B.y - A.y) >= ph + 3) continue;
+        var room = 2 * (Math.abs(B.x - A.x) - 4), sum = w[i] + w[i + 1];
+        if (sum > room) { var cut = sum - room; w[i] -= cut * w[i] / sum; w[i + 1] -= cut * w[i + 1] / sum; }
+      }
+    }
+    this.pwKey = key; this.pw = w.map(function (v) { return Math.max(60, Math.floor(v)); });
+    return this.pw;
+  };
+
+  P._plate = function (c, x, y, w, h, name, seatN, mode, t, suffix) {
     var th = this.th, edge = th.plateEdge, alpha = 1, glow = null;
     if (mode === 'held') { alpha = 0.62; edge = th.trimDim; }
     else if (mode === 'turn') { glow = th.accent; }
@@ -1268,8 +1305,14 @@
     c.fillStyle = 'rgba(15,10,0,.92)'; c.font = '800 ' + Math.round(h * 0.42) + 'px ' + SANS; c.textAlign = 'center'; c.textBaseline = 'middle';
     c.fillText(String(seatN), tx, y + 0.5);
     c.fillStyle = th.plateInk; c.textAlign = 'left';
-    var label = fit(c, name, '800 %spx ' + SANS, w - h * 1.2 - 8, Math.round(h * 0.56), 11);
-    c.fillText(label, x - w / 2 + h * 0.98, y + 1);
+    var avail = w - h * 1.0 - 7, size = Math.round(h * 0.56), label = name + (suffix || '');
+    c.font = '800 ' + size + 'px ' + SANS;
+    while (c.measureText(label).width > avail && size > 6) { size--; c.font = '800 ' + size + 'px ' + SANS; }
+    if (c.measureText(label).width > avail && name.length >= 20) {          // only a very long name is ever cut
+      var nm = name; while (nm.length > 12 && c.measureText(nm + '…' + (suffix || '')).width > avail) nm = nm.slice(0, -1);
+      label = nm + '…' + (suffix || '');
+    }
+    c.fillText(label, x - w / 2 + h * 0.92, y + 1);
     c.restore();
   };
 
@@ -1557,9 +1600,9 @@
       if (any && el > 400) mode = 'win';
     }
     if (seat.leaving) mode = mode || 'held';
-    var pw = lay.plateW, ph = lay.plateH, py = A.y + lay.R + 11 + ph / 2 + 2;
+    var pw = (this.pw && this.pw[i]) || lay.plateW, ph = lay.plateH, py = A.y + lay.R + 11 + ph / 2 + 2;
     if (mode === 'turn') { var pulse = 0.5 + 0.5 * Math.sin(t / 200); c.save(); c.globalAlpha = 0.35 + 0.4 * pulse; rrect(c, A.x - pw / 2 - 4, py - ph / 2 - 4, pw + 8, ph + 8, ph * 0.5); c.lineWidth = 3; c.strokeStyle = th.accent; c.stroke(); c.restore(); }
-    this._plate(c, A.x, py, pw, ph, seat.leaving ? seat.user + ' · leaving' : seat.user, i + 1, mode, t);
+    this._plate(c, A.x, py, pw, ph, seat.user, i + 1, mode, t, seat.leaving ? ' · leaving' : '');
   };
 
   // ---- the dealer's cards
@@ -1662,10 +1705,7 @@
     this.drawn = []; this.fly = [];
     var el = this._elapsed(t), i;
     if (!this.st) return;
-    this._drawAvatar(c, g, el, t);
     c.drawImage(this._feltCanvas(), 0, 0, BASE_W, BASE_H);
-    var dn = String(g ? g.dealer_name : (this.idle && this.idle.dealer_name) || this.cfg.dealer_name || 'Hex').toUpperCase();
-    plaque(c, 960, DEALER.plateY, 250, 30, dn + ' · DEALER', th);
     if (g && g.test) testPlaque(c, 2 * 960 - 330, T.top + 20, 330, 32);
     this._boards(c, g, el, t);
     this._shoeAndTray(c, g, el, t);
@@ -1677,16 +1717,23 @@
         for (i = 0; i < (g.last.results || []).length; i++) { var rr = g.last.results[i]; if (rr.net > 0) anyWin = true; for (var q0 = 0; q0 < rr.hands.length; q0++) if (rr.hands[q0].outcome === 'blackjack') anyBj = true; }
         this._event('res|' + pk, 450, el, anyBj ? 'blackjack' : anyWin ? 'win' : g.last.net > 0 ? 'lose' : 'push');
       }
-      this._banner(c, g, el, t);
       this._dealerHand(c, g, el, t);
+      this._plateWidths(c, g);
       for (i = 0; i < g.seats.length; i++) this._seat(c, i, g.seats[i], g, el, t);
       for (i = 0; i < this.fly.length; i++) { var f = this.fly[i]; this._card(c, f[0], f[1], f[2], f[3], f[4], f[5]); }
       this._ghosts(c);
+      this._drawHand(c, g, el, t);
+      var dn = String(g ? g.dealer_name : (this.idle && this.idle.dealer_name) || this.cfg.dealer_name || 'Hex').toUpperCase();
+      plaque(c, 960, DEALER.plateY, 270, 30, dn + "'S TABLE", th);
+      this._banner(c, g, el, t);
       this._bubble(c, g, t);
       if (g.phase === 'over') this._summary(c, g, el, t);
       this.lastShoe = g.shoe;
       // a blackjack on the table: the confetti of the winners comes from the hands themselves
     } else {
+      this._drawHand(c, null, 0, t);
+      var dn = String(g ? g.dealer_name : (this.idle && this.idle.dealer_name) || this.cfg.dealer_name || 'Hex').toUpperCase();
+      plaque(c, 960, DEALER.plateY, 270, 30, dn + "'S TABLE", th);
       this._banner(c, null, 0, t);
       // an empty table: the seats' numbers
       for (i = 0; i < this.lay.seats.length; i++) {
@@ -1792,7 +1839,7 @@
     }
     var queue = opts.queue == null ? (np >= N ? [{ user: 'walter', bet: 50 }, { user: 'xena', bet: 25 }, { user: 'yuri', bet: 100 }] : []) : opts.queue;
     var g = baseGame(c, gid, 'betting', N, seats, { ends_in_ms: ms, phase_ms: Math.max(ms, 15000), hand_no: 2, queue: queue, shoe: mkShoe(6, 120, 0),
-      say: { id: 1, key: 'next', text: 'Next hand - ante up to keep your seat.', phase: 'betting' }, seats_free: N - np });
+      say: { id: 1, key: 'next', text: 'Again? Bet to keep your seat.', phase: 'betting' }, seats_free: N - np });
     g.players = order.map(function (si, k) { return { user: seats[si].user, seat: si + 1, stake: seats[si].bet, bet: seats[si].bet, status: 'ready', hands: 0, net: 0, queued: false }; });
     return roundState(g, idleOf(c));
   }
@@ -1832,7 +1879,7 @@
     var s1 = sample(c, gid, 3000, { players: np });
     // (the same players the hands will use)
     var seats0 = seatsView('betting'); s1.game.seats = seats0; s1.game.queue = [];
-    s1.game.say = { id: 2, key: 'open', text: 'Place your bets, folks.', phase: 'betting' };
+    s1.game.say = { id: 2, key: 'open', text: 'Sit. Wager. See what it costs you.', phase: 'betting' };
     steps.push({ ms: 3000, state: s1 });
     // 2. the deal
     var order1 = [], k;
@@ -1840,7 +1887,7 @@
     var t0 = 350, dealMs = t0 + order1.length * step + 650;
     dealt += order1.length;
     push('dealing', dealMs, { deal: { kind: 'deal', t0: t0, step: step, order: order1, moves: [], flip: null, shuffle: 0 }, shoe: mkShoe(6, dealt, order1.length),
-      say: { id: 3, key: 'deal', text: 'Good luck, everyone.', phase: 'dealing' }, hand_no: 1 });
+      say: { id: 3, key: 'deal', text: 'Here come the cards. Try not to pray.', phase: 'dealing' }, hand_no: 1 });
     // 3. the action rounds
     var round = 0, again = true;
     while (again && round < 6) {
@@ -1854,7 +1901,7 @@
       });
       if (!any) break;
       push('action', round === 1 ? 4200 : 2800, { round: round, hand_no: 1, shoe: mkShoe(6, dealt, 2 * np + 2),
-        say: round === 1 ? { id: 4, key: 'action', text: 'Hit or stand? Make your move.', phase: 'action' } : null });
+        say: round === 1 ? { id: 4, key: 'action', text: 'Hit or stand? Choose wisely.', phase: 'action' } : null });
       // resolve the round in seat order
       var order2 = [], moves = [];
       P.forEach(function (p) {
@@ -1911,7 +1958,7 @@
       net += row.net; results.push(row);
     });
     var g5 = push('settle', 7000, { dealer: dv, last: { hand_no: 1, dealer: { cards: dv.cards, total: dv.total, bust: dv.bust, bj: dv.bj }, results: results, net: net },
-      say: { id: 5, key: net < 0 ? 'house' : 'players', text: net < 0 ? 'The house takes this one.' : 'Pay the winners.', phase: 'settle' }, shoe: mkShoe(6, dealt, 0) });
+      say: { id: 5, key: net < 0 ? 'house' : 'players', text: net < 0 ? 'Your coins are mine now.' : 'Fine. Collect your winnings.', phase: 'settle' }, shoe: mkShoe(6, dealt, 0) });
     g5.dealer.hidden = false;
     return steps;
   }
