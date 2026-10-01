@@ -438,7 +438,7 @@
   var T = { left: 60, right: 1860, top: 232, sideY: 560, cx: 960, rx: 900, ry: 490, rail: 38, corner: 76 };
   var SEAT_E = { cx: 960, cy: 500, rx: 840, ry: 400 };       // the seats' arc
   var DEALER = { x: 960, cardY: 424, plateY: 252, headY: 98, bannerY: 308, cw: 100, ch: 140, dx: 62 };
-  var SHOE_XY = { x: 1570, y: 408 }, TRAY_XY = { x: 372, y: 408 };
+  var SHOE_XY = { x: 1535, y: 408 }, TRAY_XY = { x: 407, y: 408 };
 
   // the table outline inset by `i` px (a "D": a straight edge for the dealer, a half ellipse for the players)
   function tablePath(c, i) {
@@ -595,6 +595,20 @@
     c.fillStyle = 'rgba(30,18,6,.92)'; c.textAlign = 'center'; c.textBaseline = 'middle';
     var t = fit(c, String(text).toUpperCase(), '800 %spx ' + SERIF, w - 28, 22, 11);
     c.fillText(t, x, y + 1.5);
+    c.restore();
+  }
+
+  // "TEST GAME · NO COINS": a red plaque on the right of the rail (the table's own plaque is on the left)
+  function testPlaque(c, x, y, w, h) {
+    c.save();
+    rrect(c, x - w / 2, y - h / 2, w, h, 8);
+    var g = c.createLinearGradient(0, y - h / 2, 0, y + h / 2);
+    g.addColorStop(0, '#e2574b'); g.addColorStop(0.5, '#b8342b'); g.addColorStop(1, '#7c1f19');
+    c.fillStyle = g; c.fill(); c.lineWidth = 1.5; c.strokeStyle = 'rgba(0,0,0,.55)'; c.stroke();
+    rrect(c, x - w / 2 + 3, y - h / 2 + 3, w - 6, h - 6, 6); c.lineWidth = 1; c.strokeStyle = 'rgba(255,255,255,.35)'; c.stroke();
+    c.fillStyle = '#fff'; c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.font = '800 17px ' + SANS;
+    c.fillText('TEST GAME · NO COINS', x, y + 1);
     c.restore();
   }
 
@@ -990,13 +1004,20 @@
   };
 
   // ---- card sprites
-  P._sprite = function (code, w, h) {
+  // A sprite is the card with its soft shadow baked in (a margin of CARD_M px around it): drawing a shadow per card
+  // per frame is the most expensive thing the table does. A card with a glow uses the plain sprite (its own shadow).
+  var CARD_M = 10;
+  P._sprite = function (code, w, h, plain) {
     w = Math.round(w); h = Math.round(h);
-    var key = (code || 'back') + '|' + w + 'x' + h + '|' + this.cfg.theme + '|' + this.k.toFixed(2), s = this.sprites[key];
+    var key = (code || 'back') + '|' + w + 'x' + h + '|' + this.cfg.theme + '|' + this.k.toFixed(2) + (plain ? '|p' : ''), s = this.sprites[key];
     if (s) return s;
     if (this.spriteN > 420) { this.sprites = {}; this.spriteN = 0; }
-    var k = this.k, cv = mk(w * k + 2, h * k + 2), c = cv.getContext('2d');
-    c.setTransform(k, 0, 0, k, 0, 0);
+    var k = this.k, m = plain ? 0 : CARD_M, cv = mk((w + 2 * m) * k + 2, (h + 2 * m) * k + 2), c = cv.getContext('2d');
+    c.setTransform(k, 0, 0, k, m * k, m * k);
+    if (!plain) {
+      c.save(); c.shadowColor = 'rgba(0,0,0,.42)'; c.shadowBlur = 7 * k; c.shadowOffsetY = 3 * k;
+      rrect(c, 0, 0, w, h, Math.max(3, w * 0.075)); c.fillStyle = '#fbfaf6'; c.fill(); c.restore();
+    }
     if (code) drawFace(c, code, w, h); else drawBack(c, w, h, this.th);
     this.sprites[key] = cv; this.spriteN++;
     return cv;
@@ -1008,15 +1029,14 @@
     var k = this.k, flip = o.flip == null ? (code ? 1 : 0) : o.flip, face = flip >= 0.5 && code, sx = Math.abs(Math.cos(flip * Math.PI));
     if (o.flip == null) sx = 1;
     if (sx < 0.02) return;
-    var spr = this._sprite(face ? code : null, w, h);
+    var plain = !!(o.glow || o.noShadow), m = plain ? 0 : CARD_M, spr = this._sprite(face ? code : null, w, h, plain);
     c.save();
     c.translate(x + w / 2, y + h / 2 - (o.lift || 0));
     if (o.rot) c.rotate(o.rot);
     c.scale(sx * (o.scale || 1), (o.scale || 1));
     if (o.alpha != null && o.alpha < 1) c.globalAlpha = clamp(o.alpha, 0, 1);
     if (o.glow) { c.shadowColor = o.glow; c.shadowBlur = (o.glowBlur || 22) * k; }
-    else if (!o.noShadow) { c.shadowColor = 'rgba(0,0,0,.42)'; c.shadowBlur = 7 * k; c.shadowOffsetY = 3 * k; }
-    c.drawImage(spr, 0, 0, spr.width, spr.height, -w / 2, -h / 2, w + 2 / k, h + 2 / k);
+    c.drawImage(spr, 0, 0, spr.width, spr.height, -w / 2 - m, -h / 2 - m, w + 2 * m + 2 / k, h + 2 * m + 2 / k);
     c.restore();
     this.drawn.push({ code: face ? code : null, x: x, y: y, w: w, h: h, rot: o.rot || 0 });
   };
@@ -1225,7 +1245,7 @@
       var u = (el - i * step) / 520;
       if (u < 0 || u > 1) continue;
       var r = mulberry(i * 31 + 7)(), p = easeOut(u);
-      var x = lerp(TRAY_XY.x + 60, SHOE_MOUTH.x - 10, p), y = lerp(TRAY_XY.y - 6, SHOE_MOUTH.y, p) - Math.sin(Math.PI * p) * (90 + r * 60);
+      var x = lerp(TRAY_XY.x + 60, SHOE_MOUTH.x - 10, p), y = lerp(TRAY_XY.y + 8, SHOE_MOUTH.y + 8, p) - Math.sin(Math.PI * p) * (12 + r * 20);
       this._card(c, null, x - 22, y - 30, 44, 62, { rot: (r - 0.5) * 1.2 + p * 0.4, alpha: 1 - Math.pow(u, 6), noShadow: false });
     }
   };
@@ -1262,22 +1282,35 @@
     return out;
   }
 
-  // the stacks of cards of one seat's hands: [{cx, by, sc}] (by = the bottom of the lowest card of the hand)
-  function handBoxes(nh, heights, lay, A) {
+  // the stacks of cards of one seat's hands: [{cx, by, sc, cap}] (by = the bottom of the lowest card of the hand,
+  // cap = how tall a stack may be). Three or four hands (splits) stand in two rows.
+  var ROW_GAP = 30;
+  function handBoxes(nh, heights, lay, A, sc, cap) {
     var bottom = A.y - lay.R - 13, out = [], i;
-    if (nh <= 1) return [{ cx: A.x, by: bottom, sc: 1 }];
-    var sc = nh === 2 ? Math.min(0.8, (lay.S - 10) / (2 * lay.cw + 6)) : Math.min(0.68, (lay.S - 10) / (2 * lay.cw + 6));
-    if (!isFinite(sc) || sc <= 0) sc = 0.7;
+    if (nh <= 1) return [{ cx: A.x, by: bottom, sc: sc, cap: cap }];
     var colW = lay.cw * sc, dx = colW / 2 + 3;
-    if (nh === 2) return [{ cx: A.x - dx, by: bottom, sc: sc }, { cx: A.x + dx, by: bottom, sc: sc }];
+    if (nh === 2) return [{ cx: A.x - dx, by: bottom, sc: sc, cap: cap }, { cx: A.x + dx, by: bottom, sc: sc, cap: cap }];
     var h0 = Math.max(heights[0] || 0, heights[1] || 0) || lay.ch * sc;
-    for (i = 0; i < nh; i++) out.push({ cx: A.x + (i % 2 ? dx : -dx), by: i < 2 ? bottom : bottom - h0 - 6, sc: sc });
+    for (i = 0; i < nh; i++) out.push({ cx: A.x + (i % 2 ? dx : -dx), by: i < 2 ? bottom : bottom - h0 - ROW_GAP, sc: sc, cap: cap });
     return out;
   }
-  // the most a hand's stack of cards may grow (px): a long hand overlaps more instead of reaching the dealer
+  // The most a hand's stack of cards may grow: a long hand overlaps more (down to a corner index showing) instead of
+  // reaching the dealer, the panels, the shoe or the tray; `cap` is the room this hand has.
   var STACK_MAX = 340;
-  function stackDy(n, ch) { return n <= 1 ? 0 : Math.min(0.36 * ch, (Math.max(ch * 1.5, Math.min(2.6 * ch, STACK_MAX)) - ch) / (n - 1)); }
-  function stackHeight(n, ch) { return n <= 1 ? ch : ch + (n - 1) * stackDy(n, ch); }
+  function stackDy(n, ch, cap) {
+    if (n <= 1) return 0;
+    var c = Math.max(ch * 1.5, Math.min(2.6 * ch, STACK_MAX));
+    if (cap) c = Math.min(c, cap);
+    return clamp((c - ch) / (n - 1), 0.2 * ch, 0.36 * ch);
+  }
+  function stackHeight(n, ch, cap) { return n <= 1 ? ch : ch + (n - 1) * stackDy(n, ch, cap); }
+  // keep-out areas on the felt [x0, x1, bottom y]: the waiting list, the limits panel, the discard tray, the shoe and the dealer's cards
+  var KEEP = [[128, 456, 350], [1464, 1794, 348], [296, 520, 458], [1384, 1690, 472], [840, 1150, 500]];   // (the last: the dealer's cards)
+  function keepBottom(x0, x1) {
+    var y = 0, i, k;
+    for (i = 0; i < KEEP.length; i++) { k = KEEP[i]; if (Math.min(x1, k[1]) - Math.max(x0, k[0]) > 12 && k[2] > y) y = k[2]; }
+    return y;
+  }
 
   // ---- one stake drops onto the felt
   P._chipDrop = function (key, amt, t) {
@@ -1307,7 +1340,7 @@
         var dr = this._chipDrop('s' + seat.n, seat.bet, t);
         this._drawPile(c, A.x, A.y + lay.R * 0.52, r, seat.bet, { alpha: dr.alpha, scale: dr.scale, lift: dr.lift });
         showLabel = { text: fmtShort(seat.bet), col: th.accent };
-      } else if (seat.state === 'held') {
+      } else if (seat.state === 'held' && phase !== 'over') {          // (a closed table holds nothing)
         if (seat.last_bet > 0) this._drawPile(c, A.x, A.y + lay.R * 0.52, r, seat.last_bet, { alpha: 0.26 });
         var pulse = 0.5 + 0.5 * Math.sin(t / 260);
         showLabel = { text: seat.last_bet > 0 ? 'ANTE UP · ' + fmtShort(seat.last_bet) : 'ANTE UP', col: '#ffd76a', glow: 'rgba(255,215,106,' + (0.25 + 0.5 * pulse).toFixed(2) + ')', border: 'rgba(255,215,106,' + (0.35 + 0.5 * pulse).toFixed(2) + ')' };
@@ -1385,7 +1418,7 @@
       if (sk != null) lastStart = Math.max(lastStart, st);
     }
     if (!started) return null;
-    var dy = stackDy(started, ch);
+    var dy = stackDy(started, ch, box.cap);
     // a hand that busts shakes when the busting card lands
     var shake = 0;
     if (hand.status === 'bust' && nc > 1) {
@@ -1493,14 +1526,27 @@
     var hands = seat.hands || [], nh = hands.length, j, mode = seat.state === 'held' ? 'held' : '';
     this._stakes(c, seat, A, g, el, t);
     if (nh) {
-      // sizes first (the rows of a split need each hand's height)
-      var sc = nh === 2 ? Math.min(0.8, (lay.S - 10) / (2 * lay.cw + 6)) : nh > 2 ? Math.min(0.68, (lay.S - 10) / (2 * lay.cw + 6)) : 1, heights = [];
+      // sizes first (the rows of a split need each hand's height); the cards shrink a little rather than reach
+      // the panels, the tray or the shoe
+      var sc = nh === 2 ? Math.min(0.8, (lay.S - 10) / (2 * lay.cw + 6)) : nh > 2 ? Math.min(0.68, (lay.S - 10) / (2 * lay.cw + 6)) : 1, heights = [], cap = 0, pass;
+      if (!isFinite(sc) || sc <= 0) sc = 0.7;
+      var bottom = A.y - lay.R - 13, counts = [];
       for (j = 0; j < nh; j++) {
         var cnt = 0, hh = hands[j];
         for (var q = 0; q < hh.cards.length; q++) { var sk = this.sched[hh.uid + ':' + q]; if (!(g.deal && sk != null) || el >= g.deal.t0 + sk * g.deal.step) cnt++; }
-        heights.push(stackHeight(Math.max(1, cnt), lay.ch * sc));
+        counts.push(Math.max(1, cnt));
       }
-      var boxes = handBoxes(nh, heights, lay, A), wait = false, any = false;
+      for (pass = 0; pass < 4; pass++) {
+        var gw = nh === 1 ? lay.cw : 2 * lay.cw * sc + 6, half = Math.max(gw / 2 + 6, 44);
+        var room = bottom - (keepBottom(A.x - half, A.x + half) + 36), need;
+        cap = nh > 2 ? (room - ROW_GAP) / 2 : room;
+        heights = [];
+        for (j = 0; j < nh; j++) heights.push(stackHeight(counts[j], lay.ch * sc, cap));
+        need = nh > 2 ? Math.max(heights[0] || 0, heights[1] || 0) + ROW_GAP + Math.max(heights[2] || 0, heights[3] || 0) : Math.max.apply(null, heights);
+        if (need <= room + 1 || sc <= 0.5) break;
+        sc = Math.max(0.5, sc * Math.max(0.8, room / need));
+      }
+      var boxes = handBoxes(nh, heights, lay, A, sc, cap), wait = false, any = false;
       for (j = 0; j < nh; j++) {
         this._hand(c, seat, hands[j], j, boxes[j], g, el, t);
         if (hands[j].status === 'active' && !hands[j].act) wait = true;
@@ -1571,7 +1617,7 @@
   P._summary = function (c, g, el, t) {
     var s = g.summary; if (!s) return;
     var th = this.th, a = clamp(el / 400, 0, 1), cur = String(s.currency || g.currency || 'hexcoins');
-    var x = 960, y = 650, w = 700, rows = (s.players || []).slice(0, 5), h = 150 + Math.max(1, rows.length) * 36 + 24;
+    var x = 960, y = 650, w = 700, all = s.players || [], rows = all.slice(0, 6), more = all.length - rows.length, h = 150 + Math.max(1, rows.length + (more > 0 ? 0.75 : 0)) * 36 + 24;
     c.save(); c.globalAlpha = a * 0.55; c.fillStyle = '#000'; tablePath(c, T.rail); c.fill(); c.restore();
     c.save(); c.globalAlpha = a; c.translate(0, (1 - easeOut(a)) * 24);
     c.shadowColor = 'rgba(0,0,0,.6)'; c.shadowBlur = 40; c.shadowOffsetY = 12;
@@ -1589,6 +1635,7 @@
       c.fillText((p.net > 0 ? '+' : p.net < 0 ? '−' : '') + fmt(Math.abs(p.net)), x + w / 2 - 50, ry);
       c.fillStyle = 'rgba(255,255,255,.08)'; c.fillRect(x - w / 2 + 40, ry + 18, w - 80, 1);
     }
+    if (more > 0) { c.textAlign = 'center'; c.font = '700 17px ' + SANS; c.fillStyle = th.inkDim; c.fillText('+ ' + more + ' more player' + (more === 1 ? '' : 's'), x, y - h / 2 + 140 + rows.length * 36 + 2); }
     c.restore();
   };
 
@@ -1619,6 +1666,7 @@
     c.drawImage(this._feltCanvas(), 0, 0, BASE_W, BASE_H);
     var dn = String(g ? g.dealer_name : (this.idle && this.idle.dealer_name) || this.cfg.dealer_name || 'Hex').toUpperCase();
     plaque(c, 960, DEALER.plateY, 250, 30, dn + ' · DEALER', th);
+    if (g && g.test) testPlaque(c, 2 * 960 - 330, T.top + 20, 330, 32);
     this._boards(c, g, el, t);
     this._shoeAndTray(c, g, el, t);
     if (g) {

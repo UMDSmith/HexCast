@@ -66,7 +66,7 @@
   }
 
   function fillSeats(tab) {
-    var g = tab.st && tab.st.game, box = tab.$('seats'), q = tab.$('queue'), pill = tab.$('seatpill');
+    var g = tab.st && tab.st.game, box = tab.$('seatgrid'), q = tab.$('queue'), pill = tab.$('seatpill');
     if (!box) return;
     if (!g) {
       var n = (tab.st && tab.st.idle && tab.st.idle.seats) || tab.cfg.seats || 10;
@@ -172,7 +172,7 @@
     extra: function (id) {
       return '<div class="card"><h2>Seats <span class="pill" id="' + id('seatpill') + '">—</span></h2>' +
         '<p class="hint">Every seat of the table, live: who sits where, what rides on it and where each hand stands. A seat is kept between hands only if its player bets again.</p>' +
-        '<div class="bj-seats" id="' + id('seats') + '"></div><div class="bj-q" id="' + id('queue') + '"></div></div>';
+        '<div class="bj-seats" id="' + id('seatgrid') + '"></div><div class="bj-q" id="' + id('queue') + '"></div></div>';
     },
     apiRows: function (a) {
       return [
@@ -212,6 +212,11 @@
       if (isFinite(seat)) b.seat = seat;
     },
     wire: function (self, $$, who, pout) {
+      // (the shared confirm talks about rides, which blackjack doesn't have)
+      $$('stop').onclick = function () {
+        if (!confirm('Stop the Blackjack table? Every stake still on the line is returned and a hand in progress is void.')) return;
+        self.act('/stop', {}, 'Stopped');
+      };
       $$('close').onclick = function () { self.act('/close', {}, function (d) { return d.closed ? 'Table closed' : 'The table closes after this hand'; }); };
       $$('rebet').onclick = function () {
         self.act('/rebet', { user: who() }, function (d) { return 'Bet ' + fmt(d.amount) + ' again (seat ' + (d.seat || 'queue') + ')'; }, pout);
@@ -279,7 +284,12 @@
     sample: function (c, gid, ms) {
       var R = renderer();
       if (!R) throw new Error('blackjack renderer not loaded');
-      return R.sample(c, gid, ms, { players: Math.min(7, Math.max(3, Math.round(+c.seats || 10))), held: true });
+      // a hand in progress (cards down, a few choices made), the way it looks most of the time; the betting window as a fallback
+      var np = Math.min(7, Math.max(3, Math.round(+c.seats || 10))), steps = R.demo(c, gid, { players: np }), i, st = null;
+      for (i = 0; i < steps.length && !st; i++) if (steps[i].state.game.phase === 'action') st = JSON.parse(JSON.stringify(steps[i].state));
+      if (!st) return R.sample(c, gid, ms, { players: np, held: true });
+      st.game.deal = null; st.game.ends_in_ms = ms; st.game.phase_ms = Math.max(ms, 12000); st.game.elapsed_ms = 3000;
+      return st;
     },
     preview: function (c, gid) {
       var R = renderer();

@@ -1101,6 +1101,87 @@ def test_rules_text_follows_the_settings(t):
 # the add-on: registration, routes, the HTTP API
 # ---------------------------------------------------------------------------------------------------------
 
+def test_a_test_table_plays_for_nothing_and_leaves_no_trace_in_the_ledger_or_the_stats(t):
+    t.set(seat_fill="first")
+    st, body = t.G.start_game({"seats": 3, "test": True})
+    assert st == 200 and t.view()["test"] is True
+    t.bets(("ann", 100), ("bob", 50))
+    t.deal(["TS", "9S", "9H", "8D", "7C", "TD"])
+    t.ok("ann", "double")
+    t.ok("bob", "stand")
+    t.finish_hand()
+    assert t.G.phase == "settle" and t.result("ann")["pay"] in (0, 200, 400) and t.result("bob")["outcome"] in ("win", "push", "lose")
+    assert t.events() == []                                   # nothing reached the shared ledger ...
+    assert t.G.g["log"], "the game keeps its own log of the coin movements"
+    assert all(e["seq"] is None and e.get("test") for e in t.G.g["log"])
+    t.G.stop()
+    assert t.G.history[0]["test"] is True
+    assert t.G._st["games"] == 0 and t.G._st["hands"] == 0 and t.G._st["total_bet"] == 0     # ... nor the stats
+
+
+def test_the_shared_ledger_and_the_games_own_books_agree_over_many_random_hands_at_a_full_table(t):
+    """Fourteen seats, a waiting list, random but legal choices (hits, doubles, splits, insurance, surrender), shoes
+    that run out and are rebuilt: whatever happens, what the bank took minus what it paid is what the hands lost."""
+    import random
+    rng = random.Random(20240601)
+    t.start(seats=14, seat_fill="center", surrender=True, resplit_aces=True, queue_max=6)
+    bj, G = t.bj, t.G
+    names = [f"p{i}" for i in range(20)]                      # 14 seats + 6 waiting
+    net_of_hands = 0
+    for hand in range(14):
+        assert G.phase == "betting"
+        for u in names:                                       # everybody (re)bets; new faces join, some stay away
+            if rng.random() < 0.85:
+                if G._seat_index(u) is not None and G.g["last_bets"].get(u):
+                    G.rebet({"user": u})
+                else:
+                    t.bet(u, rng.choice([1, 5, 10, 25, 100, 250]))            # (a full queue just says no)
+        if rng.random() < 0.3:                                # somebody gets up between hands
+            G.leave({"user": rng.choice(names)})
+        if not any(s and s["bet"] > 0 for s in G.g["seats"]):
+            t.bet("p0", 10)
+        G.advance()                                           # betting -> dealing
+        guard = 0
+        while G.phase not in ("settle", "betting", "over") and guard < 200:
+            guard += 1
+            if G.phase == "insurance":
+                for s in G.g["seats"]:
+                    if s and s["hands"] and rng.random() < 0.5:
+                        G.act({"user": s["user"], "action": rng.choice(["insurance", "decline"])})
+            elif G.phase == "action":
+                for si, s in enumerate(G.g["seats"]):
+                    if not s:
+                        continue
+                    for hi, h in enumerate(s["hands"]):
+                        if h["status"] == "active" and not h["act"]:
+                            n = len(s["hands"])
+                            moves = ["stand"] + (["hit"] if bj.can_hit(h, G.g["rules"]) else []) * 3
+                            moves += ["double"] if bj.can_double(h, G.g["rules"]) else []
+                            moves += ["split"] * 2 if bj.can_split(h, n, G.g["rules"]) else []
+                            moves += ["surrender"] if bj.can_surrender(h, n, G.g["rules"]) else []
+                            G.act({"user": s["user"], "action": rng.choice(moves), "hand": hi + 1})
+            G.advance()
+        assert G.phase == "settle", G.phase
+        view = G.state_view()["game"]
+        assert all(len(s["hands"]) <= 4 for s in view["seats"] if s["user"])
+        net_of_hands += G.g["last"]["net"]
+        G.advance()                                           # settle -> the next betting window
+    G.stop()                                                  # refunds the antes of an unplayed hand
+    debits, credits = t.balance()
+    assert debits - credits == -net_of_hands                  # money is conserved, hand by hand
+    assert G.history[0]["result"]["house_net"] == debits - credits
+    assert G.history[0]["result"]["hands"] == 14 and G.history[0]["result"]["tally"]["player_hands"] > 50
+
+
+def test_the_panel_script_gives_every_control_of_its_cards_a_different_id():
+    """The Seats card once reused the id of the "Seats for this table" box, which left the card empty."""
+    import re
+    from pathlib import Path
+    src = (Path(__file__).resolve().parent.parent / "catalog" / "games_blackjack" / "static" / "blackjack_panel.js").read_text(encoding="utf-8")
+    ids = re.findall(r"id\('([a-z0-9-]+)'\)", src.split("controls:")[1].split("apiRows:")[0])
+    assert len(ids) == len(set(ids)), sorted({i for i in ids if ids.count(i) > 1})
+
+
 def test_it_registers_as_a_games_add_on_at_order_70(real_world):
     w = real_world
     w.installer.install("games")
