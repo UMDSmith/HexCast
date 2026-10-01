@@ -56,8 +56,8 @@ RISKS = ("low", "medium", "high")
 #
 # Every player's stake that drop is paid  stake x the landing slot's multiplier,  rounded down to
 # whole coins (a x0 slot is a BUST). The multipliers are a table of rows + 1 numbers: a built-in
-# preset for rows x risk (low / medium / high; the top payout in the centre, busts and small pays
-# interleaved with the better slots) or the streamer's own list (setting `multipliers`, which must have exactly rows + 1
+# preset for rows x risk (low / medium / high; big pays rare and on the outer slots, busts and
+# small pays interleaved across the board) or the streamer's own list (setting `multipliers`, which must have exactly rows + 1
 # values). There is NO house-edge setting and nothing is nudged: the table IS the odds. Its RTP
 # (the sum of probability x multiplier) and the house edge (100% - RTP) are computed exactly from
 # the binomial probabilities and shown everywhere the table is.
@@ -65,44 +65,47 @@ RISKS = ("low", "medium", "high")
 # The table, the rows and the risk are copied into the game when it starts: changing the settings
 # mid-game never changes the odds of a game that is running.
 
-# Built-in tables, one multiplier per slot, slot k = k right bounces. They are NOT symmetric: the centre
-# slot (the likeliest one) holds the top payout - for an odd number of rows, one of the two middle
-# slots does - and the busts (x0) and the small pays are interleaved among the better slots across the
-# board. Each has an RTP of about 95% (94.99% - 95.41%); GET /games/api/hexfall/bets lists the exact numbers.
+# Built-in tables, one multiplier per slot, slot k = k right bounces. They are NOT symmetric and the big
+# pays are RARE: the biggest multipliers sit on the outer, low-probability slots (never in the central
+# third, never a slot that is hit 5% of the time), the common central slots hold a mix of small pays,
+# break-even and busts. Busts (x0) and winners are interleaved across the whole board: no two busts
+# side by side, never three slots in a row that pay less than the stake, and a bust within one slot of
+# every slot that pays x2 or more (the near miss). Higher risk = more busts and a bigger top payout.
+# Every table returns about 95% (94.99% - 95.45%); GET /games/api/hexfall/bets lists the exact numbers.
 # (static/hexfall.js carries the same tables for the Edit Mode editor's sample game; a test keeps them equal.)
 PRESETS: dict[str, dict[int, tuple]] = {
     "low": {
-        8: (1.5, 0.7, 1.2, 0.2, 1.8, 1, 0, 1, 1.5),
-        9: (0.3, 0.8, 0, 0.8, 0.3, 2, 1, 0.6, 1.8, 1.5),
-        10: (0.6, 0.8, 0.2, 0, 0.4, 2, 1.5, 0.2, 0.4, 1.2, 1.8),
-        11: (1, 0, 1.5, 0.8, 0.2, 0.6, 2, 1.2, 0, 1.2, 0.6, 0.4),
-        12: (0.8, 1.5, 1, 0.2, 0.5, 1.5, 2, 0.2, 0, 1.5, 0, 0.5, 1.2),
-        13: (0.8, 2, 0, 0.2, 0.8, 0.5, 1, 2.5, 0.3, 0, 0.3, 0, 0.2, 1.5),
-        14: (2, 0.3, 0, 0.2, 0.3, 0, 0.3, 2.5, 1.5, 0.2, 0.5, 0.3, 2, 1.5, 2),
-        15: (2, 0.5, 0.7, 0.8, 1.8, 1, 0.3, 0.6, 2.5, 0.3, 0, 1.5, 0.3, 0.8, 0, 2),
-        16: (1.5, 0.8, 0.5, 2, 0.7, 0.3, 0, 1.5, 2.5, 0.4, 0.3, 0.2, 0.4, 0.6, 2, 0, 1.5),
+        8: (5, 0, 0.4, 1, 1, 0.3, 3, 0, 0.3),
+        9: (1.2, 5, 0, 3, 0.3, 0.4, 1, 0.4, 0, 2.5),
+        10: (1.2, 0.4, 0, 3, 0.4, 1, 0.6, 0.4, 2, 0, 8),
+        11: (0.3, 8, 0, 1, 0.3, 0.2, 1, 3, 0, 1, 0, 3),
+        12: (0.6, 6, 0, 3, 0.5, 0.2, 1, 0.4, 2.5, 0, 4, 0, 10),
+        13: (0, 10, 0.2, 0.8, 1, 0.6, 0.2, 1.5, 2, 0, 0.5, 4, 0, 6),
+        14: (15, 0, 8, 0, 1.2, 0.8, 0.2, 1, 0.6, 2.5, 0, 3, 1.5, 0, 0.3),
+        15: (0.8, 15, 0, 1, 4, 0, 1.5, 0.4, 1.5, 0.2, 0.8, 1, 1.2, 0.5, 0, 5),
+        16: (0, 20, 0.3, 1.5, 0, 2.5, 1, 0.4, 1.2, 1, 0.8, 0, 2, 0.6, 3, 0, 3),
     },
     "medium": {
-        8: (2, 0, 0.7, 0.4, 2.5, 0, 0.6, 0.8, 1.2),
-        9: (0, 1.2, 0.4, 0.8, 2.5, 0, 0.7, 0.3, 1, 2),
-        10: (0.8, 1.2, 0.3, 0, 1, 2.5, 0.4, 0, 0.5, 0, 1.5),
-        11: (1.5, 2, 0, 1, 0.3, 3, 0, 0.2, 1, 0.8, 0, 2.5),
-        12: (2, 0, 0.5, 0, 0.2, 0, 3, 1, 0.3, 0, 0.8, 0.3, 2.5),
-        13: (2, 0.3, 2, 0.5, 0, 1.2, 3, 0.3, 0, 0.3, 0, 0.8, 1.2, 0.7),
-        14: (0.8, 2.5, 1.2, 0.3, 0.7, 0, 0.5, 3, 0.3, 0, 1.2, 2, 0, 2.5, 1.8),
-        15: (1.5, 0.7, 2, 1.8, 0, 0.2, 0, 3, 1, 0.5, 0, 0.4, 1, 2.5, 2, 0.5),
-        16: (2, 0, 1.5, 0.4, 2, 0.8, 0.5, 0.3, 3, 0, 0.7, 0, 1, 2, 2.5, 0, 1.2),
+        8: (0, 8, 1, 0, 1, 0.8, 1.2, 0.3, 0.5),
+        9: (0, 10, 0.4, 3, 0, 0.2, 1, 0.3, 1.2, 1),
+        10: (10, 0, 0.5, 1.2, 0.7, 1.5, 0, 1.2, 1.5, 6, 0),
+        11: (12, 0, 0.5, 1.2, 0, 0.3, 1.5, 1, 3, 0, 5, 0.3),
+        12: (0, 15, 1.2, 0.8, 0, 1, 0.2, 3, 0, 0.2, 1, 0, 3),
+        13: (0.8, 0.3, 1.2, 0, 4, 0.6, 1, 0.5, 0, 1, 0, 10, 0, 15),
+        14: (20, 0, 10, 0, 2.5, 1, 0, 0.3, 1.5, 1.2, 0.3, 5, 0, 8, 0.6),
+        15: (5, 0, 5, 0.5, 1, 0, 1, 0.3, 3, 0, 0.2, 1.2, 0.3, 0.5, 25, 0),
+        16: (0, 25, 3, 0, 10, 0.2, 1, 0.8, 0, 1.2, 0.3, 2, 0, 1, 0, 6, 0),
     },
     "high": {
-        8: (2, 0.5, 0.4, 0, 3, 0, 0.4, 0.5, 1),
-        9: (2, 0.7, 0.4, 0.8, 0, 3, 0, 0.4, 0.3, 2.5),
-        10: (1.5, 0.7, 0.3, 0.2, 0, 3, 0.7, 0, 0.3, 1.2, 0),
-        11: (3, 0, 0.4, 0.8, 0.3, 0, 3.5, 0, 0.4, 0, 0.3, 3),
-        12: (2.5, 3, 0, 0.6, 0, 0.3, 3.5, 0, 0.3, 0, 1.5, 0, 2.5),
-        13: (1.8, 0.8, 0, 1, 0.4, 0.2, 0, 3.5, 0, 1.2, 0, 1.2, 0, 3),
-        14: (2.5, 0.5, 0, 1.2, 0.3, 0, 0.4, 3.5, 0, 0.4, 0.3, 0.8, 2.5, 0.3, 3),
-        15: (2, 2.5, 0.5, 0.8, 0, 0.3, 0.2, 0, 4, 0, 0.4, 1.2, 0.4, 0, 2.5, 3.5),
-        16: (3, 0.5, 1.2, 2, 0.8, 0.7, 0.3, 0, 4, 0, 0.2, 0, 0.5, 0, 1, 0, 3.5),
+        8: (10, 0, 4, 0.7, 0, 1, 0.4, 0, 15),
+        9: (0.8, 1.5, 0.5, 1.5, 0, 0.5, 1, 0, 20, 1.2),
+        10: (4, 0, 2.5, 1, 0, 0.7, 1.2, 0, 0.2, 30, 0),
+        11: (1.2, 0.5, 0, 2, 0.2, 0, 1, 3, 0, 1, 0, 40),
+        12: (0, 50, 2, 0, 0.2, 1, 0, 0.3, 4, 0, 1, 0, 3),
+        13: (0.6, 0.5, 1, 0, 3, 1.5, 0.6, 0, 1.2, 0, 1, 0, 60, 0.3),
+        14: (75, 0, 1.2, 0.3, 1.5, 0, 3, 0.6, 0, 1, 0.3, 0, 5, 0, 4),
+        15: (1.5, 100, 0, 0.5, 1, 0, 0.2, 1, 0, 0.2, 1, 12, 0, 1.5, 0, 60),
+        16: (12, 0, 6, 2, 0, 0.3, 1, 0.2, 0, 4, 0, 0.2, 1, 0.5, 1.5, 0, 150),
     },
 }
 DEFAULT_ROWS = 12

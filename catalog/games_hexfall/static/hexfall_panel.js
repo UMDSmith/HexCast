@@ -145,8 +145,8 @@
     settings: [
       ['drops', 'Drops per game', 'int', [1, 10]],
       ['rows', 'Rows of pegs', 'int', [8, 16], 'Rows of hexagonal pegs: rows + 1 slots at the bottom'],
-      ['risk', 'Risk (built-in multiplier table)', 'select', [['low', 'Low — small swings'], ['medium', 'Medium'], ['high', 'High — the most busts, the biggest top payout']],
-        'Which built-in table pays: the top payout sits in the centre, busts and small pays are interleaved among the better slots, about 95% return'],
+      ['risk', 'Risk (built-in multiplier table)', 'select', [['low', 'Low — small swings'], ['medium', 'Medium'], ['high', 'High — the most busts, the biggest rare payouts']],
+        'Which built-in table pays: big pays are rare (outer slots), busts and small pays are interleaved across the board, about 95% return'],
       ['multipliers', 'Custom multipliers (rows + 1 numbers)', 'text', 400,
         'Your own table, left to right, e.g. 40 15 5 3 1 0.3 0 0.3 1 3 5 15 40 (0 = bust). Empty = the built-in table for rows and risk. It needs exactly rows + 1 numbers (a list that no longer fits is dropped); the return and house edge are computed from it'],
       ['open_bet_seconds', 'First bet window (s)', 'num', [5, 300]],
