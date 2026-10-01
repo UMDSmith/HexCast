@@ -23,7 +23,7 @@ install it from the **+** in the Games tab.) The header's name is yours
 | Bets | one amount per drop (`min_bet` / `max_bet` per player per drop, default 1 and 250 — both are settings in the panel and in `/games/api/config`); betting again adds to it |
 | Payout | bet × the landing slot's multiplier, rounded **down** to whole coins; ×0 is a **bust** |
 | Multipliers | a built-in table per rows × risk (`low`, `medium`, `high`), or your own list |
-| House edge | **computed**, never set: 100% − the table's return. Default table (12 rows, medium): **4.66%** |
+| House edge | **computed**, never set: 100% − the table's return. Default table (12 rows, medium): **4.74%** |
 | Timings | 30 s first bet window · 20 s before each later drop · ~9 s fall · 5 s result · 10 s game-over card |
 | No bets | when a window closes with nothing on the drop, the game ends |
 | Typical game | ~2:00 (3 drops) |
@@ -65,56 +65,60 @@ of probability × multiplier; the **house edge** is what is left of 100%
 (it is shown rounded so the two always add up, and is negative for a table that
 pays back more than 100%).
 
-The built-in tables are **not symmetric**. The **centre slot** — the likeliest
-one — holds the **top payout** (with an odd number of rows there is no single
-centre: one of the two middle slots holds it). The **busts** (×0) and the small
-pays are **interleaved** among the better slots across the whole board, never
-two busts side by side, and every table returns about 95% (94.98% – 95.40%).
-The higher the risk, the more of the drops bust and the bigger the top payout.
-Because the centre is the likeliest slot, the top payout is a modest ×1.8 – ×4
-(a bigger one there would pay back more than 100%); the surprises are the
-better pays hiding between the busts out towards the edges:
+The built-in tables are **not symmetric** and the **big pays are rare**: the
+biggest multipliers sit on the outer, low-probability slots (never in the
+central third, never on a slot that is hit 5% of the time or more), so a ×15,
+×50 or ×150 is a real event. The common central slots hold a **mix** of small
+pays, break-even and busts (a slot hit 10% of the time or more pays at most
+×1.5), and busts and winners are interleaved across the whole board:
+
+- no two busts side by side, and never three slots in a row that pay less than
+  the stake;
+- a bust within one slot of every slot that pays ×2 or more (the near miss);
+- the higher the risk, the more of the drops bust and the bigger the top payout.
+
+Every table returns about 95% (95.00% – 95.39%).
 
 | Rows | Low | Medium | High |
 | --- | --- | --- | --- |
-| 8 | 95.07% · ×1.8 · 11% | 95.07% · ×2.5 · 25% | 95.07% · ×3 · 44% |
-| 9 | 95.27% · ×2 · 7% | 95.31% · ×2.5 · 25% | 95.21% · ×3 · 41% |
-| 10 | 95.35% · ×2 · 12% | 95.14% · ×2.5 · 24% | 95.16% · ×3 · 32% |
-| 11 | 95.29% · ×2 · 9% | 95.26% · ×3 · 26% | 94.98% · ×3.5 · 42% |
-| 12 | 95.40% · ×2 · 14% | 95.34% · ×3 · 30% | 95.02% · ×3.5 · 39% |
-| 13 | 94.98% · ×2.5 · 11% | 95.27% · ×3 · 28% | 95.24% · ×3.5 · 41% |
-| 14 | 95.09% · ×2.5 · 13% | 95.33% · ×3 · 25% | 95.13% · ×3.5 · 31% |
-| 15 | 94.99% · ×2.5 · 9% | 95.14% · ×3 · 29% | 95.09% · ×4 · 39% |
-| 16 | 95.01% · ×2.5 · 12% | 95.26% · ×3 · 24% | 95.07% · ×4 · 42% |
+| 8 | 95.27% · ×5 · 11% | 95.07% · ×8 · 22% | 95.07% · ×15 · 31% |
+| 9 | 95.03% · ×5 · 9% | 95.19% · ×10 · 27% | 95.17% · ×20 · 32% |
+| 10 | 95.31% · ×8 · 5% | 95.36% · ×10 · 22% | 95.21% · ×30 · 42% |
+| 11 | 95.21% · ×8 · 5% | 95.16% · ×12 · 24% | 95.06% · ×40 · 33% |
+| 12 | 95.22% · ×10 · 6% | 95.26% · ×15 · 23% | 95.17% · ×50 · 35% |
+| 13 | 95.36% · ×10 · 4% | 95.39% · ×15 · 23% | 95.22% · ×60 · 34% |
+| 14 | 95.08% · ×15 · 8% | 95.28% · ×20 · 19% | 95.16% · ×75 · 23% |
+| 15 | 95.35% · ×15 · 10% | 95.38% · ×25 · 21% | 95.17% · ×100 · 25% |
+| 16 | 95.38% · ×20 · 13% | 95.39% · ×25 · 23% | 95.00% · ×150 · 32% |
 
-(return · the top payout, in the centre · the chance of a bust; `GET
+(return · the top payout, on an outer slot · the chance of a bust; `GET
 /games/api/hexfall/bets` lists every table, slot by slot, with its exact odds.)
 The default — **12 rows, medium** — pays:
 
 | Slot | Pays | Paths | Chance | Return share |
 | --- | --- | --- | --- | --- |
-| 1 | ×2 | 1 / 4096 | 0.02% | 0.05% |
-| 2 | **bust** | 12 / 4096 | 0.29% | 0.00% |
-| 3 | ×0.5 | 66 / 4096 | 1.61% | 0.81% |
-| 4 | **bust** | 220 / 4096 | 5.37% | 0.00% |
-| 5 | ×0.2 | 495 / 4096 | 12.08% | 2.42% |
-| 6 | **bust** | 792 / 4096 | 19.34% | 0.00% |
-| 7 | ×3 | 924 / 4096 | 22.56% | 67.68% |
-| 8 | ×1 | 792 / 4096 | 19.34% | 19.34% |
-| 9 | ×0.3 | 495 / 4096 | 12.08% | 3.63% |
-| 10 | **bust** | 220 / 4096 | 5.37% | 0.00% |
-| 11 | ×0.8 | 66 / 4096 | 1.61% | 1.29% |
-| 12 | ×0.3 | 12 / 4096 | 0.29% | 0.09% |
-| 13 | ×2.5 | 1 / 4096 | 0.02% | 0.06% |
+| 1 | ×0.7 | 1 / 4096 | 0.02% | 0.02% |
+| 2 | ×15 | 12 / 4096 | 0.29% | 4.39% |
+| 3 | **bust** | 66 / 4096 | 1.61% | 0.00% |
+| 4 | ×3 | 220 / 4096 | 5.37% | 16.11% |
+| 5 | ×1 | 495 / 4096 | 12.08% | 12.08% |
+| 6 | ×1.5 | 792 / 4096 | 19.34% | 29.00% |
+| 7 | ×0.2 | 924 / 4096 | 22.56% | 4.51% |
+| 8 | **bust** | 792 / 4096 | 19.34% | 0.00% |
+| 9 | ×1.2 | 495 / 4096 | 12.08% | 14.50% |
+| 10 | ×2.5 | 220 / 4096 | 5.37% | 13.43% |
+| 11 | **bust** | 66 / 4096 | 1.61% | 0.00% |
+| 12 | ×4 | 12 / 4096 | 0.29% | 1.17% |
+| 13 | ×1.5 | 1 / 4096 | 0.02% | 0.04% |
 
-→ return **95.34%**, house edge **4.66%**; 41.9% of drops pay the stake back or
-more.
+→ return **95.26%**, house edge **4.74%**, a bust on **22.56%** of the drops;
+54.9% of drops pay the stake back or more.
 
 ### Your own table
 
 Set **`multipliers`** (Settings → *Custom multipliers*) to a list of **exactly
 `rows + 1` numbers**, left to right, each from 0 (a bust) to 1000 — as a JSON
-list or as text: `"2 0 0.5 0 0.2 0 3 1 0.3 0 0.8 0.3 2.5"` (commas, spaces and
+list or as text: `"0.7 15 0 3 1 1.5 0.2 0 1.2 2.5 0 4 1.5"` (commas, spaces and
 semicolons all work; `x5`, `×5` and `bust` are understood). Empty means the
 built-in table for `rows` and `risk`.
 
@@ -232,15 +236,15 @@ else `null`.
   "phase": "dropping",              // betting | dropping | result | over
   "ends_in_ms": 4400, "phase_ms": 9000, "elapsed_ms": 4600,
   "drop": 1, "drops": 3, "rows": 12, "risk": "medium", "source": "preset",   // source: preset | custom
-  "slots": [{"slot": 0, "mult": 2, "bust": false, "ways": 1, "of": 4096, "probability": 0.00024414, "pct": 0.0244, "rtp_pct": 0.0488}, "..."],
-  "rtp_pct": 95.34, "house_edge_pct": 4.66,
-  "fall": {"drop": 1, "path": [1,0,1,1,0,0,1,0,1,1,0,1], "slot": 7, "mult": 1, "seed": 42, "ms": 9000},   // dropping/result/over only
-  "hits": [{"drop": 1, "slot": 7, "mult": 1}],          // this game's drops so far
-  "recent": [{"slot": 7, "rows": 12, "mult": 1}, "..."],   // the last slot hits (newest first, across games)
-  "players": [{"user": "alice", "bet": 100, "max_win": 300}],   // on the line (empty once settled)
+  "slots": [{"slot": 0, "mult": 0.7, "bust": false, "ways": 1, "of": 4096, "probability": 0.00024414, "pct": 0.0244, "rtp_pct": 0.0171}, "..."],
+  "rtp_pct": 95.26, "house_edge_pct": 4.74,
+  "fall": {"drop": 1, "path": [1,0,1,1,0,0,1,0,1,1,0,1], "slot": 6, "mult": 0.2, "seed": 42, "ms": 9000},   // dropping/result/over only
+  "hits": [{"drop": 1, "slot": 6, "mult": 0.2}],          // this game's drops so far
+  "recent": [{"slot": 6, "rows": 12, "mult": 0.2}, "..."],   // the last slot hits (newest first, across games)
+  "players": [{"user": "alice", "bet": 100, "max_win": 1500}],   // on the line (empty once settled)
   "on_the_line": 100,
-  "last": {"drop": 1, "slot": 7, "mult": 1, "bust": false, "total_bet": 100, "total_paid": 100,
-           "winners": [], "even": [{"user": "alice", "bet": 100, "paid": 100, "net": 0}], "losers": []},
+  "last": {"drop": 1, "slot": 6, "mult": 0.2, "bust": false, "total_bet": 100, "total_paid": 20,
+           "winners": [], "even": [], "losers": [{"user": "alice", "bet": 100, "paid": 20, "net": -80}]},
   "outcome": null, "summary": null,  // set in "over"
   "currency": "coins", "min_bet": 1, "max_bet": 250
 }

@@ -78,39 +78,50 @@ def bust_chance(hf, rows, t):
     return sum(p for p, m in zip(hf.slot_probs(rows), t) if m == 0)
 
 
-def test_every_preset_has_its_top_payout_in_the_centre_busts_interleaved_and_pays_about_95_percent(hf):
+def test_every_preset_keeps_big_pays_rare_and_busts_interleaved_and_pays_about_95_percent(hf):
     assert set(hf.PRESETS) == set(RISKS)
     for risk in RISKS:
         assert set(hf.PRESETS[risk]) == set(ROWS)
         for rows in ROWS:
             t = list(hf.PRESETS[risk][rows])
-            assert len(t) == rows + 1, (risk, rows)
+            n, p = rows + 1, hf.slot_probs(rows)
+            assert len(t) == n and all(0 <= m <= 150 for m in t), (risk, rows)
             top = [k for k, m in enumerate(t) if m == max(t)]
-            # the likeliest slot holds the one top payout (an odd number of rows: one of the two middle slots)
-            assert top == ([rows // 2] if rows % 2 == 0 else top) and len(top) == 1, (risk, rows, top)
-            assert top[0] in (rows // 2, (rows + 1) // 2), (risk, rows, top)
-            assert 1.5 <= max(t) <= 5, (risk, rows)
-            assert t.count(0) >= 1, (risk, rows)                                   # every table has busts ...
-            assert not any(a == 0 and b == 0 for a, b in zip(t, t[1:])), (risk, rows)   # ... and never two side by side
-            assert all(0 <= m <= 5 for m in t)
-            assert any(a != b for a, b in zip(t[:rows // 2], reversed(t[rows // 2 + 1:]))), (risk, rows)   # not a mirror image
+            assert len(top) == 1 and max(t) >= 5, (risk, rows, top)
+            k = top[0]
+            assert p[k] < Fraction(5, 100), (risk, rows, float(p[k]))             # the biggest pay is a rare event ...
+            assert not n // 3 <= k <= n - 1 - n // 3, (risk, rows, k)             # ... never in the central third
+            assert t.count(0) >= 1, (risk, rows)
+            assert not any(a == 0 and b == 0 for a, b in zip(t, t[1:])), (risk, rows)          # no two busts side by side
+            assert not any(a < 1 and b < 1 and c < 1 for a, b, c in zip(t, t[1:], t[2:])), (risk, rows)   # no run of 3 slots under x1
+            for j, m in enumerate(t):
+                if m >= 2:                                                       # a bust within one slot of every x2+ slot
+                    assert 0 in [t[i] for i in (j - 1, j + 1) if 0 <= i < n], (risk, rows, j)
+                if p[j] >= Fraction(1, 10):
+                    assert m <= 1.5, (risk, rows, j)                             # the common slots: small pays, even, busts
+            mid = t[n // 3:n - n // 3]
+            assert any(0 < m < 1 for m in mid) and any(m >= 1 for m in mid), (risk, rows)
+            assert t != t[::-1] or risk == "low", (risk, rows)
             rtp = hf.table_rtp(rows, t)
-            assert Fraction(9495, 10000) <= rtp <= Fraction(9545, 10000), (risk, rows, float(rtp))
+            assert Fraction(949, 1000) <= rtp <= Fraction(955, 1000), (risk, rows, float(rtp))
     for rows in ROWS:        # the higher the risk, the likelier a bust and the bigger the top payout
         mass = [bust_chance(hf, rows, hf.PRESETS[risk][rows]) for risk in RISKS]
         assert mass[0] < mass[1] < mass[2], (rows, mass)
         tops = [max(hf.PRESETS[risk][rows]) for risk in RISKS]
-        assert tops[0] <= tops[1] <= tops[2] and tops[0] < tops[2], (rows, tops)
+        assert tops[0] < tops[1] < tops[2], (rows, tops)
+        assert tops[2] >= 10 and tops[0] <= 25 and tops[1] <= 25, (rows, tops)
 
 
-def test_default_table_has_the_top_payout_in_the_centre_with_busts_among_the_better_slots(hf, game):
+def test_default_table_mixes_small_pays_and_busts_with_the_big_pay_on_a_rare_slot(hf, game):
     t, source = hf.resolve_table(game.cfg["rows"], game.cfg["risk"], game.cfg["multipliers"])
     assert source == "preset" and (game.cfg["rows"], game.cfg["risk"]) == (12, "medium")
-    assert t[6] == max(t) == 3 and t.count(3) == 1 and t != t[::-1]
-    assert t[5] == 0 and t[7] == 1 and t[0] > 0 and t[2] == 0.5 and t[3] == 0
+    assert list(t) == [0.7, 15, 0, 3, 1, 1.5, 0.2, 0, 1.2, 2.5, 0, 4, 1.5]
+    p = hf.slot_probs(12)
+    assert t.index(max(t)) == 1 and p[1] == Fraction(12, 4096) < Fraction(5, 100)        # x15 on a 0.29% slot
+    assert bust_chance(hf, 12, t) == Fraction(66 + 792 + 66, 4096)                        # busts on slots 2, 7 and 10: 22.56%
     slots, rtp, edge = hf.table_view(12, tuple(t))
-    assert slots[5]["bust"] and not slots[6]["bust"] and slots[6]["mult"] == 3
-    assert rtp == 95.34 and edge == 4.66 and rtp + edge == 100
+    assert slots[7]["bust"] and not slots[6]["bust"] and slots[6]["mult"] == 0.2          # the likeliest slot pays x0.2, its neighbour busts
+    assert rtp == 95.26 and edge == 4.74 and rtp + edge == 100
 
 
 def test_rtp_is_computed_exactly_and_never_overstated(hf):
@@ -209,10 +220,9 @@ def test_a_custom_table_must_have_rows_plus_one_numbers(hf, game):
 
 def test_a_full_game_settles_through_the_ledger(hf, game, core, monkeypatch):
     settings(core, game, drops=2)
-    rows = 12
-    fix_path(monkeypatch, hf, [1] * rows, [0, 1] * 5 + [0, 0])        # drop 1: the far edge (x2.5), drop 2: slot 5 (a bust next to the centre)
+    fix_path(monkeypatch, hf, [1] + [0] * 11, [1] * 7 + [0] * 5)      # drop 1: slot 1 (x15, a rare big pay), drop 2: slot 7 (a bust)
     status, body = game.start_game({"seconds": 30})
-    assert status == 200 and body == {"started": game.g["id"], "drops": 2, "rows": 12, "risk": "medium", "source": "preset", "rtp_pct": 95.34}
+    assert status == 200 and body == {"started": game.g["id"], "drops": 2, "rows": 12, "risk": "medium", "source": "preset", "rtp_pct": 95.26}
     assert game.start_game({})[0] == 409
     for user, amt in (("alice", 100), ("bob", 50), ("carol", 3)):
         status, body = game.place({"user": user, "amount": amt})
@@ -224,63 +234,63 @@ def test_a_full_game_settles_through_the_ledger(hf, game, core, monkeypatch):
 
     assert game.skip() == (200, {"skipped": "betting"})
     g = game.g
-    assert g["phase"] == "dropping" and g["fall"]["slot"] == 12 and g["fall"]["mult"] == 2.5 and g["fall"]["path"] == [1] * rows
+    assert g["phase"] == "dropping" and g["fall"]["slot"] == 1 and g["fall"]["mult"] == 15 and g["fall"]["path"] == [1] + [0] * 11
     assert game.place({"user": "dave", "amount": 5})[0] == 409        # bets are closed while the token falls
     assert game.g["bets"] == {"alice": 120, "bob": 50, "carol": 3}
 
-    game.skip()                                                       # it lands: every stake x2.5, rounded down
+    game.skip()                                                       # it lands: every stake x15
     assert g["phase"] == "result"
     assert [e for e in ledger(game) if e[0] == "credit"] == [
-        ("credit", "alice", 300, "payout"), ("credit", "bob", 125, "payout"), ("credit", "carol", 7, "payout")]
+        ("credit", "alice", 1800, "payout"), ("credit", "bob", 750, "payout"), ("credit", "carol", 45, "payout")]
     last = g["last"]
-    assert (last["drop"], last["slot"], last["mult"], last["bust"]) == (1, 12, 2.5, False)
+    assert (last["drop"], last["slot"], last["mult"], last["bust"]) == (1, 1, 15, False)
     assert [(w["user"], w["bet"], w["paid"], w["net"]) for w in last["winners"]] == [
-        ("alice", 120, 300, 180), ("bob", 50, 125, 75), ("carol", 3, 7, 4)]
-    assert last["losers"] == [] and last["total_bet"] == 173 and last["total_paid"] == 432
+        ("alice", 120, 1800, 1680), ("bob", 50, 750, 700), ("carol", 3, 45, 42)]
+    assert last["losers"] == [] and last["total_bet"] == 173 and last["total_paid"] == 2595
     assert g["bets"] == {}
 
     game.skip()                                                       # drop 2: a new window, the old bets are spent
     assert g["phase"] == "betting" and g["drop"] == 2 and g["fall"] is None and g["bets"] == {}
     game.place({"user": "alice", "amount": 10})
     game.skip()
-    assert g["fall"]["slot"] == 5 and g["fall"]["mult"] == 0
+    assert g["fall"]["slot"] == 7 and g["fall"]["mult"] == 0
     game.skip()                                                       # a bust: nothing is credited
     assert g["last"]["bust"] and g["last"]["losers"][0]["user"] == "alice" and g["last"]["winners"] == []
     assert len([e for e in ledger(game) if e[0] == "credit"]) == 3
     game.skip()
     assert g["phase"] == "over" and g["outcome"] == "complete"
     s = g["summary"]
-    assert (s["total_bet"], s["total_paid"], s["house_net"]) == (183, 432, 183 - 432)
-    assert s["drops"][0]["mult"] == 2.5 and s["drops"][1]["mult"] == 0 and s["best"] == {"user": "alice", "paid": 300, "net": 180, "drop": 1, "mult": 2.5}
+    assert (s["total_bet"], s["total_paid"], s["house_net"]) == (183, 2595, 183 - 2595)
+    assert s["drops"][0]["mult"] == 15 and s["drops"][1]["mult"] == 0 and s["best"] == {"user": "alice", "paid": 1800, "net": 1680, "drop": 1, "mult": 15}
     nets = {p["user"]: p["net"] for p in s["players"]}
-    assert nets == {"alice": 300 - 130, "bob": 75, "carol": 4}
+    assert nets == {"alice": 1800 - 130, "bob": 700, "carol": 42}
     # the ledger is the shared kind: one debit per bet, one credit per payout, every event names the game
-    assert sum(e[2] for e in ledger(game) if e[0] == "debit") == 183 and sum(e[2] for e in ledger(game) if e[0] == "credit") == 432
+    assert sum(e[2] for e in ledger(game) if e[0] == "debit") == 183 and sum(e[2] for e in ledger(game) if e[0] == "credit") == 2595
     assert {e["game"] for e in game.ledger.events} == {"hexfall"} and {e["roll_id"] for e in game.ledger.events} == {g["id"]}
     st = game.stats()
     assert (st["games"], st["complete"], st["drops"], st["busts"], st["total_bet"], st["total_paid"], st["house_net"]) == (
-        1, 1, 2, 1, 183, 432, 183 - 432)
+        1, 1, 2, 1, 183, 2595, 183 - 2595)
     assert game.history[0]["result"]["outcome"] == "complete" and game.history[0]["game"] == "hexfall"
     game.skip()
     assert game.g is None and game.phase == "idle"
-    assert [r["mult"] for r in game._recent()] == [0, 2.5]             # the strip of the last hits, newest first
+    assert [r["mult"] for r in game._recent()] == [0, 15]             # the strip of the last hits, newest first
 
 
 def test_a_partial_return_is_a_payout_not_a_win(hf, game, monkeypatch):
-    fix_path(monkeypatch, hf, [1] * 8 + [0] * 4)                      # slot 8: x0.3 (rows 12 medium)
+    fix_path(monkeypatch, hf, [1] * 6 + [0] * 6)                      # slot 6: x0.2 (rows 12 medium)
     game.start_game({"drops": 1})
     game.place({"user": "bob", "amount": 100})
     game.skip()
-    assert game.g["fall"]["slot"] == 8 and game.g["fall"]["mult"] == 0.3
+    assert game.g["fall"]["slot"] == 6 and game.g["fall"]["mult"] == 0.2
     game.skip()
-    assert ledger(game)[-1] == ("credit", "bob", 30, "payout")
-    assert game.g["last"]["losers"][0] == {"user": "bob", "bet": 100, "paid": 30, "net": -70}
+    assert ledger(game)[-1] == ("credit", "bob", 20, "payout")
+    assert game.g["last"]["losers"][0] == {"user": "bob", "bet": 100, "paid": 20, "net": -80}
     assert game.g["last"]["winners"] == [] and game.g["last"]["even"] == []
     assert game.g["best"] is None                                      # a partial return is no win
 
 
 def test_x1_is_an_even_result(hf, game, monkeypatch):
-    fix_path(monkeypatch, hf, [1] * 7 + [0] * 5)                      # slot 7: x1
+    fix_path(monkeypatch, hf, [1] * 4 + [0] * 8)                      # slot 4: x1
     game.start_game({"drops": 1})
     game.place({"user": "bob", "amount": 77})
     game.skip(); game.skip()
@@ -322,7 +332,7 @@ def test_bet_validation_and_limits(hf, game, core):
     status, body = game.place({"user": "Alice", "amount": 50})
     assert status == 400 and "max bet is 100" in body["error"] and "60 already down" in body["error"]
     assert game.place({"user": "Alice", "amount": 40})[0] == 200 and game.g["bets"] == {"Alice": 100}
-    assert game.validate({"amount": "50"})["pays"][0] == {"slot": 0, "mult": 2, "pays": 100}
+    assert game.validate({"amount": "50"})["pays"][0] == {"slot": 0, "mult": 0.7, "pays": 35}
     assert game.validate({"amount": "5"})["valid"] is False and game.validate({})["error"] == "amount required"
 
 
@@ -393,8 +403,8 @@ def test_stop_refunds_open_bets_but_pays_a_falling_token(hf, game, monkeypatch):
     game.place({"user": "amy", "amount": 10})
     game.skip()                                                       # the token is falling: its slot is decided
     assert game.g["phase"] == "dropping" and game.stop() is True
-    assert ledger(game)[-2:] == [("debit", "amy", 10, "bet"), ("credit", "amy", 25, "payout")]   # x2.5, not a refund
-    assert game.history[0]["result"]["outcome"] == "stopped" and game.history[0]["result"]["drops"][0]["mult"] == 2.5
+    assert ledger(game)[-2:] == [("debit", "amy", 10, "bet"), ("credit", "amy", 15, "payout")]   # x1.5, not a refund
+    assert game.history[0]["result"]["outcome"] == "stopped" and game.history[0]["result"]["drops"][0]["mult"] == 1.5
 
 
 def test_a_restart_settles_the_game_that_was_running(hf, core, game, tmp_path, monkeypatch):
@@ -415,7 +425,7 @@ def test_a_restart_settles_the_game_that_was_running(hf, core, game, tmp_path, m
     third = hf.Hexfall(path=game.path, ledger=game.ledger)
     assert third.g["phase"] == "dropping" and third.g["fall"]["slot"] == 12
     third.resume()
-    assert ledger(third)[-1] == ("credit", "amy", 25, "payout")
+    assert ledger(third)[-1] == ("credit", "amy", 15, "payout")
 
 
 def test_test_games_write_nothing_to_the_ledger(hf, game, monkeypatch):
@@ -423,7 +433,7 @@ def test_test_games_write_nothing_to_the_ledger(hf, game, monkeypatch):
     game.start_game({"test": True, "drops": 1})
     game.place({"user": "bob", "amount": 25})
     game.skip(); game.skip()
-    assert game.g["log"][-1]["amount"] == 62 and game.g["log"][-1]["seq"] is None
+    assert game.g["log"][-1]["amount"] == 37 and game.g["log"][-1]["seq"] is None
     assert list(game.ledger.events) == [] and game.ledger.last_seq == 0
     game.skip()
     assert game.stats()["games"] == 0 and game.history[0]["test"] is True    # test games are not in the stats
@@ -437,7 +447,7 @@ def test_a_running_game_keeps_the_odds_it_started_with(hf, game, core, monkeypat
     fix_path(monkeypatch, hf, [1] * 12)
     game.place({"user": "bob", "amount": 10})
     game.skip(); game.skip()
-    assert ledger(game)[-1] == ("credit", "bob", 25, "payout")        # paid by the table the game began with
+    assert ledger(game)[-1] == ("credit", "bob", 15, "payout")        # paid by the table the game began with
     assert game.idle_view()["rows"] == 8 and game.idle_view()["source"] == "custom"   # while the next game follows the settings
 
 
@@ -471,7 +481,7 @@ def test_the_path_is_only_sent_once_the_token_is_released(hf, game, monkeypatch)
     assert v["state"] == "betting" and v["game"]["fall"] is None and v["game"]["last"] is None
     game.skip()
     fall = game.state_view()["game"]["fall"]
-    assert fall["path"] == [0, 1] * 6 and fall["slot"] == 6 and fall["mult"] == 3 and fall["ms"] == 9000 and fall["drop"] == 1
+    assert fall["path"] == [0, 1] * 6 and fall["slot"] == 6 and fall["mult"] == 0.2 and fall["ms"] == 9000 and fall["drop"] == 1
     game.skip(); game.skip()                                          # result, then the next window: nothing of drop 1 is left to see
     v = game.state_view()
     assert v["game"]["phase"] == "betting" and v["game"]["fall"] is None
@@ -480,13 +490,13 @@ def test_the_path_is_only_sent_once_the_token_is_released(hf, game, monkeypatch)
 
 def test_state_views(hf, game):
     idle = game.state_view()
-    assert idle["game"] is None and idle["idle"]["rows"] == 12 and len(idle["idle"]["slots"]) == 13 and idle["idle"]["rtp_pct"] == 95.34
+    assert idle["game"] is None and idle["idle"]["rows"] == 12 and len(idle["idle"]["slots"]) == 13 and idle["idle"]["rtp_pct"] == 95.26
     game.start_game({})
     game.place({"user": "bob", "amount": 10}); game.place({"user": "amy", "amount": 30})
     g = game.state_view()["game"]
-    assert [p["user"] for p in g["players"]] == ["amy", "bob"] and g["on_the_line"] == 40 and g["players"][0]["max_win"] == 90
-    assert g["rtp_pct"] == 95.34 and g["house_edge_pct"] == 4.66 and g["drop"] == 1 and g["drops"] == 3
-    assert g["slots"][0]["ways"] == 1 and g["slots"][0]["of"] == 4096 and g["slots"][5]["bust"] and not g["slots"][6]["bust"]
+    assert [p["user"] for p in g["players"]] == ["amy", "bob"] and g["on_the_line"] == 40 and g["players"][0]["max_win"] == 450
+    assert g["rtp_pct"] == 95.26 and g["house_edge_pct"] == 4.74 and g["drop"] == 1 and g["drops"] == 3
+    assert g["slots"][0]["ways"] == 1 and g["slots"][0]["of"] == 4096 and g["slots"][7]["bust"] and not g["slots"][6]["bust"]
     assert game.table_view() == {"bets": [{"user": "bob", "amount": 10}, {"user": "amy", "amount": 30}], "total_on_table": 40,
                                  "currency": "coins", "last_seq": game.ledger.last_seq}
     assert game.user_view("@bob")["player"]["bet"] == 10 and game.user_view("zed")["player"] is None
@@ -579,9 +589,9 @@ def test_bets_reference_lists_the_table_odds_and_rtp(world, hf):
     assert b["multipliers"] == list(hf.preset(12, "medium")) and len(b["slots"]) == 13
     assert sum(s["ways"] for s in b["slots"]) == 4096 and all(s["of"] == 4096 for s in b["slots"])
     assert sum(s["probability"] for s in b["slots"]) == pytest.approx(1, abs=1e-6)
-    assert b["rtp_pct"] == 95.34 and b["house_edge_pct"] == 4.66 and sum(s["rtp_pct"] for s in b["slots"]) == pytest.approx(95.34, abs=0.01)
-    assert [s["mult"] for s in b["slots"]] == b["multipliers"] and b["slots"][5]["bust"] is True and b["slots"][6]["bust"] is False
-    assert set(b["presets"]) == {"low", "medium", "high"} and b["presets"]["medium"]["rtp_pct"] == 95.34 and b["rules"] and b["notes"] == []
+    assert b["rtp_pct"] == 95.26 and b["house_edge_pct"] == 4.74 and sum(s["rtp_pct"] for s in b["slots"]) == pytest.approx(95.26, abs=0.01)
+    assert [s["mult"] for s in b["slots"]] == b["multipliers"] and b["slots"][7]["bust"] is True and b["slots"][6]["bust"] is False
+    assert set(b["presets"]) == {"low", "medium", "high"} and b["presets"]["medium"]["rtp_pct"] == 95.26 and b["rules"] and b["notes"] == []
     # the settings change the table, honestly
     c.post("/games/api/config", json={"hexfall": {"rows": 8, "risk": "high"}})
     b = c.get("/games/api/hexfall/bets").json()
