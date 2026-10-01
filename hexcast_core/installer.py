@@ -35,9 +35,10 @@ from pathlib import Path
 from typing import Callable
 
 from . import requirements
-from .catalog import IGNORE_NAMES, IGNORE_SUFFIXES, CatalogEntry
+from .catalog import IGNORE_NAMES, IGNORE_SUFFIXES, CatalogEntry, content_hash
 from .host import META_NAME, PluginHost
 from .manifest import MANIFEST_NAME, ManifestError, load_manifest
+from .versions import check_url
 
 Log = Callable[[str], None]
 
@@ -144,7 +145,7 @@ class Installer:
     def prepare_update(self, pid: str, log: Log = _noop) -> Prepared:
         """Everything an update needs - the new files and their packages - WITHOUT touching the
         installed copy, so the plugin can keep running until commit() swaps it."""
-        entry = self.host.catalog.get(pid)
+        entry = self.update_entry(pid)
         if entry is None:
             raise InstallError(f"'{pid}' is not in the catalog any more")
         prepared = Prepared()
@@ -159,6 +160,17 @@ class Installer:
             prepared.discard()
             raise
         return prepared
+
+    def update_entry(self, pid: str) -> CatalogEntry | None:
+        """What an update of `pid` installs from: the newer of the local catalog and upstream
+        (see versions.update_info); with nothing newer, the catalog copy (a plain re-install)."""
+        inst = self.host.scan().get(pid)
+        catalog_entry = self.host.catalog.get(pid)
+        if inst is not None:
+            info = self.host.update_infos({pid: inst})[pid]
+            if info.available and info.entry is not None:
+                return info.entry
+        return catalog_entry
 
     def commit(self, prepared: Prepared, log: Log = _noop) -> list[str]:
         """Swap prepared copies in (quick: renames). Returns the ids swapped."""
@@ -222,6 +234,8 @@ class Installer:
         try:
             if entry.folder is not None:
                 shutil.copytree(entry.folder, stage, ignore=_ignore)
+            elif entry.subdir:
+                self._download_upstream(entry, stage, log)
             elif entry.url:
                 self._download(entry, stage, log)
             else:
@@ -231,7 +245,7 @@ class Installer:
             except ManifestError as exc:
                 raise InstallError(f"'{pid}' is not a valid plugin: {exc}") from None
             meta = {"id": pid, "version": m.version, "source": entry.source,
-                    "content_hash": entry.content_hash, "installed_at": round(time.time(), 3)}
+                    "content_hash": entry.content_hash or content_hash(stage), "installed_at": round(time.time(), 3)}
             (stage / META_NAME).write_text(json.dumps(meta, indent=1), encoding="utf-8")
         except BaseException:
             shutil.rmtree(stage_root, ignore_errors=True)
@@ -459,6 +473,40 @@ class Installer:
                 pass
 
 
+    def _download_upstream(self, entry: CatalogEntry, stage: Path, log: Log) -> None:
+        """Download the repository archive from GitHub (https, size-capped, streamed to a temp
+        file) and unpack only entry.subdir (catalog/<id>/) of it into `stage`."""
+        import httpx
+        assert entry.url and entry.subdir
+        log("Downloading the latest version from GitHub ...")
+        fd, tmp = tempfile.mkstemp(suffix=".zip")
+        os.close(fd)
+        try:
+            size = 0
+            check_url(entry.url, "the download address")
+            with httpx.stream("GET", entry.url, follow_redirects=True, timeout=30,
+                              headers={"User-Agent": "Hexcast-update"}) as r:
+                for hop in list(r.history) + [r]:
+                    check_url(str(hop.url), "the download address")
+                r.raise_for_status()
+                with open(tmp, "wb") as f:
+                    for chunk in r.iter_bytes(65536):
+                        size += len(chunk)
+                        if size > DOWNLOAD_MAX:
+                            raise InstallError("the download is far larger than expected - stopped")
+                        f.write(chunk)
+            safe_extract_subdir(Path(tmp), stage, entry.subdir)
+        except httpx.HTTPError as exc:
+            raise InstallError(f"download failed: {exc}") from None
+        except ValueError as exc:
+            raise InstallError(str(exc)) from None
+        finally:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
 def _clean_parts(name: str) -> list[str]:
     """The path parts of an archive member, or InstallError if it could point anywhere but
     down into the destination: absolute, drive letters / alternate streams (':'), '..', '.',
@@ -503,6 +551,56 @@ def safe_extract(zip_path: Path, dest: Path) -> None:
                 continue
             target = root.joinpath(*rel)
             if root not in target.resolve().parents:       # belt and braces: whatever the names said
+                raise InstallError(f"the archive has an unsafe path: {i.filename!r}")
+            targets.append((i, target))
+        for i, target in targets:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(i) as src, open(target, "wb") as out:
+                shutil.copyfileobj(src, out)
+
+
+ARCHIVE_ENTRIES_MAX = 100_000
+
+
+def safe_extract_subdir(zip_path: Path, dest: Path, subdir: str) -> None:
+    """Unzip ONLY `subdir` (e.g. 'catalog/twitch') of a repository archive into `dest`. GitHub
+    archives wrap everything in one top-level folder ('hexcast-main/'); that wrapper is dropped.
+    Nothing else in the archive is read or written, and the same protections as safe_extract
+    apply to what is: no '..', absolute or drive paths, symbolic links, or oversized content."""
+    want = [p for p in subdir.split("/") if p]
+    try:
+        zf = zipfile.ZipFile(zip_path)
+    except zipfile.BadZipFile:
+        raise InstallError("the download is not a zip file") from None
+    with zf:
+        infos = zf.infolist()
+        if len(infos) > ARCHIVE_ENTRIES_MAX:
+            raise InstallError("the archive has far more files than expected")
+        chosen: list[tuple[zipfile.ZipInfo, list[str]]] = []
+        for i in infos:
+            if i.is_dir():
+                continue
+            raw = i.filename.replace("\\", "/").split("/")
+            # '<wrapper>/catalog/<id>/<rest>': decide by the raw names first, validate only what we keep
+            if len(raw) < len(want) + 2 or raw[1:1 + len(want)] != want:
+                continue
+            parts = _clean_parts(i.filename)
+            chosen.append((i, parts[1 + len(want):]))
+        if not chosen:
+            raise InstallError(f"the archive has no {subdir}/ folder")
+        for i, _ in chosen:
+            if (i.external_attr >> 16) & 0o170000 == 0o120000:
+                raise InstallError("the archive contains a symbolic link")
+        if len(chosen) > FILES_MAX or sum(i.file_size for i, _ in chosen) > UNZIPPED_MAX:
+            raise InstallError("the plugin in the archive is far larger than a plugin should be")
+        if not any(rel == [MANIFEST_NAME] for _, rel in chosen):
+            raise InstallError(f"the archive's {subdir}/ has no {MANIFEST_NAME}")
+        dest.mkdir(parents=True, exist_ok=True)
+        root = dest.resolve()
+        targets: list[tuple[zipfile.ZipInfo, Path]] = []
+        for i, rel in chosen:
+            target = root.joinpath(*rel)
+            if root not in target.resolve().parents:
                 raise InstallError(f"the archive has an unsafe path: {i.filename!r}")
             targets.append((i, target))
         for i, target in targets:

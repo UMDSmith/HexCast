@@ -189,6 +189,12 @@ Everything is on the panel at `/games`. The top bar carries **↗ Overlay**
 everything — see [Show, hide, stop](#show-hide-stop)) and the **Edit Mode**
 toggle, which turns amber when on, exactly like the soundboard's.
 
+Each game's tab shows that add-on's version at the right end of the tab row (`Craps Version: 1.0`), and a green
+**Update to 1.1** button when a newer version of that game exists (from `catalog/` or GitHub - see
+[Versions and updates](plugins.md#versions-and-updates)); pressing it updates only that game and keeps its settings. The
+game store (the **+** tab) shows each game's version on its card, and `GET /games/api/registry` carries `version`,
+`version_label`, `latest_version`, `latest_label`, `update_available` and `update_source` for every game.
+
 Each game has its own **tab** under the top bar (**Roulette** and
 [**Craps**](craps.md#the-panel)).
 Everything below lives on the Roulette tab; `/games#roulette` opens straight

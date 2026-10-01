@@ -83,15 +83,22 @@
 
 .hb-spacer{ flex:1 1 auto; }
 
-/* --- version / update chip --------------------------------------------- */
-.hb-ver{
-  font:600 11px/1 var(--hb-mono); letter-spacing:.04em;
-  color:var(--hb-dim); text-decoration:none; white-space:nowrap;
-  padding:6px 9px; border-radius:99px; border:1px solid transparent;
-  transition:color .15s ease, border-color .15s ease, background .15s ease;
-}
-.hb-ver:hover{ color:var(--hb-ink); }
-.hb-ver.has-update{ color:var(--hb-good); border-color:#1d4d33; background:#0e2118; }
+/* --- versions: "<Module> Version: 1.0" + "Hexcast Version: 2.0", top right ---------- */
+.hb-vers{ display:flex; align-items:center; gap:14px; flex:0 1 auto; min-width:0; white-space:nowrap; }
+.hb-v{ display:inline-flex; align-items:center; gap:0; font:600 11.5px/1 var(--hb-mono); letter-spacing:.03em;
+  color:var(--hb-dim); white-space:nowrap; }
+.hb-v b{ color:var(--hb-muted); font-weight:700; margin-left:5px; }
+.hb-v .hb-vn{ color:var(--hb-muted); }
+.hb-v.hb-mod + .hb-v.hb-core{ padding-left:14px; border-left:1px solid var(--hb-line-hi); }
+.hb-up{ font:700 10.5px/1 var(--hb-mono); letter-spacing:.04em; margin-left:9px; padding:5px 9px; border-radius:99px;
+  color:var(--hb-good); background:#0e2118; border:1px solid #1d4d33; text-decoration:none; cursor:pointer; white-space:nowrap;
+  display:inline-flex; align-items:center; gap:6px; }
+a.hb-up:hover, button.hb-up:hover{ border-color:var(--hb-good); filter:brightness(1.15); }
+.hb-up.busy{ color:var(--hb-warn); background:#231a08; border-color:#5a4210; cursor:default; }
+.hb-up.err{ color:#ff6b62; background:#241010; border-color:#5a2420; cursor:help; }
+.hb-spin{ width:9px; height:9px; border:2px solid #5a4210; border-top-color:var(--hb-warn); border-radius:50%;
+  animation:hb-rot .8s linear infinite; display:inline-block; }
+@keyframes hb-rot{ to{ transform:rotate(360deg); } }
 
 /* --- slot for whatever the page already had in its top bar -------------- */
 .hb-actions{ display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
@@ -99,4 +106,11 @@
 @media (max-width: 720px){
   #hexbar{ gap:10px; padding:10px 12px; }
   .hb-sep, .hb-section{ display:none; }
+  .hb-vers{ gap:10px; }
+  .hb-v .hb-vw{ display:none; }                      /* "Games 1.0" instead of "Games Version: 1.0" */
+  .hb-v.hb-mod + .hb-v.hb-core{ padding-left:10px; }
+}
+@media (max-width: 460px){
+  .hb-spacer{ flex-basis:100%; height:0; }           /* the versions get a row of their own */
+  .hb-vers{ flex:1 1 100%; justify-content:flex-end; }
 }

@@ -48,6 +48,8 @@
     '.hs-btn.primary{ background:var(--hs-good); border-color:var(--hs-good); color:#06110a; }',
     '.hs-btn.primary:hover{ filter:brightness(1.08); }',
     '.hs-btn.danger:hover{ border-color:var(--hs-bad); color:var(--hs-bad); }',
+    '.hs-btn.hs-update{ border-color:#1d4d33; color:var(--hs-good); background:#0e2118; }',
+    '.hs-btn.hs-update.primary{ background:var(--hs-good); border-color:var(--hs-good); color:#06110a; }',
     '.hs-btn.link{ border-color:transparent; background:transparent; color:var(--hs-dim); }',
     '.hs-log{ margin:0; max-height:170px; overflow:auto; background:#08080c; border:1px solid var(--hs-line); border-radius:8px; padding:9px 10px;',
     '  font:11.5px/1.5 var(--hb-mono,monospace); color:var(--hs-muted); white-space:pre-wrap; overflow-wrap:anywhere; }',
@@ -69,6 +71,12 @@
   function esc(s) {
     return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
       .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  // 1.0.0 is shown as 1.0 (the same rule as the top bar)
+  function fmtVer(v) {
+    var m = /^(\d+)\.(\d+)\.0$/.exec(String(v == null ? '' : v));
+    return m ? m[1] + '.' + m[2] : String(v == null ? '' : v);
   }
 
   function api(method, url, body) {
@@ -231,8 +239,10 @@
           b.push('<a class="hs-btn primary" href="' + esc(p.nav.href) + '">Open</a>');
         }
         if (p.update_available) {
-          b.push('<button class="hs-btn' + (p.state === 'running' ? '' : ' primary') + '" data-do="update" data-id="' + esc(p.id) + '"' + dis +
-                 '>Update' + (p.latest_version && p.latest_version !== p.installed_version ? ' to ' + esc(p.latest_version) : '') + '</button>');
+          var to = p.latest_version && p.latest_version !== p.installed_version ? ' to ' + fmtVer(p.latest_version) : '';
+          b.push('<button class="hs-btn' + (p.state === 'running' ? '' : ' primary') + ' hs-update" data-do="update" data-id="' + esc(p.id) + '"' + dis +
+                 ' title="' + (p.update_source === 'upstream' ? 'Downloads the new version from GitHub. ' : '') +
+                 'Your settings are kept; nothing else stops.">Update' + esc(to) + '</button>');
         }
         if (p.state === 'disabled' || p.state === 'stopped') b.push('<button class="hs-btn" data-do="enable" data-id="' + esc(p.id) + '"' + dis + '>Turn on</button>');
         if (p.state === 'running' && !p.hidden) b.push('<button class="hs-btn" data-do="disable" data-id="' + esc(p.id) + '"' + dis + '>Turn off</button>');
@@ -247,7 +257,7 @@
       var html = '<div class="hs-card" id="hs-' + esc(p.id) + '" style="--c:' + esc(c) + '">' +
         '<div class="hs-head"><div class="hs-icon">' + esc(p.icon || '🧩') + '</div>' +
         '<div class="hs-title"><span class="hs-name">' + esc(p.name) + '</span>' +
-        '<span class="hs-ver">' + esc(p.installed ? (p.installed_version || p.version) : p.version) + '</span></div>' +
+        '<span class="hs-ver">Version ' + esc(fmtVer(p.installed ? (p.installed_version || p.version) : p.version)) + '</span></div>' +
         badge(p) + '</div>' +
         '<div class="hs-desc">' + esc(p.description) + '</div>';
       var ch = chips(p);

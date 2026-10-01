@@ -3,7 +3,7 @@
     python hexcast.py plugins list
     python hexcast.py plugins install twitch music games games_roulette
     python hexcast.py plugins install --all
-    python hexcast.py plugins update [--all | ids ...]
+    python hexcast.py plugins update [--all | ids ...]    (newer ones from the catalog or, when enabled, GitHub)
     python hexcast.py plugins repair ids ...
     python hexcast.py plugins remove ids ...        (settings are kept)
 
@@ -18,6 +18,7 @@ import sys
 
 from .host import PluginHost
 from .installer import InstallError, Installer
+from .versions import fmt_version
 
 
 def _say(msg: str) -> None:
@@ -54,15 +55,24 @@ def main(argv: list[str] | None = None) -> int:
                 _say(f"[!] catalog {url}: {why}")
     catalog = host.catalog.entries()
     installed = host.scan()
+    if args.cmd in ("list", "update") and host.upstream.enabled:
+        # ask GitHub for the latest versions of what is installed (quietly: offline just means "no news")
+        host.upstream.refresh([p for p, i in installed.items() if i.meta.get("source") in ("bundled", "upstream")],
+                              force=True)
+    infos = host.update_infos(installed)
 
     if args.cmd == "list":
         rows = sorted(set(catalog) | set(installed))
-        print(f"\n  {'id':<18}{'name':<22}{'installed':<12}{'catalog':<10}")
+        print(f"\n  {'id':<18}{'name':<22}{'installed':<12}{'latest':<10}{'update'}")
         for pid in rows:
-            inst, entry = installed.get(pid), catalog.get(pid)
+            inst, entry, info = installed.get(pid), catalog.get(pid), infos.get(pid)
             name = (entry.manifest.name if entry else inst.manifest.name if inst and inst.manifest else "?")
-            print(f"  {pid:<18}{name:<22}{(inst.version if inst else '-'):<12}"
-                  f"{(entry.manifest.version if entry else '-'):<10}")
+            latest = info.latest if info else (entry.manifest.version if entry else "-")
+            note = f"yes ({info.source})" if info and info.available else ""
+            print(f"  {pid:<18}{name:<22}{(fmt_version(inst.version) if inst else '-'):<12}"
+                  f"{fmt_version(latest) if latest else '-':<10}{note}")
+        if host.upstream.enabled:
+            print(f"\n  latest versions: {host.upstream.repo} ({host.upstream.branch}) on GitHub and the catalog/ folder")
         print()
         return 0
 
@@ -70,6 +80,11 @@ def main(argv: list[str] | None = None) -> int:
     if getattr(args, "all", False):
         ids = sorted(e.id for e in catalog.values() if not e.manifest.hidden) if args.cmd == "install" \
             else sorted(installed)
+        if args.cmd == "update":
+            ids = [p for p in ids if infos[p].available]
+            if not ids:
+                _say("everything is up to date")
+                return 0
     if not ids:
         ap.error(f"{args.cmd}: give at least one plugin id (or --all)")
     status = 0

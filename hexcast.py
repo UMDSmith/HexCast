@@ -62,8 +62,6 @@ try:
     VERSION = (ROOT / "VERSION").read_text(encoding="utf-8").strip() or "dev"
 except OSError:
     VERSION = "dev"
-# Where the update check looks for the latest published version.
-REMOTE_VERSION_URL = "https://raw.githubusercontent.com/UMDSmith/hexcast/main/VERSION"
 # SOUNDBOARD_MEDIA_DIR lets you point the library anywhere (another drive, shared folder,
 # network mount, etc.) without editing this file. Defaults to ./media next to the script.
 MEDIA_DIR = Path(os.getenv("SOUNDBOARD_MEDIA_DIR", str(ROOT / "media"))).expanduser().resolve()
@@ -525,6 +523,8 @@ async def lifespan(app: FastAPI):
         await plugin_service.repair_pending()  # plugins whose Python packages went missing
     except Exception:
         log.exception("plugins: restoring missing packages failed")
+    _kick_version_check()                      # GitHub: newest Hexcast + module versions - background threads, never block start-up
+    plugin_host.upstream.kick([p for p, i in plugin_host.scan().items() if i.meta.get("source") in ("bundled", "upstream")])
     if plugin_host.catalog.remote_urls:        # configured plugin indexes: fetch in the background (never blocks start-up)
         asyncio.get_running_loop().create_task(asyncio.to_thread(plugin_host.catalog.refresh_remote, 6.0, True))
 
@@ -554,9 +554,10 @@ app.mount("/static", RevalidatingStaticFiles(directory=str(ROOT / "static")), na
 
 
 # ---- version / update check ------------------------------------------------
-# The latest published version is fetched from GitHub at most once an hour and
-# cached, so every panel can show "update available" without hammering anything.
-_version_cache: dict = {"latest": None, "checked_at": 0.0}
+# The latest published version is fetched from GitHub at most once an hour, in a background
+# thread (a page load never waits for it), and cached. It follows the same "upstream" setting
+# as the module updates (config/plugins.json); with "upstream": false Hexcast never asks GitHub.
+_version_cache: dict = {"latest": None, "checked_at": 0.0, "running": False}
 
 
 def _parse_ver(s: str) -> tuple:
@@ -564,27 +565,47 @@ def _parse_ver(s: str) -> tuple:
     return tuple(int(n) for n in nums) if nums else (0,)
 
 
-async def _latest_version() -> str | None:
-    now = time.time()
-    if _version_cache["latest"] is not None and now - _version_cache["checked_at"] < 3600:
-        return _version_cache["latest"]
-    _version_cache["checked_at"] = now
+def _remote_version_url() -> str | None:
+    up = plugin_host.upstream
+    if not up.enabled:
+        return None
+    custom = (up.config or {}).get("raw_url")
+    if custom:                                    # (tests: a local server) - same host, VERSION instead of a plugin.json
+        return up._fill(custom, "").rsplit("/catalog/", 1)[0] + "/VERSION"
+    return f"https://raw.githubusercontent.com/{up.repo}/{up.branch}/VERSION"
+
+
+def _fetch_latest_version() -> None:
     try:
-        import httpx  # optional at import time; always present via requirements
-        async with httpx.AsyncClient(timeout=4.0) as client:
-            r = await client.get(REMOTE_VERSION_URL)
-            if r.status_code == 200:
-                _version_cache["latest"] = r.text.strip()[:32]
+        url = _remote_version_url()
+        if url:
+            _version_cache["latest"] = plugin_host.upstream._get(url, 256, 4.0).decode("utf-8", "replace").strip()[:32]
     except Exception:
-        pass  # offline / rate-limited / no httpx — just report no newer version
-    return _version_cache["latest"]
+        pass  # offline / rate-limited - just report no newer version
+    finally:
+        _version_cache["running"] = False
+
+
+def _kick_version_check() -> None:
+    now = time.time()
+    if _version_cache["running"] or now - _version_cache["checked_at"] < (3600 if _version_cache["latest"] else 300):
+        return
+    if _remote_version_url() is None:
+        return
+    _version_cache["running"], _version_cache["checked_at"] = True, now
+    threading.Thread(target=_fetch_latest_version, name="hexcast-version", daemon=True).start()
 
 
 @app.get("/api/version")
 async def api_version():
-    latest = await _latest_version()
+    _kick_version_check()
+    latest = _version_cache["latest"]
     update = bool(latest and VERSION != "dev" and _parse_ver(latest) > _parse_ver(VERSION))
-    return {"version": VERSION, "latest": latest, "update_available": update}
+    up = plugin_host.upstream
+    return {"version": VERSION, "latest": latest, "update_available": update,
+            "checking": bool(up.enabled and latest is None and (_version_cache["running"] or not _version_cache["checked_at"])),
+            "check_enabled": up.enabled,
+            "repo_url": up.repo_url(), "download_url": up.download_url() if up.enabled else up.repo_url()}
 
 # ---- HTML (inlined) --------------------------------------------------------
 

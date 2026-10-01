@@ -27,6 +27,7 @@ from typing import Any, Callable
 
 from . import paths, requirements
 from .catalog import Catalog
+from .versions import Upstream, normalize_upstream, update_info, fmt_version
 from .manifest import MANIFEST_NAME, Manifest, ManifestError, load_manifest
 from .staticfiles import RevalidatingStaticFiles
 
@@ -50,11 +51,20 @@ def running_plugin(pid: str) -> types.ModuleType | None:
     return _current.module(pid) if _current is not None else None
 
 
+def plugin_versions(pid: str) -> dict | None:
+    """Version / update fields of an installed plugin of this process's host (None if unknown) -
+    for code that has no ctx at hand, like a game's registry."""
+    try:
+        return _current.version_info(pid) if _current is not None else None
+    except Exception:
+        return None
+
+
 # ---- settings ----------------------------------------------------------------------
 
 class Settings:
     """config/plugins.json: which installed plugins are switched off, whether the one-time
-    upgrade migration has run, and extra catalog URLs. Tiny, and safe to hand-edit.
+    upgrade migration has run, extra catalog URLs and the `upstream` update source. Tiny, and safe to hand-edit.
 
     A file that cannot be read is never silently replaced: it is copied to plugins.json.bad,
     `problem` says what happened (the console prints it), and the upgrade migration is not
@@ -64,6 +74,7 @@ class Settings:
         self.path = Path(path)
         self.data: dict[str, Any] = {"disabled": [], "migrated": False, "catalogs": []}
         self.problem: str | None = None
+        self.upstream, self.upstream_problem = normalize_upstream(None)
         try:
             text = self.path.read_text(encoding="utf-8-sig")         # -sig: Notepad / PowerShell add a BOM
         except FileNotFoundError:
@@ -84,6 +95,10 @@ class Settings:
         self.data["migrated"] = bool(raw.get("migrated", False))
         if isinstance(raw.get("catalogs"), list):
             self.data["catalogs"] = [str(x) for x in raw["catalogs"] if isinstance(x, str)]
+        if "upstream" in raw:            # kept as written in `data` (saving never rewrites it); this is what is used
+            self.upstream, self.upstream_problem = normalize_upstream(raw["upstream"])
+            if self.upstream_problem:
+                log.warning("[plugins] %s: %s", self.path.name, self.upstream_problem)
 
     def _damaged(self, why: str) -> None:
         self.data["migrated"] = True                                  # do not "upgrade" on top of a file we cannot read
@@ -242,6 +257,8 @@ class PluginHost:
         self.media_dir = Path(media_dir) if media_dir else paths.MEDIA_DIR
         self.settings = Settings(self.config_dir / "plugins.json")
         self.catalog = Catalog(Path(catalog_dir) if catalog_dir else paths.CATALOG_DIR, self.settings.catalogs)
+        # HEXCAST_NO_UPSTREAM=1 never contacts GitHub (tests, offline machines, Docker builds)
+        self.upstream = Upstream(None if os.environ.get("HEXCAST_NO_UPSTREAM") else self.settings.upstream)
         self.loaded: dict[str, Loaded] = {}
         self.errors: dict[str, str] = {}              # plugin id -> why it is not running
         self.needs_deps: set[str] = set()             # installed, but packages are missing
@@ -578,10 +595,27 @@ class PluginHost:
             return "error"
         return "stopped"
 
+    def update_infos(self, installed: dict[str, Installed] | None = None) -> dict:
+        """pid -> UpdateInfo for every installed plugin (see versions.update_info). Also makes
+        sure the upstream check is running or cached - in the background, so this stays instant."""
+        installed = installed if installed is not None else self.scan()
+        catalog = self.catalog.entries()
+        self.upstream.kick([p for p, i in installed.items() if i.manifest is not None and i.meta.get("source") in ("bundled", "upstream")])
+        return {pid: update_info(self.upstream, inst, catalog.get(pid)) for pid, inst in installed.items()}
+
+    def version_info(self, pid: str) -> dict | None:
+        """Version fields of one installed plugin (for pages that describe it), or None."""
+        inst = self.installed(pid)
+        if inst is None:
+            return None
+        return self.update_infos({pid: inst})[pid].view()
+
     def nav_items(self) -> list[dict]:
         """The top-bar tabs: installed, top-level plugins that have a `nav` entry."""
         items = []
-        for pid, inst in self.scan().items():
+        scanned = self.scan()
+        infos = self.update_infos(scanned)
+        for pid, inst in scanned.items():
             m = inst.manifest
             if m is None or m.parent or not m.nav:
                 continue
@@ -591,7 +625,8 @@ class PluginHost:
             nav = m.nav
             item = {"id": pid, "key": nav.get("key") or pid, "label": nav["label"], "href": nav["href"],
                     "order": nav["order"], "color": nav.get("color") or m.color, "state": state,
-                    "error": self.errors.get(pid)}
+                    "error": self.errors.get(pid), "version": m.version, "version_label": fmt_version(m.version),
+                    **infos[pid].view()}
             if nav.get("status_url"):
                 item["status_url"] = nav["status_url"]
             if nav.get("status_js"):

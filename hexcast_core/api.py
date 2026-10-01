@@ -36,6 +36,7 @@ from . import requirements as reqs
 from .host import PluginHost
 from .installer import InstallError, Installer
 from .manifest import Manifest, valid_id
+from .versions import fmt_version, update_info
 
 NOCACHE = {"Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache"}
 JOBS_KEPT = 30
@@ -83,7 +84,7 @@ def _needs_download(entry) -> bool:
     return not all(reqs.satisfied(r) for r in reqs.parse(text))
 
 
-def plugin_view(host: PluginHost, pid: str, catalog: dict, installed: dict) -> dict:
+def plugin_view(host: PluginHost, pid: str, catalog: dict, installed: dict, info=None) -> dict:
     """One plugin as the store shows it: catalog data + what is installed + what is running."""
     entry = catalog.get(pid)
     inst = installed.get(pid)
@@ -101,9 +102,12 @@ def plugin_view(host: PluginHost, pid: str, catalog: dict, installed: dict) -> d
     out["enabled"] = is_installed and not host.settings.is_disabled(pid)
     out["running"] = pid in host.loaded
     out["error"] = (host.errors.get(pid) or (inst.error if inst else None)) if is_installed else None
-    out["update_available"] = bool(inst and entry and inst.meta.get("content_hash")
-                                   and inst.meta.get("content_hash") != entry.content_hash)
-    out["latest_version"] = entry.manifest.version if entry else None
+    info = info or update_info(host.upstream, inst, entry)
+    out.update(info.view())                       # installed_version, latest_version, *_label, update_available, update_source
+    out["version_label"] = fmt_version(inst.version if inst else out.get("version"))
+    if not inst:
+        out["installed_version"] = None
+        out["latest_version"] = entry.manifest.version if entry else info.latest
     out["needs_packages"] = bool(not is_installed and entry and _needs_download(entry))
     out["dependents"] = host.dependents(pid, installed) if is_installed else []
     out["dependents_info"] = [{"id": d, "name": installed[d].manifest.name if installed[d].manifest else d}
@@ -189,25 +193,21 @@ class PluginService:
     # ---- listing -------------------------------------------------------------------
 
     def updates(self) -> list[str]:
-        """Ids of installed plugins whose catalog copy differs from what was installed. Updates
-        are manual - a git pull changes the catalog, never what is running - so the top bar
-        puts a dot on the + tab to say there is something to press Update on."""
-        catalog = self.host.catalog.entries()
-        out = []
-        for pid, inst in self.host.scan().items():
-            entry = catalog.get(pid)
-            if entry and inst.meta.get("content_hash") and inst.meta["content_hash"] != entry.content_hash:
-                out.append(pid)
-        return out
+        """Ids of installed plugins with something newer: a catalog copy that differs from what was
+        installed, or a newer upstream version. Updates are manual - neither a git pull nor the
+        GitHub check changes what is running - so the top bar puts a dot on the + tab to say there
+        is something to press Update on."""
+        return [pid for pid, info in self.host.update_infos().items() if info.available]
 
     async def listing(self, parent: str | None, refresh: bool) -> dict:
         host = self.host
         if host.catalog.remote_urls:
             await asyncio.to_thread(host.catalog.refresh_remote, 6.0, refresh)
         catalog, installed = host.catalog.entries(), host.scan()
+        infos = host.update_infos(installed)
         views = []
         for pid in set(catalog) | set(installed):
-            v = plugin_view(host, pid, catalog, installed)
+            v = plugin_view(host, pid, catalog, installed, infos.get(pid))
             if parent != "*":
                 if (v["parent"] or None) != (parent or None):
                     continue
@@ -420,7 +420,8 @@ def build_router(service: PluginService) -> APIRouter:
 
     @router.get("/api/plugins/nav")
     async def api_nav():
-        return {"ok": True, "revision": host.revision, "items": host.nav_items(), "updates": service.updates()}
+        return {"ok": True, "revision": host.revision, "items": host.nav_items(), "updates": service.updates(),
+                "upstream": {"enabled": host.upstream.enabled, "repo": host.upstream.repo if host.upstream.enabled else None}}
 
     @router.get("/api/plugins/jobs/{job_id}")
     async def api_job(job_id: str, since: int = 0):

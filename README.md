@@ -378,8 +378,8 @@ linux/amd64,linux/arm64,linux/arm/v7 -t your-registry/hexcast:latest --push .`.
 ### Upgrading
 
 Your library (`media/`), all settings/secrets (`config/`) and the plugins you installed (`plugins/`) are git-ignored, so
-updating never touches them. The top bar of every panel shows your version; when
-a newer release is out it turns green and reads **• update**.
+updating never touches them. The top bar of every panel shows `Hexcast Version: 2.0` (and the version of the module
+you are on, e.g. `Games Version: 1.0`); when a newer release is out it adds **Update to 2.1**, a link to the download.
 
 - **Git:** `git pull`, then run the launcher.
 - **ZIP:** download the latest from **`< > Code`** and extract over your existing folder (keep `media/`, `config/` and `plugins/`), then run the launcher.
@@ -391,6 +391,9 @@ no manual `pip` to remember.
 **Plugins update on your say-so.** An update brings a newer copy of the plugin folder into `catalog/`, but what
 runs is the installed copy in `plugins/` — a plugin's card shows **Update** when the catalog has something newer, and
 pressing it swaps the files and restarts just that plugin, so nothing changes in the middle of a stream.
+You do not need git for this: Hexcast checks GitHub (cached for an hour, in the background, silently when offline) and
+the module's top-bar version, its game tab and its card show **Update to 1.1** when a newer version is out. To never contact
+GitHub, put `{"upstream": false}` in `config/plugins.json` — see [Versions and updates](docs/plugins.md#versions-and-updates).
 
 **Coming from a version without plugins?** Nothing to do: the first start keeps every tab you were already using (it
 looks for their settings in `config/` and installs those plugins for you). A tab you never configured is one click away in **+**.

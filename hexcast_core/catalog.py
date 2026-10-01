@@ -109,6 +109,7 @@ class CatalogEntry:
     url: str | None = None            # remote: the plugin's .zip
     sha256: str | None = None         # remote: the .zip's expected digest
     content_hash: str = ""            # what "changed since installed" is judged by
+    subdir: str | None = None         # upstream: the folder inside the repository archive that holds the plugin
 
     @property
     def id(self) -> str:
