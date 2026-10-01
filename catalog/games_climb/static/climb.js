@@ -119,12 +119,12 @@
 
   // soul looks: skin colours and gear (the server picks indexes per climb)
   var SKINS = [
-    { a: '#bdb4ff', b: '#8f84e8', belly: '#e4dfff' },      // lavender
-    { a: '#9ff0cf', b: '#62cfa2', belly: '#d8fbec' },      // mint
-    { a: '#9fd6ff', b: '#5fa6e6', belly: '#d9efff' },      // sky
-    { a: '#ffb6cd', b: '#e5789d', belly: '#ffe3ec' },      // pink
-    { a: '#ffe58f', b: '#e2b73c', belly: '#fff4c9' },      // butter
-    { a: '#c6e69a', b: '#8ebd55', belly: '#eaf7cf' }       // pea
+    { a: '#8d8a8e', b: '#4a4450', belly: '#b9b4b6' },      // ashen
+    { a: '#8f9068', b: '#4a4c36', belly: '#bcba90' },      // sallow
+    { a: '#7f8ea0', b: '#404c5c', belly: '#b0bccd' },      // blue-grey
+    { a: '#a08585', b: '#5a4243', belly: '#cdaea9' },      // flayed
+    { a: '#a89a72', b: '#5a5036', belly: '#d3c79e' },      // bone-yellow
+    { a: '#7d9181', b: '#3f5047', belly: '#abbead' }       // grave-green
   ];
   var GEARS = ['none', 'tie', 'hardhat', 'headband', 'glasses', 'party', 'bow', 'scarf'];
 
@@ -283,10 +283,11 @@
   }
 
   // ==================================================================== the soul
-  // A cute little damned soul: big head, stub horns, a cracked halo, a tail, three-fingered mitts. Drawn from a
-  // pose (limb targets in screen px) with two-bone IK for arms and legs, outlined cartoon style.
-  var SOUL = { a1: 21, a2: 19, l1: 19, l2: 18, shX: 17, shY: -35, hipX: 9, headY: -75, torso: 46 };
-  var INK = '#2a1230';
+  // An emaciated damned man, drawn from a pose (limb targets in screen px) with two-bone IK: tapered limbs shaded across
+  // their width (cool fill from above, a warm lava rim from below), a ribcage and clavicles, five-fingered hands that curl
+  // round their holds, a tattered loincloth, a gaunt face whose expression follows the mood. The comedy is in the acting.
+  var SOUL = { a1: 25, a2: 23, l1: 33, l2: 33, shX: 18, shY: -42, hipX: 8, headY: -66 };
+  var INK = '#1a0c10';
 
   function ik(sx, sy, tx, ty, l1, l2, side) {
     // two-bone IK; side -1 = the elbow / knee points left, +1 = right (screen). Returns elbow + the (clamped) end.
@@ -308,41 +309,158 @@
     c.lineTo(x, y + r); c.quadraticCurveTo(x, y, x + r, y); c.closePath();
   }
 
-  function limb(c, x0, y0, x1, y1, x2, y2, w, skin) {
-    c.lineCap = 'round'; c.lineJoin = 'round';
-    c.strokeStyle = INK; c.lineWidth = w + 5;
-    c.beginPath(); c.moveTo(x0, y0); c.lineTo(x1, y1); c.lineTo(x2, y2); c.stroke();
-    c.strokeStyle = skin.a; c.lineWidth = w;
-    c.beginPath(); c.moveTo(x0, y0); c.lineTo(x1, y1); c.lineTo(x2, y2); c.stroke();
-    // a soft shade along the underside
-    c.strokeStyle = skin.b; c.globalAlpha = 0.35; c.lineWidth = w * 0.4;
-    c.beginPath(); c.moveTo(x0 + 1.5, y0 + 2); c.lineTo(x1 + 1.5, y1 + 2); c.lineTo(x2 + 1.5, y2 + 2); c.stroke();
-    c.globalAlpha = 1;
+  // skin ramps: hi (cool light from above), a (mid), b (shadow); the lava rim is added from the theme
+  function skinRamp(sk) { return sk.hi ? sk : (sk.hi = mixc(sk.belly, '#9db4d8', 0.28), sk); }
+  function rimCol(L, al) { return 'rgba(' + L.glow + ',' + clamp(al * L.rim, 0, 1).toFixed(3) + ')'; }
+  // the stops of a gradient that runs across a shape from its screen-top edge (0) to its screen-bottom edge (1)
+  function skinStops(g, sk, L, flip) {
+    var st = [[0, sk.hi], [0.28, mixc(sk.hi, sk.a, 0.6)], [0.5, sk.a], [0.78, sk.b], [0.9, mixc(sk.b, 'rgb(' + L.glow + ')', 0.35 * L.rim)], [1, mixc(sk.b, 'rgb(' + L.glow + ')', 0.8 * L.rim)]];
+    for (var i = 0; i < st.length; i++) g.addColorStop(flip ? 1 - st[st.length - 1 - i][0] : st[i][0], st[flip ? st.length - 1 - i : i][1]);
   }
 
-  function mitt(c, x, y, ang, grip, skin, r) {
-    // a three-fingered cartoon hand; grip 1 = closed fist, 0 = fingers spread (ang = where the arm points)
-    c.save(); c.translate(x, y); c.rotate(ang + Math.PI / 2);
-    c.lineWidth = 3; c.strokeStyle = INK; c.fillStyle = skin.a;
-    var spread = 0.55 * (1 - grip);
-    for (var i = -1; i <= 1; i++) {
-      c.save(); c.rotate(i * spread);
-      c.beginPath(); c.ellipse(0, -r * (0.95 - 0.2 * grip), r * 0.38, r * (0.62 - 0.18 * grip), 0, 0, TAU); c.fill(); c.stroke();
-      c.restore();
+  // a tapered limb segment, shaded across its width
+  function seg(c, x0, y0, x1, y1, w0, w1, sk, L, o) {
+    var dx = x1 - x0, dy = y1 - y0, len = Math.sqrt(dx * dx + dy * dy) || 0.01, a = Math.atan2(dy, dx), down = Math.cos(a + L.rot) >= 0;
+    c.save(); c.translate(x0, y0); c.rotate(a);
+    var wm = Math.max(w0, w1) / 2, g = c.createLinearGradient(0, -wm, 0, wm);
+    skinStops(g, sk, L, !down);
+    c.beginPath(); c.moveTo(0, -w0 / 2); c.lineTo(len, -w1 / 2); c.arc(len, 0, w1 / 2, -Math.PI / 2, Math.PI / 2); c.lineTo(0, w0 / 2); c.arc(0, 0, w0 / 2, Math.PI / 2, Math.PI * 1.5);
+    c.closePath(); c.fillStyle = g; c.fill(); c.lineWidth = 1; c.strokeStyle = 'rgba(14,6,9,.6)'; c.stroke();
+    if (o && o.tendons) {                                  // sinews standing out along the limb
+      c.lineCap = 'round';
+      for (var i = -1; i <= 1; i += 2) {
+        var ww = (w0 + w1) / 2 * 0.26 * i;
+        c.strokeStyle = 'rgba(14,6,9,' + (0.18 + 0.4 * o.tendons) + ')'; c.lineWidth = 0.9;
+        c.beginPath(); c.moveTo(len * 0.18, ww * 0.8); c.quadraticCurveTo(len * 0.5, ww * 1.5, len * 0.88, ww * 0.5); c.stroke();
+        c.strokeStyle = 'rgba(255,235,215,' + (0.06 + 0.12 * o.tendons) + ')'; c.beginPath(); c.moveTo(len * 0.18, ww * 0.8 - 1); c.quadraticCurveTo(len * 0.5, ww * 1.5 - 1, len * 0.88, ww * 0.5 - 1); c.stroke();
+      }
     }
-    c.beginPath(); c.arc(0, 0, r, 0, TAU); c.fill(); c.stroke();
-    c.fillStyle = skin.belly; c.globalAlpha = 0.5; c.beginPath(); c.arc(-r * 0.25, -r * 0.2, r * 0.38, 0, TAU); c.fill(); c.globalAlpha = 1;
+    if (o && o.bulge) {                                    // a muscle belly (straining)
+      var bg = c.createRadialGradient(len * 0.4, -w0 * 0.12, 0.5, len * 0.4, 0, w0 * 0.75);
+      bg.addColorStop(0, 'rgba(255,240,225,' + (0.16 * o.bulge) + ')'); bg.addColorStop(1, 'rgba(255,240,225,0)');
+      c.fillStyle = bg; c.fillRect(len * 0.1, -w0, len * 0.7, w0 * 2);
+    }
+    c.restore();
+  }
+  function joint(c, x, y, r, sk, L) {
+    var g = c.createRadialGradient(x - r * 0.3, y - r * 0.4, 0.5, x, y, r * 1.15);
+    g.addColorStop(0, sk.hi); g.addColorStop(0.55, sk.a); g.addColorStop(1, sk.b);
+    c.fillStyle = g; c.beginPath(); c.arc(x, y, r, 0, TAU); c.fill(); c.strokeStyle = 'rgba(14,6,9,.5)'; c.lineWidth = 0.9; c.stroke();
+    c.strokeStyle = rimCol(L, 0.5); c.lineWidth = 1.1; c.beginPath(); c.arc(x, y, r * 0.86, 0.35, Math.PI - 0.35); c.stroke();
+  }
+
+  // a hand: palm, four fingers of three phalanges and a thumb. grip 1 = curled round the hold, 0 = open and spread
+  function hand(c, x, y, ang, grip, sk, L, sd) {
+    c.save(); c.translate(x, y); c.rotate(ang);
+    var ca = Math.cos(ang + L.rot), cs = Math.abs(ca) > 0.3 ? (ca > 0 ? 1 : -1) : (sd || 1);       // curl towards the screen-bottom
+    var palm = c.createLinearGradient(0, -5, 0, 5); skinStops(palm, sk, L, ca < 0);
+    c.fillStyle = palm; c.strokeStyle = 'rgba(14,6,9,.6)'; c.lineWidth = 1;
+    c.beginPath(); c.moveTo(-1.5, -3.4 * cs); c.lineTo(8, -4.6 * cs); c.quadraticCurveTo(10.4, 0, 8, 4.6 * cs); c.lineTo(-1.5, 3.4 * cs); c.closePath(); c.fill(); c.stroke();
+    var lens = [10, 12, 11, 8.4], fr = [0.42, 0.33, 0.25], i, j;
+    c.lineCap = 'round'; c.lineJoin = 'round';
+    for (i = 0; i < 4; i++) {
+      var by = (-3.3 + i * 2.2) * cs, a0 = (i - 1.5) * 0.13 * (1 - grip) * cs, px = 8.6, py = by, pa = a0, pts = [[px, py]];
+      for (j = 0; j < 3; j++) {
+        pa += cs * grip * (0.5 + 0.38 * j);
+        px += Math.cos(pa) * lens[i] * fr[j]; py += Math.sin(pa) * lens[i] * fr[j]; pts.push([px, py]);
+      }
+      for (var pass = 0; pass < 2; pass++) {
+        for (j = 0; j < 3; j++) {
+          c.strokeStyle = pass ? (j === 2 ? sk.b : sk.a) : 'rgba(14,6,9,.75)'; c.lineWidth = (3.1 - j * 0.5) + (pass ? 0 : 1.1);
+          c.beginPath(); c.moveTo(pts[j][0], pts[j][1]); c.lineTo(pts[j + 1][0], pts[j + 1][1]); c.stroke();
+        }
+      }
+      c.strokeStyle = rimCol(L, 0.55); c.lineWidth = 0.9; c.beginPath(); c.moveTo(pts[0][0], pts[0][1] + cs * 1.2); c.lineTo(pts[1][0], pts[1][1] + cs * 1.2); c.lineTo(pts[2][0], pts[2][1] + cs * 1.1); c.stroke();
+      if (grip > 0.5) { c.fillStyle = 'rgba(235,222,205,.35)'; c.beginPath(); c.arc(pts[1][0], pts[1][1] - cs * 1.2, 1, 0, TAU); c.fill(); }
+    }
+    var tp = [[2.4, -4.2 * cs]], ta = -cs * (0.5 - 0.5 * grip) - 0.25 * cs;
+    for (j = 0; j < 2; j++) { ta += cs * grip * 0.55; tp.push([tp[j][0] + Math.cos(ta - cs * 0.0) * 5.4, tp[j][1] + Math.sin(ta) * 5.4 - cs * 0.9 * (1 - grip) * (j ? 0 : 1)]); }
+    for (var ps = 0; ps < 2; ps++) for (j = 0; j < 2; j++) {
+      c.strokeStyle = ps ? sk.a : 'rgba(14,6,9,.75)'; c.lineWidth = (3.4 - j * 0.6) + (ps ? 0 : 1.1);
+      c.beginPath(); c.moveTo(tp[j][0], tp[j][1]); c.lineTo(tp[j + 1][0], tp[j + 1][1]); c.stroke();
+    }
     c.restore();
   }
 
-  function foot(c, x, y, ang, skin) {
+  // a foot seen from the front: heel and ankle bones, the arch, five toes that curl onto a hold
+  function foot(c, x, y, ang, sk, L, grip) {
     c.save(); c.translate(x, y); c.rotate(ang);
-    c.lineWidth = 3; c.strokeStyle = INK; c.fillStyle = skin.a;
-    c.beginPath(); c.ellipse(0, 3, 10.5, 6.8, 0, 0, TAU); c.fill(); c.stroke();
-    c.fillStyle = skin.belly; c.globalAlpha = 0.45; c.beginPath(); c.ellipse(-2, 1, 4.5, 2.6, 0, 0, TAU); c.fill(); c.globalAlpha = 1;
-    c.fillStyle = INK;
-    for (var i = -1; i <= 1; i++) { c.beginPath(); c.arc(i * 5.4, 7.6, 1.5, 0, TAU); c.fill(); }
+    var g = c.createLinearGradient(0, -3, 0, 9); skinStops(g, sk, L, false);
+    c.fillStyle = g; c.strokeStyle = 'rgba(14,6,9,.6)'; c.lineWidth = 1;
+    c.beginPath(); c.moveTo(-4.2, -1); c.quadraticCurveTo(-7.4, 4, -6.4, 8.6); c.lineTo(6.4, 8.6); c.quadraticCurveTo(7.6, 4, 4.2, -1); c.closePath(); c.fill(); c.stroke();
+    var cl = 0.5 + 0.5 * (grip == null ? 0.5 : grip);
+    for (var i = -2; i <= 2; i++) {
+      var tx = i * 2.9, ty = 8.4 + (i === -2 ? 0.4 : Math.abs(i) * 0.15), tg = c.createLinearGradient(0, ty - 2, 0, ty + 3.4);
+      tg.addColorStop(0, sk.a); tg.addColorStop(1, mixc(sk.b, 'rgb(' + L.glow + ')', 0.5 * L.rim));
+      c.fillStyle = tg; c.beginPath(); c.ellipse(tx, ty + 1.2 * cl, 1.7 + (i === -2 ? 0.5 : 0), 2.6 * (0.8 + 0.2 * cl), 0, 0, TAU); c.fill(); c.stroke();
+      c.fillStyle = 'rgba(40,28,24,.8)'; c.beginPath(); c.ellipse(tx, ty + 2.6 * cl, 0.9, 0.7, 0, 0, TAU); c.fill();
+    }
+    c.fillStyle = 'rgba(235,222,205,.3)'; c.beginPath(); c.arc(-3.6, 1.4, 1.5, 0, TAU); c.arc(3.6, 1.4, 1.5, 0, TAU); c.fill();
+    c.strokeStyle = rimCol(L, 0.6); c.lineWidth = 1; c.beginPath(); c.moveTo(-6, 8.6); c.lineTo(6, 8.6); c.stroke();
     c.restore();
+  }
+
+  // the ribcage and shoulders: collarbones, sternum, curved ribs with dark gaps, a sunken belly, hip bones
+  function torso(c, sk, L, t) {
+    var br = Math.sin(t / 640) * 0.5, sx = SOUL.shX;
+    c.beginPath();
+    c.moveTo(-5, -47); c.quadraticCurveTo(-12, -46, -sx - 3, -42.5); c.quadraticCurveTo(-sx - 5, -40, -16.5, -33);
+    c.quadraticCurveTo(-15, -22, -11.5, -12); c.quadraticCurveTo(-13, -5, -14.5, 0);
+    c.quadraticCurveTo(0, 5, 14.5, 0); c.quadraticCurveTo(13, -5, 11.5, -12);
+    c.quadraticCurveTo(15, -22, 16.5, -33); c.quadraticCurveTo(sx + 5, -40, sx + 3, -42.5); c.quadraticCurveTo(12, -46, 5, -47); c.closePath();
+    var g = c.createLinearGradient(-sx, 0, sx, 0);
+    g.addColorStop(0, sk.b); g.addColorStop(0.25, sk.a); g.addColorStop(0.5, sk.hi); g.addColorStop(0.75, sk.a); g.addColorStop(1, sk.b);
+    c.fillStyle = g; c.fill(); c.lineWidth = 1.1; c.strokeStyle = 'rgba(14,6,9,.65)'; c.stroke();
+    c.save(); c.clip();
+    var up = c.createLinearGradient(0, -47, 0, 2);                       // cool from above, lava from below
+    up.addColorStop(0, 'rgba(150,175,215,.16)'); up.addColorStop(0.45, 'rgba(0,0,0,0)'); up.addColorStop(0.75, 'rgba(10,3,5,.18)'); up.addColorStop(1, rimCol(L, 0.62));
+    c.fillStyle = up; c.fillRect(-30, -48, 60, 52);
+    // collarbones, sternum
+    c.lineCap = 'round';
+    [-1, 1].forEach(function (sd) {
+      c.strokeStyle = 'rgba(14,6,9,.55)'; c.lineWidth = 2.2; c.beginPath(); c.moveTo(sd * 2.5, -43); c.quadraticCurveTo(sd * 9, -45.4, sd * 16.5, -42.2); c.stroke();
+      c.strokeStyle = 'rgba(235,222,205,.34)'; c.lineWidth = 1.2; c.beginPath(); c.moveTo(sd * 2.5, -43.6); c.quadraticCurveTo(sd * 9, -46, sd * 16.5, -43); c.stroke();
+      // ribs: curved bands, a dark gap above each and a lit lower edge
+      for (var i = 0; i < 6; i++) {
+        var ry = -37 + i * 4.4 + br, w = 14.5 - i * 0.9 + (i > 3 ? -1 : 0), dr = 4 + i * 0.4;
+        c.strokeStyle = 'rgba(12,4,7,' + (0.5 - i * 0.03) + ')'; c.lineWidth = 2.1;
+        c.beginPath(); c.moveTo(sd * 2.2, ry - 1); c.quadraticCurveTo(sd * w * 0.7, ry - 2.2, sd * w, ry + dr); c.stroke();
+        c.strokeStyle = 'rgba(' + L.glow + ',' + (0.26 * L.rim + 0.05) + ')'; c.lineWidth = 1.1;
+        c.beginPath(); c.moveTo(sd * 2.4, ry + 1.2); c.quadraticCurveTo(sd * w * 0.7, ry - 0.2, sd * w, ry + dr + 1.6); c.stroke();
+        c.strokeStyle = 'rgba(235,222,205,.16)'; c.lineWidth = 0.8;
+        c.beginPath(); c.moveTo(sd * 2.4, ry - 0.2); c.quadraticCurveTo(sd * w * 0.7, ry - 1.4, sd * w, ry + dr + 0.4); c.stroke();
+      }
+      c.fillStyle = 'rgba(12,4,7,.18)'; c.beginPath(); c.ellipse(sd * 9, -7, 4.6, 6, sd * 0.2, 0, TAU); c.fill();         // hollow flank
+      c.strokeStyle = 'rgba(235,222,205,.22)'; c.lineWidth = 1.4; c.beginPath(); c.moveTo(sd * 11.4, -3.6); c.quadraticCurveTo(sd * 13.6, -5.5, sd * 12.4, -8); c.stroke();   // hip bone
+    });
+    c.strokeStyle = 'rgba(235,222,205,.3)'; c.lineWidth = 1.5; c.beginPath(); c.moveTo(0, -43); c.lineTo(0, -24); c.stroke();
+    c.strokeStyle = 'rgba(12,4,7,.4)'; c.lineWidth = 1; c.beginPath(); c.moveTo(0.9, -43); c.lineTo(0.9, -24); c.stroke();
+    c.fillStyle = 'rgba(12,4,7,.28)'; c.beginPath(); c.ellipse(0, -13, 5.8, 8, 0, 0, TAU); c.fill();                // sunken belly
+    c.fillStyle = 'rgba(12,4,7,.45)'; c.beginPath(); c.arc(0, -10, 0.9, 0, TAU); c.fill();
+    c.restore();
+  }
+
+  // a ragged loincloth with fold shading, a rope belt and torn strips that sway
+  function loincloth(c, sk, L, t) {
+    var sw = Math.sin(t / 700) * 1.6;
+    c.save();
+    c.beginPath(); c.moveTo(-15, -4); c.lineTo(15, -4); c.lineTo(16, 6); c.lineTo(12.5, 15 + sw * 0.3); c.lineTo(9, 9); c.lineTo(5.5, 19 + sw); c.lineTo(1.5, 10); c.lineTo(-2.5, 17 + sw * 0.6);
+    c.lineTo(-6.5, 8); c.lineTo(-10.5, 18 + sw * 0.4); c.lineTo(-13, 9); c.lineTo(-16.5, 13); c.closePath();
+    var g = c.createLinearGradient(-15, -4, 15, 14);
+    g.addColorStop(0, '#8d806a'); g.addColorStop(0.5, '#6b5f4c'); g.addColorStop(1, '#3f362b');
+    c.fillStyle = g; c.fill(); c.lineWidth = 1; c.strokeStyle = 'rgba(14,6,9,.7)'; c.stroke();
+    c.clip();
+    for (var i = 0; i < 6; i++) {                                         // folds fanning down from the belt
+      var fx = -12 + i * 4.8;
+      c.strokeStyle = 'rgba(15,9,8,.42)'; c.lineWidth = 1.5; c.beginPath(); c.moveTo(fx * 0.8, -3); c.quadraticCurveTo(fx + sw * 0.4, 6, fx * 1.1 + (i % 2 ? 1.5 : -1.5), 18); c.stroke();
+      c.strokeStyle = 'rgba(225,205,175,.15)'; c.lineWidth = 1; c.beginPath(); c.moveTo(fx * 0.8 + 1.4, -3); c.quadraticCurveTo(fx + sw * 0.4 + 1.4, 6, fx * 1.1 + 1.4 + (i % 2 ? 1.5 : -1.5), 18); c.stroke();
+    }
+    var rim = c.createLinearGradient(0, -2, 0, 19); rim.addColorStop(0, 'rgba(0,0,0,0)'); rim.addColorStop(0.55, 'rgba(0,0,0,0.1)'); rim.addColorStop(1, rimCol(L, 0.7));
+    c.fillStyle = rim; c.fillRect(-20, -4, 40, 26);
+    c.restore();
+    c.strokeStyle = '#5b4630'; c.lineWidth = 2.2; c.lineCap = 'round'; c.beginPath(); c.moveTo(-15, -3.4); c.quadraticCurveTo(0, 0.5, 15, -3.4); c.stroke();
+    c.strokeStyle = 'rgba(210,175,120,.4)'; c.lineWidth = 0.8; c.beginPath(); c.moveTo(-15, -4.2); c.quadraticCurveTo(0, -0.3, 15, -4.2); c.stroke();
+    c.strokeStyle = '#5b4630'; c.lineWidth = 1.8; c.beginPath(); c.moveTo(4, -1.6); c.lineTo(6, 6 + sw * 0.3); c.moveTo(6, -1.4); c.lineTo(9, 5); c.stroke();
   }
 
   /*
@@ -350,207 +468,249 @@
    *   x, y            pelvis, screen px          s       scale          rot, lean   body rotation (rad)
    *   hands[2], feet[2]   {x,y} screen targets (null = let it hang)      grip[2]  0..1
    *   look {x,y} -1..1   mood  'calm'|'strain'|'scared'|'angry'|'happy'|'dizzy'|'smug'|'ouch'   mouth 0..1
-   *   sweat 0..1   blink 0..1   skin, gear   t (ms)    halo {dx, dy, rot, on}   tailWag   flat (sat / lying)
+   *   sweat 0..1   blink 0..1   skin, gear   t (ms)    halo {dx, dy, rot, on}   flat (sat / lying)
+   *   glow 'r,g,b' (the lava), rim 0..1 (how strong its light is up here)
    * }
    */
   function drawSoul(c, o) {
-    var s = o.s || 1, skin = SKINS[((o.skin | 0) % SKINS.length + SKINS.length) % SKINS.length];
+    var s = o.s || 1, sk = skinRamp(SKINS[((o.skin | 0) % SKINS.length + SKINS.length) % SKINS.length]);
     var gear = GEARS[((o.gear | 0) % GEARS.length + GEARS.length) % GEARS.length];
-    var t = o.t || 0, lean = o.lean || 0, rot = o.rot || 0;
+    var t = o.t || 0, lean = o.lean || 0, rot = o.rot || 0, tot = rot + lean * 0.5;
+    var mood = o.mood || 'calm', eff = mood === 'strain' ? 1 : mood === 'angry' || mood === 'scared' || mood === 'ouch' ? 0.7 : mood === 'calm' ? 0.25 : 0.4;
+    var L = { glow: o.glow || '255,96,28', rim: o.rim == null ? 0.7 : o.rim, rot: tot, eff: eff };
     c.save();
-    c.translate(o.x, o.y); c.rotate(rot + lean * 0.5); c.scale(s, s);
-    // everything below is in body space: pelvis (0,0), up = -y. Targets are given in screen px: bring them in.
-    var cr = Math.cos(-(rot + lean * 0.5)), sr = Math.sin(-(rot + lean * 0.5));
+    c.translate(o.x, o.y); c.rotate(tot); c.scale(s, s);
+    var cr = Math.cos(-tot), sr = Math.sin(-tot);
     function loc(p) { var dx = (p.x - o.x) / s, dy = (p.y - o.y) / s; return { x: dx * cr - dy * sr, y: dx * sr + dy * cr }; }
-
-    // ---- tail (behind everything)
-    var wag = Math.sin(t / (o.tailWag ? 120 : 420)) * (o.tailWag ? 14 : 6);
-    c.lineCap = 'round'; c.lineJoin = 'round';
-    c.strokeStyle = INK; c.lineWidth = 8;
-    c.beginPath(); c.moveTo(-4, -4); c.bezierCurveTo(-26, 0 + wag * 0.3, -34, -18 + wag, -26, -34 + wag);
-    c.stroke();
-    c.strokeStyle = skin.b; c.lineWidth = 4;
-    c.beginPath(); c.moveTo(-4, -4); c.bezierCurveTo(-26, 0 + wag * 0.3, -34, -18 + wag, -26, -34 + wag);
-    c.stroke();
-    c.fillStyle = skin.b; c.strokeStyle = INK; c.lineWidth = 2.5;
-    c.beginPath(); c.moveTo(-26, -34 + wag); c.lineTo(-34, -40 + wag); c.lineTo(-20, -42 + wag); c.closePath(); c.fill(); c.stroke();
+    var i, Lm;
 
     // ---- legs
-    var hip = [{ x: -SOUL.hipX, y: -2 }, { x: SOUL.hipX, y: -2 }], i, L;
+    var hip = [{ x: -SOUL.hipX, y: -2 }, { x: SOUL.hipX, y: -2 }];
     for (i = 0; i < 2; i++) {
-      var ft = o.feet && o.feet[i] ? loc(o.feet[i]) : { x: hip[i].x * 1.2 + (i ? 3 : -3), y: 38 + Math.sin(t / 380 + i * 2) * 2 };
-      L = ik(hip[i].x, hip[i].y, ft.x, ft.y, SOUL.l1, SOUL.l2, i ? 1 : -1);
-      limb(c, hip[i].x, hip[i].y, L.ex, L.ey, L.hx, L.hy, 12, skin);
-      var fa = Math.atan2(L.hy - L.ey, L.hx - L.ex) - Math.PI / 2;
-      foot(c, L.hx, L.hy, o.feet && o.feet[i] ? fa * 0.3 : fa * 0.5, skin);
+      var ft = o.feet && o.feet[i] ? loc(o.feet[i]) : { x: hip[i].x * 1.3 + (i ? 2 : -2), y: 58 + Math.sin(t / 380 + i * 2) * 1.5 };
+      Lm = ik(hip[i].x, hip[i].y, ft.x, ft.y - 4, SOUL.l1, SOUL.l2, i ? 1 : -1);
+      seg(c, hip[i].x, hip[i].y, Lm.ex, Lm.ey, 12.5, 8.4, sk, L, { bulge: 0.5 + 0.5 * eff });
+      seg(c, Lm.ex, Lm.ey, Lm.hx, Lm.hy, 8.4, 5, sk, L, { tendons: eff * 0.6 });
+      joint(c, Lm.ex, Lm.ey, 5, sk, L);
+      var fa = Math.atan2(Lm.hy - Lm.ey, Lm.hx - Lm.ex) - Math.PI / 2;
+      foot(c, Lm.hx, Lm.hy + 1, o.feet && o.feet[i] ? fa * 0.25 : fa * 0.5, sk, L, o.feet && o.feet[i] ? 0.9 : 0.4);
     }
-
-    // ---- torso (a bean) + belly + gear below the head
-    c.fillStyle = skin.a; c.strokeStyle = INK; c.lineWidth = 3.4;
-    c.beginPath();
-    c.moveTo(-17, -42); c.quadraticCurveTo(-26, -20, -19, 0); c.quadraticCurveTo(0, 7, 19, 0);
-    c.quadraticCurveTo(26, -20, 17, -42); c.quadraticCurveTo(0, -48, -17, -42); c.closePath();
-    c.fill(); c.stroke();
-    c.fillStyle = skin.belly; c.globalAlpha = 0.65;
-    c.beginPath(); c.ellipse(0, -17, 11, 14, 0, 0, TAU); c.fill(); c.globalAlpha = 1;
-    c.strokeStyle = skin.b; c.globalAlpha = 0.45; c.lineWidth = 3;
-    c.beginPath(); c.moveTo(14, -38); c.quadraticCurveTo(22, -20, 15, -3); c.stroke(); c.globalAlpha = 1;
-    // a tattered loincloth
-    c.fillStyle = '#f4efe6'; c.strokeStyle = INK; c.lineWidth = 2.6;
-    c.beginPath(); c.moveTo(-19, -3); c.lineTo(19, -3); c.lineTo(17, 11); c.lineTo(11, 6); c.lineTo(5, 13); c.lineTo(-1, 6); c.lineTo(-7, 12); c.lineTo(-13, 6); c.lineTo(-18, 10); c.closePath();
-    c.fill(); c.stroke();
+    // ---- torso + cloth
+    torso(c, sk, L, t);
+    loincloth(c, sk, L, t);
     if (gear === 'tie') {
-      c.fillStyle = '#d83a3a'; c.strokeStyle = INK; c.lineWidth = 2.4;
-      c.beginPath(); c.moveTo(-4, -44); c.lineTo(4, -44); c.lineTo(3, -37); c.lineTo(7, -16); c.lineTo(0, -10); c.lineTo(-7, -16); c.lineTo(-3, -37); c.closePath(); c.fill(); c.stroke();
+      var tg = c.createLinearGradient(-5, 0, 5, 0); tg.addColorStop(0, '#4a0f14'); tg.addColorStop(0.5, '#8c2a2c'); tg.addColorStop(1, '#3c0b10');
+      c.fillStyle = tg; c.strokeStyle = 'rgba(14,6,9,.8)'; c.lineWidth = 1;
+      c.beginPath(); c.moveTo(-2.6, -46); c.lineTo(2.6, -46); c.lineTo(2, -42); c.lineTo(4.6, -22); c.lineTo(1.5, -17); c.lineTo(0, -20); c.lineTo(-1.8, -15); c.lineTo(-4.4, -23); c.lineTo(-2, -42); c.closePath(); c.fill(); c.stroke();
     } else if (gear === 'scarf') {
-      c.fillStyle = '#e0453a'; c.strokeStyle = INK; c.lineWidth = 2.4;
-      c.beginPath(); c.moveTo(-17, -46); c.quadraticCurveTo(0, -38, 17, -46); c.lineTo(17, -38); c.quadraticCurveTo(0, -30, -17, -38); c.closePath(); c.fill(); c.stroke();
-      c.beginPath(); c.moveTo(8, -38); c.lineTo(15, -20 + Math.sin(t / 260) * 2); c.lineTo(8, -22 + Math.sin(t / 260) * 2); c.closePath(); c.fill(); c.stroke();
+      var sg = c.createLinearGradient(0, -48, 0, -38); sg.addColorStop(0, '#7a2a24'); sg.addColorStop(1, '#3f1412');
+      c.fillStyle = sg; c.strokeStyle = 'rgba(14,6,9,.8)'; c.lineWidth = 1;
+      c.beginPath(); c.moveTo(-14, -45); c.quadraticCurveTo(0, -38.5, 14, -45); c.lineTo(14, -39.5); c.quadraticCurveTo(0, -32, -14, -39.5); c.closePath(); c.fill(); c.stroke();
+      c.beginPath(); c.moveTo(7, -37); c.lineTo(14, -20 + Math.sin(t / 260) * 2); c.lineTo(11, -17 + Math.sin(t / 260) * 2); c.lineTo(9, -22); c.lineTo(5, -34); c.closePath(); c.fill(); c.stroke();
     } else if (gear === 'bow') {
-      c.fillStyle = '#3a6adf'; c.strokeStyle = INK; c.lineWidth = 2.2;
-      c.beginPath(); c.moveTo(0, -43); c.lineTo(-10, -49); c.lineTo(-10, -37); c.closePath(); c.fill(); c.stroke();
-      c.beginPath(); c.moveTo(0, -43); c.lineTo(10, -49); c.lineTo(10, -37); c.closePath(); c.fill(); c.stroke();
-      c.beginPath(); c.arc(0, -43, 3.2, 0, TAU); c.fill(); c.stroke();
+      c.fillStyle = '#26356a'; c.strokeStyle = 'rgba(14,6,9,.8)'; c.lineWidth = 1;
+      c.beginPath(); c.moveTo(0, -46); c.lineTo(-8, -50); c.lineTo(-7, -42); c.closePath(); c.fill(); c.stroke();
+      c.beginPath(); c.moveTo(0, -46); c.lineTo(8, -50); c.lineTo(7, -42.5); c.closePath(); c.fill(); c.stroke();
+      c.fillStyle = '#34478c'; c.beginPath(); c.arc(0, -46, 2, 0, TAU); c.fill(); c.stroke();
     }
-
     // ---- arms (in front of the torso)
     var sh = [{ x: -SOUL.shX, y: SOUL.shY }, { x: SOUL.shX, y: SOUL.shY }];
-    var armsFront = [];
     for (i = 0; i < 2; i++) {
-      var hd = o.hands && o.hands[i] ? loc(o.hands[i]) : { x: sh[i].x * 1.9, y: sh[i].y + 38 };
-      L = ik(sh[i].x, sh[i].y, hd.x, hd.y, SOUL.a1, SOUL.a2, i ? 1 : -1);
-      limb(c, sh[i].x, sh[i].y, L.ex, L.ey, L.hx, L.hy, 11, skin);
-      var ha = Math.atan2(L.hy - L.ey, L.hx - L.ex);
-      mitt(c, L.hx, L.hy, ha, o.grip ? o.grip[i] : 0.5, skin, 7.8);
+      var hd = o.hands && o.hands[i] ? loc(o.hands[i]) : { x: sh[i].x * 1.5, y: sh[i].y + 46 };
+      var ddx = hd.x - sh[i].x, ddy = hd.y - sh[i].y, dl = Math.sqrt(ddx * ddx + ddy * ddy) || 1, reach = Math.min(10, dl * 0.25);      // the hand extends past the wrist
+      Lm = ik(sh[i].x, sh[i].y, hd.x - ddx / dl * reach, hd.y - ddy / dl * reach, SOUL.a1, SOUL.a2, i ? 1 : -1);
+      seg(c, sh[i].x, sh[i].y, Lm.ex, Lm.ey, 8.2, 6.4, sk, L, { bulge: 0.4 + 0.8 * eff });
+      seg(c, Lm.ex, Lm.ey, Lm.hx, Lm.hy, 6.4, 4.6, sk, L, { tendons: 0.3 + 0.7 * eff });
+      joint(c, Lm.ex, Lm.ey, 3.9, sk, L); joint(c, sh[i].x, sh[i].y, 4.6, sk, L);
+      var ha = Math.atan2(Lm.hy - Lm.ey, Lm.hx - Lm.ex);
+      hand(c, Lm.hx, Lm.hy, ha, o.grip ? o.grip[i] : 0.5, sk, L, i ? 1 : -1);
     }
-
-    // ---- head
-    drawHead(c, o, skin, gear, t);
+    // ---- neck + head
+    drawHead(c, o, sk, gear, t, L);
     c.restore();
   }
 
-  function drawHead(c, o, skin, gear, t) {
-    var hy = SOUL.headY, look = o.look || { x: 0, y: -0.4 }, mood = o.mood || 'calm';
-    var bob = Math.sin(t / 520) * 1.2;
+  function headPath(c, k) {
+    k = k || 1;
+    c.beginPath(); c.moveTo(0, -11.8 * k);
+    c.bezierCurveTo(6.6, -11.8 * k, 10, -7, 9.9, -1.4); c.bezierCurveTo(9.7, 3.4, 7.8, 7.4, 4.7, 10);
+    c.quadraticCurveTo(2.2, 12, 0, 12); c.quadraticCurveTo(-2.2, 12, -4.7, 10);
+    c.bezierCurveTo(-7.8, 7.4, -9.7, 3.4, -9.9, -1.4); c.bezierCurveTo(-10, -7, -6.6, -11.8 * k, 0, -11.8 * k); c.closePath();
+  }
+
+  function drawHead(c, o, sk, gear, t, L) {
+    var hy = SOUL.headY, look = o.look || { x: 0, y: -0.4 }, mood = o.mood || 'calm', eff = L.eff;
+    var bob = Math.sin(t / 520) * 0.7, i;
+    // the neck: cords that stand out when he strains
+    var ng = c.createLinearGradient(-5, 0, 5, 0); ng.addColorStop(0, sk.b); ng.addColorStop(0.5, sk.a); ng.addColorStop(1, sk.b);
+    c.fillStyle = ng; c.strokeStyle = 'rgba(14,6,9,.6)'; c.lineWidth = 1;
+    c.beginPath(); c.moveTo(-4.2, hy + 8); c.lineTo(-5.2, -45); c.lineTo(5.2, -45); c.lineTo(4.2, hy + 8); c.closePath(); c.fill(); c.stroke();
+    c.strokeStyle = 'rgba(14,6,9,' + (0.25 + 0.35 * eff) + ')'; c.lineWidth = 1.1; c.lineCap = 'round';
+    [-1, 1].forEach(function (sd) { c.beginPath(); c.moveTo(sd * 3.8, hy + 9); c.quadraticCurveTo(sd * 3, -52, sd * 1, -44.5); c.stroke(); });
+    c.fillStyle = 'rgba(12,4,7,.35)'; c.beginPath(); c.ellipse(0, -52, 4.6, 5, 0, 0, TAU); c.fill();
     c.save(); c.translate(0, hy + bob);
     if (o.headTilt) c.rotate(o.headTilt);
-    // horns
-    c.fillStyle = '#fff1d0'; c.strokeStyle = INK; c.lineWidth = 3;
-    [-1, 1].forEach(function (sd) {
-      c.beginPath(); c.moveTo(sd * 14, -23); c.quadraticCurveTo(sd * 22, -34, sd * 18, -44); c.quadraticCurveTo(sd * 12, -34, sd * 6, -26); c.closePath(); c.fill(); c.stroke();
-    });
-    // the head
-    var g = c.createRadialGradient(-8, -12, 4, 0, 0, 34);
-    g.addColorStop(0, skin.belly); g.addColorStop(0.35, skin.a); g.addColorStop(1, skin.b);
-    c.fillStyle = g; c.strokeStyle = INK; c.lineWidth = 3.6;
-    c.beginPath(); c.ellipse(0, 0, 29, 27, 0, 0, TAU); c.fill(); c.stroke();
+    // hair: a few lank strands
+    c.strokeStyle = 'rgba(24,16,16,.9)'; c.lineWidth = 1.1;
+    for (i = 0; i < 8; i++) { var hx = -8 + i * 2.3, sw = Math.sin(t / 600 + i) * 1.2; c.beginPath(); c.moveTo(hx * 0.8, -10.5); c.quadraticCurveTo(hx * 1.3, -13 + sw, hx * 1.5 + (i < 4 ? -2 : 2), -5 + (i % 3) * 2.5); c.stroke(); }
     // ears
-    c.fillStyle = skin.a; c.lineWidth = 3;
-    [-1, 1].forEach(function (sd) { c.beginPath(); c.ellipse(sd * 29, 3, 5.5, 8, sd * 0.3, 0, TAU); c.fill(); c.stroke(); });
-    // gear on the head
-    if (gear === 'hardhat') {
-      c.fillStyle = '#ffd23a'; c.strokeStyle = INK; c.lineWidth = 3;
-      c.beginPath(); c.moveTo(-26, -12); c.quadraticCurveTo(-24, -34, 0, -35); c.quadraticCurveTo(24, -34, 26, -12); c.closePath(); c.fill(); c.stroke();
-      c.fillStyle = '#f2b800'; c.beginPath(); c.rect(-30, -14, 60, 7); c.fill(); c.stroke();
-      c.fillStyle = '#fff6b0'; c.beginPath(); c.arc(0, -26, 5.5, 0, TAU); c.fill(); c.stroke();
-    } else if (gear === 'party') {
-      c.fillStyle = '#d946ef'; c.strokeStyle = INK; c.lineWidth = 3;
-      c.beginPath(); c.moveTo(-15, -22); c.lineTo(1, -58); c.lineTo(15, -22); c.closePath(); c.fill(); c.stroke();
-      c.fillStyle = '#ffe14a'; c.beginPath(); c.arc(1, -59, 4, 0, TAU); c.fill(); c.stroke();
-      c.strokeStyle = '#ffe14a'; c.lineWidth = 3; c.beginPath(); c.moveTo(-9, -32); c.lineTo(9, -36); c.stroke();
-    } else if (gear === 'headband') {
-      c.fillStyle = '#e63946'; c.strokeStyle = INK; c.lineWidth = 3;
-      c.beginPath(); c.moveTo(-28, -10); c.quadraticCurveTo(0, -20, 28, -10); c.lineTo(28, -2); c.quadraticCurveTo(0, -12, -28, -2); c.closePath(); c.fill(); c.stroke();
-      c.beginPath(); c.moveTo(28, -6); c.lineTo(40, -2 + Math.sin(t / 200) * 2); c.lineTo(38, -12); c.closePath(); c.fill(); c.stroke();
+    [-1, 1].forEach(function (sd) {
+      c.fillStyle = sk.a; c.strokeStyle = 'rgba(14,6,9,.6)'; c.lineWidth = 1; c.beginPath(); c.ellipse(sd * 9.8, 0.4, 1.9, 3.3, sd * 0.15, 0, TAU); c.fill(); c.stroke();
+    });
+    // the skull-like head, lit from below by lava and from above by the cold
+    headPath(c);
+    var hg = c.createRadialGradient(-3, -6, 1, 0, 0, 14); hg.addColorStop(0, sk.hi); hg.addColorStop(0.5, sk.a); hg.addColorStop(1, sk.b);
+    c.fillStyle = hg; c.fill(); c.lineWidth = 1.2; c.strokeStyle = 'rgba(14,6,9,.7)'; c.stroke();
+    c.save(); headPath(c); c.clip();
+    var lg = c.createLinearGradient(0, -12, 0, 12); lg.addColorStop(0, 'rgba(0,0,0,.08)'); lg.addColorStop(0.55, 'rgba(0,0,0,0)'); lg.addColorStop(1, rimCol(L, 0.7));
+    c.fillStyle = lg; c.fillRect(-12, -12, 24, 24);
+    // brow ridge, sockets, hollow cheeks
+    c.fillStyle = 'rgba(12,4,7,.26)'; c.beginPath(); c.ellipse(0, -5.4, 8.6, 2.4, 0, 0, TAU); c.fill();
+    var hollow = 0.2 + 0.18 * eff;
+    [-1, 1].forEach(function (sd) {
+      c.fillStyle = 'rgba(12,4,7,.5)'; c.beginPath(); c.ellipse(sd * 4.3, -2.2, 4, 3.3, sd * 0.1, 0, TAU); c.fill();
+      c.fillStyle = 'rgba(12,4,7,' + hollow + ')'; c.beginPath(); c.ellipse(sd * 6.3, 4.8, 2.6, 3.6, -sd * 0.2, 0, TAU); c.fill();
+      c.strokeStyle = 'rgba(235,222,205,.18)'; c.lineWidth = 1; c.beginPath(); c.arc(sd * 7.6, 1.2, 3.6, sd > 0 ? -0.4 : Math.PI - 1.1, sd > 0 ? 1.1 : Math.PI + 0.4); c.stroke();     // cheekbone light
+    });
+    if (eff > 0.6) {                                                      // veins at the temple, a furrowed brow
+      c.strokeStyle = 'rgba(70,40,60,.45)'; c.lineWidth = 0.8;
+      [-1, 1].forEach(function (sd) { c.beginPath(); c.moveTo(sd * 8.2, -7.5); c.quadraticCurveTo(sd * 6.6, -9.4, sd * 5.2, -10.6); c.moveTo(sd * 8, -5.8); c.lineTo(sd * 6, -8.4); c.stroke(); });
+      c.strokeStyle = 'rgba(14,6,9,.3)'; c.lineWidth = 0.9; c.beginPath(); c.moveTo(-4, -8.6); c.lineTo(4, -8.6); c.moveTo(-3, -10); c.lineTo(3, -10); c.stroke();
     }
-    // face
-    var ex = [-11, 11], ey = -2, blink = o.blink || 0, i;
-    var wide = mood === 'scared' ? 1.18 : mood === 'angry' ? 0.8 : mood === 'smug' ? 0.78 : 1;
+    c.restore();
+    // eyes
+    var blink = o.blink || 0, open = { calm: 1, strain: 0.55, scared: 1.35, angry: 0.7, happy: 0.75, dizzy: 1, smug: 0.55, ouch: 0.2 }[mood];
+    if (open == null) open = 1;
+    var oy = -2.3;
     for (i = 0; i < 2; i++) {
-      c.save(); c.translate(ex[i], ey);
-      c.fillStyle = '#fff'; c.strokeStyle = INK; c.lineWidth = 2.8;
-      c.beginPath(); c.ellipse(0, 0, 9.4, 11.4 * wide * (1 - blink * 0.92), 0, 0, TAU); c.fill(); c.stroke();
-      if (blink < 0.7) {
+      var sd2 = i ? 1 : -1, ex = sd2 * 4.3, ry = 2.5 * open * (1 - blink * 0.92);
+      c.save(); c.translate(ex, oy);
+      if (mood === 'ouch' || ry < 0.5) {
+        c.strokeStyle = 'rgba(14,6,9,.9)'; c.lineWidth = 1.5; c.beginPath(); c.moveTo(-2.6, 0); c.quadraticCurveTo(0, mood === 'ouch' ? -1.8 : 1.2, 2.6, 0); c.stroke();
+      } else {
+        c.fillStyle = '#d9d2c2'; c.strokeStyle = 'rgba(14,6,9,.85)'; c.lineWidth = 1;
+        c.beginPath(); c.ellipse(0, 0, 2.9, ry, 0, 0, TAU); c.fill(); c.stroke();
         if (mood === 'dizzy') {
-          c.strokeStyle = INK; c.lineWidth = 2; c.beginPath();
-          for (var a = 0; a < 14; a += 0.4) c.lineTo(Math.cos(a + t / 160) * a * 0.46, Math.sin(a + t / 160) * a * 0.46);
-          c.stroke();
+          c.strokeStyle = 'rgba(30,14,20,.9)'; c.lineWidth = 0.8; c.beginPath();
+          for (var a = 0; a < 9; a += 0.4) c.lineTo(Math.cos(a + t / 160) * a * 0.3, Math.sin(a + t / 160) * a * 0.3); c.stroke();
         } else {
-          var pr = mood === 'scared' ? 2.6 : 4.4;
-          c.fillStyle = INK; c.beginPath(); c.arc(clamp(look.x * 4.2, -4.5, 4.5), clamp(look.y * 5, -5.5, 5.5), pr, 0, TAU); c.fill();
-          c.fillStyle = '#fff'; c.beginPath(); c.arc(clamp(look.x * 4.2, -4.5, 4.5) - 1.3, clamp(look.y * 5, -5.5, 5.5) - 1.6, 1.4, 0, TAU); c.fill();
+          var lx = clamp(look.x * 1.2, -1.3, 1.3), ly = clamp(look.y * 1, -1, 1) * Math.min(1, ry / 2);
+          c.save(); c.beginPath(); c.ellipse(0, 0, 2.9, ry, 0, 0, TAU); c.clip();
+          c.fillStyle = '#7f98ac'; c.beginPath(); c.arc(lx, ly, mood === 'scared' ? 1.5 : 1.8, 0, TAU); c.fill();
+          c.fillStyle = '#10080a'; c.beginPath(); c.arc(lx, ly, mood === 'scared' ? 0.6 : 0.95, 0, TAU); c.fill();
+          c.fillStyle = 'rgba(255,170,90,.9)'; c.beginPath(); c.arc(lx + 0.6, ly + 0.7, 0.45, 0, TAU); c.fill();           // the lava, reflected
+          c.fillStyle = 'rgba(255,255,255,.9)'; c.beginPath(); c.arc(lx - 0.6, ly - 0.7, 0.4, 0, TAU); c.fill();
+          c.restore();
         }
+        c.strokeStyle = 'rgba(14,6,9,.9)'; c.lineWidth = 1.2; c.beginPath(); c.moveTo(-3, -ry * 0.1); c.quadraticCurveTo(0, -ry * 1.25, 3, -ry * 0.1); c.stroke();      // upper lid
+        c.strokeStyle = 'rgba(20,8,12,.35)'; c.lineWidth = 0.8; c.beginPath(); c.moveTo(-2.8, ry + 0.8); c.quadraticCurveTo(0, ry + 1.8, 2.8, ry + 0.8); c.stroke();     // eye bag
       }
       c.restore();
     }
-    // eyebrows: tilt > 0 = angry (the inner end lower), < 0 = worried
-    c.strokeStyle = INK; c.lineWidth = 3.2; c.lineCap = 'round';
-    var br = { calm: [0, 0], strain: [0.5, -3], scared: [-0.8, -7], angry: [0.9, 0], happy: [-0.2, -3], dizzy: [0, 0], smug: [0.3, 0], ouch: [-0.5, -2] }[mood] || [0, 0];
+    // brows (the inner end lower = angry / straining, higher = worried)
+    var br = { calm: [0.05, 0], strain: [0.5, 0.6], scared: [-0.55, -2.4], angry: [0.8, 1], happy: [-0.12, -1.3], dizzy: [0.1, 0], smug: [0.3, 0.2], ouch: [-0.4, -0.8] }[mood] || [0, 0];
+    c.strokeStyle = 'rgba(22,12,12,.92)'; c.lineCap = 'round';
     [-1, 1].forEach(function (sd) {
-      var bx = sd * 11, by = -16 + br[1];
-      c.beginPath(); c.moveTo(bx + sd * 8, by - br[0] * 5); c.lineTo(bx - sd * 8, by + br[0] * 5); c.stroke();
+      var by = -7.4 + br[1];
+      c.lineWidth = 1.7; c.beginPath(); c.moveTo(sd * 0.9, by + br[0] * 3); c.quadraticCurveTo(sd * 4.6, by - 1.2 - br[0] * 0.5, sd * 8.2, by - br[0] * 2); c.stroke();
     });
-    // cheeks
-    c.fillStyle = 'rgba(255,90,110,.28)';
-    c.beginPath(); c.ellipse(-20, 10, 5, 3.4, 0, 0, TAU); c.fill(); c.beginPath(); c.ellipse(20, 10, 5, 3.4, 0, 0, TAU); c.fill();
-    // glasses
-    if (gear === 'glasses') {
-      c.strokeStyle = INK; c.lineWidth = 2.6; c.fillStyle = 'rgba(255,255,255,.18)';
-      c.beginPath(); c.arc(-11, ey, 13, 0, TAU); c.fill(); c.stroke(); c.beginPath(); c.arc(11, ey, 13, 0, TAU); c.fill(); c.stroke();
-      c.beginPath(); c.moveTo(-2, ey - 1); c.lineTo(2, ey - 1); c.stroke();
-    }
+    // nose
+    c.strokeStyle = 'rgba(14,6,9,.4)'; c.lineWidth = 0.9; c.beginPath(); c.moveTo(-0.5, 0); c.quadraticCurveTo(-1, 3, -1.6, 4.2); c.stroke();
+    c.beginPath(); c.moveTo(-2.2, 4.8); c.quadraticCurveTo(0, 5.8, 2.2, 4.8); c.stroke();
+    c.strokeStyle = 'rgba(235,222,205,.22)'; c.beginPath(); c.moveTo(0.7, 0); c.lineTo(0.8, 4); c.stroke();
     // mouth
-    var m = o.mouth || 0;
-    c.strokeStyle = INK; c.lineWidth = 3; c.fillStyle = '#6a1020';
-    var my = 14;
+    var m = o.mouth || 0, my = 8, tw = 'rgba(14,6,9,.92)';
+    c.lineWidth = 1.2; c.strokeStyle = tw; c.fillStyle = '#240a0e';
+    function teeth(w, h) {
+      c.save(); c.beginPath(); c.rect(-w, -h, w * 2, h); c.clip(); c.fillStyle = '#cfc7b4';
+      c.fillRect(-w, -h, w * 2, h * 0.5); c.strokeStyle = 'rgba(14,6,9,.5)'; c.lineWidth = 0.6;
+      for (var q = -w + 1.6; q < w; q += 1.7) { c.beginPath(); c.moveTo(q, -h); c.lineTo(q, 0); c.stroke(); }
+      c.restore();
+    }
     if (mood === 'happy') {
-      c.beginPath(); c.moveTo(-10, my - 2); c.quadraticCurveTo(0, my + 12 + m * 4, 10, my - 2); c.closePath(); c.fill(); c.stroke();
-      c.fillStyle = '#ff7a8a'; c.beginPath(); c.ellipse(0, my + 6, 5, 2.6, 0, 0, TAU); c.fill();
+      c.beginPath(); c.moveTo(-4.4, my - 1.2); c.quadraticCurveTo(0, my + 3.4 + m * 2.4, 4.4, my - 1.2); c.quadraticCurveTo(0, my - 0.2, -4.4, my - 1.2); c.closePath(); c.fill(); c.stroke();
+      c.save(); c.translate(0, my - 0.6); teeth(3.6, 1.4); c.restore();
     } else if (mood === 'scared' || mood === 'ouch') {
-      c.beginPath(); c.ellipse(0, my + 2, 6 + m * 2, 7 + m * 5, 0, 0, TAU); c.fill(); c.stroke();
+      c.beginPath(); c.ellipse(0, my + 1.2, 3 + m * 0.9, 2.6 + m * 2.2, 0, 0, TAU); c.fill(); c.stroke();
+      c.save(); c.translate(0, my - 0.8 - m * 0.4); teeth(2.4, 1.2); c.restore();
+      c.fillStyle = '#6a2230'; c.beginPath(); c.ellipse(0, my + 2.8 + m * 1.6, 1.8, 0.9 + m * 0.5, 0, 0, TAU); c.fill();
     } else if (mood === 'strain') {
-      c.fillStyle = '#fff';
-      c.beginPath(); rr(c, -10, my - 3, 20, 8 + m * 5, 3); c.fill(); c.stroke();
-      c.lineWidth = 1.6; c.beginPath(); c.moveTo(-4, my - 3); c.lineTo(-4, my + 5 + m * 5); c.moveTo(2, my - 3); c.lineTo(2, my + 5 + m * 5); c.moveTo(8, my - 3); c.lineTo(8, my + 5 + m * 5); c.stroke();
+      c.beginPath(); c.moveTo(-4.8, my - 1.4); c.quadraticCurveTo(0, my - 2.4, 4.8, my - 1.4); c.lineTo(4.2, my + 1.6 + m * 1.8); c.quadraticCurveTo(0, my + 2.6 + m * 2.2, -4.2, my + 1.6 + m * 1.8); c.closePath(); c.fill(); c.stroke();
+      c.save(); c.translate(0, my + 0.4); teeth(4, 2.2 + m * 1.2); c.restore();
+      c.strokeStyle = 'rgba(14,6,9,.5)'; c.lineWidth = 0.9; c.beginPath(); c.moveTo(-6.4, my - 2.4); c.quadraticCurveTo(-7.4, my, -6.2, my + 2.6); c.moveTo(6.4, my - 2.4); c.quadraticCurveTo(7.4, my, 6.2, my + 2.6); c.stroke();
     } else if (mood === 'angry') {
-      c.beginPath(); c.moveTo(-9, my + 5); c.quadraticCurveTo(0, my - 5, 9, my + 5); c.stroke();
+      c.beginPath(); c.moveTo(-4.4, my + 1.8); c.quadraticCurveTo(0, my - 1.6, 4.4, my + 1.8); c.stroke();
+      c.save(); c.translate(0, my + 0.2); c.beginPath(); c.moveTo(-3, 0.4); c.lineTo(3, 0.4); c.lineTo(2.4, 1.8); c.lineTo(-2.4, 1.8); c.closePath(); c.fillStyle = '#cfc7b4'; c.fill(); c.stroke(); c.restore();
     } else if (mood === 'smug') {
-      c.beginPath(); c.moveTo(-9, my + 1); c.quadraticCurveTo(2, my + 7, 10, my - 3); c.stroke();
+      c.beginPath(); c.moveTo(-4, my + 0.8); c.quadraticCurveTo(1, my + 2.6, 4.6, my - 1); c.stroke();
     } else if (mood === 'dizzy') {
-      c.beginPath(); c.moveTo(-9, my + 3);
-      for (var z = 1; z <= 6; z++) c.lineTo(-9 + z * 3.2, my + 3 + (z % 2 ? -3 : 3)); c.stroke();
+      c.beginPath(); c.moveTo(-4, my + 1.2); for (var z = 1; z <= 6; z++) c.lineTo(-4 + z * 1.35, my + 1.2 + (z % 2 ? -1.2 : 1.2)); c.stroke();
+      c.fillStyle = '#a04a5a'; c.beginPath(); c.ellipse(1, my + 3, 1.6, 2, 0.2, 0, TAU); c.fill(); c.stroke();
     } else {
-      c.beginPath(); c.moveTo(-8, my); c.quadraticCurveTo(0, my + 5 + m * 6, 8, my); c.stroke();
+      c.beginPath(); c.moveTo(-3.8, my); c.quadraticCurveTo(0, my + 0.8 + m * 2.4, 3.8, my); c.stroke();
+      c.strokeStyle = 'rgba(14,6,9,.28)'; c.lineWidth = 0.8; c.beginPath(); c.moveTo(-4.8, my - 1.2); c.quadraticCurveTo(-5.6, my + 0.4, -4.4, my + 1.8); c.moveTo(4.8, my - 1.2); c.quadraticCurveTo(5.6, my + 0.4, 4.4, my + 1.8); c.stroke();
+    }
+    c.strokeStyle = 'rgba(' + L.glow + ',' + (0.3 * L.rim) + ')'; c.lineWidth = 1; c.beginPath(); c.moveTo(-3.2, my + 4.6); c.quadraticCurveTo(0, my + 5.6, 3.2, my + 4.6); c.stroke();     // lit lower lip / chin
+    // gear on the head
+    if (gear === 'hardhat') {
+      var hg2 = c.createLinearGradient(0, -20, 0, -8); hg2.addColorStop(0, '#d9a42a'); hg2.addColorStop(1, '#7a5612');
+      c.fillStyle = hg2; c.strokeStyle = 'rgba(14,6,9,.85)'; c.lineWidth = 1.2;
+      c.beginPath(); c.moveTo(-10.6, -6.4); c.quadraticCurveTo(-10, -17.5, 0, -18); c.quadraticCurveTo(10, -17.5, 10.6, -6.4); c.closePath(); c.fill(); c.stroke();
+      c.fillStyle = '#6a4a10'; c.beginPath(); c.rect(-12.4, -7.2, 24.8, 2.8); c.fill(); c.stroke();
+      c.fillStyle = 'rgba(255,240,200,.25)'; c.beginPath(); c.ellipse(-3.5, -14, 3, 1.6, -0.4, 0, TAU); c.fill();
+      c.strokeStyle = 'rgba(40,20,5,.7)'; c.lineWidth = 0.9; c.beginPath(); c.moveTo(4, -17); c.lineTo(5.6, -13); c.lineTo(4.4, -10); c.stroke();           // a dent
+      c.fillStyle = '#fff2c0'; c.beginPath(); c.arc(0, -13, 2, 0, TAU); c.fill(); c.stroke();
+    } else if (gear === 'party') {
+      var pg = c.createLinearGradient(-8, 0, 8, 0); pg.addColorStop(0, '#5a1f5c'); pg.addColorStop(0.5, '#8a3a86'); pg.addColorStop(1, '#4a1a4c');
+      c.fillStyle = pg; c.strokeStyle = 'rgba(14,6,9,.85)'; c.lineWidth = 1.2;
+      c.beginPath(); c.moveTo(-7, -9); c.lineTo(2.4, -26); c.lineTo(8, -9); c.closePath(); c.fill(); c.stroke();
+      c.strokeStyle = 'rgba(210,190,120,.7)'; c.lineWidth = 1.2; c.beginPath(); c.moveTo(-4.4, -13); c.lineTo(5.4, -14.6); c.stroke();
+      c.fillStyle = '#b8a060'; c.beginPath(); c.arc(2.4, -26.6, 1.6, 0, TAU); c.fill();
+    } else if (gear === 'headband') {
+      c.fillStyle = '#7d1f26'; c.strokeStyle = 'rgba(14,6,9,.85)'; c.lineWidth = 1;
+      c.beginPath(); c.moveTo(-10.2, -5.4); c.quadraticCurveTo(0, -9.6, 10.2, -5.4); c.lineTo(10.2, -2.4); c.quadraticCurveTo(0, -6.6, -10.2, -2.4); c.closePath(); c.fill(); c.stroke();
+      c.beginPath(); c.moveTo(10, -4); c.lineTo(18, -1 + Math.sin(t / 200) * 2); c.lineTo(16.6, -6.6 + Math.sin(t / 230)); c.closePath(); c.fill(); c.stroke();
+      c.beginPath(); c.moveTo(10, -3.4); c.lineTo(16, 3 + Math.sin(t / 190) * 2); c.lineTo(13, 3.4); c.closePath(); c.fill(); c.stroke();
+    } else if (gear === 'glasses') {
+      c.strokeStyle = 'rgba(90,70,60,.95)'; c.lineWidth = 1; c.fillStyle = 'rgba(200,225,255,.12)';
+      c.beginPath(); c.arc(-4.4, oy, 4.6, 0, TAU); c.fill(); c.stroke(); c.beginPath(); c.arc(4.4, oy, 4.6, 0, TAU); c.fill(); c.stroke();
+      c.beginPath(); c.moveTo(-0.2, oy - 0.4); c.lineTo(0.2, oy - 0.4); c.moveTo(-9, oy - 0.4); c.lineTo(-10.4, oy - 1); c.moveTo(9, oy - 0.4); c.lineTo(10.4, oy - 1); c.stroke();
+      c.strokeStyle = 'rgba(255,255,255,.7)'; c.lineWidth = 0.6; c.beginPath(); c.moveTo(3, oy - 3.4); c.lineTo(5.2, oy - 0.2); c.lineTo(3.8, oy + 2.8); c.stroke();      // a crack
+    }
+    // the halo: a thin, tarnished, cracked ring that gives off a ghostly glow
+    var hl = o.halo || { on: true, dx: 0, dy: 0, rot: 0 };
+    if (hl.on !== false) {
+      c.save(); c.translate(1 + (hl.dx || 0) * 0.5, -19 + (hl.dy || 0) * 0.5 + Math.sin(t / 700) * 1); c.rotate(-0.25 + (hl.rot || 0));
+      var hgl = c.createRadialGradient(0, 0, 4, 0, 0, 20); hgl.addColorStop(0, 'rgba(255,225,140,.22)'); hgl.addColorStop(1, 'rgba(255,225,140,0)');
+      c.fillStyle = hgl; c.fillRect(-22, -14, 44, 28);
+      c.strokeStyle = 'rgba(40,24,8,.8)'; c.lineWidth = 3.4; c.beginPath(); c.ellipse(0, 0, 11.5, 3.6, 0, 0, TAU); c.stroke();
+      c.strokeStyle = '#cdb46a'; c.lineWidth = 1.8; c.beginPath(); c.ellipse(0, 0, 11.5, 3.6, 0, 0.4, TAU + 0.1); c.stroke();
+      c.strokeStyle = 'rgba(255,245,200,.7)'; c.lineWidth = 0.8; c.beginPath(); c.ellipse(0, -0.5, 11.5, 3.6, 0, 3.4, 5.6); c.stroke();
+      c.restore();
     }
     // soot (a lava geyser went off in his face)
     if (o.soot > 0.02) {
-      c.fillStyle = 'rgba(30,24,30,' + (0.55 * o.soot) + ')';
-      c.beginPath(); c.ellipse(0, 4, 26, 24, 0, 0, TAU); c.fill();
-      c.fillStyle = 'rgba(255,255,255,' + (0.95 * o.soot) + ')';
-      [-1, 1].forEach(function (sd) { c.beginPath(); c.ellipse(sd * 11, -2, 8.4, 10, 0, 0, TAU); c.fill(); c.fillStyle = INK; c.beginPath(); c.arc(sd * 11, -1, 4.2 * o.soot, 0, TAU); c.fill(); c.fillStyle = 'rgba(255,255,255,' + (0.95 * o.soot) + ')'; });
+      c.fillStyle = 'rgba(24,18,22,' + (0.62 * o.soot) + ')'; headPath(c); c.fill();
+      c.fillStyle = 'rgba(225,220,210,' + (0.95 * o.soot) + ')';
+      [-1, 1].forEach(function (sd) { c.beginPath(); c.ellipse(sd * 4.3, oy, 3, 2.9 * open, 0, 0, TAU); c.fill(); c.fillStyle = 'rgba(14,6,9,' + o.soot + ')'; c.beginPath(); c.arc(sd * 4.3, oy, 1.2, 0, TAU); c.fill(); c.fillStyle = 'rgba(225,220,210,' + (0.95 * o.soot) + ')'; });
     }
-    // sweat drops
+    // sweat: beads on the brow and flung drops
     if (o.sweat > 0.05) {
       var sw = o.sweat;
-      for (i = 0; i < 2; i++) {
-        var ph = ((t / 700) + i * 0.5) % 1, sx = i ? 30 : -31;
-        c.fillStyle = 'rgba(160,220,255,' + (0.9 * (1 - ph) * sw + 0.1) + ')'; c.strokeStyle = 'rgba(40,90,150,.8)'; c.lineWidth = 1.6;
-        var dy = -14 + ph * 28;
-        c.beginPath(); c.moveTo(sx, dy - 7); c.quadraticCurveTo(sx + 5, dy + 1, sx, dy + 3); c.quadraticCurveTo(sx - 5, dy + 1, sx, dy - 7); c.fill(); c.stroke();
+      for (i = 0; i < 4; i++) {
+        var ph = ((t / 900) + i * 0.27) % 1, bx = [-7.5, 7.2, -3.4, 4.6][i], bY = [-7, -6, -10, -10.4][i] + ph * (i < 2 ? 9 : 2);
+        c.fillStyle = 'rgba(190,225,255,' + (0.8 * (1 - ph) * sw + 0.1) + ')'; c.strokeStyle = 'rgba(40,70,110,.5)'; c.lineWidth = 0.6;
+        c.beginPath(); c.ellipse(bx, bY, 0.9, 1.3 + ph * 0.8, 0, 0, TAU); c.fill(); c.stroke();
+        c.fillStyle = 'rgba(255,255,255,.8)'; c.beginPath(); c.arc(bx - 0.3, bY - 0.4, 0.3, 0, TAU); c.fill();
       }
-    }
-    // the cracked, bent halo
-    var hl = o.halo || { on: true, dx: 0, dy: 0, rot: 0 };
-    if (hl.on !== false) {
-      c.save(); c.translate(3 + (hl.dx || 0), -52 + (hl.dy || 0) + Math.sin(t / 700) * 2); c.rotate(-0.28 + (hl.rot || 0));
-      c.strokeStyle = INK; c.lineWidth = 8; c.beginPath(); c.ellipse(0, 0, 18, 6, 0, 0, TAU); c.stroke();
-      c.strokeStyle = '#ffd45a'; c.lineWidth = 4.2; c.beginPath(); c.ellipse(0, 0, 18, 6, 0, 0, TAU); c.stroke();
-      c.strokeStyle = INK; c.lineWidth = 2; c.beginPath(); c.moveTo(14, -2); c.lineTo(17, 3); c.lineTo(13, 4); c.stroke();
-      c.restore();
+      for (i = 0; i < 3; i++) {                                          // drops flung off by the effort
+        var fp = ((t / 620) + i * 0.34) % 1, sd3 = i % 2 ? 1 : -1;
+        c.fillStyle = 'rgba(200,230,255,' + (0.85 * (1 - fp) * sw) + ')';
+        c.beginPath(); c.ellipse(sd3 * (11 + fp * 14), -4 + fp * 22 - Math.sin(fp * Math.PI) * 8, 0.9, 1.4, sd3 * 0.5, 0, TAU); c.fill();
+      }
     }
     c.restore();
   }
-
 
   // ==================================================================== colours
   var COLC = {};
@@ -615,7 +775,7 @@
     return level < 0 ? 'ledge' : routes[routes.length - 1].kind;
   }
   function limbTargets(kind, py, pyAhead, T) {
-    var hy = pyAhead + 35 + 28, fy = py - 14;
+    var hy = pyAhead + 35 + 28, fy = py - 26;
     return { hl: snapHold(kind, 'hl', hy, T), hr: snapHold(kind, 'hr', hy, T), fl: snapHold(kind, 'fl', fy, T), fr: snapHold(kind, 'fr', fy, T) };
   }
 
@@ -1152,6 +1312,53 @@
     c.restore();
   }
 
+
+  // ---- the rock: value noise in WORLD coordinates (so chunks join without a seam) and a per-pixel lit height field
+  var NZ = (function () { var t = new Float32Array(512 * 512), r = mulberry(4242), i; for (i = 0; i < t.length; i++) t[i] = r(); return t; })();
+  function vn(x, y) {
+    var xi = Math.floor(x), yi = Math.floor(y), fx = x - xi, fy = y - yi, xj, yj;
+    xi &= 511; yi &= 511; xj = (xi + 1) & 511; yj = (yi + 1) & 511;
+    var a = NZ[yi * 512 + xi], b = NZ[yi * 512 + xj], c2 = NZ[yj * 512 + xi], d = NZ[yj * 512 + xj], u = fx * fx * (3 - 2 * fx), v = fy * fy * (3 - 2 * fy);
+    return a + (b - a) * u + (c2 - a) * v + (a - b - c2 + d) * u * v;
+  }
+  function rockH(wx, wy) {
+    var bed = (wy + 5 * Math.sin(wx * 0.013) + 3 * Math.sin(wx * 0.05 + 1) + 16 * vn(wx * 0.006, wy * 0.01)) / 52, fb = bed - Math.floor(bed);
+    var slab = Math.pow(fb, 1.6) * 0.9 - (fb > 0.9 ? (fb - 0.9) * 8 : 0);                    // each bed leans out and ends in a lip
+    var n = vn(wx * 0.011, wy * 0.011) * 0.9 + vn(wx * 0.034, wy * 0.034) * 0.42 + vn(wx * 0.09, wy * 0.09) * 0.16;
+    var r = 1 - Math.abs(2 * vn(wx * 0.017 + 50, wy * 0.013 + 7) - 1), crack = Math.pow(r, 9) * 1.1;
+    return slab * 0.42 + n * 1.15 - crack;
+  }
+  function bakeRock(inst, idx) {
+    var th = inst.th, H = inst.H, W2 = VW >> 1, H2 = CH >> 1, top = (idx + 1) * CH, cv = mkCanvas(W2, H2), c = cv.getContext('2d');
+    var img = c.createImageData(W2, H2), d = img.data, hh = new Float32Array((W2 + 2) * (H2 + 2)), x, y;
+    var pal = {}, gl = th.glow.split(',').map(Number), lt = [gl[0] / 255, gl[1] / 255, gl[2] / 255], cool = [0.5, 0.58, 0.85];
+    for (y = -1; y <= H2; y++) for (x = -1; x <= W2; x++) hh[(y + 1) * (W2 + 2) + x + 1] = rockH(x * 2, top - y * 2);
+    function albedo(wy, wx) {
+      var lvl = wy / LV, sI = lvlStratum(lvl), sh = lvlStratum((wy + strataEdge(sI, wx)) / LV);
+      var key = sh + ':' + (H - lvl < 18 ? Math.round((H - lvl) / 2) : 99), a = pal[key];
+      if (!a) { a = pal[key] = rgb(strataColor(th, sh < 0 ? 2 : 6 + 14 * sh + 1, H - lvl < 18 ? lvl : 0)); }
+      return a;
+    }
+    for (y = 0; y < H2; y++) {
+      var wy = top - y * 2, lvl = wy / LV, Il = 0.08 + 0.62 * Math.exp(-Math.max(0, lvl - 1) / 15), Ic = 0.5 + 0.25 * smooth(8, 60, lvl) ;
+      for (x = 0; x < W2; x++) {
+        var o = (y + 1) * (W2 + 2) + x + 1, wx = x * 2, hx = hh[o + 1] - hh[o - 1], hy = hh[o + W2 + 2] - hh[o - W2 - 2], h0 = hh[o];
+        var nx = -hx * 3.4, ny = -hy * 3.4, il = 1 / Math.sqrt(nx * nx + ny * ny + 1);
+        nx *= il; ny *= il; var nz = il;
+        var d1 = Math.max(0, ny * 0.8 + nz * 0.6), d2 = Math.max(0, -ny * 0.7 - nx * 0.3 + nz * 0.64);
+        var ao = 0.62 + 0.38 * clamp((h0 + 0.7) / 1.5, 0, 1), al = albedo(wy, wx), gr = 0.9 + 0.2 * vn(wx * 0.25, wy * 0.25);
+        var ll = Il * (0.1 + 1.0 * d1 * d1 + 0.25 * d1), li = 0.12 + Ic * 0.55 * d2;
+        var q = (y * W2 + x) * 4;
+        d[q] = clamp(al[0] * gr * ao * (li * cool[0] + ll * lt[0] * 1.15) * 1.55, 0, 255);
+        d[q + 1] = clamp(al[1] * gr * ao * (li * cool[1] + ll * lt[1] * 1.0) * 1.55, 0, 255);
+        d[q + 2] = clamp(al[2] * gr * ao * (li * cool[2] + ll * lt[2] * 0.85) * 1.55, 0, 255);
+        d[q + 3] = 255;
+      }
+    }
+    c.putImageData(img, 0, 0);
+    return cv;
+  }
+
   // One baked piece of the main wall: strata (wavy layers), fine layer lines, boulders, cracks (some glow), bones,
   // hexagonal crystals and grain. Everything is a function of the chunk index and the theme: the same everywhere.
   function bakeWall(inst, idx) {
@@ -1160,24 +1367,9 @@
     c.setTransform(k, 0, 0, k, 0, 0);
     var top = (idx + 1) * CH, bot = idx * CH, rnd = mulberry(idx * 7919 + 13), x, y, i;
     function cy(wy) { return top - wy; }
-    var sLo = lvlStratum(bot / LV), sHi = lvlStratum(top / LV);
-    c.fillStyle = strataColor(th, bot / LV + 0.01, H); c.fillRect(0, 0, VW, CH);
-    for (var s = sLo; s <= sHi; s++) {
-      var y0 = s < 0 ? -9999 : (6 + 14 * s) * LV, y1 = (6 + 14 * (s + 1)) * LV, col = strataColor(th, s < 0 ? 2 : y0 / LV + 1, H);
-      var gr = c.createLinearGradient(0, cy(Math.min(y1, top + 400)), 0, cy(Math.max(y0, bot - 400)));
-      gr.addColorStop(0, shade(col, 1.16)); gr.addColorStop(1, shade(col, 0.82));
-      c.beginPath();
-      c.moveTo(0, s < 0 ? CH + 20 : cy(y0 + strataEdge(s, 0)));
-      if (s < 0) c.lineTo(VW, CH + 20); else for (x = 8; x <= VW + 8; x += 8) c.lineTo(x, cy(y0 + strataEdge(s, x)));
-      c.lineTo(VW, -20); c.lineTo(0, -20); c.closePath();
-      c.fillStyle = gr; c.fill();
-      if (s >= 0) {                                      // the edge between two layers: a shadow line and a lit lip
-        c.lineWidth = 3; c.strokeStyle = 'rgba(0,0,0,.4)'; c.beginPath();
-        for (x = 0; x <= VW; x += 8) { var yy = cy(y0 + strataEdge(s, x)); if (x) c.lineTo(x, yy); else c.moveTo(x, yy); } c.stroke();
-        c.lineWidth = 2; c.strokeStyle = 'rgba(255,230,200,.10)'; c.beginPath();
-        for (x = 0; x <= VW; x += 8) { var y2 = cy(y0 + strataEdge(s, x)) - 3; if (x) c.lineTo(x, y2); else c.moveTo(x, y2); } c.stroke();
-      }
-    }
+    // the rock itself: a height field (bedding planes, noise, cracks) lit like a normal map - warm lava from below, cool fill above
+    c.imageSmoothingEnabled = true;
+    c.drawImage(bakeRock(inst, idx), 0, 0, VW, CH);
     // fine layers
     for (i = 0; i < 16; i++) {
       var ly = rnd() * CH, ph = rnd() * 6, amp = 3 + rnd() * 7, dark = rnd() < 0.7;
@@ -2490,7 +2682,8 @@
     function S(pt) { return pt ? { x: LANE_X + pt.x - self.cam.x, y: ANCHOR_Y - (pt.y - self.cam.y) } : null; }
     var o = { soot: pose.soot || 0, x: sp.x, y: sp.y, s: 1, rot: pose.rot || 0, lean: pose.lean || 0, hands: pose.hands ? [S(pose.hands[0]), S(pose.hands[1])] : null,
       feet: pose.feet ? [S(pose.feet[0]), S(pose.feet[1])] : null, grip: pose.grip, look: pose.look, mood: pose.mood, mouth: pose.mouth, sweat: pose.sweat,
-      blink: blink, skin: soul.skin, gear: soul.gear, t: T, halo: pose.halo, tailWag: pose.tailWag, headTilt: pose.headTilt };
+      blink: blink, skin: soul.skin, gear: soul.gear, t: T, halo: pose.halo, tailWag: pose.tailWag, headTilt: pose.headTilt,
+      glow: self.th.glow, rim: clamp(0.18 + 0.95 * Math.exp(-Math.max(0, sc.level) / 15), 0, 1) };
     c.save();
     if (pose.lava) {                                      // sunk to the neck: only what is above the surface shows
       var ys = ANCHOR_Y - (LAVA_Y - self.cam.y);
@@ -2516,7 +2709,7 @@
           bubble(c, th, q.text, dx, dy, age, life, 'demon');
         } else {
           var um = pose && pose.fx && pose.fx.umb, lift = um && um.burn < 0.9 ? 80 * um.open : 0;       // above the umbrella, not on it
-          bubble(c, th, q.text, sp.x + 8, sp.y - 132 - lift, age, life, 'soul');
+          bubble(c, th, q.text, sp.x + 8, sp.y - 112 - lift, age, life, 'soul');
         }
       }
     } else if (sc.g || this.st) {
@@ -2524,7 +2717,7 @@
       var n = Math.floor(T / 9000), ph = T % 9000, r = hash2(n, 99);
       if (ph > 2600 && ph < 4800 && (!sc.g || sc.ph === 'betting')) {
         var nm = (sc.g && sc.g.soul && sc.g.soul.name) || (this.st && this.st.idle && this.st.idle.soul && this.st.idle.soul.name) || 'Gary';
-        bubble(c, th, fillName(pick(LINES.ready, r), nm), sp.x + 8, sp.y - 132, ph - 2600, 2200, 'soul');
+        bubble(c, th, fillName(pick(LINES.ready, r), nm), sp.x + 8, sp.y - 112, ph - 2600, 2200, 'soul');
       }
     }
   };
