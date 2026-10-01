@@ -29,7 +29,7 @@
  * varies cosmetic jitter (hop heights, hop times, sparks), never where the token goes:
  *   0 - tI            the rune ring above the pyramid charges, the token glows
  *   tI - tI+0.46 s    the token is released and falls onto the first peg
- *   then one hop per row: the hex token rolls a sixty degrees from peg to peg (peg flash, spark,
+ *   then one hop per row: the skull tumbles from peg to peg (peg flash, spark,
  *                     squash, a click); the last two hops are slower
  *   D-0.85            it drops into its slot: the pocket flashes (beam, shock ring, confetti or ash)
  *   D                 the server settles: the result badge + each player's payout
@@ -51,11 +51,11 @@
     'show_history', 'sfx', 'sfx_volume'];
 
   // The backend's built-in tables (catalog/games_hexfall/hexfall.py PRESETS; a test keeps them equal).
-  // risk -> rows -> one multiplier per slot (slot k = k right bounces). Symmetric, RTP about 95%.
-  var PRESETS = {"low": {"8": [6, 2.5, 1.2, 0.8, 0.5, 0.8, 1.2, 2.5, 6], "9": [8, 5, 1.2, 1, 0.5, 0.5, 1, 1.2, 5, 8], "10": [8, 2.5, 2, 1, 0.8, 0.6, 0.8, 1, 2, 2.5, 8], "11": [10, 4, 2, 1.5, 1, 0.5, 0.5, 1, 1.5, 2, 4, 10], "12": [10, 4, 3, 1.5, 1, 0.8, 0.5, 0.8, 1, 1.5, 3, 4, 10], "13": [15, 5, 3, 2, 1.2, 1, 0.5, 0.5, 1, 1.2, 2, 3, 5, 15], "14": [15, 8, 5, 2, 1.5, 1, 0.7, 0.5, 0.7, 1, 1.5, 2, 5, 8, 15], "15": [20, 10, 5, 4, 2, 1.2, 0.7, 0.5, 0.5, 0.7, 1.2, 2, 4, 5, 10, 20], "16": [20, 10, 5, 4, 2, 1.2, 1, 0.7, 0.5, 0.7, 1, 1.2, 2, 4, 5, 10, 20]}, "medium": {"8": [15, 5, 1, 0.5, 0.3, 0.5, 1, 5, 15], "9": [20, 10, 3, 0.3, 0, 0, 0.3, 3, 10, 20], "10": [25, 10, 2.5, 1.2, 0.5, 0, 0.5, 1.2, 2.5, 10, 25], "11": [40, 15, 5, 2, 0.5, 0, 0, 0.5, 2, 5, 15, 40], "12": [40, 15, 5, 3, 1, 0.3, 0, 0.3, 1, 3, 5, 15, 40], "13": [60, 20, 10, 5, 1, 0.5, 0, 0, 0.5, 1, 5, 10, 20, 60], "14": [75, 25, 5, 3, 2, 1, 0.6, 0, 0.6, 1, 2, 3, 5, 25, 75], "15": [100, 50, 25, 10, 1.5, 1, 0.5, 0, 0, 0.5, 1, 1.5, 10, 25, 50, 100], "16": [100, 50, 25, 5, 3, 1.2, 1, 0.5, 0, 0.5, 1, 1.2, 3, 5, 25, 50, 100]}, "high": {"8": [30, 2, 1.5, 0.6, 0, 0.6, 1.5, 2, 30], "9": [50, 8, 1.5, 0.8, 0, 0, 0.8, 1.5, 8, 50], "10": [75, 25, 2, 0.6, 0, 0, 0, 0.6, 2, 25, 75], "11": [100, 50, 5, 0.3, 0, 0, 0, 0, 0.3, 5, 50, 100], "12": [150, 30, 8, 3, 0.5, 0, 0, 0, 0.5, 3, 8, 30, 150], "13": [250, 50, 10, 4, 1.5, 0, 0, 0, 0, 1.5, 4, 10, 50, 250], "14": [400, 100, 25, 8, 0.8, 0, 0, 0, 0, 0, 0.8, 8, 25, 100, 400], "15": [600, 100, 20, 10, 5, 0, 0, 0, 0, 0, 0, 5, 10, 20, 100, 600], "16": [1000, 500, 100, 10, 2, 0.2, 0, 0, 0, 0, 0, 0.2, 2, 10, 100, 500, 1000]}};
+  // risk -> rows -> one multiplier per slot (slot k = k right bounces). The top payout in the centre, busts interleaved, RTP about 95%.
+  var PRESETS = {"low": {"8": [1.5, 0.7, 1.2, 0.2, 1.8, 1, 0, 1, 1.5], "9": [0.3, 0.8, 0, 0.8, 0.3, 2, 1, 0.6, 1.8, 1.5], "10": [0.6, 0.8, 0.2, 0, 0.4, 2, 1.5, 0.2, 0.4, 1.2, 1.8], "11": [1, 0, 1.5, 0.8, 0.2, 0.6, 2, 1.2, 0, 1.2, 0.6, 0.4], "12": [0.8, 1.5, 1, 0.2, 0.5, 1.5, 2, 0.2, 0, 1.5, 0, 0.5, 1.2], "13": [0.8, 2, 0, 0.2, 0.8, 0.5, 1, 2.5, 0.3, 0, 0.3, 0, 0.2, 1.5], "14": [2, 0.3, 0, 0.2, 0.3, 0, 0.3, 2.5, 1.5, 0.2, 0.5, 0.3, 2, 1.5, 2], "15": [2, 0.5, 0.7, 0.8, 1.8, 1, 0.3, 0.6, 2.5, 0.3, 0, 1.5, 0.3, 0.8, 0, 2], "16": [1.5, 0.8, 0.5, 2, 0.7, 0.3, 0, 1.5, 2.5, 0.4, 0.3, 0.2, 0.4, 0.6, 2, 0, 1.5]}, "medium": {"8": [2, 0, 0.7, 0.4, 2.5, 0, 0.6, 0.8, 1.2], "9": [0, 1.2, 0.4, 0.8, 2.5, 0, 0.7, 0.3, 1, 2], "10": [0.8, 1.2, 0.3, 0, 1, 2.5, 0.4, 0, 0.5, 0, 1.5], "11": [1.5, 2, 0, 1, 0.3, 3, 0, 0.2, 1, 0.8, 0, 2.5], "12": [2, 0, 0.5, 0, 0.2, 0, 3, 1, 0.3, 0, 0.8, 0.3, 2.5], "13": [2, 0.3, 2, 0.5, 0, 1.2, 3, 0.3, 0, 0.3, 0, 0.8, 1.2, 0.7], "14": [0.8, 2.5, 1.2, 0.3, 0.7, 0, 0.5, 3, 0.3, 0, 1.2, 2, 0, 2.5, 1.8], "15": [1.5, 0.7, 2, 1.8, 0, 0.2, 0, 3, 1, 0.5, 0, 0.4, 1, 2.5, 2, 0.5], "16": [2, 0, 1.5, 0.4, 2, 0.8, 0.5, 0.3, 3, 0, 0.7, 0, 1, 2, 2.5, 0, 1.2]}, "high": {"8": [2, 0.5, 0.4, 0, 3, 0, 0.4, 0.5, 1], "9": [2, 0.7, 0.4, 0.8, 0, 3, 0, 0.4, 0.3, 2.5], "10": [1.5, 0.7, 0.3, 0.2, 0, 3, 0.7, 0, 0.3, 1.2, 0], "11": [3, 0, 0.4, 0.8, 0.3, 0, 3.5, 0, 0.4, 0, 0.3, 3], "12": [2.5, 3, 0, 0.6, 0, 0.3, 3.5, 0, 0.3, 0, 1.5, 0, 2.5], "13": [1.8, 0.8, 0, 1, 0.4, 0.2, 0, 3.5, 0, 1.2, 0, 1.2, 0, 3], "14": [2.5, 0.5, 0, 1.2, 0.3, 0, 0.4, 3.5, 0, 0.4, 0.3, 0.8, 2.5, 0.3, 3], "15": [2, 2.5, 0.5, 0.8, 0, 0.3, 0.2, 0, 4, 0, 0.4, 1.2, 0.4, 0, 2.5, 3.5], "16": [3, 0.5, 1.2, 2, 0.8, 0.7, 0.3, 0, 4, 0, 0.2, 0, 0.5, 0, 1, 0, 3.5]}};
 
-  // Theme colours. Tiers colour a slot by its multiplier: bust (x0), low (< 1), mid (< 2), good (< 10),
-  // hot (< 50), jack (50 and up); each is {fill, rim, text, glow}.
+  // Theme colours. Tiers colour a slot by its multiplier: bust (x0), low (< 1), mid (< 2), good (< 3),
+  // hot (< 10), jack (10 and up); each is {fill, rim, text, glow}.
   var THEMES = {
     coven: {
       font: "'Trebuchet MS','Segoe UI',system-ui,sans-serif", fontTitle: "'Palatino Linotype','Book Antiqua',Palatino,Georgia,serif",
@@ -179,8 +179,8 @@
     var t = PRESETS[risk] && PRESETS[risk][rows];
     return t || PRESETS.medium[12];
   }
-  function tierOf(m) { return m <= 0 ? 'bust' : m < 1 ? 'low' : m < 2 ? 'mid' : m < 10 ? 'good' : m < 50 ? 'hot' : 'jack'; }
-  // payout ladder: the slots grouped by multiplier (the table is symmetric: one row per distinct value)
+  function tierOf(m) { return m <= 0 ? 'bust' : m < 1 ? 'low' : m < 2 ? 'mid' : m < 3 ? 'good' : m < 10 ? 'hot' : 'jack'; }
+  // payout ladder: the slots grouped by multiplier (one row per distinct value)
   function ladderOf(slots) {
     var by = {}, out = [];
     slots.forEach(function (s) {
@@ -199,7 +199,7 @@
     var pitch = BOARD.w / (R + 1);
     var dy = (BOARD.yLast - BOARD.y0) / (R - 1);
     var rp = clamp(pitch * 0.185, 6, 13);
-    var rt = clamp(pitch * 0.3, 9.5, 22);
+    var rt = clamp(pitch * 0.36, 11, 26);
     var a = Math.min(pitch * 0.47, 31);                    // pocket circumradius (flat-top hexagon)
     return {
       R: R, pitch: pitch, dy: dy, rp: rp, rt: rt, a: a, ph: a * 1.732, contact: rt + rp * 0.78,
@@ -222,15 +222,16 @@
     var P = [], pj = [], j = 0;
     for (i = 0; i < R; i++) { P.push({ x: G.pegX(i, j), y: G.pegY(i) - G.contact }); pj.push(j); j += path[i] ? 1 : 0; }
     P.push({ x: G.slotX(j), y: BOARD.slotTop - G.rt * 0.3 });
-    var imp = [tI + f0], lift = [], dirs = [], rot = [0];
+    var imp = [tI + f0], lift = [], dirs = [], rot = [0], spin = [];
     for (i = 0; i < R; i++) {
       imp.push(imp[i] + w[i] / sum * R * hop);
       lift.push(G.dy * (0.36 + rnd() * 0.16));
       dirs.push(path[i] ? 1 : -1);
-      rot.push(rot[i] + dirs[i] * SIXTH);
+      spin.push(TAU * (0.4 + rnd() * 0.22));                    // the skull tumbles 145-225 degrees on every bounce, the way it was kicked
+      rot.push(rot[i] + dirs[i] * spin[i]);
     }
     return { G: G, R: R, path: path, D: D, tI: tI, f0: f0, hop: hop, settle: settle, imp: imp, P: P, pj: pj, lift: lift,
-      dirs: dirs, rot: rot, slot: j, seed: seed | 0 };
+      dirs: dirs, rot: rot, spin: spin, slot: j, seed: seed | 0 };
   }
 
   // the token at time t (seconds since the drop began)
@@ -239,13 +240,13 @@
     var o = { x: BOARD.cx, y: BOARD.portalY, rot: 0, sx: 1, sy: 1, a: 1, mode: 'charge', hop: -1, u: 0, vx: 0, vy: 0 };
     var u, i;
     if (t < pl.tI) {
-      o.u = t / pl.tI; o.y = BOARD.portalY + Math.sin(t * 3.1) * 3 * (1 - o.u * 0.6); o.rot = t * 0.9;
+      o.u = t / pl.tI; o.y = BOARD.portalY + Math.sin(t * 3.1) * 3 * (1 - o.u * 0.6); o.rot = Math.sin(t * 2.4) * 0.14;
       return o;
     }
     if (t < imp[0]) {                                           // released: falls onto the first peg
       u = (t - pl.tI) / pl.f0; o.mode = 'fall'; o.u = u;
       o.x = P[0].x; o.y = lerp(BOARD.portalY, P[0].y, u * u);
-      o.rot = -2 * SIXTH * (1 - easeOut(u)); o.sy = 1 + 0.16 * u; o.sx = 1 - 0.07 * u; o.vy = 2 * u;
+      o.rot = Math.sin(u * Math.PI) * -0.45 + 0.0; o.sy = 1 + 0.16 * u; o.sx = 1 - 0.07 * u; o.vy = 2 * u;
       return o;
     }
     i = 0;
@@ -256,12 +257,13 @@
       o.x = lerp(A.x, B.x, u);
       o.y = lerp(A.y, B.y, u) - 4 * pl.lift[i] * u * (1 - u);
       o.vx = (B.x - A.x) / T; o.vy = ((B.y - A.y) - 4 * pl.lift[i] * (1 - 2 * u)) / T;
-      o.rot = pl.rot[i] + pl.dirs[i] * SIXTH * easeInOut(u);
+      o.rot = pl.rot[i] + pl.dirs[i] * pl.spin[i] * easeInOut(u);
       var sp = Math.sqrt(o.vx * o.vx + o.vy * o.vy), st = clamp(sp / 520, 0, 1) * 0.12;
       o.sy = 1 + st; o.sx = 1 - st * 0.6;
     } else {                                                    // in the pocket: two damped hops, then it dissolves into the glow
       var s = t - imp[R], B2 = P[R];
-      o.mode = 'rest'; o.u = s; o.x = B2.x; o.rot = pl.rot[R];
+      o.mode = 'rest'; o.u = s; o.x = B2.x;
+      o.rot = lerp(pl.rot[R], Math.round(pl.rot[R] / TAU) * TAU, smooth(0, 0.35, s));   // it settles upright in its pocket
       o.y = B2.y - 15 * Math.abs(Math.sin(s * 8.5)) * Math.exp(-s * 4.2) + 4 * smooth(0.15, 0.7, s);
       o.a = 1 - smooth(0.32, 0.8, s);
       var k = 1 - smooth(0.3, 0.8, s) * 0.55; o.sx = k; o.sy = k;
@@ -971,7 +973,7 @@
       if (this._event('release', plan.tI, since)) this._snd('release');
     }
     // the token waiting for the next drop, glowing brighter as the ring charges
-    if (!plan && (ph === 'betting' || ph === 'idle')) this._drawToken(c, cx, cy + Math.sin(s * 2.2) * 4, G.rt, s * 0.6, 1, 1, 0.7 + 0.3 * charge, 1);
+    if (!plan && (ph === 'betting' || ph === 'idle')) this._drawToken(c, cx, cy + Math.sin(s * 2.2) * 4, G.rt, Math.sin(s * 1.6) * 0.12, 1, 1, 0.7 + 0.3 * charge, 1);
     else if (plan && since >= 0 && since < plan.tI) {
       var pp = planAt(plan, since), cw = 1 + 0.06 * Math.sin(since * 14) * charge;
       this._drawToken(c, pp.x, pp.y, G.rt, pp.rot, cw, cw, 0.8 + 0.6 * charge, 1);
@@ -1014,20 +1016,43 @@
     c.save(); c.globalCompositeOperation = 'lighter'; glow(c, th.accent, p.x, p.y, G.pitch * 1.9, 0.16 * p.a); c.restore();
   };
 
-  // the glowing hex token (core, rim, a highlight); s = squash in world axes
+  // the glowing skull token (a bone-bright cranium and jaw, eye sockets lit by the green fire, a nose, teeth); s = squash in world axes
   P._drawToken = function (c, x, y, r, rot, sx, sy, bright, alpha) {
-    var th = this.th, tk = th.token;
+    var th = this.th, tk = th.token, u = r * 1.08, i;
     c.save();
     c.globalAlpha = alpha;
     c.translate(x, y); c.scale(sx, sy); c.rotate(rot);
-    glow(c, tk.glow, 0, 0, r * 2.4, 0.5 * bright);
-    hexPath(c, 0, 0, r, 0);
-    var g = c.createRadialGradient(-r * 0.25, -r * 0.3, r * 0.1, 0, 0, r * 1.05);
-    g.addColorStop(0, tk.core); g.addColorStop(0.45, mixHex(tk.core, tk.mid, 0.55)); g.addColorStop(0.8, tk.mid); g.addColorStop(1, tk.rim);
+    glow(c, tk.glow, 0, 0, r * 2.6, 0.5 * bright);
+    c.beginPath();                                              // one outline: jaw, cheek, cranium
+    c.moveTo(-0.5 * u, 1.0 * u); c.lineTo(-0.5 * u, 0.62 * u);
+    c.bezierCurveTo(-0.5 * u, 0.46 * u, -0.97 * u, 0.36 * u, -0.97 * u, -0.12 * u);
+    c.bezierCurveTo(-0.97 * u, -0.72 * u, -0.52 * u, -1.0 * u, 0, -1.0 * u);
+    c.bezierCurveTo(0.52 * u, -1.0 * u, 0.97 * u, -0.72 * u, 0.97 * u, -0.12 * u);
+    c.bezierCurveTo(0.97 * u, 0.36 * u, 0.5 * u, 0.46 * u, 0.5 * u, 0.62 * u);
+    c.lineTo(0.5 * u, 0.84 * u); c.quadraticCurveTo(0.5 * u, 1.0 * u, 0.34 * u, 1.0 * u);
+    c.lineTo(-0.34 * u, 1.0 * u); c.quadraticCurveTo(-0.5 * u, 1.0 * u, -0.5 * u, 0.84 * u);
+    c.closePath();
+    var g = c.createRadialGradient(-u * 0.3, -u * 0.45, u * 0.1, 0, 0, u * 1.15);
+    g.addColorStop(0, tk.core); g.addColorStop(0.5, mixHex(tk.core, tk.mid, 0.4)); g.addColorStop(0.85, mixHex(tk.core, tk.mid, 0.8)); g.addColorStop(1, tk.mid);
     c.fillStyle = g; c.fill();
-    c.lineJoin = 'round'; c.lineWidth = Math.max(1.6, r * 0.16); c.strokeStyle = tk.rim; c.stroke();
-    hexPath(c, 0, 0, r * 0.56, 0); c.strokeStyle = rgba('#ffffff', 0.7 * bright); c.lineWidth = Math.max(1, r * 0.09); c.stroke();
-    hexPath(c, 0, 0, r * 0.22, 0); c.fillStyle = rgba('#ffffff', 0.9 * bright); c.fill();
+    c.lineJoin = 'round'; c.lineWidth = Math.max(1.5, r * 0.14); c.strokeStyle = tk.rim; c.stroke();
+    // eye sockets (dark, a flame inside), a nose, the teeth
+    c.fillStyle = '#10051f';
+    for (i = -1; i <= 1; i += 2) {
+      c.save(); c.translate(i * 0.4 * u, -0.1 * u); c.rotate(i * -0.18);
+      c.beginPath(); c.ellipse(0, 0, 0.27 * u, 0.3 * u, 0, 0, TAU); c.fill(); c.restore();
+    }
+    c.beginPath(); c.moveTo(0, 0.18 * u); c.lineTo(-0.12 * u, 0.44 * u); c.lineTo(0.12 * u, 0.44 * u); c.closePath(); c.fill();
+    c.strokeStyle = tk.rim; c.lineWidth = Math.max(1, r * 0.07); c.lineCap = 'round';
+    c.beginPath();
+    for (i = -1; i <= 1; i++) { c.moveTo(i * 0.2 * u, 0.7 * u); c.lineTo(i * 0.2 * u, 0.98 * u); }
+    c.moveTo(-0.5 * u, 0.7 * u); c.lineTo(0.5 * u, 0.7 * u);
+    c.stroke();
+    c.globalCompositeOperation = 'lighter';
+    for (i = -1; i <= 1; i += 2) {
+      glow(c, th.flame1, i * 0.4 * u, -0.1 * u, 0.36 * u, (0.75 + 0.25 * Math.sin(x * 0.07 + y * 0.05 + i)) * bright);
+      glow(c, th.flame0, i * 0.4 * u, -0.12 * u, 0.15 * u, 0.95 * bright);
+    }
     c.restore();
   };
 
@@ -1173,7 +1198,7 @@
       var best = Math.max.apply(null, slots.map(function (s) { return +s.mult; }));
       var rh = '<h4>Bets open<small>drop ' + g.drop + ' of ' + g.drops + '</small></h4>' +
         '<p><em>BET</em> ' + fmt(g.min_bet) + (g.max_bet ? '–' + fmt(g.max_bet) : '+') + ' ' + esc(cur) + ' on this drop.</p>' +
-        '<p>One hex falls through ' + rows + ' rows; the slot it lands in pays your bet <em>×</em> its multiplier — up to <em>' + fmtMult(best) + '</em>.</p>' +
+        '<p>One skull falls through ' + rows + ' rows; the slot it lands in pays your bet <em>×</em> its multiplier — up to <em>' + fmtMult(best) + '</em>.</p>' +
         (cfg.commands_text || g.commands_text ? '<div class="cmd">' + esc(cfg.commands_text || g.commands_text) + '</div>' : '');
       this._set('rules', this.el.rules, rh + '<div class="hfx-w"></div>');
       var w = this.el.rules.querySelector('.hfx-w');

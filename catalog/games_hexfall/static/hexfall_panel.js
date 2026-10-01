@@ -145,8 +145,8 @@
     settings: [
       ['drops', 'Drops per game', 'int', [1, 10]],
       ['rows', 'Rows of pegs', 'int', [8, 16], 'Rows of hexagonal pegs: rows + 1 slots at the bottom'],
-      ['risk', 'Risk (built-in multiplier table)', 'select', [['low', 'Low — small swings'], ['medium', 'Medium'], ['high', 'High — big edge slots, many busts']],
-        'Which built-in table pays: every one is symmetric, big at the edges, small or bust in the middle, about 95% return'],
+      ['risk', 'Risk (built-in multiplier table)', 'select', [['low', 'Low — small swings'], ['medium', 'Medium'], ['high', 'High — the most busts, the biggest top payout']],
+        'Which built-in table pays: the top payout sits in the centre, busts and small pays are interleaved among the better slots, about 95% return'],
       ['multipliers', 'Custom multipliers (rows + 1 numbers)', 'text', 400,
         'Your own table, left to right, e.g. 40 15 5 3 1 0.3 0 0.3 1 3 5 15 40 (0 = bust). Empty = the built-in table for rows and risk. It needs exactly rows + 1 numbers (a list that no longer fits is dropped); the return and house edge are computed from it'],
       ['open_bet_seconds', 'First bet window (s)', 'num', [5, 300]],
@@ -154,8 +154,8 @@
       ['drop_seconds', 'Token fall (s)', 'num', [6, 20]],
       ['result_seconds', 'Result on screen (s)', 'num', [2, 30]],
       ['summary_seconds', 'Game-over card (s)', 'num', [4, 60]],
-      ['min_bet', 'Min bet', 'int', [1, 1e9]],
-      ['max_bet', 'Max bet per drop (0 = none)', 'int', [0, 1e12]],
+      ['min_bet', 'Min bet per drop', 'int', [1, 1e9], 'The smallest bet a player may put down on a drop (default 1)'],
+      ['max_bet', 'Max bet per drop (0 = no max)', 'int', [0, 1e12], 'The most one player may have down on a drop, all their bets added together (default 250)'],
       ['currency', 'Currency', 'text', 24],
       ['commands_text', 'Commands line on the overlay', 'text', 120, 'Your bot\'s commands, e.g. !drop 100'],
       ['title', 'Title on the overlay', 'text', 32, 'Your branding: the name in the overlay\'s header (Edit Mode can preview it)'],
@@ -170,7 +170,7 @@
     textRows: {
       title: ['Title', 'Your branding: the name in the header']
     },
-    hint: 'Live mirror of the overlay. A hex-themed Plinko: each drop chat bets an amount against the bank (your bot), then <b>one glowing hex token</b> falls through rows of hexagonal pegs - the server flips a fair coin at every peg - into a slot that pays the bet <b>× its multiplier</b> (×0 is a bust). The slot odds, return and house edge are computed and shown; nothing here can steer the token.',
+    hint: 'Live mirror of the overlay. A hex-themed Plinko: each drop chat bets an amount against the bank (your bot), then <b>one glowing skull</b> falls through rows of hexagonal pegs - the server flips a fair coin at every peg - into a slot that pays the bet <b>× its multiplier</b> (×0 is a bust). The slot odds, return and house edge are computed and shown; nothing here can steer the token.',
     scene: 'scene', ledgerNote: '', doc: 'hexfall',
     demoWord: 'drop',
 

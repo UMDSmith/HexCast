@@ -1,10 +1,9 @@
 # Hexfall — a hex-themed Plinko and chat's coins
 
-One glowing hex token drops through a pyramid of hexagonal pegs and falls into
+One glowing skull drops through a pyramid of hexagonal pegs and falls into
 a slot at the bottom. Chat bets against the **bank** (your bot and its coin
-bank) before every drop; the slot the token lands in pays the bet **× its
-multiplier** — or **busts** (×0). It rolls from peg to peg sixty degrees at a
-time, every peg flashes and clicks, the landing slot blazes, and the winners
+bank) before every drop; the slot the skull lands in pays the bet **× its
+multiplier** — or **busts** (×0). It tumbles from peg to peg, spinning as it bounces, every peg flashes and clicks, the landing slot blazes, and the winners
 are listed.
 
 The **server** picks every path; the overlay only animates it. Everything
@@ -21,10 +20,10 @@ install it from the **+** in the Games tab.) The header's name is yours
 | --- | --- |
 | Drops per game | 3 (setting `drops`, 1–10) |
 | Board | `rows` rows of hexagonal pegs (8–16, default 12) → `rows + 1` slots |
-| Bets | one amount per drop (`min_bet` / `max_bet` per player per drop); betting again adds to it |
+| Bets | one amount per drop (`min_bet` / `max_bet` per player per drop, default 1 and 250 — both are settings in the panel and in `/games/api/config`); betting again adds to it |
 | Payout | bet × the landing slot's multiplier, rounded **down** to whole coins; ×0 is a **bust** |
 | Multipliers | a built-in table per rows × risk (`low`, `medium`, `high`), or your own list |
-| House edge | **computed**, never set: 100% − the table's return. Default table (12 rows, medium): **5.15%** |
+| House edge | **computed**, never set: 100% − the table's return. Default table (12 rows, medium): **4.66%** |
 | Timings | 30 s first bet window · 20 s before each later drop · ~9 s fall · 5 s result · 10 s game-over card |
 | No bets | when a window closes with nothing on the drop, the game ends |
 | Typical game | ~2:00 (3 drops) |
@@ -40,15 +39,15 @@ install it from the **+** in the Games tab.) The header's name is yours
   earlier drop. (Rows 12: the middle slot is 924 / 4096 = 22.56%, each edge
   slot 1 / 4096.)
 - The overlay and panel only **animate** the server's path: `fall.path` lists
-  the bounce at every peg (0 = left, 1 = right). The token touches exactly
+  the bounce at every peg (0 = left, 1 = right). The skull touches exactly
   those pegs and ends in exactly that slot. The drop's `seed` only varies the
   cosmetic jitter — hop heights, hop times, sparks — never where it goes.
   Nothing — the API, the panel, a bet — can pick or nudge an outcome.
-- The path is sent to the overlay when the token is released. Bets are already
+- The path is sent to the overlay when the skull is released. Bets are already
   closed by then (`409 bets_closed`), so knowing it early is worth nothing;
   the next drop's path does not exist until its own window closes. Nothing on
-  screen gives it away before the token gets there: the pegs light up behind
-  and around the token (the same on both sides), and the pockets glow the same
+  screen gives it away before the skull gets there: the pegs light up behind
+  and around the skull (the same on both sides), and the pockets glow the same
   whatever is coming.
 - **No hidden edge.** There is no house-edge setting and no payout scaling:
   the multiplier table *is* the odds. The return and the house edge shown on
@@ -61,48 +60,61 @@ install it from the **+** in the Games tab.) The header's name is yours
 ## The multiplier table
 
 Each slot carries a multiplier; slot *k* (counting from the left) is where the
-token ends after *k* right bounces. **Return** (RTP) is the sum over the slots
+skull ends after *k* right bounces. **Return** (RTP) is the sum over the slots
 of probability × multiplier; the **house edge** is what is left of 100%
 (it is shown rounded so the two always add up, and is negative for a table that
 pays back more than 100%).
 
-The built-in tables are symmetric, big at the edges and small — or a bust — in
-the middle, and all return about 95% (94.85% – 95.23%). The higher the risk,
-the bigger the edge slots and the more often the middle busts:
+The built-in tables are **not symmetric**. The **centre slot** — the likeliest
+one — holds the **top payout** (with an odd number of rows there is no single
+centre: one of the two middle slots holds it). The **busts** (×0) and the small
+pays are **interleaved** among the better slots across the whole board, never
+two busts side by side, and every table returns about 95% (94.98% – 95.40%).
+The higher the risk, the more of the drops bust and the bigger the top payout.
+Because the centre is the likeliest slot, the top payout is a modest ×1.8 – ×4
+(a bigger one there would pay back more than 100%); the surprises are the
+better pays hiding between the busts out towards the edges:
 
 | Rows | Low | Medium | High |
 | --- | --- | --- | --- |
-| 8 | 95.23% · ×6 | 94.92% · ×15 | 95.00% · ×30 |
-| 9 | 95.00% · ×8 | 95.00% · ×20 | 95.00% · ×50 |
-| 10 | 95.03% · ×8 | 95.01% · ×25 | 95.11% · ×75 |
-| 11 | 94.97% · ×10 | 95.21% · ×40 | 95.16% · ×100 |
-| 12 | 95.00% · ×10 | 94.85% · ×40 | 94.99% · ×150 |
-| 13 | 94.94% · ×15 | 94.93% · ×60 | 95.12% · ×250 |
-| 14 | 94.89% · ×15 | 94.94% · ×75 | 95.06% · ×400 |
-| 15 | 95.02% · ×20 | 95.08% · ×100 | 95.06% · ×600 |
-| 16 | 95.01% · ×20 | 95.00% · ×100 | 94.95% · ×1000 |
+| 8 | 95.07% · ×1.8 · 11% | 95.07% · ×2.5 · 25% | 95.07% · ×3 · 44% |
+| 9 | 95.27% · ×2 · 7% | 95.31% · ×2.5 · 25% | 95.21% · ×3 · 41% |
+| 10 | 95.35% · ×2 · 12% | 95.14% · ×2.5 · 24% | 95.16% · ×3 · 32% |
+| 11 | 95.29% · ×2 · 9% | 95.26% · ×3 · 26% | 94.98% · ×3.5 · 42% |
+| 12 | 95.40% · ×2 · 14% | 95.34% · ×3 · 30% | 95.02% · ×3.5 · 39% |
+| 13 | 94.98% · ×2.5 · 11% | 95.27% · ×3 · 28% | 95.24% · ×3.5 · 41% |
+| 14 | 95.09% · ×2.5 · 13% | 95.33% · ×3 · 25% | 95.13% · ×3.5 · 31% |
+| 15 | 94.99% · ×2.5 · 9% | 95.14% · ×3 · 29% | 95.09% · ×4 · 39% |
+| 16 | 95.01% · ×2.5 · 12% | 95.26% · ×3 · 24% | 95.07% · ×4 · 42% |
 
-(return · the edge slots' multiplier; `GET /games/api/hexfall/bets` lists every
-table, slot by slot.) The default — **12 rows, medium** — pays:
+(return · the top payout, in the centre · the chance of a bust; `GET
+/games/api/hexfall/bets` lists every table, slot by slot, with its exact odds.)
+The default — **12 rows, medium** — pays:
 
 | Slot | Pays | Paths | Chance | Return share |
 | --- | --- | --- | --- | --- |
-| 1 · 13 | ×40 | 1 / 4096 | 0.02% | 0.98% each |
-| 2 · 12 | ×15 | 12 / 4096 | 0.29% | 4.39% each |
-| 3 · 11 | ×5 | 66 / 4096 | 1.61% | 8.06% each |
-| 4 · 10 | ×3 | 220 / 4096 | 5.37% | 16.11% each |
-| 5 · 9 | ×1 | 495 / 4096 | 12.09% | 12.09% each |
-| 6 · 8 | ×0.3 | 792 / 4096 | 19.34% | 5.80% each |
-| 7 | **bust** | 924 / 4096 | 22.56% | 0% |
+| 1 | ×2 | 1 / 4096 | 0.02% | 0.05% |
+| 2 | **bust** | 12 / 4096 | 0.29% | 0.00% |
+| 3 | ×0.5 | 66 / 4096 | 1.61% | 0.81% |
+| 4 | **bust** | 220 / 4096 | 5.37% | 0.00% |
+| 5 | ×0.2 | 495 / 4096 | 12.08% | 2.42% |
+| 6 | **bust** | 792 / 4096 | 19.34% | 0.00% |
+| 7 | ×3 | 924 / 4096 | 22.56% | 67.68% |
+| 8 | ×1 | 792 / 4096 | 19.34% | 19.34% |
+| 9 | ×0.3 | 495 / 4096 | 12.08% | 3.63% |
+| 10 | **bust** | 220 / 4096 | 5.37% | 0.00% |
+| 11 | ×0.8 | 66 / 4096 | 1.61% | 1.29% |
+| 12 | ×0.3 | 12 / 4096 | 0.29% | 0.09% |
+| 13 | ×2.5 | 1 / 4096 | 0.02% | 0.06% |
 
-→ return **94.85%**, house edge **5.15%**; 38.8% of drops pay the stake back or
+→ return **95.34%**, house edge **4.66%**; 41.9% of drops pay the stake back or
 more.
 
 ### Your own table
 
 Set **`multipliers`** (Settings → *Custom multipliers*) to a list of **exactly
 `rows + 1` numbers**, left to right, each from 0 (a bust) to 1000 — as a JSON
-list or as text: `"40 15 5 3 1 0.3 0 0.3 1 3 5 15 40"` (commas, spaces and
+list or as text: `"2 0 0.5 0 0.2 0 3 1 0.3 0 0.8 0.3 2.5"` (commas, spaces and
 semicolons all work; `x5`, `×5` and `bust` are understood). Empty means the
 built-in table for `rows` and `risk`.
 
@@ -147,7 +159,7 @@ drop's bet. A bet is for **one drop**: put coins down again for the next one.
 POST /start ─► betting (30 s: open_bet_seconds)   rules box · "Bets close in 10!"
                  │  nothing on the drop when it closes → game over ("no_bets" / "walked")
                  ▼
-               dropping (~9 s: drop_seconds)       the rune ring charges · the token is released ·
+               dropping (~9 s: drop_seconds)       the rune ring charges · the skull is released ·
                  │                                  one hop per row, peg flash + click ·
                  │                                  into the slot (the last two hops slow down)
                  ▼
@@ -197,7 +209,7 @@ JSON body both work (the body wins). Actions return the game's fresh `state`.
 | `GET /games/api/hexfall/ledger?since=0&limit=500` | this game's ledger events |
 | `GET /games/api/hexfall/bets` | the table in use: `rows`, `risk`, `source`, `multipliers`, `rtp_pct`, `house_edge_pct`, every slot's multiplier, exact odds (`ways` of `of` paths, `probability`, `pct`) and share of the return, the three presets for the current rows, `notes`, the rules |
 | `GET /games/api/hexfall/validate?amount=` | dry run of a bet: `valid`, `error`, and what the bet pays in every slot |
-| `GET\|POST /games/api/hexfall/stop` | end the game now: a token already falling counts (its slot pays), a bet still open is refunded |
+| `GET\|POST /games/api/hexfall/stop` | end the game now: a skull already falling counts (its slot pays), a bet still open is refunded |
 | `GET /games/api/hexfall/history · last` | finished games + stats · the last one |
 | `GET\|POST /games/api/hexfall/show · hide` | keep the idle scene on screen · hide it |
 | `GET\|POST /games/api/hexfall/preview` | `{overrides: {appearance keys}, seconds (2–60, default 8)}` (or `x=&y=&scale=`) — the Edit Mode editor's **Test in OBS**: the scene goes on screen for `seconds` with that look on top of the saved config (`STATE.preview`), even while hidden, over whatever it shows (the idle scene between games). Never touches the game, bets or the ledger; expires on its own; `/hide`, `/stop` and `/preview/clear` end it |
@@ -220,17 +232,17 @@ else `null`.
   "phase": "dropping",              // betting | dropping | result | over
   "ends_in_ms": 4400, "phase_ms": 9000, "elapsed_ms": 4600,
   "drop": 1, "drops": 3, "rows": 12, "risk": "medium", "source": "preset",   // source: preset | custom
-  "slots": [{"slot": 0, "mult": 40, "bust": false, "ways": 1, "of": 4096, "probability": 0.00024414, "pct": 0.0244, "rtp_pct": 0.9766}, "..."],
-  "rtp_pct": 94.85, "house_edge_pct": 5.15,
-  "fall": {"drop": 1, "path": [1,0,1,1,0,0,1,0,1,1,0,1], "slot": 7, "mult": 0.3, "seed": 42, "ms": 9000},   // dropping/result/over only
-  "hits": [{"drop": 1, "slot": 7, "mult": 0.3}],          // this game's drops so far
-  "recent": [{"slot": 7, "rows": 12, "mult": 0.3}, "..."],   // the last slot hits (newest first, across games)
-  "players": [{"user": "alice", "bet": 100, "max_win": 4000}],   // on the line (empty once settled)
+  "slots": [{"slot": 0, "mult": 2, "bust": false, "ways": 1, "of": 4096, "probability": 0.00024414, "pct": 0.0244, "rtp_pct": 0.0488}, "..."],
+  "rtp_pct": 95.34, "house_edge_pct": 4.66,
+  "fall": {"drop": 1, "path": [1,0,1,1,0,0,1,0,1,1,0,1], "slot": 7, "mult": 1, "seed": 42, "ms": 9000},   // dropping/result/over only
+  "hits": [{"drop": 1, "slot": 7, "mult": 1}],          // this game's drops so far
+  "recent": [{"slot": 7, "rows": 12, "mult": 1}, "..."],   // the last slot hits (newest first, across games)
+  "players": [{"user": "alice", "bet": 100, "max_win": 300}],   // on the line (empty once settled)
   "on_the_line": 100,
-  "last": {"drop": 1, "slot": 7, "mult": 0.3, "bust": false, "total_bet": 100, "total_paid": 30,
-           "winners": [], "even": [], "losers": [{"user": "alice", "bet": 100, "paid": 30, "net": -70}]},
+  "last": {"drop": 1, "slot": 7, "mult": 1, "bust": false, "total_bet": 100, "total_paid": 100,
+           "winners": [], "even": [{"user": "alice", "bet": 100, "paid": 100, "net": 0}], "losers": []},
   "outcome": null, "summary": null,  // set in "over"
-  "currency": "coins", "min_bet": 1, "max_bet": 100000
+  "currency": "coins", "min_bet": 1, "max_bet": 250
 }
 ```
 
@@ -247,7 +259,7 @@ biggest single win, net of the bet — `{user, paid, net, drop, mult}` — or
 | --- | --- | --- |
 | debit | `bet` / `add` | a bet / more on the same drop this window |
 | credit | `payout` | a drop landed: bet × the slot's multiplier, rounded down (only when it is at least 1 coin; a x0.3 landing on 100 coins credits 30) |
-| credit | `refund` | a bet taken back (`/remove`), or returned by `/stop` before the token fell |
+| credit | `refund` | a bet taken back (`/remove`), or returned by `/stop` before the skull fell |
 
 Each event's `bet_id` is `<game id>/d<drop>` (`hf-1a2b3c4d/d2`), its `roll_id`
 the game's id, and its `bet` a label (`Drop 2`, `Drop 2 · ×0.5`).
@@ -287,10 +299,10 @@ ledger, or right away from the `/bet` reply's `debits`, but never both).
 | `multipliers` | [] | your own table: `rows + 1` numbers, 0–1000 (empty = the built-in table) |
 | `open_bet_seconds` · `between_seconds` | 30 · 20 | betting windows |
 | `drop_seconds` · `result_seconds` · `summary_seconds` | 9 · 5 · 10 | animation lengths (the fall: 6–20) |
-| `min_bet` · `max_bet` | 1 · 100000 | per player per drop; 0 = no max |
+| `min_bet` · `max_bet` | 1 · 250 | per player per drop (all of a player's bets on that drop added together); `max_bet` 0 = no max; a max below the min is dropped. Change them in the panel's Settings or `POST /games/api/config {"hexfall": {"min_bet": 10, "max_bet": 1000}}` |
 | `currency` | coins | the name after amounts (your bot's coin), ≤ 24 characters |
 | `commands_text` | "" | a line in the rules box, e.g. `!drop 100` |
-| `drop_clip` · `win_clip` · `bust_clip` | "" | soundboard clips: the token is released · it lands in a slot that pays the stake or more · it pays less (play on the base `/overlay`) |
+| `drop_clip` · `win_clip` · `bust_clip` | "" | soundboard clips: the skull is released · it lands in a slot that pays the stake or more · it pays less (play on the base `/overlay`) |
 | `title` | "Hexfall" | the header's name — your branding (≤ 32 characters) ✓ |
 | `x` · `y` · `scale` · `theme` | 50 · 50 · 0.85 · coven | placement (0–100 % · 0–100 % · 0.2–5 × the 1280×860 scene) · `coven` (violet and green fire), `ember`, `frost` ✓ |
 | `show_rules` · `show_players` · `players_max` | on · on · 8 | the rules box · the players board (on the line, then the drop's payouts) · how many it lists ✓ |
@@ -305,7 +317,7 @@ ledger, or right away from the `/bet` reply's `debits`, but never both).
 
 The overlay synthesizes its own sounds (WebAudio, nothing to install): a rising
 charge as the ring powers up, a click and a note for every peg — a pentatonic
-scale climbing as the token falls, panned to the side it bounced — and a
+scale climbing as the skull falls, panned to the side it bounced — and a
 different landing for a win, a big win, a small return and a bust. Turn on
 **Control audio via OBS** for the browser source so they reach your mixer.
 
@@ -319,7 +331,7 @@ so you place what the stream will really show. Drag it (or use the 3×3 quick
 grid), **Scale** 0.2–5, **Theme**, **Title**, the rules box, payout ladder and
 last-hits strip, the players board and how many it lists, sound and volume —
 all live in the preview. **▶ Preview** plays a local demo drop (bets close → the
-token falls → its slot and payouts → the game-over card, about 17 s; you can
+skull falls → its slot and payouts → the game-over card, about 17 s; you can
 keep dragging while it plays — its path is random, it is only a demo);
 **Test in OBS** puts the unsaved look on the real overlay for 8 seconds
 (`/preview`); **Save** stores it and restyles every overlay; **Reset** goes back
@@ -340,7 +352,7 @@ tab's Settings card.
 `config/games_hexfall.json` holds the running game (and the last 50 finished
 ones + stats). Every change is written before its ledger events, with those
 events as a journal, so a crash can't pay twice or lose a stake. A game still
-running when Hexcast stops is **settled at the next start-up**: a token already
+running when Hexcast stops is **settled at the next start-up**: a skull already
 falling pays its slot, then a bet still open is refunded. Removing the add-on
 settles a running game the same way (`/stop`) and keeps the settings and the
 file, so putting it back brings everything back.

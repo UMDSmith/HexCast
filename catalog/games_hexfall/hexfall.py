@@ -49,15 +49,15 @@ RISKS = ("low", "medium", "high")
 # hexfall
 # --------------------------------------------------------------------------
 # A hex-themed Plinko. A game is `drops` drops (3). Each drop has a betting window in which every
-# player puts up an amount (per drop, min_bet / max_bet), then ONE glowing hex token falls through
+# player puts up an amount (per drop, min_bet / max_bet), then ONE glowing skull falls through
 # `rows` rows (8-16) of hexagonal pegs. At every peg the server flips a fair coin - left or right,
 # secrets.SystemRandom - and the slot is the number of right bounces, so slot k has the binomial
 # probability C(rows, k) / 2^rows. The overlay only animates the path it is sent.
 #
 # Every player's stake that drop is paid  stake x the landing slot's multiplier,  rounded down to
 # whole coins (a x0 slot is a BUST). The multipliers are a table of rows + 1 numbers: a built-in
-# preset for rows x risk (low / medium / high; symmetric, big at the edges, small or bust in the
-# middle) or the streamer's own list (setting `multipliers`, which must have exactly rows + 1
+# preset for rows x risk (low / medium / high; the top payout in the centre, busts and small pays
+# interleaved with the better slots) or the streamer's own list (setting `multipliers`, which must have exactly rows + 1
 # values). There is NO house-edge setting and nothing is nudged: the table IS the odds. Its RTP
 # (the sum of probability x multiplier) and the house edge (100% - RTP) are computed exactly from
 # the binomial probabilities and shown everywhere the table is.
@@ -65,42 +65,44 @@ RISKS = ("low", "medium", "high")
 # The table, the rows and the risk are copied into the game when it starts: changing the settings
 # mid-game never changes the odds of a game that is running.
 
-# Built-in tables, one multiplier per slot, slot k = k right bounces. Each is symmetric and has an
-# RTP of about 95% (94.85% - 95.23%); GET /games/api/hexfall/bets lists the exact numbers.
+# Built-in tables, one multiplier per slot, slot k = k right bounces. They are NOT symmetric: the centre
+# slot (the likeliest one) holds the top payout - for an odd number of rows, one of the two middle
+# slots does - and the busts (x0) and the small pays are interleaved among the better slots across the
+# board. Each has an RTP of about 95% (94.99% - 95.41%); GET /games/api/hexfall/bets lists the exact numbers.
 # (static/hexfall.js carries the same tables for the Edit Mode editor's sample game; a test keeps them equal.)
 PRESETS: dict[str, dict[int, tuple]] = {
     "low": {
-        8: (6, 2.5, 1.2, 0.8, 0.5, 0.8, 1.2, 2.5, 6),
-        9: (8, 5, 1.2, 1, 0.5, 0.5, 1, 1.2, 5, 8),
-        10: (8, 2.5, 2, 1, 0.8, 0.6, 0.8, 1, 2, 2.5, 8),
-        11: (10, 4, 2, 1.5, 1, 0.5, 0.5, 1, 1.5, 2, 4, 10),
-        12: (10, 4, 3, 1.5, 1, 0.8, 0.5, 0.8, 1, 1.5, 3, 4, 10),
-        13: (15, 5, 3, 2, 1.2, 1, 0.5, 0.5, 1, 1.2, 2, 3, 5, 15),
-        14: (15, 8, 5, 2, 1.5, 1, 0.7, 0.5, 0.7, 1, 1.5, 2, 5, 8, 15),
-        15: (20, 10, 5, 4, 2, 1.2, 0.7, 0.5, 0.5, 0.7, 1.2, 2, 4, 5, 10, 20),
-        16: (20, 10, 5, 4, 2, 1.2, 1, 0.7, 0.5, 0.7, 1, 1.2, 2, 4, 5, 10, 20),
+        8: (1.5, 0.7, 1.2, 0.2, 1.8, 1, 0, 1, 1.5),
+        9: (0.3, 0.8, 0, 0.8, 0.3, 2, 1, 0.6, 1.8, 1.5),
+        10: (0.6, 0.8, 0.2, 0, 0.4, 2, 1.5, 0.2, 0.4, 1.2, 1.8),
+        11: (1, 0, 1.5, 0.8, 0.2, 0.6, 2, 1.2, 0, 1.2, 0.6, 0.4),
+        12: (0.8, 1.5, 1, 0.2, 0.5, 1.5, 2, 0.2, 0, 1.5, 0, 0.5, 1.2),
+        13: (0.8, 2, 0, 0.2, 0.8, 0.5, 1, 2.5, 0.3, 0, 0.3, 0, 0.2, 1.5),
+        14: (2, 0.3, 0, 0.2, 0.3, 0, 0.3, 2.5, 1.5, 0.2, 0.5, 0.3, 2, 1.5, 2),
+        15: (2, 0.5, 0.7, 0.8, 1.8, 1, 0.3, 0.6, 2.5, 0.3, 0, 1.5, 0.3, 0.8, 0, 2),
+        16: (1.5, 0.8, 0.5, 2, 0.7, 0.3, 0, 1.5, 2.5, 0.4, 0.3, 0.2, 0.4, 0.6, 2, 0, 1.5),
     },
     "medium": {
-        8: (15, 5, 1, 0.5, 0.3, 0.5, 1, 5, 15),
-        9: (20, 10, 3, 0.3, 0, 0, 0.3, 3, 10, 20),
-        10: (25, 10, 2.5, 1.2, 0.5, 0, 0.5, 1.2, 2.5, 10, 25),
-        11: (40, 15, 5, 2, 0.5, 0, 0, 0.5, 2, 5, 15, 40),
-        12: (40, 15, 5, 3, 1, 0.3, 0, 0.3, 1, 3, 5, 15, 40),
-        13: (60, 20, 10, 5, 1, 0.5, 0, 0, 0.5, 1, 5, 10, 20, 60),
-        14: (75, 25, 5, 3, 2, 1, 0.6, 0, 0.6, 1, 2, 3, 5, 25, 75),
-        15: (100, 50, 25, 10, 1.5, 1, 0.5, 0, 0, 0.5, 1, 1.5, 10, 25, 50, 100),
-        16: (100, 50, 25, 5, 3, 1.2, 1, 0.5, 0, 0.5, 1, 1.2, 3, 5, 25, 50, 100),
+        8: (2, 0, 0.7, 0.4, 2.5, 0, 0.6, 0.8, 1.2),
+        9: (0, 1.2, 0.4, 0.8, 2.5, 0, 0.7, 0.3, 1, 2),
+        10: (0.8, 1.2, 0.3, 0, 1, 2.5, 0.4, 0, 0.5, 0, 1.5),
+        11: (1.5, 2, 0, 1, 0.3, 3, 0, 0.2, 1, 0.8, 0, 2.5),
+        12: (2, 0, 0.5, 0, 0.2, 0, 3, 1, 0.3, 0, 0.8, 0.3, 2.5),
+        13: (2, 0.3, 2, 0.5, 0, 1.2, 3, 0.3, 0, 0.3, 0, 0.8, 1.2, 0.7),
+        14: (0.8, 2.5, 1.2, 0.3, 0.7, 0, 0.5, 3, 0.3, 0, 1.2, 2, 0, 2.5, 1.8),
+        15: (1.5, 0.7, 2, 1.8, 0, 0.2, 0, 3, 1, 0.5, 0, 0.4, 1, 2.5, 2, 0.5),
+        16: (2, 0, 1.5, 0.4, 2, 0.8, 0.5, 0.3, 3, 0, 0.7, 0, 1, 2, 2.5, 0, 1.2),
     },
     "high": {
-        8: (30, 2, 1.5, 0.6, 0, 0.6, 1.5, 2, 30),
-        9: (50, 8, 1.5, 0.8, 0, 0, 0.8, 1.5, 8, 50),
-        10: (75, 25, 2, 0.6, 0, 0, 0, 0.6, 2, 25, 75),
-        11: (100, 50, 5, 0.3, 0, 0, 0, 0, 0.3, 5, 50, 100),
-        12: (150, 30, 8, 3, 0.5, 0, 0, 0, 0.5, 3, 8, 30, 150),
-        13: (250, 50, 10, 4, 1.5, 0, 0, 0, 0, 1.5, 4, 10, 50, 250),
-        14: (400, 100, 25, 8, 0.8, 0, 0, 0, 0, 0, 0.8, 8, 25, 100, 400),
-        15: (600, 100, 20, 10, 5, 0, 0, 0, 0, 0, 0, 5, 10, 20, 100, 600),
-        16: (1000, 500, 100, 10, 2, 0.2, 0, 0, 0, 0, 0, 0.2, 2, 10, 100, 500, 1000),
+        8: (2, 0.5, 0.4, 0, 3, 0, 0.4, 0.5, 1),
+        9: (2, 0.7, 0.4, 0.8, 0, 3, 0, 0.4, 0.3, 2.5),
+        10: (1.5, 0.7, 0.3, 0.2, 0, 3, 0.7, 0, 0.3, 1.2, 0),
+        11: (3, 0, 0.4, 0.8, 0.3, 0, 3.5, 0, 0.4, 0, 0.3, 3),
+        12: (2.5, 3, 0, 0.6, 0, 0.3, 3.5, 0, 0.3, 0, 1.5, 0, 2.5),
+        13: (1.8, 0.8, 0, 1, 0.4, 0.2, 0, 3.5, 0, 1.2, 0, 1.2, 0, 3),
+        14: (2.5, 0.5, 0, 1.2, 0.3, 0, 0.4, 3.5, 0, 0.4, 0.3, 0.8, 2.5, 0.3, 3),
+        15: (2, 2.5, 0.5, 0.8, 0, 0.3, 0.2, 0, 4, 0, 0.4, 1.2, 0.4, 0, 2.5, 3.5),
+        16: (3, 0.5, 1.2, 2, 0.8, 0.7, 0.3, 0, 4, 0, 0.2, 0, 0.5, 0, 1, 0, 3.5),
     },
 }
 DEFAULT_ROWS = 12
@@ -254,7 +256,7 @@ class Hexfall(RoundGame):
         "result_seconds": 5,            # the landing slot + payouts stay up
         "summary_seconds": 10,          # game over card
         "currency": "coins",            # your bot's coin name, shown after amounts
-        "min_bet": 1, "max_bet": 100000,  # per player per drop; 0 = no max
+        "min_bet": 1, "max_bet": 250,  # per player per drop; 0 = no max
         "drop_clip": "", "win_clip": "", "bust_clip": "",   # soundboard clips
     }
     SCHEMA: dict[str, tuple] = {
@@ -623,7 +625,7 @@ class Hexfall(RoundGame):
                 "source": source, "multipliers": mults, "rtp_pct": rtp, "house_edge_pct": edge,
                 "slots": list(slots), "presets": presets, "notes": notes,
                 "rules": [
-                    f"A game is {cfg['drops']} drops. Each drop has a betting window, then ONE hex token falls "
+                    f"A game is {cfg['drops']} drops. Each drop has a betting window, then ONE skull falls "
                     f"through {rows} rows of hexagonal pegs into one of {rows + 1} slots.",
                     f"At every peg the server flips a fair coin (secrets.SystemRandom): left or right. The slot is "
                     f"the number of right bounces, so slot k has probability C({rows}, k) / 2^{rows} - the "
@@ -738,7 +740,7 @@ async def api_hf_ledger(since: str | None = None, limit: str | None = None):
 
 
 API_DOC = {
-    "about":    "one game at a time: betting -> dropping -> result -> ... -> over. A hex-themed Plinko: one token "
+    "about":    "one game at a time: betting -> dropping -> result -> ... -> over. A hex-themed Plinko: one skull "
                 "falls through rows of pegs (a fair coin at each one, server side) into a slot that pays stake x "
                 "its multiplier. Bets are against the bank; docs/hexfall.md",
     "start":    "GET|POST /games/api/hexfall/start   {drops (1-10), rows (8-16), risk (low|medium|high), multipliers "

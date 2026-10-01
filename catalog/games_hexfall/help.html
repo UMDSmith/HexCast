@@ -3,8 +3,8 @@
   <h2>Hexfall <span class="tag">/games#hexfall</span></h2>
   <p class="hint">A hex-themed Plinko on the games overlay (<code>/games/overlay</code>, or <code>?game=hexfall</code>). Each
     drop has a betting window where chat puts <b>hexcoins</b> up against the bank (your bot), through the shared
-    <b>ledger</b>; then <b>one glowing hex token</b> falls through a pyramid of hexagonal pegs. The <b>server</b> flips a fair
-    coin at every peg (left or right, <code>secrets.SystemRandom</code>) and the overlay only animates that path. The token
+    <b>ledger</b>; then <b>one glowing skull</b> falls through a pyramid of hexagonal pegs. The <b>server</b> flips a fair
+    coin at every peg (left or right, <code>secrets.SystemRandom</code>) and the overlay only animates that path. The skull
     lands in a slot that pays <b>stake &times; its multiplier</b> (x0 is a <b>bust</b>); every slot's odds, the table's RTP
     and the house edge are computed from the binomial probabilities and shown. 3 drops a game, 30 s to bet on the first,
     20 s between drops; no bets ends the game. Placement, look and the header's title
@@ -15,7 +15,7 @@
     <tr><td>GET|POST /games/api/hexfall/remove</td><td><code>{user}</code> — take back this window's bet (<code>refund</code>)</td></tr>
     <tr><td>GET|POST /games/api/hexfall/next</td><td>end the current phase now (alias <code>/drop</code>)</td></tr>
     <tr><td>GET /games/api/hexfall/table · user/{name} · ledger · history · bets</td><td>the STATE · one player · this game's ledger events (<code>payout</code> credits) · finished games + stats · the slot table with every slot's multiplier, exact odds, the RTP and house edge</td></tr>
-    <tr><td>GET|POST /games/api/hexfall/stop</td><td>end the game: a token already falling counts (its slot pays), open bets are refunded</td></tr>
+    <tr><td>GET|POST /games/api/hexfall/stop</td><td>end the game: a skull already falling counts (its slot pays), open bets are refunded</td></tr>
     <tr><td>GET|POST /games/api/hexfall/preview</td><td><code>{overrides, seconds}</code> — Edit Mode's Test in OBS: the scene on screen for a few seconds with that look (<code>STATE.preview</code>); never touches the game · <code>/preview/clear</code></td></tr>
   </table>
   <pre>curl -X POST http://localhost:4747/games/api/hexfall/start -H "Content-Type: application/json" -d "{\"rows\":12,\"risk\":\"high\"}"
