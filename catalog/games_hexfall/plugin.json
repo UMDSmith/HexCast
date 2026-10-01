@@ -1,0 +1,21 @@
+{
+  "id": "games_hexfall",
+  "name": "Hexfall",
+  "version": "1.0.0",
+  "parent": "games",
+  "description": "A hex-themed Plinko: chat bets on each drop, one glowing hex token falls through a pyramid of hexagonal pegs and pays the bet times the slot it lands in - or busts. Three drops a game, about two minutes.",
+  "icon": "🔮",
+  "color": "#9b5de5",
+  "category": "Games",
+  "author": "UMDSmith",
+  "help": {
+    "file": "help.html",
+    "toc": [
+      {
+        "id": "hexfall",
+        "label": "Hexfall"
+      }
+    ]
+  },
+  "order": 50
+}
