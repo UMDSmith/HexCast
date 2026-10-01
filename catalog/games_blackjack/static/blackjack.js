@@ -635,72 +635,237 @@
     c.restore();
   }
   // ------------------------------------------------------------------ Hex's hand
-  // Hex is on stream himself: at the table there is only his skeleton hand, reaching in from the top of the screen out of a
-  // suit sleeve with a hex-patterned cuff. (tx, ty) = where the fingertips point; sc = size.
-  // pose: {spread 0..1 (fingers apart), curl 0..1 (fingers drawn in), pinch 0..1 (thumb meets index)}
-  var BONE = '#ece6d3', BONE_D = '#a79f86', BONE_O = '#2f2a20';
-  function boneCap(c, x0, y0, x1, y1, w) {
-    c.lineCap = 'round';
-    c.strokeStyle = BONE_O; c.lineWidth = w + 2.6; c.beginPath(); c.moveTo(x0, y0); c.lineTo(x1, y1); c.stroke();
-    c.strokeStyle = BONE; c.lineWidth = w; c.beginPath(); c.moveTo(x0, y0); c.lineTo(x1, y1); c.stroke();
-    c.strokeStyle = 'rgba(255,255,255,.55)'; c.lineWidth = Math.max(1, w * 0.28); c.beginPath(); c.moveTo(x0, y0 - w * 0.18); c.lineTo(x1, y1 - w * 0.18); c.stroke();
+  // Hex is on stream himself: at the table there is only his skeleton hand, reaching in from the top of the screen out of
+  // a suit sleeve and a satin cuff. The bones are drawn once per frame into a small offscreen sprite (outline, ivory shading
+  // from the table lamp, grain / cracks / stains, ambient occlusion in the joint gaps, a faint infernal rim), then the sprite is
+  // laid on the table with ONE soft contact shadow. Local frame: the wrist at the origin, the fingers along +x.
+  // pose: {spread, roll, fc: [index, middle, ring, pinky curl 0..1], th: thumb curl, pinch}
+  var HAND_BOX = { x0: -52, y0: -92, w: 250, h: 184 };
+  var BONE_TEX = null, HAND_CV = null, HAND_K = '', HAND_T = 0;
+  function smooth01(u) { u = clamp(u, 0, 1); return u * u * (3 - 2 * u); }
+  function boneTexture() {
+    if (BONE_TEX) return BONE_TEX;
+    var cv = mk(HAND_BOX.w * 2, HAND_BOX.h * 2), g = cv.getContext('2d'), r = mulberry(90210), i, j;
+    g.scale(2, 2);
+    for (i = 0; i < 16; i++) {            // stains: old tea, dried blood, a little grave-mould
+      var sx = HAND_BOX.w * r(), sy = HAND_BOX.h * r(), sr = 8 + r() * 22, kind = r();
+      var col = kind < 0.55 ? '122,82,34' : kind < 0.8 ? '70,34,26' : '70,84,62';
+      var gr = g.createRadialGradient(sx, sy, 0, sx, sy, sr);
+      gr.addColorStop(0, 'rgba(' + col + ',' + (0.16 + r() * 0.12).toFixed(2) + ')'); gr.addColorStop(1, 'rgba(' + col + ',0)');
+      g.fillStyle = gr; g.fillRect(sx - sr, sy - sr, sr * 2, sr * 2);
+    }
+    for (i = 0; i < 1500; i++) {          // grain: fibres running along the bones
+      var gx = HAND_BOX.w * r(), gy = HAND_BOX.h * r(), gl = 5 + r() * 15;
+      g.strokeStyle = 'rgba(' + (r() < 0.7 ? '96,68,36' : '255,250,235') + ',' + (0.05 + r() * 0.1).toFixed(3) + ')'; g.lineWidth = 0.5 + r() * 0.5;
+      g.beginPath(); g.moveTo(gx, gy); g.lineTo(gx + gl, gy + (r() - 0.5) * 3); g.stroke();
+    }
+    for (i = 0; i < 800; i++) {           // pores
+      g.fillStyle = 'rgba(58,40,22,' + (0.12 + r() * 0.2).toFixed(2) + ')';
+      g.beginPath(); g.arc(HAND_BOX.w * r(), HAND_BOX.h * r(), 0.4 + r() * 0.8, 0, TAU); g.fill();
+    }
+    g.lineCap = 'round';
+    for (i = 0; i < 26; i++) {            // hairline cracks, a few with a branch
+      var cx = HAND_BOX.w * r(), cy = HAND_BOX.h * r(), a = r() * TAU, n = 3 + Math.floor(r() * 4);
+      g.strokeStyle = 'rgba(38,26,14,' + (0.4 + r() * 0.3).toFixed(2) + ')'; g.lineWidth = 0.6 + r() * 0.4;
+      g.beginPath(); g.moveTo(cx, cy);
+      for (j = 0; j < n; j++) { a += (r() - 0.5) * 1.1; cx += Math.cos(a) * (2.5 + r() * 3.5); cy += Math.sin(a) * (2.5 + r() * 3.5); g.lineTo(cx, cy); if (j === 1 && r() < 0.5) { g.moveTo(cx, cy); g.lineTo(cx + Math.cos(a + 1) * 4, cy + Math.sin(a + 1) * 4); g.moveTo(cx, cy); } }
+      g.stroke();
+    }
+    BONE_TEX = cv; return cv;
   }
-  function knuckle(c, x, y, r) {
-    c.beginPath(); c.arc(x, y, r, 0, TAU); c.fillStyle = BONE; c.fill(); c.lineWidth = 1.6; c.strokeStyle = BONE_O; c.stroke();
-    c.beginPath(); c.arc(x - r * 0.25, y - r * 0.3, r * 0.35, 0, TAU); c.fillStyle = 'rgba(255,255,255,.7)'; c.fill();
+  // a bone shaft from (x0,y0) to (x1,y1): flared ends (w0, w1), waisted middle (wm); returns its shapes
+  function shape(x0, y0, x1, y1, w0, wm, w1) {
+    var dx = x1 - x0, dy = y1 - y0, L = Math.hypot(dx, dy) || 1, nx = -dy / L, ny = dx / L, N = 8, A = [], B = [], i, u, w, p = new Path2D(), q;
+    for (i = 0; i <= N; i++) {
+      u = i / N; w = (u < 0.5 ? lerp(w0, wm, smooth01(u * 2)) : lerp(wm, w1, smooth01((u - 0.5) * 2))) / 2;
+      A.push([x0 + dx * u + nx * w, y0 + dy * u + ny * w]); B.push([x0 + dx * u - nx * w, y0 + dy * u - ny * w]);
+    }
+    p.moveTo(A[0][0], A[0][1]); for (i = 1; i <= N; i++) p.lineTo(A[i][0], A[i][1]);
+    for (i = N; i >= 0; i--) p.lineTo(B[i][0], B[i][1]);
+    p.closePath();
+    var ang = Math.atan2(dy, dx), e0 = new Path2D(), e1 = new Path2D();
+    e0.ellipse(x0, y0, w0 * 0.54, w0 * 0.5, ang, 0, TAU); e1.ellipse(x1, y1, w1 * 0.56, w1 * 0.52, ang, 0, TAU);
+    return { shapes: [p, e0, e1], hl: [x0, y0, x1, y1, wm] };
   }
-  function finger(c, bx, by, ang, lens, w, bend) {
-    var x = bx, y = by, a = ang, i, pts = [[x, y]];
-    for (i = 0; i < lens.length; i++) { a += bend * (i === 0 ? 0.6 : 1); x += Math.cos(a) * lens[i]; y += Math.sin(a) * lens[i]; pts.push([x, y]); }
-    for (i = 0; i < lens.length; i++) boneCap(c, pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1], w * (1 - i * 0.14));
-    for (i = 0; i < pts.length; i++) knuckle(c, pts[i][0], pts[i][1], w * (i === pts.length - 1 ? 0.5 : 0.66));
+  function blob(x, y, rx, ry, rot) { var p = new Path2D(); p.ellipse(x, y, rx, ry, rot || 0, 0, TAU); return { shapes: [p], hl: null }; }
+  var F_BASE = [[91, -23], [95, -8], [92, 8], [85, 22]];                // the knuckles: heads of the metacarpals 2..5
+  var F_LEN = [[33, 21, 15], [37, 23, 16], [34, 22, 15], [27, 17, 13]], F_W = [10.5, 11, 10, 8.6];
+  var C_BASE = [[46, -14], [47, -3], [46, 8], [44, 16]];                // bases of the metacarpals (on the carpals)
+  var CARPALS = [[26, -15, 9.5, 7.5, 0.6], [28, -3, 8.5, 8.5, 0], [26, 8, 7.5, 7.5, 0.3], [18, 17, 5.2, 5, 0], [40, -21, 7.5, 6.5, 0.4], [44, -11, 6.5, 6, 0],
+    [45, 0, 8.4, 8, 0], [42, 12, 8, 7.5, 0.3]];
+  function buildBones(pose) {
+    var bones = [], links = [], i, k;
+    // forearm: the ends of the radius and the ulna, coming out of the cuff
+    bones.push(shape(1, -9, 20, -10, 12, 12.5, 21));
+    var ul = shape(1, 12, 18, 13, 9, 8, 13); bones.push(ul); bones.push(blob(18, 19.5, 4.6, 4.6));
+    bones.push(blob(19, -18, 4, 3.4, 0.3));                              // the radial styloid
+    for (i = 0; i < CARPALS.length; i++) { var cp = CARPALS[i]; bones.push(blob(cp[0], cp[1], cp[2], cp[3], cp[4])); }
+    // the thumb: metacarpal, proximal and distal phalanx
+    var thA = -0.92 + pose.pinch * 0.62 - pose.spread * 0.12, thc = pose.th, p0 = [34, -22];
+    var m1 = [p0[0] + Math.cos(thA - 0.12) * 32, p0[1] + Math.sin(thA - 0.12) * 32];
+    bones.push(shape(p0[0], p0[1], m1[0], m1[1], 12, 8.4, 11));
+    var a1 = thA + thc * 0.55, p1 = [m1[0] + Math.cos(a1) * 25 * (1 - 0.25 * thc), m1[1] + Math.sin(a1) * 25 * (1 - 0.25 * thc)];
+    bones.push(shape(m1[0], m1[1], p1[0], p1[1], 10.5, 7.4, 9));
+    var a2 = a1 + thc * 0.6, p2 = [p1[0] + Math.cos(a2) * 20 * (1 - 0.2 * thc), p1[1] + Math.sin(a2) * 20 * (1 - 0.2 * thc)];
+    bones.push(shape(p1[0], p1[1], p2[0], p2[1], 8.6, 6.2, 5.6));
+    links.push([m1, 6], [p1, 5]);
+    // the four fingers, back to front so the near ones overlap the far ones
+    for (i = 0; i < 4; i++) {
+      var cb = C_BASE[i], hd = F_BASE[i], fa = (i - 1.5) * pose.spread * 0.2 + (i - 1.5) * 0.045, cu = clamp(pose.fc[i], 0, 1);
+      var tot = Math.atan2(hd[1] - cb[1], hd[0] - cb[0]);
+      hd = [hd[0] + Math.cos(fa) * 0, hd[1]];
+      bones.push(shape(cb[0], cb[1], hd[0], hd[1], F_W[i] + 1.6, F_W[i] - 2.6, F_W[i] + 0.6));       // the metacarpal
+      var x = hd[0], y = hd[1], cum = 0, side = (i - 1.5) * -0.09, w = F_W[i] - 0.6;
+      var flex = [cu * 1.15, cu * 1.4, cu * 0.95];
+      links.push([[x, y], 5.4]);
+      for (k = 0; k < 3; k++) {
+        cum += flex[k];
+        var cs = Math.cos(Math.min(cum, 1.5)), len = F_LEN[i][k] * Math.max(0.26, cs), dir = fa + side * cum * 0.55 + (i === 0 ? pose.pinch * 0.18 : 0);
+        var nx2 = x + Math.cos(dir) * len, ny2 = y + Math.sin(dir) * len, near = 1 + 0.2 * Math.sin(Math.min(cum, 1.5));
+        bones.push(shape(x, y, nx2, ny2, w * near, w * 0.66 * near, w * (k === 2 ? 0.74 : 0.9) * near));
+        if (k < 2) links.push([[nx2, ny2], 4.6 * near]);
+        x = nx2; y = ny2; w *= 0.84;
+      }
+    }
+    return { bones: bones, links: links };
   }
-  var FINGERS = [[-19, [27, 19, 14]], [-6.5, [31, 21, 15]], [6.5, [28, 19, 14]], [19, [22, 15, 12]]];
-  function drawHexHand(c, tx, ty, sc, pose, th, t, vis) {
-    sc *= 1.25;
-    var ax = 960 + (tx - 960) * 0.3, ay = -90, L = 118 * sc;
-    var dx = tx - ax, dy = ty - ay, len = Math.hypot(dx, dy) || 1, ux = dx / len, uy = dy / len, ang = Math.atan2(dy, dx);
-    var wx = tx - ux * L, wy = ty - uy * L, nx = -uy, ny = ux, cuffW = 36 * sc;
-    var spread = pose.spread || 0, curl = pose.curl || 0, pinch = pose.pinch || 0, i;
-    var glow = th.accent && th.accent.charAt(0) === '#' ? th.accent : '#e6c06c';
+  function renderBones(g, u, pose, ll) {
+    var B = buildBones(pose), i, j, bn, sh;
+    g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, g.canvas.width, g.canvas.height);
+    g.setTransform(u, 0, 0, u, -HAND_BOX.x0 * u, -HAND_BOX.y0 * u);
+    g.lineJoin = 'round'; g.lineCap = 'round';
+    // dried ligaments in the joint gaps (dark, under the bones)
+    g.fillStyle = '#2c2116';
+    for (i = 0; i < B.links.length; i++) { g.beginPath(); g.arc(B.links[i][0][0], B.links[i][0][1], B.links[i][1], 0, TAU); g.fill(); }
+    // outline underlay, then the fill, bone by bone (later bones overlap earlier ones)
+    for (i = 0; i < B.bones.length; i++) {
+      bn = B.bones[i];
+      g.strokeStyle = '#2a2013'; g.lineWidth = 2.6; for (j = 0; j < bn.shapes.length; j++) g.stroke(bn.shapes[j]);
+      g.fillStyle = '#e2d8bd'; for (j = 0; j < bn.shapes.length; j++) g.fill(bn.shapes[j]);
+    }
+    g.save();
+    g.globalCompositeOperation = 'source-atop';
+    // the lamp: ivory on the lit side, umber in shadow (across the whole hand)
+    var gx = ll[0] * 62, gy = ll[1] * 62, sg = g.createLinearGradient(gx + 60, gy, -gx + 60, -gy);
+    sg.addColorStop(0, 'rgba(255,250,228,.55)'); sg.addColorStop(0.45, 'rgba(220,205,168,.0)'); sg.addColorStop(1, 'rgba(34,20,10,.62)');
+    g.fillStyle = sg; g.fillRect(HAND_BOX.x0, HAND_BOX.y0, HAND_BOX.w, HAND_BOX.h);
+    g.drawImage(boneTexture(), HAND_BOX.x0, HAND_BOX.y0, HAND_BOX.w, HAND_BOX.h);
+    // roundness: each shaft darkens towards its shadow edge
+    for (i = 0; i < B.bones.length; i++) {
+      var h = B.bones[i].hl; if (!h) continue;
+      var mx = (h[0] + h[2]) / 2, my = (h[1] + h[3]) / 2, rg = g.createLinearGradient(mx + ll[0] * h[4] * 0.55, my + ll[1] * h[4] * 0.55, mx - ll[0] * h[4] * 0.55, my - ll[1] * h[4] * 0.55);
+      rg.addColorStop(0, 'rgba(255,250,235,.22)'); rg.addColorStop(0.55, 'rgba(0,0,0,0)'); rg.addColorStop(1, 'rgba(30,16,8,.38)');
+      g.fillStyle = rg; for (j = 0; j < B.bones[i].shapes.length; j++) g.fill(B.bones[i].shapes[j]);
+    }
+    // ambient occlusion in the joint gaps and under the wrist
+    for (i = 0; i < B.links.length; i++) {
+      var lk = B.links[i], ao = g.createRadialGradient(lk[0][0], lk[0][1], 0, lk[0][0], lk[0][1], lk[1] * 1.9);
+      ao.addColorStop(0, 'rgba(18,10,4,.6)'); ao.addColorStop(1, 'rgba(18,10,4,0)');
+      g.fillStyle = ao; g.fillRect(lk[0][0] - lk[1] * 2, lk[0][1] - lk[1] * 2, lk[1] * 4, lk[1] * 4);
+    }
+    var wg = g.createLinearGradient(-12, 0, 24, 0); wg.addColorStop(0, 'rgba(10,6,4,.75)'); wg.addColorStop(1, 'rgba(10,6,4,0)');
+    g.fillStyle = wg; g.fillRect(-14, -30, 40, 60);
+    g.restore();
+    // specular glints along the lit side of the shafts
+    g.lineCap = 'round';
+    for (i = 0; i < B.bones.length; i++) {
+      var s2 = B.bones[i].hl; if (!s2) continue;
+      var ox = ll[0] * s2[4] * 0.26, oy = ll[1] * s2[4] * 0.26, dx = s2[2] - s2[0], dy = s2[3] - s2[1];
+      g.strokeStyle = 'rgba(255,253,244,.62)'; g.lineWidth = Math.max(1, s2[4] * 0.13);
+      g.beginPath(); g.moveTo(s2[0] + dx * 0.2 + ox, s2[1] + dy * 0.2 + oy); g.lineTo(s2[0] + dx * 0.78 + ox, s2[1] + dy * 0.78 + oy); g.stroke();
+    }
+    // the faint infernal rim: a red halo drawn behind the bones
+    g.globalCompositeOperation = 'destination-over';
+    g.lineWidth = 7; g.strokeStyle = 'rgba(255,40,30,.10)';
+    for (i = 0; i < B.bones.length; i++) for (j = 0; j < B.bones[i].shapes.length; j++) g.stroke(B.bones[i].shapes[j]);
+    g.lineWidth = 3.4; g.strokeStyle = 'rgba(255,70,50,.24)';
+    for (i = 0; i < B.bones.length; i++) for (j = 0; j < B.bones[i].shapes.length; j++) g.stroke(B.bones[i].shapes[j]);
+    g.globalCompositeOperation = 'source-over';
+  }
+  // the suit sleeve and the satin cuff, in the hand's frame (sleeve to -x, the cuff ends at the origin); s = size, len = sleeve length
+  function paintSleeve(c, s, len, ll, th, k) {
+    var wa = 33 * s, wb = 29 * s, cuffL = 36 * s, hemX = -cuffL + 6 * s, i;
+    var litSide = ll[1] < 0 ? -1 : 1, glow = th.accent && th.accent.charAt(0) === '#' ? th.accent : '#e6c06c';
+    // the jacket sleeve
     c.save();
-    if (vis != null) c.globalAlpha = vis;
-    // the sleeve: a long dark suit sleeve from beyond the top of the screen, crimson pinstripe
-    var wa = 30 * sc + 12, wb = cuffW * 0.9;
-    c.beginPath();
-    c.moveTo(ax + nx * wa, ay + ny * wa); c.lineTo(wx + nx * wb, wy + ny * wb); c.lineTo(wx - nx * wb, wy - ny * wb); c.lineTo(ax - nx * wa, ay - ny * wa); c.closePath();
-    var sg = c.createLinearGradient(ax, ay, wx, wy); sg.addColorStop(0, '#0b0910'); sg.addColorStop(1, '#241a26');
-    c.shadowColor = 'rgba(0,0,0,.55)'; c.shadowBlur = 18; c.shadowOffsetY = 8;
-    c.fillStyle = sg; c.fill(); c.shadowBlur = 0; c.shadowOffsetY = 0;
-    c.lineWidth = 2; c.strokeStyle = 'rgba(214,52,66,.75)'; c.stroke();
-    c.strokeStyle = 'rgba(214,52,66,.38)'; c.lineWidth = 1.2;
-    for (i = -1; i <= 1; i += 2) { c.beginPath(); c.moveTo(ax + nx * wa * 0.45 * i, ay + ny * wa * 0.45 * i); c.lineTo(wx + nx * wb * 0.45 * i, wy + ny * wb * 0.45 * i); c.stroke(); }
-    // the hand, in its own frame: the wrist at the origin, the fingers along +x
-    c.translate(wx, wy); c.rotate(ang); c.scale(sc, sc);
-    // the cuff: a band with a row of glowing hexagons and a hex link
-    c.save();
-    rrect(c, -34, -cuffW / sc - 3, 40, 2 * cuffW / sc + 6, 7);
-    var cg = c.createLinearGradient(-34, 0, 6, 0); cg.addColorStop(0, '#1d1522'); cg.addColorStop(1, '#0e0a12'); c.fillStyle = cg; c.fill();
-    c.lineWidth = 2; c.strokeStyle = 'rgba(214,52,66,.9)'; c.stroke();
-    c.shadowColor = glow; c.shadowBlur = 10; c.lineWidth = 1.6; c.strokeStyle = glow;
-    for (i = -1; i <= 1; i++) { hexPath(c, -14, i * 17, 7.5, Math.PI / 6); c.stroke(); }
-    hexPath(c, -14, 0, 4, Math.PI / 6); c.fillStyle = glow; c.fill();
+    c.beginPath(); c.moveTo(-len, -wa); c.lineTo(hemX, -wb); c.lineTo(hemX, wb); c.lineTo(-len, wa); c.closePath();
+    c.fillStyle = '#17131b'; c.fill();
+    c.clip();
+    var sg = c.createLinearGradient(0, -wa * litSide, 0, wa * litSide);
+    sg.addColorStop(0, '#3a3140'); sg.addColorStop(0.35, '#241d29'); sg.addColorStop(1, '#0b090e');
+    c.fillStyle = sg; c.fillRect(-len, -wa, len, wa * 2);
+    // wool weave: faint diagonal twill
+    c.strokeStyle = 'rgba(255,255,255,.035)'; c.lineWidth = 1;
+    for (i = -len; i < 0; i += 5) { c.beginPath(); c.moveTo(i, -wa); c.lineTo(i + wa * 2, wa); c.stroke(); }
+    // pinstripes, converging with the sleeve
+    c.strokeStyle = 'rgba(214,150,150,.30)'; c.lineWidth = 1.1;
+    for (i = -4; i <= 4; i++) { c.beginPath(); c.moveTo(-len, i * wa * 0.23); c.lineTo(hemX, i * wb * 0.23); c.stroke(); }
+    // folds: the cloth gathers at the cuff (dark creases with a light flank) and one long soft fold
+    for (i = 0; i < 6; i++) {
+      var fx = hemX - 8 * s - i * 15 * s, fy = (i % 2 ? 1 : -1) * wb * 0.7, bend = (i % 2 ? -1 : 1) * 10 * s;
+      c.beginPath(); c.moveTo(fx, fy); c.quadraticCurveTo(fx + bend, fy * 0.1, fx - 2 * s, -fy); c.lineWidth = 6 * s; c.strokeStyle = 'rgba(0,0,0,' + (0.38 - i * 0.04).toFixed(2) + ')'; c.stroke();
+      c.beginPath(); c.moveTo(fx + 5 * s, fy); c.quadraticCurveTo(fx + bend + 5 * s, fy * 0.1, fx + 3 * s, -fy); c.lineWidth = 3 * s; c.strokeStyle = 'rgba(255,255,255,' + (0.10 - i * 0.01).toFixed(2) + ')'; c.stroke();
+    }
+    var fg = c.createLinearGradient(0, 0, 0, wa * litSide * 0.9); fg.addColorStop(0, 'rgba(255,255,255,.07)'); fg.addColorStop(1, 'rgba(255,255,255,0)');
+    c.fillStyle = fg; c.fillRect(-len, litSide < 0 ? -wa : 0, len, wa);
+    var vg = c.createLinearGradient(-len, 0, hemX, 0); vg.addColorStop(0, 'rgba(0,0,0,.55)'); vg.addColorStop(0.5, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,.25)');
+    c.fillStyle = vg; c.fillRect(-len, -wa, len, wa * 2);
     c.restore();
-    // glow of the bones
-    c.shadowColor = 'rgba(176,150,255,.85)'; c.shadowBlur = 12;
-    // the palm: the wrist bones, the metacarpals, a rounded outline
-    for (i = 0; i < 4; i++) {
-      var by = FINGERS[i][0] * 1.0, cx0 = 4 + (i % 2) * 3, cy0 = by * 0.35;
-      boneCap(c, cx0, cy0, 56, by * 1.02, 8.4 - (i === 3 ? 1.2 : 0));
-    }
-    for (i = 0; i < 3; i++) knuckle(c, 6 + i * 7, -11 + i * 11, 7);
-    // fingers: spread fans them out, curl draws them in, the index goes to the thumb on a pinch
-    for (i = 0; i < 4; i++) {
-      var f = FINGERS[i], fa = (i - 1.5) * spread * 0.2, kc = curl * (1 - i * 0.06) + (i === 0 ? pinch * 0.5 : 0), lens = f[1].map(function (v) { return v * (1 - 0.5 * kc); });
-      finger(c, 56, f[0] * 1.02, fa + (i === 0 ? pinch * 0.2 : 0), lens, 7.4, kc * 0.5);
-    }
-    // the thumb
-    finger(c, 12, -22, -0.85 + pinch * 0.62 - spread * 0.1, [25, 21], 8, 0.18 - pinch * 0.1);
+    // the hem: a darker edge and a seam
+    c.strokeStyle = 'rgba(214,52,66,.7)'; c.lineWidth = 1.6; c.beginPath(); c.moveTo(hemX, -wb); c.lineTo(hemX, wb); c.stroke();
+    // the shirt cuff: black satin with crimson piping, a fold, stitching and a hex cufflink
+    c.save();
+    rrect(c, -cuffL, -wb + 1, cuffL, wb * 2 - 2, 6 * s);
+    var cg = c.createLinearGradient(0, -wb * litSide, 0, wb * litSide); cg.addColorStop(0, '#4a3a52'); cg.addColorStop(0.4, '#221a28'); cg.addColorStop(1, '#09070c');
+    c.fillStyle = cg; c.fill(); c.clip();
+    var sat = c.createLinearGradient(-cuffL, 0, 0, 0); sat.addColorStop(0, 'rgba(0,0,0,.35)'); sat.addColorStop(0.55, 'rgba(255,255,255,.08)'); sat.addColorStop(1, 'rgba(0,0,0,.5)');
+    c.fillStyle = sat; c.fillRect(-cuffL, -wb, cuffL, wb * 2);
+    c.strokeStyle = 'rgba(0,0,0,.45)'; c.lineWidth = 3 * s;
+    for (i = 0; i < 2; i++) { c.beginPath(); c.moveTo(-cuffL * (0.3 + i * 0.3), -wb); c.quadraticCurveTo(-cuffL * (0.35 + i * 0.3), 0, -cuffL * (0.3 + i * 0.3), wb); c.stroke(); }
+    c.setLineDash([3, 3]); c.strokeStyle = 'rgba(255,255,255,.22)'; c.lineWidth = 1; c.beginPath(); c.moveTo(-cuffL + 5, -wb + 6 * s); c.lineTo(-3, -wb + 6 * s); c.moveTo(-cuffL + 5, wb - 6 * s); c.lineTo(-3, wb - 6 * s); c.stroke(); c.setLineDash([]);
+    c.restore();
+    rrect(c, -cuffL, -wb + 1, cuffL, wb * 2 - 2, 6 * s); c.lineWidth = 1.8; c.strokeStyle = 'rgba(200,36,52,.9)'; c.stroke();
+    // the cufflink: a gold hexagon with a ruby, a bright edge on the lit side
+    var kx = -cuffL * 0.5, ky = -wb * 0.5 * litSide * -1, kr = 8.5 * s;
+    c.save(); c.shadowColor = 'rgba(0,0,0,.6)'; c.shadowBlur = 5 * k; c.shadowOffsetY = 2 * k;
+    hexPath(c, kx, ky, kr, Math.PI / 6); var kg = c.createLinearGradient(kx - kr, ky - kr, kx + kr, ky + kr); kg.addColorStop(0, '#fff0b0'); kg.addColorStop(0.5, '#c79a3a'); kg.addColorStop(1, '#5e4210'); c.fillStyle = kg; c.fill(); c.restore();
+    c.lineWidth = 1; c.strokeStyle = 'rgba(40,24,0,.8)'; hexPath(c, kx, ky, kr, Math.PI / 6); c.stroke();
+    hexPath(c, kx, ky, kr * 0.5, Math.PI / 6); var rg = c.createRadialGradient(kx - 1, ky - 1, 0, kx, ky, kr * 0.5); rg.addColorStop(0, '#ff8a8a'); rg.addColorStop(1, '#8c0f1f'); c.fillStyle = rg; c.fill();
+    c.fillStyle = 'rgba(255,255,255,.7)'; c.beginPath(); c.arc(kx - kr * 0.16, ky - kr * 0.18, kr * 0.1, 0, TAU); c.fill();
+    // the cuff's mouth: the dark inside the sleeve the bones come out of
+    var og = c.createLinearGradient(-4, 0, 6, 0); og.addColorStop(0, 'rgba(0,0,0,.9)'); og.addColorStop(1, 'rgba(0,0,0,0)');
+    c.fillStyle = og; c.fillRect(-4, -wb * 0.82, 10, wb * 1.64);
+  }
+  var SLEEVE = { cv: null, key: '' }, SLEEVE_LEN = 1100;
+  function sleeveSprite(s, k, th) {
+    var key = [s.toFixed(2), k, th.accent].join('|');
+    if (SLEEVE.key === key && SLEEVE.cv) return SLEEVE.cv;
+    var wa = 33 * s, W = Math.ceil(SLEEVE_LEN + 4), H = Math.ceil(wa * 2 + 4), cv = mk(W * k, H * k), g = cv.getContext('2d');
+    g.setTransform(k, 0, 0, k, (SLEEVE_LEN + 2) * k, (H / 2) * k);
+    paintSleeve(g, s, SLEEVE_LEN, [-0.93, 0.34], th, k);
+    var dk = mk(cv.width, cv.height), dg = dk.getContext('2d'); dg.drawImage(cv, 0, 0); dg.globalCompositeOperation = 'source-in'; dg.fillStyle = '#000'; dg.fillRect(0, 0, dk.width, dk.height);
+    SLEEVE.dark = dk; SLEEVE.cv = cv; SLEEVE.key = key; SLEEVE.H = H; return cv;
+  }
+  // Hex's hand with its sleeve: the fingertips point at (tx, ty); sc = size; pose as above; roll = wrist roll (radians)
+  function drawHexHand(c, tx, ty, sc, pose, th, k, t) {
+    var ax = 960 + (tx - 960) * 0.3, ay = -90, L = 150 * sc;
+    var dx = tx - ax, dy = ty - ay, len = Math.hypot(dx, dy) || 1, ang = Math.atan2(dy, dx);
+    var wx = tx - dx / len * L, wy = ty - dy / len * L, ca = Math.cos(ang), sa = Math.sin(ang);
+    var lw = [-0.5, -0.86], ll = [lw[0] * ca + lw[1] * sa, -lw[0] * sa + lw[1] * ca];     // the lamp, in the hand's frame
+    var sp = sleeveSprite(sc, k, th), sh = SLEEVE.H, take = Math.min(len, SLEEVE_LEN), sx = (SLEEVE_LEN + 2 - take) * k;
+    c.save(); c.translate(wx + 11, wy + 19); c.rotate(ang); c.globalAlpha = 0.2;      // the sleeve's shadow on the table (no blur: a darker, offset copy)
+    c.drawImage(SLEEVE.dark, sx, 0, take * k, sp.height, -take, -sh / 2, take, sh);
+    c.restore();
+    c.save(); c.translate(wx, wy); c.rotate(ang);
+    c.drawImage(sp, sx, 0, take * k, sp.height, -take, -sh / 2, take, sh);
+    c.restore();
+    var RS = 0.8, u = sc * k * RS;           // the bones are drawn a little under full resolution, and re-drawn at ~30 fps (the hand itself still moves every frame)
+    if (!HAND_CV || HAND_K !== k + '|' + sc.toFixed(2)) { HAND_CV = mk(HAND_BOX.w * 1.2 * k * RS, HAND_BOX.h * 1.2 * k * RS); HAND_K = k + '|' + sc.toFixed(2); HAND_T = -1e9; }
+    if (t - HAND_T >= 40 || t < HAND_T) { renderBones(HAND_CV.getContext('2d'), u, pose, ll); HAND_T = t; }
+    c.save(); c.translate(wx, wy); c.rotate(ang + (pose.roll || 0));
+    // the contact shadow falls away from the lamp (down and to the right of the hand, on the felt, the cards and the chips)
+    c.shadowColor = 'rgba(0,0,0,.5)'; c.shadowBlur = 13 * k; c.shadowOffsetX = 10 * k; c.shadowOffsetY = 18 * k;
+    c.drawImage(HAND_CV, 0, 0, HAND_CV.width, HAND_CV.height, HAND_BOX.x0 * sc, HAND_BOX.y0 * sc, HAND_CV.width / (k * RS), HAND_CV.height / (k * RS));
     c.restore();
   }
 
@@ -1044,15 +1209,19 @@
   };
 
   // ---- Hex's hand: where it is, what it is doing
-  P._handRest = function (t) { return { x: 1228, y: 452, spread: 0.32 + 0.1 * Math.sin(t / 700), curl: 0.12, pinch: 0 }; };
+  P._handRest = function (t) { return { x: 1228, y: 452, spread: 0.3 + 0.08 * Math.sin(t / 700), curl: 0.3, pinch: 0, drum: true }; };
   P._handTarget = function (g, el, t) {
     var lay = this.lay, rest = this._handRest(t);
     if (!g) return rest;
     var d = g.deal, ph = g.phase, i, n;
-    function seatPt(sn) { var A = lay.seats[sn - 1]; return A ? { x: A.x, y: A.y - lay.R - 13 - lay.ch * 0.8 } : null; }
+    function seatPt(sn, hi) {
+      var A = lay.seats[sn - 1], s = g.seats && g.seats[sn - 1]; if (!A) return null;
+      var nh = s && s.hands ? s.hands.length : 1, hd = s && s.hands && s.hands[hi || 0], n = hd ? hd.cards.length : 2, sc = nh > 1 ? 0.75 : 1;
+      return { x: A.x, y: A.y - lay.R - 13 - stackHeight(Math.max(1, n), lay.ch * sc) + 8 };       // the fingertips rest on the top edge of the stack: the hand never covers it
+    }
     function dealerPt(j) {
       var cn = (g.dealer && g.dealer.cards ? g.dealer.cards.length : 2) || 2, dx = cn > 5 ? Math.max(34, (560 - DEALER.cw) / (cn - 1)) : DEALER.dx;
-      return { x: DEALER.x - (DEALER.cw + (cn - 1) * dx) / 2 + j * dx + DEALER.cw / 2, y: DEALER.cardY - 36 };
+      return { x: DEALER.x - (DEALER.cw + (cn - 1) * dx) / 2 + j * dx + DEALER.cw / 2, y: DEALER.cardY - DEALER.ch / 2 + 8 };
     }
     if (d && (ph === 'dealing' || ph === 'resolve' || ph === 'dealer')) {
       if (ph === 'dealing' && d.shuffle > 0 && el < d.shuffle + 200) {
@@ -1066,7 +1235,7 @@
         return { x: hp.x, y: hp.y, spread: 0.1, curl: 0.35, pinch: Math.sin(Math.PI * u) };
       }
       if (n && kk >= 0 && kk < n) {
-        var o = d.order[kk], pt = o[0] === 0 ? dealerPt(o[2]) : seatPt(o[0]);
+        var o = d.order[kk], pt = o[0] === 0 ? dealerPt(o[2]) : seatPt(o[0], o[1]);
         if (pt) return { x: pt.x, y: pt.y, spread: 0.25, curl: 0.25, pinch: clamp(1 - (el - (d.t0 + kk * step)) / 240, 0, 1) };
       }
       if (n && kk < 0) { var f0 = d.order[0], p0 = f0[0] === 0 ? dealerPt(0) : seatPt(f0[0]); if (p0) return { x: p0.x, y: p0.y, spread: 0.3, curl: 0.2, pinch: 0 }; }
@@ -1089,14 +1258,19 @@
       }
       return rest;
     }
-    if (ph === 'action' || ph === 'insurance') { rest.spread = 0.3 + 0.25 * Math.abs(Math.sin(t / 380)); rest.curl = 0.1 + 0.25 * Math.abs(Math.sin(t / 380 + 1)); }
-    return rest;
+        return rest;
   };
   P._drawHand = function (c, g, el, t) {
-    var tg = this._handTarget(g, el, t), h = this.hand, dt = Math.min(100, t - this.lastT0), a = 1 - Math.exp(-dt / (g && g.phase === 'settle' ? 60 : 95));
-    if (!h) h = this.hand = { x: tg.x, y: tg.y - 160, spread: 0.3, curl: 0.1, pinch: 0 };
-    h.x += (tg.x - h.x) * a; h.y += (tg.y - h.y) * a; h.spread += (tg.spread - h.spread) * a; h.curl += (tg.curl - h.curl) * a; h.pinch += (tg.pinch - h.pinch) * Math.min(1, a * 1.8);
-    drawHexHand(c, h.x, h.y + Math.sin(t / 900) * 2, clamp(this.lay.S / 150, 0.72, 1.1), h, this.th, t, null);
+    var tg = this._handTarget(g, el, t), h = this.hand, dt = Math.min(100, t - this.lastT0), a = 1 - Math.exp(-dt / (g && g.phase === 'settle' ? 60 : 95)), i;
+    var base = tg.curl, fcT = [], drum = tg.drum ? 1 : 0;
+    for (i = 0; i < 4; i++) fcT.push(base * (0.85 + 0.13 * i) + drum * 0.3 * Math.pow(Math.max(0, Math.sin(t / 300 - i * 0.85)), 3) + (i === 0 ? tg.pinch * 0.5 : 0));
+    var thT = 0.12 + base * 0.5 + tg.pinch * 0.35;
+    if (!h) h = this.hand = { x: tg.x, y: tg.y - 160, spread: 0.3, fc: fcT.slice(), th: thT, pinch: 0, roll: 0 };
+    var lean = clamp((tg.x - h.x) * 0.0016, -0.2, 0.2);
+    h.x += (tg.x - h.x) * a; h.y += (tg.y - h.y) * a; h.spread += (tg.spread - h.spread) * a; h.pinch += (tg.pinch - h.pinch) * Math.min(1, a * 1.8);
+    for (i = 0; i < 4; i++) h.fc[i] += (fcT[i] - h.fc[i]) * Math.min(1, a * (1 + i * 0.08));      // the fingers follow one after another
+    h.th += (thT - h.th) * a; h.roll += (lean - h.roll) * Math.min(1, a * 0.8);
+    drawHexHand(c, h.x, h.y + Math.sin(t / 900) * 2, clamp(this.lay.S / 150, 0.72, 1.1) * 1.3, h, this.th, this.k, t);
   };
 
   P._banner = function (c, g, el, t) {

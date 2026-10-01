@@ -358,8 +358,8 @@ default. Set it in Edit Mode (to see it live) or in the tab's Settings card.
 
 ### On screen
 
-Hex's skeleton hand (bony, faintly glowing, in a suit sleeve with a hex-patterned
-cuff) reaches in from the top of the screen: it flicks each card out to its
+Hex's skeleton hand (aged ivory bone with grain, cracks and stains, lit by the table lamp, a faint infernal red rim, in a pinstriped suit sleeve with a satin cuff and a hex cufflink) reaches in from the top of the screen:
+it flicks each card out to its
 seat, turns the hole card over, sweeps the losing chips to the bank and pushes
 the payouts out, and rests beside the dealer's cards between jobs. The shoe sits
 at one corner and the discard tray at the other, a chip rack on each side of the
