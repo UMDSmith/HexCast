@@ -74,6 +74,7 @@ class Settings:
         self.path = Path(path)
         self.data: dict[str, Any] = {"disabled": [], "migrated": False, "catalogs": []}
         self.problem: str | None = None
+        self.check_updates = True
         self.upstream, self.upstream_problem = normalize_upstream(None)
         try:
             text = self.path.read_text(encoding="utf-8-sig")         # -sig: Notepad / PowerShell add a BOM
@@ -95,10 +96,34 @@ class Settings:
         self.data["migrated"] = bool(raw.get("migrated", False))
         if isinstance(raw.get("catalogs"), list):
             self.data["catalogs"] = [str(x) for x in raw["catalogs"] if isinstance(x, str)]
-        if "upstream" in raw:            # kept as written in `data` (saving never rewrites it); this is what is used
-            self.upstream, self.upstream_problem = normalize_upstream(raw["upstream"])
-            if self.upstream_problem:
-                log.warning("[plugins] %s: %s", self.path.name, self.upstream_problem)
+        self._derive()
+        if self.upstream_problem:
+            log.warning("[plugins] %s: %s", self.path.name, self.upstream_problem)
+
+    def _derive(self) -> None:
+        """What `check_updates` and `upstream` in `data` mean (data keeps them as the user wrote them)."""
+        flag = self.data.get("check_updates", True)
+        self.check_updates = flag if isinstance(flag, bool) else True
+        self.upstream, self.upstream_problem = normalize_upstream(self.data.get("upstream"))
+
+    @property
+    def update_source(self) -> dict | None:
+        """The GitHub source to check for updates, or None when checking is off (the switch in
+        Options, or `"upstream": false`)."""
+        return self.upstream if self.check_updates else None
+
+    def set_check_updates(self, on: bool) -> None:
+        self.data["check_updates"] = bool(on)
+        if on and self.data.get("upstream") is False:
+            del self.data["upstream"]                  # "upstream": false was the old way to say off
+        self._derive()
+        self.save()
+
+    def set_upstream(self, repo: str, branch: str) -> None:
+        cur = self.data.get("upstream")
+        self.data["upstream"] = {**(cur if isinstance(cur, dict) else {}), "repo": repo, "branch": branch}
+        self._derive()
+        self.save()
 
     def _damaged(self, why: str) -> None:
         self.data["migrated"] = True                                  # do not "upgrade" on top of a file we cannot read
@@ -258,7 +283,7 @@ class PluginHost:
         self.settings = Settings(self.config_dir / "plugins.json")
         self.catalog = Catalog(Path(catalog_dir) if catalog_dir else paths.CATALOG_DIR, self.settings.catalogs)
         # HEXCAST_NO_UPSTREAM=1 never contacts GitHub (tests, offline machines, Docker builds)
-        self.upstream = Upstream(None if os.environ.get("HEXCAST_NO_UPSTREAM") else self.settings.upstream)
+        self.upstream = Upstream(self.update_source())
         self.loaded: dict[str, Loaded] = {}
         self.errors: dict[str, str] = {}              # plugin id -> why it is not running
         self.needs_deps: set[str] = set()             # installed, but packages are missing
@@ -594,6 +619,18 @@ class PluginHost:
         if pid in self.errors or (inst is not None and inst.manifest is None):
             return "error"
         return "stopped"
+
+    @staticmethod
+    def env_locked() -> bool:
+        return bool(os.environ.get("HEXCAST_NO_UPSTREAM"))
+
+    def update_source(self) -> dict | None:
+        """The upstream settings in force: the saved ones unless checking is off or the environment forbids it."""
+        return None if self.env_locked() else self.settings.update_source
+
+    def reload_upstream(self) -> None:
+        """Options changed: the update source follows (the cache of the old one is dropped)."""
+        self.upstream.configure(self.update_source())
 
     def update_infos(self, installed: dict[str, Installed] | None = None) -> dict:
         """pid -> UpdateInfo for every installed plugin (see versions.update_info). Also makes

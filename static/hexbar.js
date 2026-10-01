@@ -90,7 +90,11 @@
     (section ? '<span class="hb-sep">/</span><span class="hb-section">' + esc(section) + '</span>' : '') +
     '<nav class="hb-nav"></nav>' +
     '<span class="hb-spacer"></span>' +
-    '<div class="hb-vers" id="hb-vers"></div>' +
+    '<div class="hb-right"><div class="hb-vers" id="hb-vers"></div>' +
+    '<a class="hb-gear' + (forcedKey === 'options' ? ' sel' : '') + '" id="hb-gear" href="/options" title="Settings - update checks and other options for all of Hexcast" aria-label="Settings">' +
+      '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.11-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.56-1.11 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.01A1.7 1.7 0 0 0 10 3.09V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.01A1.7 1.7 0 0 0 20.91 10H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1z"/></svg>' +
+    '</a></div>' +
     '<div class="hb-actions" id="hb-actions"></div>';
 
   // Relocate the page's own buttons into the bar, keeping their handlers.
@@ -201,15 +205,17 @@
     });
   }
 
+  var coreTimer = 0;
   function loadCore() {
+    clearTimeout(coreTimer);
     return fetch('/api/version', { cache: 'no-store' })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (v) {
         if (v) { core = v; renderVersions(); }
         // the server asks GitHub in the background: look again soon, then now and then
-        setTimeout(loadCore, v && v.checking ? 5000 : 10 * 60 * 1000);
+        coreTimer = setTimeout(loadCore, v && v.checking ? 5000 : 10 * 60 * 1000);
       })
-      .catch(function () { setTimeout(loadCore, 60000); });
+      .catch(function () { coreTimer = setTimeout(loadCore, 60000); });
   }
   loadCore();
 
@@ -297,5 +303,5 @@
   items.forEach(loadAdapter);
   fetchNav().then(pollStatus);
   setInterval(function () { fetchNav().then(pollStatus); }, 10000);
-  window.HexbarRefresh = function () { return fetchNav().then(pollStatus); };   // e.g. right after an install
+  window.HexbarRefresh = function () { loadCore(); return fetchNav().then(pollStatus); };   // e.g. right after an install
 })();

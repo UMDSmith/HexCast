@@ -29,7 +29,7 @@
     '  background:color-mix(in srgb, var(--c,#35354a) 22%, transparent); }',
     '.hs-title{ flex:1; min-width:0; }',
     '.hs-name{ font-size:16px; font-weight:700; }',
-    '.hs-ver{ font:600 11px/1 var(--hb-mono,monospace); color:var(--hs-dim); margin-left:8px; }',
+    '.hs-ver{ display:block; font:600 11px/1 var(--hb-mono,monospace); color:var(--hs-dim); margin-top:5px; }',
     '.hs-desc{ color:var(--hs-muted); font-size:13px; line-height:1.5; }',
     '.hs-badge{ font:700 10px/1 var(--hb-mono,monospace); letter-spacing:.08em; text-transform:uppercase; padding:4px 8px;',
     '  border-radius:99px; border:1px solid var(--hs-line); color:var(--hs-dim); white-space:nowrap; }',

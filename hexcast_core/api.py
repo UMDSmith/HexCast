@@ -4,6 +4,9 @@
     GET  /api/plugins                    what is installed / can be installed
                                          ?parent=games -> that plugin's add-ons; none -> top level
     GET  /api/plugins/nav                the top-bar tabs
+    GET  /options                        the master Options page (the gear in the top bar)
+    GET|POST /api/options                the global options (update checks, upstream repo / branch)
+    POST /api/options/check-now          ask GitHub for the latest versions right now
     POST /api/plugins/{id}/install       -> {job}     (also installs what it requires)
     POST /api/plugins/{id}/update        -> {job}
     POST /api/plugins/{id}/repair        -> {job}     (re-install its Python packages)
@@ -32,6 +35,7 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
+from . import options as opts
 from . import requirements as reqs
 from .host import PluginHost
 from .installer import InstallError, Installer
@@ -463,6 +467,48 @@ def build_router(service: PluginService) -> APIRouter:
     @guard
     async def api_disable(pid: str, request: Request):
         return await service.disable(pid)
+
+    def options_view(extra: dict | None = None) -> dict:
+        view = opts.read_all(host)
+        scanned = host.scan()
+        view["available"] = [
+            {"id": pid, "name": scanned[pid].manifest.name if scanned[pid].manifest else pid,
+             "installed": i.view()["installed_label"], "latest": i.view()["latest_label"], "source": i.source}
+            for pid, i in host.update_infos(scanned).items() if i.available]
+        return {"ok": True, **view, **(extra or {})}
+
+    @router.get("/api/options")
+    async def api_options():
+        return options_view()
+
+    @router.post("/api/options")
+    @guard
+    async def api_options_set(request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = None
+        try:
+            opts.apply(host, body)
+        except opts.OptionError as exc:
+            raise ApiError(str(exc), 400, errors=getattr(exc, "errors", {})) from None
+        except OSError as exc:
+            raise ApiError(f"could not save the setting ({exc.strerror or exc}) - is config/ writable?", 500) from None
+        return options_view()
+
+    @router.post("/api/options/check-now")
+    @guard
+    async def api_options_check_now(request: Request):
+        up = host.upstream
+        if not up.enabled:
+            raise ApiError("Update checks are switched off - nothing was contacted", 409)
+        installed = [p for p, i in host.scan().items() if i.meta.get("source") in ("bundled", "upstream")]
+        await asyncio.to_thread(up.refresh, installed, True)
+        return options_view({"checked": True})
+
+    @router.get("/options", response_class=HTMLResponse)
+    async def options_page():
+        return HTMLResponse((service.static_dir / "options.html").read_text(encoding="utf-8"), headers=NOCACHE)
 
     @router.get("/plugins", response_class=HTMLResponse)
     async def store_page():

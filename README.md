@@ -378,8 +378,34 @@ linux/amd64,linux/arm64,linux/arm/v7 -t your-registry/hexcast:latest --push .`.
 ### Upgrading
 
 Your library (`media/`), all settings/secrets (`config/`) and the plugins you installed (`plugins/`) are git-ignored, so
-updating never touches them. The top bar of every panel shows `Hexcast Version: 2.0` (and the version of the module
-you are on, e.g. `Games Version: 1.0`); when a newer release is out it adds **Update to 2.1**, a link to the download.
+updating never touches them.
+
+**What the top bar shows.** At the top right of every page: `Hexcast Version: 2.0`, and next to it the version of the
+module (plugin) of the tab you are on - `Games Version: 1.0`, `Twitch Version: 1.0` (nothing extra on the Soundboard).
+`1.0.0` is shown as `1.0`; anything else as it is (`1.2.3`). Inside Games, each game's tab shows its own version
+(`Craps Version: 1.0`) and each game card in the game store shows it too. On a narrow window the word *Version* is dropped.
+
+**Update links.** When a newer version exists, an **Update to 1.1** button appears: next to that module's version in the
+top bar, on the game's tab in Games, on its card in the **+** store, and as a green dot on the **+** tab. Pressing it updates
+*that module only* - the new files and Python packages are prepared while the old version keeps running, your settings
+are kept, nothing needs restarting, and if anything goes wrong the old version stays. For Hexcast itself the top bar shows
+`Hexcast Version: 2.0` with **Update to 2.1**, a link to the GitHub ZIP: download it and unpack it over your Hexcast folder
+(Hexcast never overwrites its own core files; your `media/`, `config/` and `plugins/` are not in the ZIP).
+
+**No git needed.** Hexcast checks GitHub itself:
+- **How often:** at most once an hour. The answer is cached, and the check runs in the background - it never delays start-up
+  or a page load, and when you are offline it just stays quiet.
+- **What is fetched:** the repository's `VERSION` file (the newest Hexcast) and the small `plugin.json` of each module you have
+  installed (to read its version). When you press **Update to ...** on a module, its folder is downloaded from the repository
+  ZIP (https, github.com only, size-capped, nothing outside that module's folder is unpacked). Nothing about you, your
+  streams or your settings is sent - it is the same as opening those files in a browser.
+- **Turn it off:** click the **gear** at the top right of the top bar (Settings) and switch **Check GitHub for updates** off
+  (or put `{"check_updates": false}` in `config/plugins.json`). Then Hexcast makes no update requests at all; version numbers
+  still show, and updates that arrive in the local `catalog/` folder (git users: `git pull`) are still offered. The same page
+  has **Check now** (with the time of the last check and what it found) and the repository / branch to follow (default
+  `UMDSmith/hexcast`, `main`).
+
+More in [docs/plugins.md](docs/plugins.md#versions-and-updates).
 
 - **Git:** `git pull`, then run the launcher.
 - **ZIP:** download the latest from **`< > Code`** and extract over your existing folder (keep `media/`, `config/` and `plugins/`), then run the launcher.
@@ -388,12 +414,9 @@ you are on, e.g. `Games Version: 1.0`); when a newer release is out it adds **Up
 The launcher notices when requirements changed and re-installs automatically —
 no manual `pip` to remember.
 
-**Plugins update on your say-so.** An update brings a newer copy of the plugin folder into `catalog/`, but what
-runs is the installed copy in `plugins/` — a plugin's card shows **Update** when the catalog has something newer, and
+**Plugins update on your say-so.** An update brings a newer copy of the plugin folder into `catalog/` (or is fetched from GitHub), but what
+runs is the installed copy in `plugins/` — a plugin's card shows **Update to 1.1** when something newer exists, and
 pressing it swaps the files and restarts just that plugin, so nothing changes in the middle of a stream.
-You do not need git for this: Hexcast checks GitHub (cached for an hour, in the background, silently when offline) and
-the module's top-bar version, its game tab and its card show **Update to 1.1** when a newer version is out. To never contact
-GitHub, put `{"upstream": false}` in `config/plugins.json` — see [Versions and updates](docs/plugins.md#versions-and-updates).
 
 **Coming from a version without plugins?** Nothing to do: the first start keeps every tab you were already using (it
 looks for their settings in `config/` and installs those plugins for you). A tab you never configured is one click away in **+**.

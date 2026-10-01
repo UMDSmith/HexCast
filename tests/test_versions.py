@@ -39,10 +39,13 @@ class FakeUpstream(Upstream):
     def __init__(self, answers=None, config=None):
         super().__init__(config if config is not None else dict(DEFAULT_UPSTREAM))
         self.answers = answers or {}
-        self.calls = []
+        self.calls, self.core_calls = [], []
 
     def _get(self, url, limit, timeout):
-        self.calls.append(url)
+        if url == self.version_url():
+            self.core_calls.append(url)                               # (plugin fetches are `calls`)
+        else:
+            self.calls.append(url)
         a = self.answers.get(url, NotFound(url))
         if isinstance(a, Exception):
             raise a
@@ -418,7 +421,7 @@ def test_an_upstream_update_applies_end_to_end_and_keeps_the_config(world, clien
     assert (world.plugins / "alpha" / "static" / "new.txt").read_text() == "v1.1.0"
     assert json.loads((world.plugins / "alpha" / "plugin.json").read_text())["version"] == "1.1.0"
     assert (world.config / "alpha.json").read_text() == '{"keep": "me"}'
-    assert "alpha" in world.host.loaded and client.get("/alpha/api/status").status_code == 200
+    assert "alpha" in world.host.loaded and not world.host.errors            # restarted on the new files
     meta = world.host.scan()["alpha"].meta
     assert meta["source"] == "upstream" and meta["version"] == "1.1.0" and meta["content_hash"]
     v = client.get("/api/plugins").json()["plugins"][0]
@@ -538,17 +541,152 @@ def test_core_version_says_where_the_download_is(hexcast):
     c = TestClient(hexcast.app)
     d = c.get("/api/version").json()
     assert d["version"] == hexcast.VERSION and d["check_enabled"] is False and d["update_available"] is False
-    assert d["repo_url"] == "https://github.com/UMDSmith/hexcast"
-    hexcast.plugin_host.upstream = Upstream({"repo": "me/fork", "branch": "dev"})
-    hexcast._version_cache.update({"latest": "99.1", "checked_at": time.time(), "running": False})
+    assert d["repo_url"] == "https://github.com/UMDSmith/hexcast" and d["checking"] is False
+    old = hexcast.plugin_host.upstream
+    up = FakeUpstream(config={"repo": "me/fork", "branch": "dev"})
+    up.core_latest, up._core_at, up.checked_at = "99.1", time.time(), time.time()
+    hexcast.plugin_host.upstream = up
     try:
         d = c.get("/api/version").json()
         assert d["update_available"] and d["latest"] == "99.1" and d["check_enabled"] and not d["checking"]
         assert d["download_url"] == "https://github.com/me/fork/archive/refs/heads/dev.zip"
         assert d["repo_url"] == "https://github.com/me/fork"
+        up.configure(None)                                           # switched off: no latest, no update link, no request
+        d = c.get("/api/version").json()
+        assert d["latest"] is None and d["update_available"] is False and d["check_enabled"] is False and up.calls == []
     finally:
-        hexcast._version_cache.update({"latest": None, "checked_at": 0.0})
-        hexcast.plugin_host.upstream = Upstream(None)
+        hexcast.plugin_host.upstream = old
+
+
+def test_core_version_is_fetched_with_the_modules_and_cached():
+    up = FakeUpstream()
+    up.answers = {up.version_url(): b"2.1\n", **raw(up, "alpha", "1.1.0")}
+    assert up.version_url() == "https://raw.githubusercontent.com/UMDSmith/hexcast/main/VERSION"
+    assert up.core_due()
+    up.refresh(["alpha"])
+    assert up.core_latest == "2.1" and up.latest("alpha") == "1.1.0" and not up.core_due()
+    n = len(up.calls) + len(up.core_calls)
+    up.refresh(["alpha"])
+    assert len(up.calls) + len(up.core_calls) == n
+    up.answers[up.version_url()] = b"<html>no</html>"
+    up.refresh([], force=True)
+    assert up.core_latest is None                                    # not a version: ignored
+    up.configure(None)
+    assert not up.enabled and up.core_latest is None and not up.core_due() and not up.kick(["alpha"], force=True)
+
+
+# ---- the Options page and API ------------------------------------------------------------------------------------
+
+@pytest.fixture
+def opt_client(world, client, monkeypatch):
+    monkeypatch.delenv("HEXCAST_NO_UPSTREAM", raising=False)          # (the test suite sets it so nothing contacts GitHub)
+    world.host.upstream = FakeUpstream(config=world.host.update_source())   # (no test talks to the real GitHub)
+    static = world.plugins.parent / "static"
+    (static / "options.html").write_text("<html>options</html>")
+    world.host.settings.path = world.config / "plugins.json"
+    return client
+
+
+def test_options_defaults_and_page(world, opt_client):
+    c = opt_client
+    assert c.get("/options").status_code == 200
+    d = c.get("/api/options").json()
+    assert d["ok"] and d["options"] == {"check_updates": True, "upstream_repo": "UMDSmith/hexcast", "upstream_branch": "main"}
+    assert d["defaults"] == d["options"] and d["locked"] == {} and d["available"] == []
+    assert d["updates"]["repo"] == "UMDSmith/hexcast" and d["updates"]["checked_at"] is None
+
+
+def test_options_off_stops_every_update_request_but_not_local_updates(world, opt_client, server):
+    c = opt_client
+    installed_alpha(world, "1.0.0")
+    world.host.upstream = Upstream(server.config)
+    publish(server, "1.1.0")
+    world.host.upstream.refresh(["alpha"], force=True)
+    assert c.get("/api/plugins/nav").json()["updates"] == ["alpha"]
+    n = len(server.hits)
+    # switch it off through the API (what the page does)
+    d = c.post("/api/options", json={"check_updates": False}).json()
+    assert d["ok"] and d["options"]["check_updates"] is False and d["updates"]["enabled"] is False
+    assert json.loads((world.config / "plugins.json").read_text())["check_updates"] is False
+    up = world.host.upstream
+    assert not up.enabled and up.kick(["alpha"], force=True) is False
+    assert c.post("/api/options/check-now").status_code == 409
+    nav = c.get("/api/plugins/nav").json()
+    assert nav["updates"] == [] and nav["items"][0]["version_label"] == "1.0" and nav["items"][0]["update_available"] is False
+    assert len(server.hits) == n                                          # not one request while it is off
+    # a git-pulled catalog still shows its update
+    write_plugin(world.catalog, "alpha", version="1.2.0")
+    nav = c.get("/api/plugins/nav").json()
+    assert nav["updates"] == ["alpha"] and nav["items"][0]["update_source"] == "catalog"
+    assert len(server.hits) == n
+
+
+def test_options_check_now_reports_what_github_said(world, opt_client, server):
+    c = opt_client
+    installed_alpha(world, "1.0.0")
+    server.files["/raw/UMDSmith/hexcast/main/VERSION"] = b"2.5"
+    publish(server, "1.1.0")
+    world.host.settings.data["upstream"] = server.config
+    world.host.settings._derive()
+    world.host.upstream = Upstream(None)                              # the real fetching code, aimed at the local server
+    world.host.reload_upstream()
+    d = c.post("/api/options/check-now").json()
+    assert d["ok"] and d["checked"] and d["updates"]["core_latest"] == "2.5" and d["updates"]["modules"] == {"alpha": "1.1.0"}
+    assert d["updates"]["checked_at"] and d["updates"]["error"] is None
+    assert d["available"] == [{"id": "alpha", "name": "Alpha", "installed": "1.0", "latest": "1.1", "source": "upstream"}]
+    # offline: a quiet error, and the old answers stay
+    world.host.upstream.config = dict(server.config, raw_url="http://localhost:1/{id}")
+    d = c.post("/api/options/check-now").json()
+    assert d["ok"] and d["updates"]["error"] and d["updates"]["modules"] == {"alpha": "1.1.0"}
+
+
+def test_options_repo_and_branch_are_validated_and_saved(world, opt_client):
+    c = opt_client
+    d = c.post("/api/options", json={"upstream_repo": "https://github.com/me/fork.git", "upstream_branch": "dev"}).json()
+    assert d["ok"] and d["options"]["upstream_repo"] == "me/fork" and d["options"]["upstream_branch"] == "dev"
+    assert json.loads((world.config / "plugins.json").read_text())["upstream"] == {"repo": "me/fork", "branch": "dev"}
+    assert world.host.upstream.repo == "me/fork" and world.host.upstream.raw_url("x").startswith("https://raw.githubusercontent.com/me/fork/dev/")
+    for body, key in (({"upstream_repo": "nonsense"}, "upstream_repo"), ({"upstream_repo": "a/b/c"}, "upstream_repo"),
+                      ({"upstream_repo": 5}, "upstream_repo"), ({"upstream_branch": "../x"}, "upstream_branch"),
+                      ({"upstream_branch": ""}, "upstream_branch"), ({"check_updates": "yes"}, "check_updates"),
+                      ({"upstream_repo": "me/ok", "upstream_branch": "bad branch!"}, "upstream_branch")):
+        r = c.post("/api/options", json=body)
+        assert r.status_code == 400 and key in r.json()["errors"], body
+    assert c.post("/api/options", json={"nope": 1}).status_code == 400
+    assert c.post("/api/options", json=[1]).status_code == 400
+    assert c.post("/api/options", content=b"not json").status_code == 400
+    assert c.get("/api/options").json()["options"]["upstream_repo"] == "me/fork"      # nothing half-applied
+    # editing the repo while checking is off does not switch it on
+    c.post("/api/options", json={"check_updates": False})
+    c.post("/api/options", json={"upstream_repo": "me/other"})
+    d = c.get("/api/options").json()
+    assert d["options"]["check_updates"] is False and d["options"]["upstream_repo"] == "me/other"
+
+
+def test_options_the_old_upstream_false_means_off_and_switching_on_clears_it(world, opt_client):
+    c = opt_client
+    (world.config / "plugins.json").write_text(json.dumps({"upstream": False, "keep": 1}))
+    world.host.settings.__init__(world.config / "plugins.json")
+    world.host.reload_upstream()
+    assert c.get("/api/options").json()["options"]["check_updates"] is False
+    d = c.post("/api/options", json={"check_updates": True}).json()
+    assert d["options"]["check_updates"] is True and world.host.upstream.enabled
+    saved = json.loads((world.config / "plugins.json").read_text())
+    assert saved["check_updates"] is True and "upstream" not in saved and saved["keep"] == 1
+
+
+def test_options_environment_lock(world, opt_client, monkeypatch):
+    monkeypatch.setenv("HEXCAST_NO_UPSTREAM", "1")
+    d = opt_client.get("/api/options").json()
+    assert "HEXCAST_NO_UPSTREAM" in d["locked"]["check_updates"]
+    assert opt_client.post("/api/options", json={"check_updates": True}).status_code == 400
+
+
+def test_options_refuse_other_web_pages(world, opt_client):
+    for path in ("/api/options", "/api/options/check-now"):
+        r = opt_client.post(path, json={"check_updates": False}, headers={"Origin": "https://evil.example"})
+        assert r.status_code == 403
+    assert world.host.settings.check_updates is True
 
 
 # ---- the command line -----------------------------------------------------------------------------------------

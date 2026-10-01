@@ -1,0 +1,208 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="/static/hexcast.png">
+<link rel="stylesheet" href="/static/hexbar.css?v=2">
+<title>Hexcast - Settings</title>
+<style>
+  :root{
+    --bg:var(--hb-bg); --panel:var(--hb-panel); --line:var(--hb-line); --ink:var(--hb-ink);
+    --dim:var(--hb-dim); --good:var(--hb-good); --warn:var(--hb-warn); --bad:#ff6b62;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 'Segoe UI',system-ui,sans-serif;}
+  main{padding:8px 22px 70px;max-width:860px}
+  h1{margin:6px 0 4px;font-size:22px}
+  .lead{margin:0 0 14px;color:var(--dim);max-width:70ch}
+  .card{background:var(--hb-card);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
+  .card h2{margin:0 0 4px;font:800 13px/1.2 var(--hb-mono);letter-spacing:.16em;text-transform:uppercase}
+  .hint{margin:0 0 14px;color:var(--dim);font-size:13px;max-width:72ch}
+  .hint code,.mono{font:12.5px var(--hb-mono);color:var(--good)}
+  .row{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .opt{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:12px 0;border-top:1px solid var(--line)}
+  .opt:first-of-type{border-top:0;padding-top:4px}
+  .opt .t b{display:block;font-size:15px}
+  .opt .t span{display:block;color:var(--dim);font-size:13px;max-width:62ch}
+  /* the on/off switch */
+  .sw{position:relative;flex:0 0 auto;width:46px;height:26px;border-radius:99px;border:1px solid var(--hb-line-hi);background:#1c1c25;
+      cursor:pointer;padding:0;transition:background .15s,border-color .15s}
+  .sw::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:var(--dim);transition:transform .15s,background .15s}
+  .sw[aria-checked="true"]{background:#0e2118;border-color:var(--good)}
+  .sw[aria-checked="true"]::after{transform:translateX(20px);background:var(--good)}
+  .sw:disabled{opacity:.45;cursor:not-allowed}
+  .sw:focus-visible,.btn:focus-visible,input:focus-visible{outline:2px solid var(--good);outline-offset:2px}
+  .fields{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:12px;margin-top:6px}
+  label.f{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--dim);letter-spacing:.06em;text-transform:uppercase;font-weight:600}
+  input[type=text]{background:#08080c;border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:9px 10px;font:14px var(--hb-mono);width:100%}
+  input[type=text].bad{border-color:var(--bad)}
+  input[type=text]:disabled{opacity:.5}
+  .err{color:var(--bad);font-size:12.5px;min-height:1em;text-transform:none;letter-spacing:0;font-weight:500}
+  .btn{font:600 13px/1 'Segoe UI',system-ui,sans-serif;padding:10px 15px;border-radius:8px;cursor:pointer;border:1px solid var(--line);
+       background:var(--hb-panel);color:var(--ink)}
+  .btn:hover{border-color:var(--hb-line-hi)}
+  .btn.primary{background:var(--good);border-color:var(--good);color:#06110a}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+  .status{margin-top:14px;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:#0c0c11;font-size:13.5px}
+  .status .k{color:var(--dim)}
+  .status ul{margin:6px 0 0;padding-left:18px}
+  .status .good{color:var(--good)} .status .warn{color:var(--warn)}
+  .off{opacity:.55}
+  .note{margin-top:10px;padding:9px 11px;border:1px solid #5a4210;border-radius:8px;background:#231a08;color:var(--warn);font-size:13px}
+  #toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,calc(100% + 30px));background:var(--hb-card);border:1px solid var(--hb-line-hi);
+         color:var(--ink);padding:10px 18px;border-radius:99px;font-weight:600;font-size:14px;transition:transform .25s ease;z-index:200;
+         max-width:calc(100vw - 32px);text-align:center}
+  #toast.up{transform:translate(-50%,0)} #toast.bad{border-color:var(--bad);color:var(--bad)}
+  @media (max-width:560px){ main{padding:8px 12px 70px} .fields{grid-template-columns:1fr} .card{padding:14px} }
+</style></head>
+<body>
+<div id="hexbar" data-section="Settings" data-key="options"></div>
+<script src="/static/hexbar.js?v=2"></script>
+
+<main>
+  <h1>Settings</h1>
+  <p class="lead">Settings for Hexcast as a whole. Each plugin keeps its own settings on its own tab.</p>
+
+  <section class="card" id="updates">
+    <h2>Updates</h2>
+    <p class="hint">Hexcast can look on GitHub for newer versions of itself and of the modules you have installed, so you see
+      <b>Update to 1.1</b> without needing git. It asks at most once an hour, in the background, and says nothing when you are offline.</p>
+
+    <div class="opt">
+      <div class="t"><b id="sw-label">Check GitHub for updates</b>
+        <span>Fetches the <code>VERSION</code> file and the <code>plugin.json</code> of each plugin you installed - nothing about you or your
+          streams is sent. Off = no update requests at all; version numbers still show, and updates from the local <code>catalog/</code>
+          folder (after a <code>git pull</code>) still work.</span></div>
+      <button class="sw" id="sw" role="switch" aria-labelledby="sw-label" aria-checked="true" type="button"></button>
+    </div>
+    <div id="lock" class="note" hidden></div>
+
+    <div id="source">
+      <div class="fields">
+        <label class="f">GitHub repository <input type="text" id="repo" spellcheck="false" autocomplete="off" placeholder="owner/name">
+          <span class="err" id="repo-err"></span></label>
+        <label class="f">Branch <input type="text" id="branch" spellcheck="false" autocomplete="off" placeholder="main">
+          <span class="err" id="branch-err"></span></label>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <button class="btn" id="save" type="button" disabled>Save</button>
+        <button class="btn" id="reset" type="button" disabled>Back to the default</button>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:16px">
+      <button class="btn primary" id="check" type="button">Check now</button>
+      <span class="k" id="checking"></span>
+    </div>
+    <div class="status" id="status" aria-live="polite"></div>
+  </section>
+</main>
+<div id="toast"></div>
+
+<script>
+(function(){
+  var $ = function(id){ return document.getElementById(id); };
+  var S = null;                 // the last GET /api/options
+  var busy = false, filled = false;
+
+  function esc(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function toast(msg, bad){
+    var t = $('toast'); t.textContent = msg; t.className = (bad ? 'bad ' : '') + 'up';
+    clearTimeout(toast.h); toast.h = setTimeout(function(){ t.className = ''; }, 2600);
+  }
+  function api(method, url, body){
+    var o = { method: method, cache: 'no-store', headers: {} };
+    if(body !== undefined){ o.headers['Content-Type'] = 'application/json'; o.body = JSON.stringify(body); }
+    return fetch(url, o).then(function(r){
+      return r.json().catch(function(){ return {}; }).then(function(d){ d.__status = r.status; return d; });
+    });
+  }
+  function ago(ts){
+    if(!ts) return 'never';
+    var s = Math.max(0, Math.round(Date.now() / 1000 - ts));
+    if(s < 45) return 'just now';
+    if(s < 3600) return Math.round(s / 60) + ' min ago';
+    if(s < 86400) return Math.round(s / 3600) + ' h ago';
+    return Math.round(s / 86400) + ' days ago';
+  }
+  function clock(ts){ return ts ? new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''; }
+  function fmtV(v){ var m = /^(\d+)\.(\d+)\.0$/.exec(String(v == null ? '' : v)); return m ? m[1] + '.' + m[2] : String(v == null ? '' : v); }
+
+  function render(){
+    if(!S) return;
+    var o = S.options, on = !!o.check_updates, locked = S.locked && S.locked.check_updates;
+    var sw = $('sw');
+    sw.setAttribute('aria-checked', on ? 'true' : 'false');
+    sw.disabled = !!locked || busy;
+    $('lock').hidden = !locked; $('lock').textContent = locked || '';
+    $('source').classList.toggle('off', !on);
+    if(!filled){ $('repo').value = o.upstream_repo; $('branch').value = o.upstream_branch; filled = true; }
+    var dirty = $('repo').value.trim() !== o.upstream_repo || $('branch').value.trim() !== o.upstream_branch;
+    if(!dirty && document.activeElement !== $('repo') && document.activeElement !== $('branch')){
+      $('repo').value = o.upstream_repo; $('branch').value = o.upstream_branch;     // follows the server (saved elsewhere)
+    }
+    $('save').disabled = !dirty || busy || !!locked;
+    $('reset').disabled = busy || !!locked || (o.upstream_repo === S.defaults.upstream_repo && o.upstream_branch === S.defaults.upstream_branch && !dirty);
+    $('check').disabled = !on || busy || !!locked;
+    $('checking').textContent = busy ? 'Asking GitHub ...' : '';
+    var u = S.updates || {}, html = '';
+    if(!on){
+      html = '<span class="k">Update checks are off. No requests are made to GitHub.</span> Updates in the local <span class="mono">catalog/</span> folder are still found.';
+    } else {
+      html += '<div><span class="k">Last checked:</span> ' + (u.checked_at ? esc(ago(u.checked_at)) + ' (' + esc(clock(u.checked_at)) + ')' : 'not yet - the first check runs in the background shortly after start') + '</div>';
+      html += '<div><span class="k">Source:</span> <span class="mono">' + esc(u.repo) + '</span> @ <span class="mono">' + esc(u.branch) + '</span></div>';
+      if(u.error) html += '<div class="warn">Could not reach GitHub just now (' + esc(u.error) + '). It will try again in a few minutes; nothing is wrong with Hexcast.</div>';
+      else if(u.last_ok_at){
+        var av = S.available || [];
+        html += '<div><span class="k">Hexcast:</span> ' + (u.core_latest ? 'latest is ' + esc(fmtV(u.core_latest)) : 'latest version unknown') + '</div>';
+        if(av.length) html += '<div class="good">' + av.length + ' module update' + (av.length === 1 ? '' : 's') + ' available:</div><ul>' +
+          av.map(function(a){ return '<li>' + esc(a.name) + ' ' + esc(a.installed) + ' &rarr; ' + esc(a.latest) + ' <span class="k">(' + (a.source === 'upstream' ? 'from GitHub' : 'from the catalog folder') + ')</span></li>'; }).join('') + '</ul>';
+        else html += '<div class="good">Every installed module is up to date.</div>';
+      }
+    }
+    $('status').innerHTML = html;
+  }
+
+  function load(){
+    return api('GET', '/api/options').then(function(d){ if(d && d.ok){ S = d; render(); } });
+  }
+  function save(changes, okMsg){
+    busy = true; render();
+    return api('POST', '/api/options', changes).then(function(d){
+      busy = false;
+      ['repo', 'branch'].forEach(function(k){ $(k + '-err').textContent = ''; $(k).classList.remove('bad'); });
+      if(d.ok){ S = d; render(); toast(okMsg || 'Saved'); if(window.HexbarRefresh) window.HexbarRefresh(); return true; }
+      var errs = d.errors || {};
+      if(errs.upstream_repo){ $('repo-err').textContent = errs.upstream_repo; $('repo').classList.add('bad'); }
+      if(errs.upstream_branch){ $('branch-err').textContent = errs.upstream_branch; $('branch').classList.add('bad'); }
+      toast(Object.keys(errs).length ? Object.keys(errs).map(function(k){ return errs[k]; }).join('; ') : (d.error || 'That did not work.'), true);
+      render();
+      return false;
+    }).catch(function(){ busy = false; toast('Could not reach Hexcast.', true); render(); });
+  }
+
+  $('sw').onclick = function(){
+    var next = $('sw').getAttribute('aria-checked') !== 'true';
+    save({ check_updates: next }, next ? 'Update checks are on' : 'Update checks are off').then(function(ok){
+      if(ok && next) $('check').click();                     // switching it on: look right away
+    });
+  };
+  $('repo').oninput = $('branch').oninput = render;
+  $('save').onclick = function(){ save({ upstream_repo: $('repo').value, upstream_branch: $('branch').value }, 'Saved - checking ...').then(function(ok){ if(ok) $('check').click(); }); };
+  $('reset').onclick = function(){
+    $('repo').value = S.defaults.upstream_repo; $('branch').value = S.defaults.upstream_branch;
+    render();
+    $('save').click();
+  };
+  $('check').onclick = function(){
+    if($('check').disabled) return;
+    busy = true; render();
+    api('POST', '/api/options/check-now').then(function(d){
+      busy = false;
+      if(d.ok){ S = d; render(); if(window.HexbarRefresh) window.HexbarRefresh(); }
+      else { toast(d.error || 'That did not work.', true); render(); }
+    }).catch(function(){ busy = false; toast('Could not reach Hexcast.', true); render(); });
+  };
+  load();
+  setInterval(function(){ if(!busy && document.activeElement !== $('repo') && document.activeElement !== $('branch')) load(); }, 15000);
+})();
+</script>
+</body></html>

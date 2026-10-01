@@ -84,11 +84,13 @@
 .hb-spacer{ flex:1 1 auto; }
 
 /* --- versions: "<Module> Version: 1.0" + "Hexcast Version: 2.0", top right ---------- */
+.hb-right{ display:flex; align-items:center; gap:12px; flex:0 1 auto; min-width:0; }
 .hb-vers{ display:flex; align-items:center; gap:14px; flex:0 1 auto; min-width:0; white-space:nowrap; }
 .hb-v{ display:inline-flex; align-items:center; gap:0; font:600 11.5px/1 var(--hb-mono); letter-spacing:.03em;
   color:var(--hb-dim); white-space:nowrap; }
 .hb-v b{ color:var(--hb-muted); font-weight:700; margin-left:5px; }
 .hb-v .hb-vn{ color:var(--hb-muted); }
+.hb-v .hb-vw{ margin-left:.45em; }
 .hb-v.hb-mod + .hb-v.hb-core{ padding-left:14px; border-left:1px solid var(--hb-line-hi); }
 .hb-up{ font:700 10.5px/1 var(--hb-mono); letter-spacing:.04em; margin-left:9px; padding:5px 9px; border-radius:99px;
   color:var(--hb-good); background:#0e2118; border:1px solid #1d4d33; text-decoration:none; cursor:pointer; white-space:nowrap;
@@ -99,6 +101,16 @@ a.hb-up:hover, button.hb-up:hover{ border-color:var(--hb-good); filter:brightnes
 .hb-spin{ width:9px; height:9px; border:2px solid #5a4210; border-top-color:var(--hb-warn); border-radius:50%;
   animation:hb-rot .8s linear infinite; display:inline-block; }
 @keyframes hb-rot{ to{ transform:rotate(360deg); } }
+
+/* --- the gear: Settings for all of Hexcast ----------------------------------------- */
+.hb-gear{ display:inline-flex; align-items:center; justify-content:center; flex:0 0 auto; width:32px; height:32px;
+  border-radius:8px; border:1px solid var(--hb-line); background:var(--hb-card); color:var(--hb-muted); text-decoration:none;
+  transition:color .15s ease, border-color .15s ease, transform .3s ease; }
+.hb-gear:hover{ color:var(--hb-ink); border-color:var(--hb-line-hi); }
+.hb-gear:hover svg{ transform:rotate(45deg); }
+.hb-gear svg{ transition:transform .3s ease; display:block; }
+.hb-gear.sel{ color:var(--hb-ink); border-color:var(--hb-line-hi); background:var(--hb-panel); }
+.hb-gear:focus-visible{ outline:2px solid var(--hb-good); outline-offset:2px; }
 
 /* --- slot for whatever the page already had in its top bar -------------- */
 .hb-actions{ display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
@@ -112,5 +124,7 @@ a.hb-up:hover, button.hb-up:hover{ border-color:var(--hb-good); filter:brightnes
 }
 @media (max-width: 460px){
   .hb-spacer{ flex-basis:100%; height:0; }           /* the versions get a row of their own */
-  .hb-vers{ flex:1 1 100%; justify-content:flex-end; }
+  .hb-right{ flex:1 1 100%; }
+  .hb-vers{ flex:1 1 auto; justify-content:flex-end; flex-wrap:wrap; row-gap:8px; }
+  .hb-v.hb-mod + .hb-v.hb-core{ padding-left:0; border-left:0; }
 }

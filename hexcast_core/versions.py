@@ -149,6 +149,19 @@ class Upstream:
         self._thread: threading.Thread | None = None
         self.last_error: str | None = None
         self.checked_at = 0.0                                # when a round last finished
+        self.last_ok_at = 0.0                                # ... and the last one that reached GitHub
+        self.core_latest: str | None = None                  # the newest Hexcast (core) version, from the repo's VERSION file
+        self._core_at = 0.0
+
+    def configure(self, config: dict | None) -> None:
+        """New settings (Options page): forget what the old source said; nothing is fetched here."""
+        with self._lock:
+            self.config = config
+            self._manifests, self._at = {}, {}
+            self.core_latest, self._core_at = None, 0.0
+            self._retry_at = 0.0
+            self.last_error = None
+            self.checked_at = self.last_ok_at = 0.0
 
     @property
     def enabled(self) -> bool:
@@ -170,6 +183,13 @@ class Upstream:
 
     def archive_url(self) -> str:
         return self._fill((self.config or {}).get("archive_url") or ARCHIVE_TEMPLATE)
+
+    def version_url(self) -> str:
+        """The repository's VERSION file (the Hexcast core version)."""
+        custom = (self.config or {}).get("raw_url")
+        if custom:                                         # a local test server: same place, VERSION instead of a plugin.json
+            return self._fill(custom).rsplit("/catalog/", 1)[0] + "/VERSION"
+        return f"https://raw.githubusercontent.com/{self.repo}/{self.branch}/VERSION"
 
     def repo_url(self) -> str:
         return f"https://github.com/{self.repo}"
@@ -196,6 +216,10 @@ class Upstream:
 
     # ---- refreshing ----
 
+    def core_due(self, now: float | None = None) -> bool:
+        now = time.time() if now is None else now
+        return self.enabled and now >= self._retry_at and now - self._core_at >= TTL_SECONDS
+
     def due(self, pids: list[str], now: float | None = None) -> list[str]:
         if not self.enabled:
             return []
@@ -205,14 +229,14 @@ class Upstream:
         return [p for p in pids if now - self._at.get(p, 0.0) >= TTL_SECONDS]
 
     def kick(self, pids: list[str], force: bool = False) -> bool:
-        """Start a background refresh if any of `pids` is due. Returns at once."""
-        if not self.enabled or not pids:
+        """Start a background refresh if the core version or any of `pids` is due. Returns at once."""
+        if not self.enabled:
             return False
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
                 return False
             todo = list(pids) if force else self.due(list(pids))
-            if not todo:
+            if not todo and not (force or self.core_due()):
                 return False
             t = threading.Thread(target=self.refresh, args=(todo, force), name="hexcast-upstream", daemon=True)
             self._thread = t
@@ -225,6 +249,18 @@ class Upstream:
         if not self.enabled:
             return
         todo = list(pids) if force else self.due(list(pids))
+        reached = False
+        if force or self.core_due():
+            try:
+                text = self._get(self.version_url(), 256, FETCH_TIMEOUT).decode("utf-8", "replace").strip()[:32]
+                self.core_latest = text if _NUMS.match(text) else None
+                self._core_at, reached = time.time(), True
+            except NotFound:
+                self.core_latest, self._core_at, reached = None, time.time(), True
+            except Exception as exc:
+                self.last_error = f"{type(exc).__name__}: {exc}"
+                self._retry_at = time.time() + RETRY_SECONDS
+                todo = []                                    # offline: do not try every plugin as well
         for pid in todo:
             try:
                 body = self._get(self.raw_url(pid), MANIFEST_MAX, FETCH_TIMEOUT)
@@ -236,15 +272,27 @@ class Upstream:
                     m = None                                  # not a plugin we can read: ignore it
                 self._manifests[pid] = m
                 self._at[pid] = time.time()
-                self.last_error = None
+                self.last_error, reached = None, True
             except NotFound:
                 self._manifests[pid] = None                   # a plugin that is not in the repository
                 self._at[pid] = time.time()
+                reached = True
             except Exception as exc:                          # offline, rate-limited, DNS ...: try later, say nothing
                 self.last_error = f"{type(exc).__name__}: {exc}"
                 self._retry_at = time.time() + RETRY_SECONDS
                 break
         self.checked_at = time.time()
+        if reached:
+            self.last_ok_at = self.checked_at
+            if self._retry_at <= self.checked_at:
+                self.last_error = None
+
+    def status(self) -> dict:
+        """For the Options page: when GitHub was last asked and what it said."""
+        return {"enabled": self.enabled, "repo": self.repo, "branch": self.branch, "checked_at": self.checked_at or None,
+                "last_ok_at": self.last_ok_at or None, "error": self.last_error if self.enabled else None,
+                "core_latest": self.core_latest,
+                "modules": {p: m.version for p, m in self._manifests.items() if m is not None}}
 
     def _get(self, url: str, limit: int, timeout: float) -> bytes:
         """GET `url` (https GitHub / http localhost only, also after redirects), at most `limit` bytes."""

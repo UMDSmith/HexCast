@@ -277,27 +277,31 @@ An update is offered only when the version is **semver-greater** than the instal
 
 **Applying an upstream update.** Hexcast downloads the repository archive from GitHub (`https`, size-capped, streamed to a temporary file), unpacks **only** `catalog/<plugin id>/` from it (no `..`, no absolute paths, no links; nothing else in the archive is touched), and then it goes through the ordinary update path described above.
 
-### The `upstream` setting
+### The Settings page and the `upstream` setting
 
-In `config/plugins.json`:
+The **gear** at the top right of every page opens **Settings** (`/options`), the master settings for all of Hexcast (Updates is the first section; later global options go there too). It has:
+
+- **Check GitHub for updates** - on by default. Off = Hexcast makes **no update requests at all** (no module check, no Hexcast-version check, nothing in the background); version numbers still show, and an update that arrives in the local `catalog/` folder (`git pull`) is still offered. Upstream updates are not offered while it is off.
+- **GitHub repository** and **Branch** - where to look (default `UMDSmith/hexcast`, `main`); validated before they are saved (a pasted `https://github.com/owner/name` is accepted).
+- **Check now** - asks GitHub right away; the page shows when it last asked, the source, the latest Hexcast version and which installed modules have an update (or that GitHub could not be reached).
+
+It saves to `config/plugins.json`, which you can also edit by hand:
 
 ```json
-{ "upstream": { "repo": "UMDSmith/hexcast", "branch": "main" } }
+{ "check_updates": true, "upstream": { "repo": "UMDSmith/hexcast", "branch": "main" } }
 ```
 
-```json
-{ "upstream": false }
-```
-
-- Left out (or `true`, or `{}`) = the default repository, `UMDSmith/hexcast`, branch `main`. Set another `repo` (`owner/name`) and `branch` to follow a fork.
-- `false` = never contact GitHub: no module checks, no Hexcast-version check. Updates then come only from the `catalog/` folder (`git pull`, or a new ZIP), exactly as before.
+- `check_updates` - `true` (the default if the key is missing) or `false`.
+- `upstream` - left out (or `true`, or `{}`) = the default repository; set `repo` (`owner/name`) and `branch` to follow a fork. `"upstream": false` is the older way to say the same as `"check_updates": false`.
 - A value that is not usable (a bad repo name, a non-GitHub address) is ignored with a warning in the console and the default is used.
-- For testing against your own local server `raw_url` and `archive_url` (templates with `{repo}`, `{branch}`, `{id}`) can be added; like everything here they must be `https` GitHub or `http` `localhost`.
-- The environment variable `HEXCAST_NO_UPSTREAM=1` switches the check off without touching the file (Docker builds, offline machines).
+- For testing against your own local server `raw_url` and `archive_url` (templates with `{repo}`, `{branch}`, `{id}`) can be added to `upstream`; like everything here they must be `https` GitHub or `http` `localhost`.
+- The environment variable `HEXCAST_NO_UPSTREAM=1` switches the check off without touching the file (Docker builds, offline machines); Settings then shows the switch as locked.
+
+**The Options API** (what the page uses; built so future global options are one more entry in `hexcast_core/options.py`): `GET /api/options` returns `{"options": {...}, "defaults": {...}, "locked": {...}, "updates": {checked_at, last_ok_at, error, core_latest, modules}, "available": [...]}`; `POST /api/options` with e.g. `{"check_updates": false}` or `{"upstream_repo": "me/fork", "upstream_branch": "dev"}` validates every value first and saves them all or none (`400` with `errors` per key); `POST /api/options/check-now` fetches the latest versions now (`409` while checking is off). Like the plugin API it only accepts requests from Hexcast's own pages and from scripts.
 
 **How it behaves.** The check runs in a background thread, never while a page loads or while Hexcast starts; the answer is cached for an hour (a failed attempt is retried after five minutes); offline simply means no news, with no error shown. Only `https` to `github.com`, `raw.githubusercontent.com` and `codeload.github.com` is used (also after redirects), and only for plugins you have installed that came from Hexcast.
 
-**Privacy.** What is sent to GitHub: ordinary HTTPS GET requests for `VERSION` and for the `plugin.json` of each plugin you have installed (so GitHub can see your IP address and which module files were requested, like any download from it), plus - only when you press an update - the repository ZIP. Nothing about you, your streams or your settings is sent. Turn all of it off with `"upstream": false`.
+**Privacy.** What is sent to GitHub: ordinary HTTPS GET requests for `VERSION` and for the `plugin.json` of each plugin you have installed (so GitHub can see your IP address and which module files were requested, like any download from it), plus - only when you press an update - the repository ZIP. Nothing about you, your streams or your settings is sent. Turn all of it off with the switch in Settings (the gear), or `"check_updates": false`.
 
 **From a terminal.** `python hexcast.py plugins list` shows installed vs latest versions and where an update would come from (`catalog` or `upstream`); `plugins update <id>` / `plugins update --all` applies it (`--all` only touches plugins that have something newer).
 
@@ -351,5 +355,5 @@ The first start after upgrading looks in `config/` for the settings of each bund
 - **An install failed** - nothing is left half-installed: the card is back to **Install** with the log of what went wrong (usually pip and the internet connection). An update that fails leaves the old version running.
 - **Files in `plugins/.trash/`** - Windows had a file open while removing a plugin; they are deleted on the next start.
 - **Plugin changes from other web pages are refused** - the plugin API only accepts requests from the pages Hexcast serves (and from scripts and `curl`, which send no `Origin`), so a site open in another tab cannot install or remove plugins.
-- **No "Update to ..." appears though a newer version is on GitHub** - the check is cached for an hour and needs the internet; check `"upstream"` in `config/plugins.json` is not `false`, and that the new `plugin.json` has a higher `version`.
+- **No "Update to ..." appears though a newer version is on GitHub** - the check is cached for an hour and needs the internet; check **Check GitHub for updates** is on in Settings (the gear), and that the new `plugin.json` has a higher `version`.
 - **Developing a plugin in `catalog/`** - start Hexcast with `HEXCAST_DEV=1` and changed plugins are re-installed from the catalog on every start.
