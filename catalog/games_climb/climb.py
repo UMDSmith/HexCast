@@ -14,9 +14,10 @@ he falls with chance q(i); the hazard rises with height (he tires, the wall gets
     Lambda(t) = L * (t + 0.9 t^2) / 1.9      cumulative hazard
     p(i) = exp(-(Lambda(i/H) - Lambda((i-1)/H)))      chance to make level i from level i-1
 
-p(i) is turned into a whole number of parts per billion (fail[i] = round(1e9 * (1 - p(i)))) and
-THAT is what the server rolls: it draws randrange(1e9) < fail[i] for level 1, 2, 3 ... with
-secrets.SystemRandom until he falls or has made every level. So
+p(i) is turned into a whole number of parts per billion (fail[i] = ceil(1e9 * (1 - p(i))): rounded
+up, so the real chances are never better for the player than the model) and THAT is what the server
+rolls: it draws randrange(1e9) < fail[i] for level 1, 2, 3 ... with secrets.SystemRandom until he
+falls or has made every level. So
 
     S(h) = prod_{i<=h} (1e9 - fail[i]) / 1e9     chance his best height is >= h   (exact)
     multiplier(h) = max(1.00, floor_to_cents((1 - house_edge) / S(h)))
@@ -419,9 +420,10 @@ def build_script(height: int, reached: int, bet_heights: Iterable[int], seed: in
     scale = 1.0 / max(0.25, float(speed or 1.0))
     if total * scale > CL_SCRIPT_MAX_MS:
         scale = CL_SCRIPT_MAX_MS / total
-    t = 0
-    for b in beats:
-        d = max(1, int(round(b["d"] * scale)))
+    t, acc = 0, 0.0
+    for b in beats:                      # rounded on the running total, so the beats add up to the cap, not past it
+        acc += b["d"] * scale
+        d = max(1, int(round(acc)) - t)
         b["t"], b["d"] = t, d
         t += d
     return {"v": 1, "seed": int(seed), "height": big_h, "max": best, "escaped": escaped, "cause": cause,
@@ -844,6 +846,8 @@ class SoulClimb(RoundGame):
             else:
                 out = sum(1 for r in res if r["escaped"])
                 text = f"{len(res)} climbs, best level {best}" + (f" ({out} escaped)" if out else "")
+        elif outcome == "stopped" and res:
+            text = f"Game stopped after {len(res)} climb{'s' if len(res) != 1 else ''}, best level {best}"
         return {"outcome": outcome, "text": text, "soul": dict(g["soul"] or {}),
                 "climbs": g["climbs"], "played": len(res), "results": res,
                 "best": best, "height": g["height"],

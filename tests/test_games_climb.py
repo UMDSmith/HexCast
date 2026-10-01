@@ -120,7 +120,9 @@ def check_script(sc, height, best, bets=()):
         assert top_climb == best
     # route stretches cover 0..top without gaps
     routes = sc["routes"]
-    assert routes[0]["from"] == 0 and routes[0]["kind"] == "ledge"
+    assert routes[0]["from"] == 0
+    if sc["cause"] is None or len(routes) > 1 and best >= routes[0]["to"]:
+        assert routes[0]["kind"] == "ledge"                           # the first stretch is the left ledge (unless a cause rewrote it)
     for a, b in zip(routes, routes[1:]):
         assert a["to"] == b["from"]
     assert routes[-1]["to"] >= min(height, best + 1)
@@ -366,6 +368,11 @@ def test_the_renderers_timeline_stays_inside_the_script(w):
           if (h > script.max && st !== 'lost') bad.push(['lost', script.max, h, st]);
         }
         if (tl.flag(1, -1) !== 'open') bad.push(['open']);
+        // the wall's dressing: real props are at or below the best height, decoys (waiting props that never act) above it
+        for (const pr of tl.props) {
+          if (pr.decoy ? !(pr.lv > script.max && pr.lv < script.height) : pr.lv > script.max) bad.push(['prop', script.max, pr.lv, !!pr.decoy]);
+        }
+        if (script.max < script.height - 12 && !tl.props.some(pr => pr.decoy)) bad.push(['no decoys', script.max]);
       }
       console.log(JSON.stringify({checked, bad: bad.slice(0, 10)}));
     """
@@ -478,7 +485,7 @@ def test_a_full_game_pays_exactly_what_the_table_says(w, monkeypatch):
     assert script["max"] == 40 and g.g["marks"] and g.phase == "climbing"
     assert g.place({"user": "erin", "amount": 5, "height": 5})[1]["error"] == "bets_closed"      # the window is closed
     assert g.g["ends_at"] == pytest.approx(g.g["phase_at"] + script["duration_ms"] / 1000 + w.climb.CL_TAIL_S, abs=0.01)
-    assert g.ledger.last_seq == 5 or True
+    assert len(list(g.ledger.events)) == 5                                                 # the five stakes; the refused bet moved nothing
     to_phase(g, "result")
     last = g.g["last"]
     assert last["max"] == 40 and last["escaped"] is False and last["style"] == script["style"] and last["cause"] == script["cause"]
@@ -608,7 +615,6 @@ def test_no_bets_ends_the_game_and_a_quiet_second_window_too(w, monkeypatch):
     fix_outcome(w, monkeypatch, 12)
     g.start_game({"climbs": 2})
     place(g, "al", 10, 5)
-    to_phase(g, "betting", limit=3) if False else None
     g.skip()
     g.skip()
     g.skip()                                                                              # betting -> climbing -> result -> betting 2
@@ -655,6 +661,7 @@ def test_stop_in_a_betting_window_refunds_everything(w):
     refunds = [e for e in g.ledger.events if e["reason"] == "refund"]
     assert sorted((e["user"], e["amount"]) for e in refunds) == [("al", 100), ("bo", 50)]
     assert g.history[0]["result"]["outcome"] == "stopped" and g.history[0]["result"]["total_paid"] == 150
+    assert g.history[0]["result"]["text"] == "Game stopped - every open stake returned"
     assert g.stats()["stopped"] == 1
 
 
@@ -671,6 +678,7 @@ def test_stop_while_he_climbs_settles_the_decided_climb(w, monkeypatch):
     assert [(e["user"], e["reason"]) for e in credits] == [("al", "win")]                  # decided: al won, bo lost, nothing refunded
     assert credits[0]["amount"] == 100 * w.climb.climb_model(100, 2).mult_cents(20, keep_of(5)) // 100
     assert g.history[0]["result"]["outcome"] == "stopped" and g.history[0]["result"]["best"] == 30
+    assert g.history[0]["result"]["text"] == "Game stopped after 1 climb, best level 30"           # the decided climb counted
 
 
 def test_a_game_interrupted_by_a_restart_is_settled_at_the_next_start(w, monkeypatch):
@@ -833,8 +841,8 @@ def test_the_state_reaches_overlays_over_the_websocket(w, monkeypatch):
     fix_outcome(w, monkeypatch, 12)
     with TestClient(w.app) as c:
         with c.websocket_connect("/games/ws/overlay") as ws:
-            msgs = [json.loads(ws.receive_text()) for _ in range(3)]                                  # config + one state per game
-            assert any(m["type"] == "state" and m["game"] == "climb" for m in msgs)
+            msgs = [json.loads(ws.receive_text()) for _ in range(1 + len(w.core.GAMES))]            # config + one state per game
+            assert msgs[0]["type"] == "config" and any(m["type"] == "state" and m["game"] == "climb" for m in msgs)
             c.post("/games/api/climb/start", json={})
             c.post("/games/api/climb/bet", json={"user": "al", "height": 5, "amount": 10})
             seen = []

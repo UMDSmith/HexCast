@@ -274,7 +274,8 @@
       var n = Math.max(1, b.n || 1), v = sat01(u / imp) * n, k = Math.min(n - 1, Math.floor(v)), f = v - k;
       var top = lv * (1 - k / n), bot = lv * (1 - (k + 1) / n);
       var arc = Math.sin(f * Math.PI) * Math.min(1.2, 0.18 * (top - bot) + 0.3);
-      return Math.max(-0.3, lerp(top, bot, easeIn(f) * 0.8 + f * 0.2) + arc * (k > 0 || f > 0.15 ? 1 : 0));
+      // the rebound off a ledge only after the first one, and never above where the fall began (= the best height)
+      return Math.min(lv, Math.max(-0.3, lerp(top, bot, easeIn(f) * 0.8 + f * 0.2) + arc * (k > 0 ? 1 : 0)));
     }
     var g = sat01(u / imp);
     var h = lv * (1 - g * g);                        // free fall: down the wall, faster and faster
@@ -1055,7 +1056,9 @@
     var imp = FALL_IMPACT.umbrella, open = smooth(0.05, 0.14, u), post = sat01((u - imp) / (1 - imp));
     var g = sat01(u / imp), burn = smooth(0.5, 0.74, u);
     p.x = Math.sin(T / 640) * 20 * open * (1 - burn); p.rot = Math.sin(T / 640) * 0.18 * open * (1 - burn) * -1 + (burn > 0 ? Math.sin(T / 60) * 0.1 * burn : 0);
-    p.hands = [{ x: p.x - 2, y: p.y + 100 }, { x: p.x + 2, y: p.y + 98 }]; p.grip = [1, 1];
+    // the right hand holds the shaft (at his side, chest high); the left one waves at whoever is down there
+    var wave = Math.sin(T / 170);
+    p.hands = [{ x: p.x - 40 + wave * 6, y: p.y + 66 + Math.cos(T / 170) * 10 }, { x: p.x + 31, y: p.y + 50 }]; p.grip = [0.1, 1];
     p.feet = [{ x: p.x - 10, y: p.y - 38 + Math.sin(T / 300) * 4 }, { x: p.x + 11, y: p.y - 36 + Math.cos(T / 300) * 4 }];
     p.mood = u < 0.14 ? 'scared' : burn < 0.1 ? 'happy' : 'scared'; p.mouth = burn > 0.1 ? 1 : 0.4; p.sweat = burn;
     p.fx.umb = { open: open, burn: burn, u: u }; p.line = 'umbrella';
@@ -1444,7 +1447,7 @@
       c.strokeStyle = L % 5 === 0 ? 'rgba(255,225,190,.8)' : 'rgba(255,225,190,.38)'; c.lineWidth = L % 5 === 0 ? 2.4 : 1.6;
       c.beginPath(); c.moveTo(0, y); c.lineTo(L % 5 === 0 ? 24 : 12, y); c.stroke();
       if (L % 5 === 0 && L > 0) {
-        c.fillStyle = 'rgba(255,240,220,.95)'; c.fillText(String(L), 3, y - 11);
+        c.fillStyle = 'rgba(255,240,220,.95)'; c.fillText(String(L), 8, y - 11);
       }
     }
   };
@@ -1676,7 +1679,7 @@
     var lines = wrap(c, text, 190), w = 0, i;
     for (i = 0; i < lines.length; i++) w = Math.max(w, c.measureText(lines[i]).width);
     var bw = w + 24, bh = lines.length * (fs + 3) + 16, bx = -bw / 2, by = -bh - 20;
-    var shiftX = clamp(x - 0, 4 + bw / 2, VW - 4 - bw / 2) - x;                 // keep it on the screen
+    var shiftX = clamp(x - 0, 42 + bw / 2, VW - 8 - bw / 2) - x;                // keep it on the screen (and off the ruler)
     c.translate(shiftX, 0);
     c.fillStyle = who === 'demon' ? '#ffe3e0' : '#fffaf0'; c.strokeStyle = '#2a1230'; c.lineWidth = 3; c.lineJoin = 'round';
     c.beginPath(); rr(c, bx, by, bw, bh, 12); c.fill(); c.stroke();
@@ -1812,7 +1815,7 @@
     for (var i = 0; i < tl.props.length; i++) {
       var pr = tl.props[i], b = pr.b, ys = ANCHOR_Y - ((pr.lv * LV) - cam.y);
       if (ys < -220 || ys > VH + 220) continue;
-      var u = (tms - b.t) / b.d;
+      var u = pr.decoy ? -9 : (tms - b.t) / b.d;
       switch (pr.type) {
         case 'demon': {
           var x = LANE_X + (b.side > 0 ? 196 : -178), y = ys - LV * 0.9;
@@ -2035,6 +2038,20 @@
         default: break;
       }
     }
+    // Decoys: the same waiting props ABOVE his best height, never used. The wall then looks alike wherever he will stop
+    // (no sleeping bats and demons only below the place where he falls), so nothing on it gives the end away.
+    var rd = mulberry(((hash2(seed, 90210) * 4294967296) | 0) || 1), topLv = Math.min(this.H, this.max + 64), lv = this.max + 1 + Math.floor(rd() * 4);
+    var kinds = ['demon', 'bats', 'vent', 'hand', 'spur', 'fray'], wts = [3, 1.5, 2, 2, 1.5, 1.5], routes = this.script.routes || [];
+    function routeKind(l) { for (var k = 0; k < routes.length; k++) if (routes[k].from <= l && l < routes[k].to) return routes[k].kind; return null; }
+    while (lv < topLv) {
+      var pickW = rd() * 11.5, ty = kinds[0], acc = 0, kk, skip = rd() > 0.62;      // (only about 6 in 10 of the real events leave a prop)
+      if (skip) { lv += 5 + Math.floor(rd() * 6); continue; }
+      for (kk = 0; kk < kinds.length; kk++) { acc += wts[kk]; if (pickW <= acc) { ty = kinds[kk]; break; } }
+      if (ty === 'fray' && routeKind(lv) !== 'rope') ty = 'vent';
+      props.push({ type: ty, lv: lv, decoy: true, b: { t: 1e12, d: 1, ev: 'decoy', lv: lv, to: lv, s: (rd() * 2147483647) | 0, side: rd() < 0.5 ? -1 : 1,
+        kind: Math.floor(rd() * 3), n: 2 + Math.floor(rd() * 4), peak: lv + 2 + Math.floor(rd() * 3) } });
+      lv += 5 + Math.floor(rd() * 6);
+    }
   };
   TP.bubbleAt = function (t) {
     var out = [];
@@ -2138,7 +2155,7 @@
       '.hcl-timer span{font-size:34px;font-weight:900;line-height:1;font-variant-numeric:tabular-nums}',
       '.hcl-timer.last span{color:var(--hcl-bad);animation:hcl-pulse .5s ease-in-out infinite alternate}',
       '@keyframes hcl-pulse{from{transform:scale(1)}to{transform:scale(1.12)}}',
-      '.hcl-meter{display:flex;gap:16px;height:452px;padding:26px 12px 12px 22px}',
+      '.hcl-meter{display:flex;gap:16px;height:440px;padding:26px 12px 12px 22px}',
       '.hcl-gauge{position:relative;width:34px;flex:0 0 34px;border-radius:17px;background:rgba(0,0,0,.5);border:2px solid var(--hcl-line);overflow:visible}',
       '.hcl-fill{position:absolute;left:3px;right:3px;bottom:3px;border-radius:14px;background:linear-gradient(0deg,var(--hcl-lava0),var(--hcl-lava1) 60%,var(--hcl-lava2));box-shadow:0 0 12px var(--hcl-glowc)}',
       '.hcl-gtop{position:absolute;left:50%;top:-1px;transform:translate(-50%,-100%);font-size:10px;font-weight:900;letter-spacing:.14em;color:var(--hcl-accent);white-space:nowrap;margin-top:-3px}',
@@ -2158,10 +2175,11 @@
       '.hcl-nf b{font-size:17px;font-variant-numeric:tabular-nums} .hcl-nf i{font-style:normal;font-weight:900;font-size:16px;color:var(--hcl-accent);font-variant-numeric:tabular-nums}',
       '.hcl-nf u{text-decoration:none;display:block;font-size:11px;color:var(--hcl-dim);max-width:104px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       '.hcl-players{flex:1;min-height:0;overflow:hidden}',
-      '.hcl-p{display:flex;justify-content:space-between;gap:6px;font-size:14px;padding:4px 0;border-top:1px solid rgba(255,255,255,.07)}',
+      '.hcl-more{float:right;letter-spacing:.06em;color:var(--hcl-dim);text-transform:none;font-weight:700}',
+      '.hcl-p{display:flex;justify-content:space-between;gap:6px;font-size:14px;line-height:1.15;padding:3px 0;border-top:1px solid rgba(255,255,255,.07)}',
       '.hcl-p u{text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:104px;font-weight:700}',
       '.hcl-p i{font-style:normal;font-weight:800;font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right}',
-      '.hcl-p small{display:block;color:var(--hcl-dim);font-size:11px;font-weight:600}',
+      '.hcl-p small{display:block;color:var(--hcl-dim);font-size:10.5px;line-height:1.1;font-weight:600}',
       '.hcl-p .ok{color:var(--hcl-good)} .hcl-p .bad{color:var(--hcl-bad)} .hcl-p .dim{color:var(--hcl-dim)}',
       '.hcl-empty{color:var(--hcl-dim);font-size:13px;padding:4px 0}',
       '.hcl-rules{position:absolute;left:16px;top:16px;width:262px;padding:9px 11px;transition:opacity .35s}',
@@ -2186,7 +2204,8 @@
       '.hcl-banner .pos{color:var(--hcl-good)} .hcl-banner .neg{color:var(--hcl-bad)}',
       '.hcl-banner .tot{display:flex;justify-content:center;gap:16px;margin-top:8px;font-size:13px;color:var(--hcl-dim)}',
       '.hcl-banner .none{color:var(--hcl-dim);font-size:14px;padding:6px 0 2px}',
-      '.hcl-test{position:absolute;right:16px;bottom:12px;font-size:11px;letter-spacing:.2em;color:var(--hcl-bad);font-weight:900}',
+      '.hcl-test{flex:none;text-align:right;padding:0 6px 2px;font-size:11px;letter-spacing:.2em;color:var(--hcl-bad);font-weight:900}',
+      '.hcl-test:empty{display:none}',
       '.hcl-hide{opacity:0!important}'
     ].join('\n');
     var st = root.document.createElement('style');
@@ -2239,10 +2258,10 @@
           '<div class="hcl-read"><div class="lbl">Height</div><div class="hcl-h"><span class="hcl-hv">0</span><small>/ 100</small></div><div class="hcl-best">best <b class="hcl-bv">0</b></div>' +
           '<div class="lbl hcl-nl">Next flags</div><div class="hcl-next"></div></div></div>' +
         '<div class="hcl-box hcl-players"><h4 class="hcl-ph">On the line</h4><div class="hcl-pb"></div></div>' +
+        '<div class="hcl-test"></div>' +
       '</div>' +
       '<div class="hcl-box hcl-rules"></div>' +
-      '<div class="hcl-banner"></div>' +
-      '<div class="hcl-test"></div>';
+      '<div class="hcl-banner"></div>';
     var q = this.ui.querySelector.bind(this.ui);
     this.el = { name: q('.hcl-name'), sub: q('.hcl-sub'), timer: q('.hcl-timer'), tlabel: q('.hcl-timer b'), tval: q('.hcl-timer span'),
       meter: q('.hcl-meter'), fill: q('.hcl-fill'), ticks: q('.hcl-ticks'), dot: q('.hcl-dot'), gauge: q('.hcl-gauge'), gtop: q('.hcl-gtop'),
@@ -2273,7 +2292,7 @@
     var r = this.box.getBoundingClientRect ? this.box.getBoundingClientRect() : { width: BASE_W };
     var dpr = root.devicePixelRatio || 1;
     var w = r.width > 4 ? r.width : BASE_W;
-    var k = Math.max(0.3, Math.min(3, w * dpr / BASE_W));
+    var k = Math.max(0.3, Math.min(2, w * dpr / BASE_W));          // (the canvas is never drawn at more than 2x: a big scene stays smooth, a little soft)
     var cw = Math.round(BASE_W * k), ch = Math.round(BASE_H * k);
     if (cw === this.canvas.width && ch === this.canvas.height && k === this.k) return;
     this.k = k; this.canvas.width = cw; this.canvas.height = ch;
@@ -2423,6 +2442,7 @@
     DRAW.lava(this, c, sc, T);
     DRAW.platform(this, c, sc, T);
     DRAW.routes(this, c, sc, T);
+    DRAW.ruler(this, c, sc, T);
     DRAW.props(this, c, sc, T);
     DRAW.flags(this, c, sc, T);
     // the soul
@@ -2435,7 +2455,6 @@
     // talk
     this._bubbles(c, sc, pose, sp, T);
     DRAW.foreground(this, c, sc, T);
-    DRAW.ruler(this, c, sc, T);
     this._embers(c, sc, T);
     this._light(c, sc, T);
     // a cut between scenes: a quick fade in
@@ -2495,7 +2514,8 @@
           if (q.fin) { dx = LANE_X + DEMON.x; dy = ANCHOR_Y - (80 - this.cam.y); }
           bubble(c, th, q.text, dx, dy, age, life, 'demon');
         } else {
-          bubble(c, th, q.text, sp.x + 8, sp.y - 132, age, life, 'soul');
+          var um = pose && pose.fx && pose.fx.umb, lift = um && um.burn < 0.9 ? 80 * um.open : 0;       // above the umbrella, not on it
+          bubble(c, th, q.text, sp.x + 8, sp.y - 132 - lift, age, life, 'soul');
         }
       }
     } else if (sc.g || this.st) {
@@ -2557,10 +2577,12 @@
     var cur = (g && g.currency) || idle.currency || cfg.currency || 'coins', H = this.H, left = this._left(t);
     var name = g ? g.soul.name : ((idle.soul && idle.soul.name) || 'Gary');
     // title block
-    this._set('sub', this.el.sub, esc(g ? 'Climb ' + g.climb + ' of ' + g.climbs + ' · ' + name : 'Next up: ' + name));
+    var played = g && g.summary ? (g.summary.played || 0) : -1;       // a game over after fewer climbs than planned (a quiet last window)
+    this._set('sub', this.el.sub, esc(!g ? 'Next up: ' + name : ph === 'over' && played >= 0 && played < g.climb ?
+      (played ? played + ' of ' + g.climbs + ' climbs played' : 'No climb played') : 'Climb ' + g.climb + ' of ' + g.climbs + ' · ' + name));
     // the timer
     var tl_ = '', tv = '', last = false;
-    if (ph === 'betting') { tl_ = g.climb === 1 ? 'Bets close in' : 'Next climb in'; tv = Math.ceil(left / 1000) + 's'; last = left <= 10000; }
+    if (ph === 'betting') { tl_ = 'Bets close in'; tv = Math.ceil(left / 1000) + 's'; last = left <= 10000; }
     else if (ph === 'climbing') { tl_ = 'Climbing'; tv = '…'; }
     else if (ph === 'result') { tl_ = g.last && g.last.escaped ? 'Escaped!' : 'Fell'; tv = ''; }
     else if (ph === 'over') { tl_ = 'Game over'; tv = ''; }
@@ -2601,20 +2623,20 @@
     // players / results
     var showP = !!cfg.show_players && !!g;
     this._show(this.el.players, !!cfg.show_players);
-    var phTitle = ph === 'result' || ph === 'over' ? 'Results' : 'On the line', html = '';
-    this._set('ph', this.el.ph, phTitle);
+    var phTitle = ph === 'result' || ph === 'over' ? 'Results' : 'On the line', html = '', moreN = 0;
     if (cfg.show_players) {
       var max = +cfg.players_max || 8;
       if ((ph === 'result' || ph === 'over') && g && g.last) {
         var all = {}, order = [];
-        (g.last.winners || []).forEach(function (w) { var e = all[w.user] || (all[w.user] = { user: w.user, paid: 0, lost: 0, bets: [] }); if (order.indexOf(e) < 0) order.push(e); e.paid += w.pays; e.bets.push('L' + w.height + ' ✓'); });
-        (g.last.losers || []).forEach(function (w) { var e = all[w.user] || (all[w.user] = { user: w.user, paid: 0, lost: 0, bets: [] }); if (order.indexOf(e) < 0) order.push(e); e.lost += w.amount; e.bets.push('L' + w.height + ' ✗'); });
-        order.sort(function (a, b) { return (b.paid - b.lost) - (a.paid - a.lost); });
+        function row(u) { var e = all[u] || (all[u] = { user: u, net: 0, bets: [] }); if (order.indexOf(e) < 0) order.push(e); return e; }
+        (g.last.winners || []).forEach(function (w) { var e = row(w.user); e.net += w.pays - w.amount; e.bets.push('L' + w.height + ' ✓'); });
+        (g.last.losers || []).forEach(function (w) { var e = row(w.user); e.net -= w.amount; e.bets.push('L' + w.height + ' ✗'); });
+        order.sort(function (a, b) { return b.net - a.net; });
         for (i = 0; i < Math.min(order.length, max); i++) {
-          var e = order[i], net = e.paid ? e.paid : -e.lost;
-          html += '<div class="hcl-p"><u>' + esc(e.user) + '<small>' + esc(e.bets.slice(0, 3).join(' ')) + '</small></u><i class="' + (e.paid ? 'ok' : 'bad') + '">' + (e.paid ? '+' : '') + fmt(net) + '</i></div>';
+          var e = order[i], net = e.net;
+          html += '<div class="hcl-p"><u>' + esc(e.user) + '<small>' + esc(e.bets.slice(0, 3).join(' ')) + '</small></u><i class="' + (net > 0 ? 'ok' : net < 0 ? 'bad' : 'dim') + '">' + (net > 0 ? '+' : net === 0 ? '±' : '') + fmt(net) + '</i></div>';
         }
-        if (order.length > max) html += '<div class="hcl-empty">+' + (order.length - max) + ' more</div>';
+        moreN = Math.max(0, order.length - max);
         if (!order.length) html = '<div class="hcl-empty">Nobody bet on this climb</div>';
       } else if (g) {
         var ps = g.players || [];
@@ -2626,10 +2648,11 @@
           }).join(' ');
           html += '<div class="hcl-p"><u>' + esc(p.user) + '<small>' + hs + '</small></u><i>' + fmt(p.stake) + '<small>' + esc(cur) + '</small></i></div>';
         }
-        if (ps.length > max) html += '<div class="hcl-empty">+' + (ps.length - max) + ' more</div>';
+        moreN = Math.max(0, ps.length - max);
       } else html = '<div class="hcl-empty">—</div>';
       this._set('players', this.el.pb, html);
     }
+    this._set('ph', this.el.ph, phTitle + (moreN ? '<span class="hcl-more">+' + moreN + ' more</span>' : ''));
     // the rules box (bets open) and the ladder
     var odds = g ? g.odds : (idle.odds || []);
     var showR = !!cfg.show_rules && (ph === 'betting' || (!g && st && st.visible));
@@ -2665,7 +2688,8 @@
     var why = esc_ ? 'All ' + g.height + ' levels. Fresh air, grass, and a very long nap.' :
       esc(CAUSE_TEXT[l.cause] || 'He fell') + ', ' + esc(STYLE_TEXT[l.style] || 'all the way down') + '.';
     var rows = (l.winners || []).slice(0, 5).map(function (w) {
-      return '<div class="row"><span>' + esc(w.user) + '<small>level ' + w.height + ' · ' + mult(w.mult) + '</small></span><i class="pos">+' + fmt(w.pays) + '</i></div>';
+      var net = w.pays - w.amount;                       // what he won on top of his stake (a x1.00 bet just gets it back)
+      return '<div class="row"><span>' + esc(w.user) + '<small>level ' + w.height + ' · ' + mult(w.mult) + (net ? '' : ' · stake back') + '</small></span><i class="' + (net > 0 ? 'pos' : '') + '">' + (net > 0 ? '+' + fmt(net) : '±0') + '</i></div>';
     }).join('');
     var more = (l.winners || []).length > 5 ? '<div class="none">+' + ((l.winners || []).length - 5) + ' more winners</div>' : '';
     var lost = (l.losers || []).slice(0, 3).map(function (w) {
@@ -2949,12 +2973,15 @@
   }
 
   function umbrellaDraw(I, c, th, x, y, o, T) {
-    // x, y = his hands; o = {open, burn}. A striped dome that opens, floats, and then catches fire from the heat below
-    var op = o.open, burn = o.burn, cw = 88 * op, ch = 46 * op, hy = y - 96 - 20 * op;
-    c.save(); c.translate(x, hy);
-    // the handle (hooked) down to his hands
-    c.strokeStyle = '#2a1230'; c.lineWidth = 7; c.lineCap = 'round'; c.beginPath(); c.moveTo(0, 0); c.lineTo(0, 84 + 20 * op); c.stroke();
-    c.strokeStyle = '#8a5a2a'; c.lineWidth = 3.4; c.beginPath(); c.moveTo(0, 0); c.lineTo(0, 84 + 20 * op); c.stroke();
+    // (x, y) = where his right hand holds the shaft; o = {open, burn}. A striped dome that opens over his head, floats,
+    // and then catches fire from the heat below
+    var op = o.open, burn = o.burn, cw = 92 * op, ch = 48 * op, edge = -(70 + 38 * op);
+    c.save(); c.translate(x, y);
+    // the shaft with its hooked handle, from below his hand up to the top of the dome
+    c.lineCap = 'round'; c.lineJoin = 'round';
+    c.strokeStyle = '#2a1230'; c.lineWidth = 7.5; c.beginPath(); c.moveTo(-9, 40); c.quadraticCurveTo(-11, 50, -2, 47); c.moveTo(0, 38); c.lineTo(0, edge - ch); c.stroke();
+    c.strokeStyle = '#a06a30'; c.lineWidth = 3.6; c.beginPath(); c.moveTo(-9, 40); c.quadraticCurveTo(-11, 50, -2, 47); c.moveTo(0, 38); c.lineTo(0, edge - ch); c.stroke();
+    c.translate(0, edge);
     var n = 6, i;
     for (i = 0; i < n; i++) {
       var x0 = -cw + 2 * cw * i / n, x1 = -cw + 2 * cw * (i + 1) / n, xm = (x0 + x1) / 2;
@@ -2999,7 +3026,7 @@
       if (d.y < VH + 320) bigDemon(I, c, th, d.x, d.y, { rise: fi.arr, hx: hp.x, hy: hp.y, pinch: fx ? (fx.post < 0.24 ? smooth(0, 0.06, fx.post) : 0) : 0.0, flick: fx ? fx.flick : 0, smug: fx && fx.post > 0.5 ? 1 : 0 }, T);
     }
     else if (fi.style === 'umbrella' && pose.fx && pose.fx.umb && !pose.hidden) {
-      var sp = I.soulScreen, u = pose.fx.umb; if (u.open > 0 && u.burn < 0.995 && u.u < FALL_IMPACT.umbrella + 0.02) umbrellaDraw(I, c, th, sp.x + pose.hands[0].x - pose.x, sp.y - 60, u, T);
+      var sp = I.soulScreen, u = pose.fx.umb, gh = pose.hands[1]; if (u.open > 0 && u.burn < 0.995 && u.u < FALL_IMPACT.umbrella + 0.02) umbrellaDraw(I, c, th, sp.x + gh.x - pose.x, sp.y - (gh.y - pose.y), u, T);
     }
   };
 
