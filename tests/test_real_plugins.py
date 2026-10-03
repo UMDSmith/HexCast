@@ -13,6 +13,7 @@ PLUGINS = [
     ("twitch", "/twitch/api/status", ["websockets"]),
     ("clips", "/clips/api/status", []),
     ("music", "/ytm/api/status", ["socketio", "aiohttp"]),
+    ("avatar", "/avatar/api/status", []),
 ]
 
 
@@ -63,7 +64,7 @@ def test_twitch_shoutout_finds_clips_only_when_installed(real_world):
 def test_every_catalog_plugin_has_a_valid_manifest_and_help(real_world):
     entries = real_world.host.catalog.entries()
     assert real_world.host.catalog.errors == {}
-    assert {"twitch", "music", "discord", "clips", "countdown", "games", "ticker", "ytdlp",
+    assert {"twitch", "music", "avatar", "discord", "clips", "countdown", "games", "ticker", "ytdlp",
             "games_roulette", "games_craps", "games_russian", "games_trivia", "games_hexfall", "games_climb", "games_blackjack"} <= set(entries)
     for pid, e in entries.items():
         m = e.manifest

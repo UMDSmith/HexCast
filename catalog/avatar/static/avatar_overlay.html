@@ -1,0 +1,71 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<title>Hexcast - Avatars overlay</title>
+<style>
+  html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent}
+  #stage{position:fixed;inset:0}
+  #note{position:fixed;left:16px;bottom:14px;font:600 15px 'Segoe UI',sans-serif;color:#ffd0e4;
+        background:rgba(10,10,14,.75);padding:8px 12px;border-radius:8px;display:none}
+</style>
+<!--HEXCAST-RUNTIME-->
+</head>
+<body>
+<div id="stage"></div>
+<div id="note"></div>
+<script>
+/* OBS browser source (1920x1080). Every avatar, or ?avatar=main,guest for some of them.
+   ?audio=0 keeps this source silent (another source plays the speech). ?note=1 shows problems
+   (a missing runtime, a lost connection) on the overlay itself - off by default, so nothing but
+   avatars ever appears on stream. */
+(function () {
+  var q = new URLSearchParams(location.search);
+  var only = (q.get('avatar') || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+  var audio = q.get('audio') !== '0', showNote = q.get('note') === '1';
+  var note = document.getElementById('note');
+  function say(t) { if (showNote) { note.textContent = t; note.style.display = t ? 'block' : 'none'; } }
+  if (!window.HexAvatar || !window.PIXI || !window.Live2DCubismCore) {
+    say('Avatars: the Live2D runtime is not installed - open the Avatars tab in Hexcast.');
+    // come back once it is installed
+    setTimeout(function () { location.reload(); }, 15000);
+    return;
+  }
+  var stage = new HexAvatar.Stage({ mount: document.getElementById('stage'), role: 'obs', audio: audio, only: only.length ? only : null });
+  var ws = null, backoff = 500, ready = false, queue = [];
+  function send(o) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
+  stage.on('event', function (e) { send(Object.assign({ type: 'event' }, e)); });
+  stage.on('model_info', function (m) { send({ type: 'model_info', model: m.model, info: m.info }); });
+  stage.on('stats', function (s) { send(Object.assign({ type: 'stats' }, s)); });
+  function handle(m) {
+    switch (m.type) {
+      case 'snapshot':                                    // Hexcast was updated: load the new renderer
+        if (m.build && window.HEXCAST_AVATAR_BUILD && m.build !== window.HEXCAST_AVATAR_BUILD) { location.reload(); return; }
+        stage.snapshot(m); break;
+      case 'config': stage.setConfig(m.config); break;
+      case 'library': stage.setLibrary(m.models, m.items); break;
+      case 'cmd': stage.command(m); break;
+      case 'reload_model': for (var n in stage.avatars) if (stage.avatars[n].cfg.model === m.model) stage.avatars[n].load(m.model); break;
+      case 'runtime': location.reload(); break;
+      case 'get_params': var av = stage.avatars[m.avatar]; send({ type: 'live_params', rid: m.rid, values: av ? av.paramValues() : {} }); break;
+    }
+  }
+  function connect() {
+    var url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/avatar/ws/render?role=obs' +
+      (only.length ? '&avatar=' + encodeURIComponent(only.join(',')) : '') + (audio ? '' : '&audio=0');
+    ws = new WebSocket(url);
+    ws.binaryType = 'arraybuffer';
+    ws.onopen = function () { backoff = 500; say(''); };
+    ws.onmessage = function (ev) {
+      if (typeof ev.data !== 'string') { stage.pcm(ev.data); return; }
+      var m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+      if (!ready) queue.push(m); else handle(m);
+    };
+    ws.onclose = function () { say('Avatars: reconnecting to Hexcast...'); setTimeout(connect, backoff); backoff = Math.min(8000, backoff * 2); };
+  }
+  stage.init().then(function () {
+    ready = true;
+    queue.splice(0).forEach(handle);
+  }).catch(function (e) { say('Avatars: ' + e.message); console.error(e); });
+  connect();
+})();
+</script>
+</body></html>

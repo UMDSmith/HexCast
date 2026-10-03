@@ -9,7 +9,7 @@ Control panel:       http://localhost:4747/
 OBS browser source:  http://localhost:4747/overlay
 
 This file is the core: the soundboard and the plugin host. Everything else (Twitch,
-Music, Discord, Clips, Countdown, Games, Ticker ...) is a plugin, installed from the (+)
+Music, Avatars, Discord, Clips, Countdown, Games, Ticker ...) is a plugin, installed from the (+)
 tab of the control panel or with `python hexcast.py plugins install <id>`.
 See docs/plugins.md.
 
@@ -503,7 +503,21 @@ class WatchHandler(FileSystemEventHandler):
         # Ignore our own bookkeeping files
         if path.endswith(".poster.jpg") or path.endswith(".json"):
             return
+        # Only audio/ and video/ are the soundboard's; the rest of media/ (overlay backgrounds,
+        # the Avatars library with its model folders ...) changes without touching the index,
+        # and unpacking a model there must not start a full rescan per file.
+        dest = str(getattr(event, "dest_path", "") or "")
+        if not any(_under(p, d) for p in (path, dest) if p for d in (AUDIO_DIR, VIDEO_DIR)):
+            return
         reindex()
+
+
+def _under(path: str, folder: Path) -> bool:
+    try:
+        Path(path).resolve().relative_to(folder.resolve())
+        return True
+    except (ValueError, OSError):
+        return False
 
 
 # ---- lifespan / app --------------------------------------------------------

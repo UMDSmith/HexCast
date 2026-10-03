@@ -43,7 +43,7 @@ set of OBS browser-source overlays from a web control panel. **That is all you
 get on a fresh download** — one tab, **Soundboard**, and a **+** next to it.
 
 Everything else is a **plugin** you add with one click from that **+** tab:
-Twitch, Music, Discord, Clips, Countdown, Games and Ticker. Each is
+Twitch, Music, Avatars, Discord, Clips, Countdown, Games and Ticker. Each is
 self-contained, with its own overlay and settings panel, and gets its own tab in
 the top bar once installed. Add as many or as few as you like; none of them
 changes how the soundboard behaves, and a plugin you never install costs you
@@ -124,6 +124,34 @@ YouTube refuses an anonymous lookup (age-restricted, bot check), yt-dlp reads
 that browser's YouTube cookies on this PC for that lookup, so it's done as your
 account. Stays linked across restarts until **Unlink**. Separate from the Clips
 link. Details: [docs/music.md](docs/music.md#youtube-sign-in-optional).
+
+### 🎭 Avatars *(plugin)*
+
+**What it does.** Live2D avatars your AI drives through the API — a lighter
+VTube Studio without face tracking: **the bot is the tracker**. Any number of
+models on screen, each addressed by a name (`main`, `guest` …), placed by dragging
+and scrolling in a live preview that is the OBS renderer itself. Between commands
+each one stays alive — blinking, breathing, idle sway, wandering eyes, head motion
+while talking.
+
+**What a bot can do.** Speak a line (it hands over the audio; the overlay plays it
+with **advanced lipsync** — vowel shapes, VTube Studio's `VoiceA`…`VoiceO`), or
+lip-sync from an audio device / virtual cable, or move the mouth itself. Set **any
+Live2D parameter** (held, eased, weighted, or streamed every frame over a
+WebSocket), toggle the model's **expressions** (several at once), play its
+**motions**, set an **emotion** or face, **look** at a point, **nod / shake /
+tilt**, move / zoom / hide the avatar, add **items** (pictures, GIFs, frame
+animations, Live2D items — pinned to the head or a hand if you like) and change
+its **light** (key, rim, ambient, animated presets). Events tell it when a line
+has finished.
+
+**Models.** Cubism 3, 4 and 5 models from a zip or a folder — or straight from
+VTube Studio if it's installed, with their VTube Studio parameter setup, hotkey
+expressions and idle animation. **PNGtubers** too: a few pictures (quiet, talking,
+blinking — per state, optionally a mouth per vowel), or a layered **PNGTuber Plus**
+avatar imported from its `.save`, with the same API. Live2D's own runtime is downloaded once after you
+accept Live2D's license in the tab (it doesn't ship with Hexcast).
+See [docs/avatar.md](docs/avatar.md).
 
 ### 🎙️ Discord *(plugin)*
 
@@ -673,17 +701,17 @@ hexcast/
 ├── hexcast_core/              # the plugin system (manifest, installer, store API)
 ├── static/                    # the core's web files: control panel, top bar, the + store page, help
 ├── catalog/                   # every plugin that ships with Hexcast — what the + tab installs from
-│   ├── twitch/  music/  discord/  clips/  countdown/  ticker/  ytdlp/
+│   ├── twitch/  music/  avatar/  discord/  clips/  countdown/  ticker/  ytdlp/
 │   └── games/  games_roulette/  games_craps/  games_russian/  games_trivia/  games_hexfall/  games_climb/  games_blackjack/
 │                              #   each: plugin.json, its Python, static/ (panel + overlay), help.html, requirements.txt
 ├── plugins/                   # the plugins you installed (a copy of their catalog folder; gitignored)
-├── docs/                      # plugins.md + one doc per plugin: twitch, music, discord, clips, countdown, games, craps, ticker …
+├── docs/                      # plugins.md + one doc per plugin: twitch, music, avatar, discord, clips, countdown, games, craps, ticker …
 ├── tools/                     # build_catalog.py (make a remote plugin catalog)
 ├── tests/                     # pytest suite for the plugin system
 ├── config/                    # settings, tokens, playlists, games tables + ledger (gitignored)
 ├── requirements.txt           # the core's packages only — each plugin brings its own
 ├── start.sh / start.bat       # launchers
-└── media/                     # auto-created: audio/ and video/
+└── media/                     # auto-created: audio/ and video/ (plus overlays/ and avatars/ when those are used)
 ```
 
 Each clip may have adjacent files: `airhorn.mp4` (media), `airhorn.json` (saved

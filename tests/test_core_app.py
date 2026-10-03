@@ -46,10 +46,10 @@ def test_fresh_download_is_just_the_soundboard(hexcast, client):
     assert client.get("/api/plugins/nav").json()["items"] == []
     assert not hexcast.plugin_host.loaded
     listing = client.get("/api/plugins").json()["plugins"]
-    assert {p["id"] for p in listing} >= {"twitch", "music", "discord", "clips", "countdown", "games", "ticker"}
+    assert {p["id"] for p in listing} >= {"twitch", "music", "avatar", "discord", "clips", "countdown", "games", "ticker"}
     assert not any(p["installed"] for p in listing)
     # none of the integrations' pages exist yet
-    for path in ("/twitch", "/ytm", "/discord", "/clips", "/countdown", "/games", "/ticker"):
+    for path in ("/twitch", "/ytm", "/avatar", "/discord", "/clips", "/countdown", "/games", "/ticker"):
         assert client.get(path).status_code == 404, path
 
 

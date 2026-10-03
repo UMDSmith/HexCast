@@ -1,0 +1,1412 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="/static/hexcast.png">
+<link rel="stylesheet" href="/static/hexbar.css?v=2">
+<title>HexCast - Avatars</title>
+<style>
+  :root{
+    --bg:var(--hb-bg); --panel:var(--hb-panel); --card:var(--hb-card); --line:var(--hb-line); --line-hi:var(--hb-line-hi);
+    --ink:var(--hb-ink); --muted:var(--hb-muted); --dim:var(--hb-dim); --accent:#ff5fa2; --accent-soft:#ff8cbf;
+    --good:var(--hb-good); --warn:var(--hb-warn); --bad:#ff6b62; --mono:var(--hb-mono);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 'Segoe UI',system-ui,-apple-system,sans-serif}
+  main{padding:4px 18px 60px;max-width:1720px;margin:0 auto}
+  a{color:var(--accent-soft)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
+  .card h2{margin:0 0 4px;font-size:13px;letter-spacing:.14em;text-transform:uppercase}
+  .card h3{margin:14px 0 6px;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+  p.hint{margin:0 0 12px;color:var(--dim);font-size:12.5px}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .grow{flex:1 1 auto}
+  input,select,textarea{background:#08080c;border:1px solid var(--line);color:var(--ink);border-radius:7px;padding:6px 8px;font:13px/1.3 inherit}
+  input[type=number]{width:78px}
+  input[type=color]{padding:2px;height:30px;width:46px;cursor:pointer}
+  input[type=range]{accent-color:var(--accent);flex:1 1 auto;min-width:80px;padding:0;background:none;border:0}
+  input[type=checkbox]{accent-color:var(--accent);width:16px;height:16px;margin:0}
+  input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:var(--accent)}
+  button{font:600 13px inherit;cursor:pointer;border-radius:8px;padding:6px 12px;border:1px solid var(--line);background:#1c1c25;color:var(--ink)}
+  button:hover{border-color:var(--accent)}
+  button.act{background:var(--accent);border-color:var(--accent);color:#16060e;font-weight:700}
+  button.act:hover{filter:brightness(1.1)}
+  button.ghost{background:transparent}
+  button.danger:hover{border-color:var(--bad);color:var(--bad)}
+  button.sm{padding:3px 9px;font-size:12px}
+  button.on{background:#3a1a2b;border-color:var(--accent);color:var(--accent-soft)}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  label.sw{display:inline-flex;gap:7px;align-items:center;cursor:pointer;user-select:none}
+  .muted{color:var(--muted)} .dim{color:var(--dim)} .mono{font-family:var(--mono)}
+  .pill{display:inline-flex;align-items:center;gap:6px;font:600 11px var(--mono);letter-spacing:.04em;padding:3px 8px;border-radius:99px;
+        border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+  .pill.good{color:var(--good);border-color:#1d4d33} .pill.warn{color:var(--warn);border-color:#5a4210} .pill.bad{color:var(--bad);border-color:#5a2420}
+  #toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,90px);background:#1c1c25;border:1px solid var(--accent);
+         color:var(--ink);padding:10px 18px;border-radius:99px;font-weight:600;transition:transform .25s ease;z-index:50;max-width:80vw}
+  #toast.up{transform:translate(-50%,0)} #toast.err{border-color:var(--bad);color:#ffd0cc}
+
+  /* runtime gate */
+  #gate .lic{background:#0c0c11;border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:10px 0;font-size:13px;color:var(--muted)}
+  #gate .lic b{color:var(--ink)}
+  #gate ul{margin:6px 0 0 18px;padding:0}
+
+  /* layout */
+  .top{display:grid;grid-template-columns:minmax(0,1fr) 470px;gap:14px;align-items:start}
+  @media (max-width:1180px){.top{grid-template-columns:1fr}}
+
+  /* stage */
+  .bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+  .chip{display:inline-flex;gap:7px;align-items:center;padding:5px 11px;border-radius:99px;border:1px solid var(--line);background:var(--card);
+        cursor:pointer;font-weight:600;font-size:13px;color:var(--muted);user-select:none}
+  .chip:hover{color:var(--ink);border-color:var(--line-hi)}
+  .chip.sel{color:var(--ink);border-color:var(--accent);background:#25121c}
+  .chip .d{width:8px;height:8px;border-radius:50%;background:#555}
+  .chip .d.on{background:var(--good)} .chip .d.hid{background:transparent;border:1px solid var(--dim)}
+  .chip .lk{font-size:11px;opacity:.7}
+  #pv{position:relative;width:100%;aspect-ratio:16/9;border:1px solid var(--line);border-radius:10px;overflow:hidden;
+      background-color:#14141b;background-image:linear-gradient(45deg,#1a1a23 25%,transparent 25%),linear-gradient(-45deg,#1a1a23 25%,transparent 25%),
+      linear-gradient(45deg,transparent 75%,#1a1a23 75%),linear-gradient(-45deg,transparent 75%,#1a1a23 75%);
+      background-size:28px 28px;background-position:0 0,0 14px,14px -14px,-14px 0}
+  #pv.bg-dark{background:#0a0a0e} #pv.bg-green{background:#00b140} #pv.bg-light{background:#e9e9ef}
+  #pv-msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:30px;color:var(--muted);pointer-events:none}
+  .stats{font:600 11.5px var(--mono);color:var(--dim)}
+  .url{display:flex;gap:8px;align-items:center;margin-top:10px}
+  .url a{flex:1;background:#08080c;border:1px solid var(--line);border-radius:8px;padding:7px 10px;font:12.5px var(--mono);color:var(--good);
+         overflow:auto;white-space:nowrap;text-decoration:none}
+
+  /* inspector */
+  .insp-head{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .insp-head .nm{font-size:18px;font-weight:800;letter-spacing:.02em}
+  .tabs{display:flex;gap:4px;flex-wrap:wrap;margin:12px 0 10px;border-bottom:1px solid var(--line);padding-bottom:8px}
+  .tabs button{border:0;background:transparent;color:var(--dim);padding:5px 9px;font-size:12.5px}
+  .tabs button.sel{color:var(--ink);background:var(--card);box-shadow:inset 0 -2px 0 var(--accent)}
+  .pane{display:none} .pane.sel{display:block}
+  .f{display:grid;grid-template-columns:118px minmax(0,1fr);gap:8px;align-items:center;margin:7px 0}
+  .f>span{color:var(--muted);font-size:12.5px}
+  .f .ctl{display:flex;gap:8px;align-items:center;min-width:0}
+  .f .val{font:12px var(--mono);color:var(--dim);min-width:40px;text-align:right}
+  .btns{display:flex;gap:6px;flex-wrap:wrap}
+  .btns button{min-width:0}
+  .empty{color:var(--dim);font-size:12.5px;padding:6px 0}
+  details{border:1px solid var(--line);border-radius:9px;padding:6px 10px;margin:8px 0;background:#0e0e14}
+  details summary{cursor:pointer;color:var(--muted);font-weight:600;font-size:12.5px}
+  .emo{display:grid;grid-template-columns:96px 1fr 1fr auto;gap:6px;align-items:center;margin:5px 0}
+  .emo select{min-width:0;width:100%}
+  .emo .xp{min-width:0;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .btns button.pick{outline:2px dashed var(--accent);outline-offset:1px}
+  #lookpad{position:relative;width:100%;height:120px;border:1px dashed var(--line-hi);border-radius:9px;background:#0c0c11;cursor:crosshair;touch-action:none}
+  #lookpad i{position:absolute;width:14px;height:14px;margin:-7px;border-radius:50%;background:var(--accent);box-shadow:0 0 10px var(--accent);display:none}
+  #lookpad b{position:absolute;left:50%;top:50%;width:6px;height:6px;margin:-3px;border-radius:50%;background:var(--dim)}
+  .meters{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;align-items:end;height:84px;margin:6px 0 2px}
+  .meters div{position:relative;background:#0c0c11;border:1px solid var(--line);border-radius:6px;height:100%;overflow:hidden}
+  .meters div i{position:absolute;left:0;right:0;bottom:0;background:linear-gradient(var(--accent-soft),var(--accent));height:0}
+  .meters div span{position:absolute;left:0;right:0;top:3px;text-align:center;font:700 11px var(--mono);color:var(--muted);z-index:1}
+  .plist{max-height:430px;overflow:auto;border:1px solid var(--line);border-radius:9px;padding:4px 8px;background:#0c0c11}
+  .prow{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr) 54px 22px;gap:8px;align-items:center;padding:3px 0;border-bottom:1px solid #16161e}
+  .prow:last-child{border-bottom:0}
+  .prow .pn{font:12px var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .prow .pn small{display:block;font:11px 'Segoe UI',sans-serif;color:var(--dim)}
+  .prow.held .pn{color:var(--accent-soft)}
+  .prow .pv{font:11.5px var(--mono);color:var(--dim);text-align:right}
+  .prow button{padding:0;width:22px;height:22px;border-radius:6px;font-size:12px;visibility:hidden}
+  .prow.held button{visibility:visible}
+  .ilist .it{display:grid;grid-template-columns:44px 1fr auto;gap:10px;align-items:center;border:1px solid var(--line);border-radius:9px;padding:8px;margin:6px 0;background:#0e0e14}
+  .thumb{width:44px;height:44px;border-radius:7px;background:#0a0a0e center/contain no-repeat;border:1px solid var(--line)}
+  .it .ctls{grid-column:1/-1;display:none}
+  .it.open .ctls{display:block}
+  .libgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+  .lib{border:1px solid var(--line);border-radius:10px;padding:10px;background:var(--card);display:flex;flex-direction:column;gap:6px;min-width:0}
+  .lib .thumb{width:100%;height:96px}
+  .lib .t{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .lib .s{font:11px var(--mono);color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .lib.bad{border-color:#5a2420}
+  .vts{max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:9px;padding:6px 10px;background:#0c0c11;margin-top:8px}
+  .vts label{display:flex;gap:8px;align-items:center;padding:3px 0}
+  .log{max-height:240px;overflow:auto;font:12px var(--mono);background:#0c0c11;border:1px solid var(--line);border-radius:9px;padding:6px 10px}
+  .log div{padding:2px 0;border-bottom:1px solid #16161e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .log .t{color:var(--dim)} .log .a{color:var(--accent-soft)} .log .e{color:var(--warn)} .log .x{color:var(--bad)}
+  pre.code{background:#08080c;border:1px solid var(--line);border-radius:8px;padding:9px 10px;font:12px/1.5 var(--mono);color:#cfe;white-space:pre-wrap;word-break:break-all;margin:6px 0}
+  .prog{height:6px;border-radius:99px;background:#1c1c25;overflow:hidden;margin-top:8px;display:none}
+  .prog i{display:block;height:100%;width:0;background:var(--accent);transition:width .2s}
+  .pst{border:1px solid var(--line);border-radius:10px;padding:9px 10px;margin:8px 0;background:#0e0e14}
+  .prole-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:8px}
+  .prole{display:grid;grid-template-columns:40px minmax(0,1fr);gap:7px;align-items:center}
+  .prole span{font-size:11.5px;color:var(--muted);display:block;margin-bottom:2px}
+  .prole select{width:100%;min-width:0;font-size:12px;padding:4px 6px}
+  .ly{display:grid;grid-template-columns:40px minmax(0,1fr) auto;gap:8px;align-items:center;border:1px solid var(--line);border-radius:9px;padding:6px 8px;margin:5px 0;background:#0e0e14}
+  .ly .ly-ctl{grid-column:1/-1;display:none}
+  .ly.open .ly-ctl{display:block}
+  .ly .nm2{font-weight:600;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ly .sub{font-size:11px;color:var(--dim)}
+  .ly-ctl .f{grid-template-columns:110px minmax(0,1fr);margin:4px 0}
+  .ly-ctl input[type=number]{width:70px}
+  .nums{display:flex;gap:6px;flex-wrap:wrap}
+  .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.65);display:none;align-items:center;justify-content:center;z-index:40;padding:20px}
+  .modal-bg.up{display:flex}
+  .modal{background:var(--panel);border:1px solid var(--line-hi);border-radius:12px;padding:18px;width:420px;max-width:100%}
+</style></head>
+<body>
+<div id="hexbar" data-section="Avatars" data-key="avatar"></div>
+
+<main>
+  <!-- the Live2D runtime: needed once, after accepting Live2D's license -->
+  <div class="card" id="gate" style="display:none">
+    <h2>Set up Live2D</h2>
+    <p class="hint">Avatars draws Live2D models with Live2D's own <b>Cubism Core</b> and an open-source renderer built on Live2D's Cubism Framework. They are Live2D Inc.'s software, so they don't ship with Hexcast: read and accept Live2D's terms, and Hexcast downloads them once (about 1.3 MB) into <span class="mono" id="gate-dir">config/avatar_runtime</span>.</p>
+    <div class="lic">
+      <b>What you agree to</b> - Live2D's licenses, not Hexcast's:
+      <ul>
+        <li><a id="lic-psla" target="_blank" rel="noopener">Live2D Proprietary Software License Agreement</a> (the Cubism Core)</li>
+        <li><a id="lic-open" target="_blank" rel="noopener">Live2D Open Software License Agreement</a> (the Cubism Framework inside the renderer)</li>
+      </ul>
+      <div style="margin-top:8px">Read them yourself - the agreement is between you and Live2D. Publishers of apps that load users' own models need Live2D's <a id="lic-exp" target="_blank" rel="noopener">publication license</a>. Your models' own terms (from their artist or rigger) apply too.</div>
+    </div>
+    <label class="sw"><input type="checkbox" id="gate-ok"> I have read Live2D's license agreements and accept them.</label>
+    <div class="row" style="margin-top:12px">
+      <button class="act" id="gate-go" disabled>Download and set up</button>
+      <span class="dim">or, offline:</span>
+      <button id="gate-core">Upload live2dcubismcore.min.js</button>
+      <a class="dim" id="gate-page" target="_blank" rel="noopener">Live2D's download page</a>
+    </div>
+    <div class="prog" id="gate-prog"><i></i></div>
+    <div id="gate-msg" class="dim" style="margin-top:8px"></div>
+  </div>
+
+  <div class="top">
+    <!-- the stage -->
+    <section class="card" style="margin-bottom:0">
+      <div class="bar">
+        <div id="chips" class="row"></div>
+        <button class="sm" id="add-av">+ Avatar</button>
+        <span class="grow"></span>
+        <span class="stats" id="stats"></span>
+      </div>
+      <div id="pv"><div id="pv-msg">Loading the preview...</div></div>
+      <div class="row" style="margin-top:8px">
+        <span class="dim" style="font-size:12px">Drag to move &middot; scroll to zoom &middot; drag the dot to rotate &middot; double-click to reset &middot; Shift snaps</span>
+        <span class="grow"></span>
+        <label class="sw dim" style="font-size:12px" title="Play speech here too (OBS always plays it)"><input type="checkbox" id="pv-hear"> Hear speech</label>
+        <select id="pv-bg" title="Preview background" style="font-size:12px;padding:3px 6px">
+          <option value="">Checkerboard</option><option value="bg-dark">Dark</option><option value="bg-light">Light</option><option value="bg-green">Green</option>
+        </select>
+      </div>
+      <div class="url"><a id="u-ov" target="_blank" rel="noopener"></a><button class="sm" id="cp-ov">Copy</button></div>
+      <div class="dim" style="font-size:12px;margin-top:4px">OBS: Browser source, 1920&times;1080, tick <b>Control audio via OBS</b> (speech plays through it). One avatar per source: add <span class="mono">?avatar=name</span> (several: <span class="mono">?avatar=a,b</span>).</div>
+    </section>
+
+    <!-- the selected avatar -->
+    <aside class="card" id="insp" style="margin-bottom:0">
+      <div id="insp-none" class="empty" style="padding:18px 4px">
+        <b style="color:var(--ink)">No avatar yet.</b><br>Add a model to the library below, then press <b>+ Avatar</b>. An avatar is a named slot (<span class="mono">main</span>, <span class="mono">guest</span> ...) showing a model - the name is what your bot uses in the API.
+      </div>
+      <div id="insp-body" style="display:none">
+        <div class="insp-head">
+          <span class="nm" id="i-name"></span>
+          <button class="sm ghost" id="i-rename" title="Rename">&#9998;</button>
+          <span class="grow"></span>
+          <label class="sw" title="Shown on stream"><input type="checkbox" id="i-visible"> Visible</label>
+          <label class="sw" title="Can't be dragged or zoomed by accident"><input type="checkbox" id="i-locked"> Lock</label>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <select id="i-model" class="grow" title="The model this avatar shows"></select>
+          <button class="sm" id="i-reload" title="Load the model again (after adding expressions or motions to its folder)">&#8635;</button>
+          <button class="sm danger" id="i-delete" title="Delete this avatar (the model stays in the library)">Delete</button>
+        </div>
+        <div id="i-problem" class="pill bad" style="display:none;margin-top:8px;white-space:normal"></div>
+        <div class="tabs" id="tabs">
+          <button data-p="place" class="sel">Placement</button>
+          <button data-p="mood">Face &amp; Mood</button>
+          <button data-p="mouth">Mouth</button>
+          <button data-p="idle">Idle</button>
+          <button data-p="png" id="tab-png" style="display:none">PNGtuber</button>
+          <button data-p="params">Parameters</button>
+          <button data-p="items">Items</button>
+          <button data-p="light">Light</button>
+          <button data-p="api">API</button>
+        </div>
+
+        <div class="pane sel" data-p="place">
+          <div class="f"><span>Position X %</span><div class="ctl"><input type="range" min="-20" max="120" step="0.1" data-k="x"><input type="number" step="0.1" data-k="x"></div></div>
+          <div class="f"><span>Position Y %</span><div class="ctl"><input type="range" min="-20" max="160" step="0.1" data-k="y"><input type="number" step="0.1" data-k="y"></div></div>
+          <div class="f"><span>Zoom</span><div class="ctl"><input type="range" min="0.05" max="4" step="0.01" data-k="scale"><input type="number" step="0.01" data-k="scale"></div></div>
+          <div class="f"><span>Rotation &deg;</span><div class="ctl"><input type="range" min="-180" max="180" step="0.5" data-k="rotation"><input type="number" step="0.5" data-k="rotation"></div></div>
+          <div class="f"><span>Mirror</span><div class="ctl"><label class="sw"><input type="checkbox" data-k="flip"> Flip left-right</label></div></div>
+          <div class="f"><span>Layer</span><div class="ctl btns"><button class="sm" id="l-up">Bring forward</button><button class="sm" id="l-down">Send back</button><span class="dim" id="l-pos"></span></div></div>
+          <div class="row" style="margin-top:10px"><button class="sm" id="p-center">Centre</button><button class="sm" id="p-reset">Reset</button></div>
+          <p class="hint" style="margin-top:10px">Saved for this avatar. Bots move it for the moment with <span class="mono">transform</span> (add <span class="mono">"save": true</span> to keep it).</p>
+        </div>
+
+        <div class="pane" data-p="mood">
+          <h3 style="margin-top:0">Emotion</h3>
+          <div class="btns" id="m-emos"></div>
+          <h3 id="m-exprs-h">Expressions <span class="dim" style="text-transform:none;letter-spacing:0">(the model's own - several can be on)</span></h3>
+          <div class="btns" id="m-exprs"></div>
+          <div class="row" id="m-multi" style="margin-top:7px">
+            <label class="sw dim l2d-only" style="font-size:12px" title="Click expressions to pick them, then fire them in one go"><input type="checkbox" id="x-pick"> Pick several</label>
+            <button class="sm l2d-only" id="x-fire" disabled>Fire together</button>
+            <button class="sm l2d-only" id="x-only" disabled title="Switch the picked ones on and every other expression off">Only these</button>
+            <span class="grow"></span><button class="sm ghost" id="x-clear" title="Switch every expression off">All off</button>
+          </div>
+          <h3 class="l2d-only">Motions</h3>
+          <div class="btns l2d-only" id="m-motions"></div>
+          <h3>Gestures</h3>
+          <div class="btns" id="m-gest"></div>
+          <h3>Look at</h3>
+          <div id="lookpad"><b></b><i></i></div>
+          <div class="row" style="margin-top:6px"><button class="sm" id="look-cam">Camera</button><button class="sm" id="look-rel">Let the eyes wander</button></div>
+          <details id="emo-edit"><summary>Emotion &rarr; expression table</summary>
+            <p class="hint" style="margin:6px 0">What <span class="mono">emotion</span> calls do on this model. Each one also shapes the face (smile, brows, eyes) on any model; add the model's own expression or a motion on top.</p>
+            <div id="emo-rows"></div>
+          </details>
+        </div>
+
+        <div class="pane" data-p="mouth">
+          <div class="f"><span>Lipsync</span><div class="ctl"><label class="sw"><input type="checkbox" data-k="mouth.lipsync"> Move the mouth with the voice</label></div></div>
+          <div class="f"><span>Voice from</span><div class="ctl"><select data-k="mouth.source" class="grow">
+            <option value="speech">Speech sent to Hexcast (the speak API)</option>
+            <option value="device">An audio device (mic, virtual cable ...)</option>
+            <option value="none">Nothing - the bot moves the mouth itself</option></select></div></div>
+          <div class="f" id="dev-row"><span>Device</span><div class="ctl"><select data-k="mouth.device" id="dev-sel" class="grow"></select><button class="sm" id="dev-ref" title="List devices again">&#8635;</button></div></div>
+          <div class="meters" id="meters">
+            <div><span>VOL</span><i></i></div><div><span>A</span><i></i></div><div><span>I</span><i></i></div><div><span>U</span><i></i></div><div><span>E</span><i></i></div><div><span>O</span><i></i></div><div><span>OPEN</span><i></i></div>
+          </div>
+          <div class="f"><span>Gain</span><div class="ctl"><input type="range" min="0.1" max="8" step="0.05" data-k="mouth.gain"><span class="val" data-v="mouth.gain"></span></div></div>
+          <div class="f"><span>Cutoff</span><div class="ctl"><input type="range" min="0" max="0.6" step="0.01" data-k="mouth.cutoff"><span class="val" data-v="mouth.cutoff"></span></div></div>
+          <div class="f"><span>Mouth size</span><div class="ctl"><input type="range" min="0.2" max="2" step="0.05" data-k="mouth.open"><span class="val" data-v="mouth.open"></span></div></div>
+          <div class="f"><span>Smoothing</span><div class="ctl"><input type="range" min="0" max="100" step="1" data-k="mouth.smoothing"><span class="val" data-v="mouth.smoothing"></span></div></div>
+          <div class="f"><span>Lead (ms)</span><div class="ctl"><input type="range" min="0" max="300" step="5" data-k="mouth.delay_ms"><span class="val" data-v="mouth.delay_ms"></span></div></div>
+          <div class="f"><span>Vowels</span><div class="ctl"><label class="sw"><input type="checkbox" data-k="mouth.vowels"> Shape A / I / U / E / O (advanced lipsync)</label></div></div>
+          <p class="hint">Lead delays the speech audio a little so the mouth is never late. Models with vowel shapes (VTube Studio's VoiceA..VoiceO inputs) use them; any other model gets mouth open + form.</p>
+          <h3>Try it</h3>
+          <div class="row"><button id="t-speak">Speak a file...</button><button id="t-stop">Stop</button><span class="dim" style="font-size:12px">plays in OBS like the API's speak</span></div>
+          <h3>Learn this voice</h3>
+          <p class="hint">Optional: give it a recording of the voice (30 s or more of normal speech - your TTS reading anything) and the vowels are tuned to it. Without it the lipsync tunes itself while talking.</p>
+          <div class="row"><button id="t-learn">Learn from a file...</button><button class="sm ghost" id="t-forget">Forget</button><span id="t-voice" class="dim mono" style="font-size:12px"></span></div>
+        </div>
+
+        <div class="pane" data-p="idle">
+          <p class="hint">What keeps the model alive between commands - all of it can be overridden by the API at any time.</p>
+          <div class="f"><span>Blink</span><div class="ctl"><label class="sw"><input type="checkbox" data-k="idle.blink"> Blink by itself</label></div></div>
+          <div class="f"><span>Breath</span><div class="ctl"><label class="sw"><input type="checkbox" data-k="idle.breath"> Breathe</label></div></div>
+          <div class="f l2d-only"><span>Physics</span><div class="ctl"><label class="sw"><input type="checkbox" data-k="idle.physics"> Hair and cloth physics</label></div></div>
+          <div class="f l2d-only"><span>Idle animation</span><div class="ctl"><label class="sw"><input type="checkbox" data-k="idle.idle_motion"> Play the model's idle animation</label></div></div>
+          <div class="f"><span>Sway</span><div class="ctl"><input type="range" min="0" max="100" step="1" data-k="idle.sway"><span class="val" data-v="idle.sway"></span></div></div>
+          <div class="f"><span>Eyes wander</span><div class="ctl"><input type="range" min="0" max="100" step="1" data-k="idle.gaze"><span class="val" data-v="idle.gaze"></span></div></div>
+          <div class="f"><span>Talking motion</span><div class="ctl"><input type="range" min="0" max="100" step="1" data-k="idle.speech_motion"><span class="val" data-v="idle.speech_motion"></span></div></div>
+          <div class="f"><span>Update rate</span><div class="ctl"><select data-k="idle.fps"><option value="60">60 fps</option><option value="30">30 fps (lighter)</option><option value="20">20 fps (lightest)</option><option value="120">120 fps</option></select></div></div>
+          <h3>Stage (every avatar)</h3>
+          <div class="f"><span>Frame rate cap</span><div class="ctl"><select id="st-fps"><option value="30">30</option><option value="60">60</option><option value="120">120</option><option value="144">144</option></select><span class="dim" style="font-size:12px">what the OBS source draws at</span></div></div>
+        </div>
+
+        <div class="pane" data-p="params">
+          <div class="row"><input id="pf" class="grow" placeholder="Filter parameters and parts (id or name)..."><button class="sm" id="p-rel">Release all</button></div>
+          <p class="hint" style="margin:6px 0">Live values. Drag a slider to take that parameter over (as a bot would with <span class="mono">params</span>); &times; hands it back.</p>
+          <div class="plist" id="plist"></div>
+          <details id="parts-edit"><summary>Parts (show / hide)</summary>
+            <p class="hint" style="margin:6px 0">Whole parts of the model - e.g. a second set of arms, glasses, a prop. Untick to hide one (as a bot would with <span class="mono">parts</span>); &times; hands it back to the model and its animations.</p>
+            <div class="plist" id="partlist" style="max-height:260px"></div>
+          </details>
+          <details id="map-edit"><summary>Mappings (tracker input &rarr; parameter)</summary>
+            <p class="hint" style="margin:6px 0">How the built-in tracker's inputs (VTube Studio's names) drive this model. <span id="map-from"></span></p>
+            <div id="map-rows" style="max-height:300px;overflow:auto"></div>
+            <div class="row" style="margin-top:8px"><button class="sm" id="map-save">Save mappings</button><button class="sm ghost" id="map-reset">Reset to the model's</button></div>
+          </details>
+        </div>
+
+        <div class="pane" data-p="png">
+          <div class="row"><b id="png-style"></b><span class="grow"></span><span id="png-dirty" class="pill warn" style="display:none">not saved</span><button class="sm act" id="png-save" disabled>Save</button></div>
+          <p class="hint" style="margin:6px 0 4px">Changes show in the preview at once; <b>Save</b> puts them on stream (and on every avatar using this PNGtuber).</p>
+          <div class="f"><span>Bounce</span><div class="ctl"><input type="range" min="0" max="800" step="10" data-pg="bounce"><span class="val" data-pv="bounce"></span></div></div>
+          <div class="f"><span>Gravity</span><div class="ctl"><input type="range" min="200" max="4000" step="50" data-pg="gravity"><span class="val" data-pv="gravity"></span></div></div>
+          <div class="f"><span>Talks above</span><div class="ctl"><input type="range" min="0.02" max="0.6" step="0.01" data-pg="threshold"><span class="val" data-pv="threshold"></span></div></div>
+          <div class="f"><span>Hold (s)</span><div class="ctl"><input type="range" min="0" max="1" step="0.02" data-pg="hold"><span class="val" data-pv="hold"></span></div></div>
+          <div class="f"><span>Breathe</span><div class="ctl"><label class="sw"><input type="checkbox" data-pg="breathe"> A slow, gentle breathing</label></div></div>
+          <p class="hint">Bounce: how high it hops when it starts talking (0 = never). Talks above: how loud the voice must be (watch the meter on the Mouth tab). Hold keeps the mouth open between words.</p>
+          <div class="row" style="margin:8px 0 2px"><button class="sm" id="png-add-pics">Add pictures...</button><span class="grow"></span><button class="sm ghost" id="png-convert" title="Turn the pictures into layers you can wobble, offset and parent">Make it layered</button></div>
+          <div id="png-simple"></div>
+          <div id="png-layered"></div>
+        </div>
+
+        <div class="pane" data-p="items">
+          <p class="hint">Props on this avatar: pictures, GIFs, frame animations or Live2D items from the library. Position is in % of the model's box; <b>Pin</b> glues an item to the part of the model under it so it moves with the head, hands ...</p>
+          <div class="row"><select id="it-add-sel" class="grow"></select><button class="sm" id="it-add">Add</button></div>
+          <div class="ilist" id="it-list"></div>
+        </div>
+
+        <div class="pane" data-p="light">
+          <div class="f"><span>Light</span><div class="ctl"><label class="sw"><input type="checkbox" data-k="light.enabled"> On</label></div></div>
+          <div class="f"><span>Preset</span><div class="ctl"><select data-k="light.preset" id="lt-preset" class="grow"></select></div></div>
+          <div class="f"><span>Key light</span><div class="ctl"><input type="color" data-k="light.color"><input type="range" min="0" max="2" step="0.01" data-k="light.intensity"><span class="val" data-v="light.intensity"></span></div></div>
+          <div class="f"><span>From</span><div class="ctl"><input type="range" min="-180" max="180" step="1" data-k="light.angle"><span class="val" data-v="light.angle"></span></div></div>
+          <div class="f"><span>Rim light</span><div class="ctl"><input type="color" data-k="light.rim"><input type="range" min="0" max="2" step="0.01" data-k="light.rim_amount"><span class="val" data-v="light.rim_amount"></span></div></div>
+          <div class="f"><span>Ambient tint</span><div class="ctl"><input type="color" data-k="light.ambient"><input type="range" min="0" max="1" step="0.01" data-k="light.ambient_amount"><span class="val" data-v="light.ambient_amount"></span></div></div>
+          <div class="f"><span>Speed</span><div class="ctl"><input type="range" min="0.1" max="5" step="0.05" data-k="light.speed"><span class="val" data-v="light.speed"></span></div></div>
+          <p class="hint">"From" is where the light comes from: 0 = the right, -90 = above, 180 = the left. Presets animate it (fire flickers from below, police alternates red / blue ...).</p>
+        </div>
+
+        <div class="pane" data-p="api">
+          <p class="hint">Everything here is also a call your bot can make. Full list: <a href="/help/avatar" target="_blank">Help &rarr; Avatars</a>, or <span class="mono">GET /avatar/api</span>.</p>
+          <div id="api-ex"></div>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- library -->
+  <section class="card" style="margin-top:14px">
+    <div class="row"><h2 class="grow">Library</h2>
+      <button class="sm" id="lib-tab-m">Models</button><button class="sm" id="lib-tab-i">Items</button></div>
+    <div id="lib-m">
+      <p class="hint">Live2D models (Cubism 3, 4 and 5 - a folder with a <span class="mono">.model3.json</span>). A VTube Studio model folder works as it is: its parameter setup, hotkey expressions and idle animation come along. Kept in <span class="mono">media/avatars/models/</span>.</p>
+      <div class="row"><button id="m-zip">Import a zip / .save...</button><button id="m-dir">Import a folder...</button><button id="m-png">New PNGtuber from pictures...</button><span class="dim" id="m-up-msg"></span></div>
+      <p class="hint" style="margin-top:8px">PNGtubers too: a few pictures (quiet, talking, blinking ... - named <span class="mono">idle.png</span>, <span class="mono">talk.png</span>, <span class="mono">blink.png</span>, <span class="mono">happy_talk.png</span> ... or anything, and set on its PNGtuber tab), or a layered <b>PNGTuber Plus</b> avatar (its <span class="mono">.save</span> file).</p>
+      <div class="prog" id="m-prog"><i></i></div>
+      <div id="m-vts"></div>
+      <div class="libgrid" id="m-grid" style="margin-top:12px"></div>
+    </div>
+    <div id="lib-i" style="display:none">
+      <p class="hint">Items: a png / jpg / webp / gif, a folder of numbered frames (<span class="mono">name_1.png, name_2.png ...</span>) or a Live2D item. Kept in <span class="mono">media/avatars/items/</span>.</p>
+      <div class="row"><button id="i-file">Add pictures...</button><button id="i-zip">Import a zip...</button><button id="i-dir">Import a folder...</button><span class="dim" id="i-up-msg"></span></div>
+      <div class="prog" id="i-prog"><i></i></div>
+      <div id="i-vts"></div>
+      <div class="libgrid" id="i-grid" style="margin-top:12px"></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="row"><h2 class="grow">Activity</h2><span class="dim" style="font-size:12px">what bots asked for, and what happened on stream</span><button class="sm ghost" id="log-clear">Clear</button></div>
+    <div class="log" id="log"><div class="t">Nothing yet.</div></div>
+  </section>
+</main>
+
+<div class="modal-bg" id="dlg"><div class="modal">
+  <h2 style="margin:0 0 10px;font-size:14px;letter-spacing:.12em;text-transform:uppercase" id="dlg-t"></h2>
+  <div id="dlg-body"></div>
+  <div class="row" style="margin-top:14px;justify-content:flex-end"><button id="dlg-no">Cancel</button><button class="act" id="dlg-ok">OK</button></div>
+</div></div>
+
+<div id="toast"></div>
+<input type="file" id="f-zip" accept=".zip,.save" style="display:none">
+<input type="file" id="f-pngpics" accept=".png,.jpg,.jpeg,.webp,.gif" multiple style="display:none">
+<input type="file" id="f-dir" webkitdirectory multiple style="display:none">
+<input type="file" id="f-pics" accept=".png,.jpg,.jpeg,.webp,.gif" multiple style="display:none">
+<input type="file" id="f-audio" accept="audio/*,.wav,.mp3,.ogg,.opus,.m4a,.flac,.webm" style="display:none">
+<input type="file" id="f-core" accept=".js" style="display:none">
+
+<script src="/static/hexbar.js?v=2"></script>
+<!--HEXCAST-RUNTIME-->
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var S = { config: { avatars: [], stage: {} }, models: {}, items: [], live: {}, runtime: null, sel: null, info: {}, devices: null,
+            inputs: [], gestures: [], lightPresets: [], vts: null };
+  try { S.sel = localStorage.getItem('hexcast.avatar.sel') || null; } catch (e) {}
+
+  /* ---------------------------------------------------------------- helpers */
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  var toastT = null;
+  function toast(msg, err) { var t = $('toast'); t.textContent = msg; t.className = 'up' + (err ? ' err' : ''); clearTimeout(toastT); toastT = setTimeout(function () { t.className = err ? 'err' : ''; }, err ? 4200 : 1800); }
+  async function api(method, path, body) {
+    try {
+      var h = { 'X-Hexcast-From': 'panel' }; if (body) h['Content-Type'] = 'application/json';
+      var r = await fetch(path, { method: method, headers: h, body: body ? JSON.stringify(body) : undefined });
+      var j = await r.json().catch(function () { return {}; });
+      if (!r.ok || j.ok === false) { toast(j.error || ('error ' + r.status), true); return null; }
+      return j;
+    } catch (e) { toast('Hexcast is not answering', true); return null; }
+  }
+  function cmd(name, body) { return api('POST', '/avatar/api/avatars/' + encodeURIComponent(S.sel) + '/' + name, body || {}); }
+  function cur() { return S.config.avatars.filter(function (a) { return a.name === S.sel; })[0] || null; }
+  function get(obj, path) { return path.split('.').reduce(function (o, k) { return o == null ? undefined : o[k]; }, obj); }
+  function fmt(v) { return typeof v === 'number' ? (Math.abs(v) >= 100 ? v.toFixed(0) : Math.abs(v) >= 10 ? v.toFixed(1) : v.toFixed(2)) : v; }
+  function debounce(fn, ms) { var t; return function () { var a = arguments, s = this; clearTimeout(t); t = setTimeout(function () { fn.apply(s, a); }, ms); }; }
+  function throttle(fn, ms) { var last = 0, t = null, args; return function () { args = arguments; var now = Date.now(); if (now - last >= ms) { last = now; fn.apply(null, args); } else { clearTimeout(t); t = setTimeout(function () { last = Date.now(); fn.apply(null, args); }, ms - (now - last)); } }; }
+  function dialog(title, html, onOk) {
+    $('dlg-t').textContent = title; $('dlg-body').innerHTML = html; $('dlg').classList.add('up');
+    var first = $('dlg-body').querySelector('input,select'); if (first) setTimeout(function () { first.focus(); first.select && first.select(); }, 30);
+    $('dlg-ok').onclick = async function () { if ((await onOk()) !== false) $('dlg').classList.remove('up'); };
+    $('dlg-no').onclick = function () { $('dlg').classList.remove('up'); };
+  }
+  $('dlg').addEventListener('keydown', function (e) { if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA') $('dlg-ok').click(); if (e.key === 'Escape') $('dlg-no').click(); });
+
+  var ovUrl = location.origin + '/avatar/overlay';
+  $('u-ov').textContent = ovUrl; $('u-ov').href = ovUrl;
+  $('cp-ov').onclick = function () { navigator.clipboard.writeText(ovUrl).then(function () { toast('Copied'); }); };
+
+  /* ---------------------------------------------------------------- runtime gate */
+  function renderGate() {
+    var rt = S.runtime;
+    if (!rt) return;
+    $('gate').style.display = rt.installed ? 'none' : 'block';
+    $('lic-psla').href = rt.license_url; $('lic-psla').textContent = 'Live2D Proprietary Software License Agreement';
+    $('lic-open').href = rt.open_license_url; $('lic-exp').href = rt.expandable_url; $('gate-page').href = rt.download_page;
+    $('gate-dir').textContent = rt.folder;
+  }
+  $('gate-ok').onchange = function () { $('gate-go').disabled = !this.checked; };
+  $('gate-go').onclick = async function () {
+    this.disabled = true; $('gate-prog').style.display = 'block'; $('gate-prog').firstElementChild.style.width = '30%';
+    $('gate-msg').textContent = 'Downloading...';
+    var r = await api('POST', '/avatar/api/runtime/install', { accept_license: true });
+    $('gate-prog').firstElementChild.style.width = '100%';
+    if (r && r.installed) { $('gate-msg').textContent = 'Done - loading...'; setTimeout(function () { location.reload(); }, 400); }
+    else { this.disabled = false; $('gate-msg').textContent = (r && r.job && r.job.error) || 'The download failed - check the internet connection, or upload the Core by hand.'; }
+  };
+  $('gate-core').onclick = function () { if (!$('gate-ok').checked) { toast('Accept the license first', true); return; } $('f-core').click(); };
+  $('f-core').onchange = async function () {
+    var f = this.files[0]; this.value = '';
+    if (!f) return;
+    var fd = new FormData(); fd.append('file', f);
+    var r = await fetch('/avatar/api/runtime/core', { method: 'POST', body: fd }).then(function (x) { return x.json(); }).catch(function () { return null; });
+    if (!r || !r.ok) { toast((r && r.error) || 'upload failed', true); return; }
+    toast('Cubism Core saved - fetching the rest...');
+    $('gate-go').disabled = false; $('gate-go').click();
+  };
+
+  /* ---------------------------------------------------------------- the preview */
+  var stage = null, rws = null, rready = false, rqueue = [];
+  function startPreview() {
+    if (!window.HexAvatar || !window.PIXI || !window.Live2DCubismCore) { $('pv-msg').textContent = 'Set up Live2D above to see the preview.'; return; }
+    stage = new HexAvatar.Stage({ mount: $('pv'), role: 'preview', editable: true, audio: false });
+    stage.on('select', function (name) { if (name) selectAvatar(name); });
+    stage.on('transform', function (e) { onTransform(e); });
+    stage.on('item', function (e) { onItemDrag(e); });
+    stage.on('reset', function (name) { api('POST', '/avatar/api/avatars/' + encodeURIComponent(name), { x: 50, y: 55, scale: 1, rotation: 0 }); });
+    stage.on('model_info', function (m) { if (rws && rws.readyState === 1) rws.send(JSON.stringify({ type: 'model_info', model: m.model, info: m.info })); infoChanged(m.model); });
+    stage.on('stats', function (s) { S.pvStats = s; renderStats(); });
+    stage.init().then(function () {
+      $('pv-msg').style.display = 'none';
+      rready = true; rqueue.splice(0).forEach(onRender);
+      if (S.sel) stage.select(S.sel);
+    }).catch(function (e) { $('pv-msg').textContent = 'The preview could not start: ' + e.message; });
+    connectRender();
+  }
+  function connectRender() {
+    rws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/avatar/ws/render?role=preview');
+    rws.binaryType = 'arraybuffer';
+    rws.onmessage = function (ev) {
+      if (typeof ev.data !== 'string') { if (stage && rready) stage.pcm(ev.data); return; }
+      var m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+      if (!rready) rqueue.push(m); else onRender(m);
+    };
+    rws.onclose = function () { setTimeout(connectRender, 1500); };
+  }
+  function onRender(m) {
+    switch (m.type) {
+      case 'snapshot':                                    // the plugin was updated: load the new page
+        if (m.build && window.HEXCAST_AVATAR_BUILD && m.build !== window.HEXCAST_AVATAR_BUILD) { location.reload(); return; }
+        stage.snapshot(m); break;
+      case 'config': stage.setConfig(m.config); break;
+      case 'library': stage.setLibrary(m.models, m.items); break;
+      case 'cmd': if (!(m.source === 'panel' && m.cmd === 'transform' && !m.duration)) stage.command(m); break;   // our own drags are already shown
+      case 'reload_model': for (var n in stage.avatars) if (stage.avatars[n].cfg.model === m.model) stage.avatars[n].load(m.model); break;
+      case 'runtime': location.reload(); break;
+      case 'get_params': var av = stage.avatars[m.avatar]; rws.send(JSON.stringify({ type: 'live_params', rid: m.rid, values: av ? av.paramValues() : {} })); break;
+    }
+  }
+  $('pv-hear').onchange = function () { if (stage) { stage.hear = this.checked; stage.audio(); } };
+  $('pv-bg').onchange = function () { $('pv').className = this.value; try { localStorage.setItem('hexcast.avatar.bg', this.value); } catch (e) {} };
+  try { var bg0 = localStorage.getItem('hexcast.avatar.bg'); if (bg0) { $('pv-bg').value = bg0; $('pv').className = bg0; } } catch (e) {}
+  document.addEventListener('pointerdown', function () { if (stage) stage.audio(); }, { once: true });
+
+  var liveMove = throttle(function (name, t) { api('POST', '/avatar/api/avatars/' + encodeURIComponent(name) + '/transform', t); }, 60);
+  function onTransform(e) {
+    var a = S.config.avatars.filter(function (x) { return x.name === e.name; })[0];
+    if (!a) return;
+    var t = {}; for (var k in e.t) t[k] = Math.round(e.t[k] * 1000) / 1000;
+    if (!e.final) { liveMove(e.name, t); Object.assign(a, t); fillFields(true); return; }
+    setTimeout(function () { api('POST', '/avatar/api/avatars/' + encodeURIComponent(e.name), t); }, 70);
+  }
+
+  var itemLive = throttle(function (name, id, patch) { api('POST', '/avatar/api/avatars/' + encodeURIComponent(name) + '/item_update', Object.assign({ id: id }, patch)); }, 120);
+  function onItemDrag(e) {
+    var a = S.config.avatars.filter(function (x) { return x.name === e.avatar; })[0];
+    if (!a) return;
+    var it = (a.items || []).filter(function (x) { return x.id === e.id; })[0];
+    if (e.select) {                                        // show it in the Items tab
+      if (paneSel !== 'items') document.querySelector('#tabs [data-p=items]').click();
+      setTimeout(function () { var row = $('it-list').querySelector('.it[data-id="' + e.id + '"]'); if (row) row.classList.add('open'); }, 50);
+      return;
+    }
+    if (it && e.patch) Object.assign(it, e.patch);
+    if (!e.final) { itemLive(e.avatar, e.id, e.patch); return; }
+    setTimeout(function () {
+      api('POST', '/avatar/api/avatars/' + encodeURIComponent(e.avatar) + '/item_update', Object.assign({ id: e.id }, e.patch)).then(function (r) {
+        if (r && 'pin' in e.patch) toast(e.patch.pin ? 'Pinned to ' + e.patch.pin.mesh : 'Dropped off the model - not pinned any more');
+      });
+    }, 140);
+  }
+
+  function renderStats() {
+    var obs = S.obsStats, pv = S.pvStats, parts = [];
+    if (obs && Date.now() / 1000 - obs.at < 6) parts.push('OBS ' + obs.fps + ' fps \u00b7 ' + obs.frame_ms + ' ms');
+    else parts.push('OBS not connected');
+    if (pv) parts.push('preview ' + pv.fps + ' fps');
+    var a = S.sel && obs && obs.avatars && obs.avatars[S.sel];
+    if (a && a.visible) parts.push(S.sel + ' ' + a.ms + ' ms');
+    $('stats').textContent = parts.join('  \u00b7  ');
+    $('stats').title = 'Frame time is the CPU work per frame (the GPU draws in parallel). Lower the update rate of avatars that hardly move to make them cheaper.';
+  }
+
+  /* ---------------------------------------------------------------- panel socket */
+  function connectPanel() {
+    var ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/avatar/ws/panel');
+    ws.onmessage = function (ev) {
+      var m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+      switch (m.type) {
+        case 'snapshot':
+          S.config = m.config; S.models = m.models; S.items = m.items; S.live = m.live; S.runtime = m.runtime;
+          S.inputs = m.inputs || []; S.gestures = m.gestures || []; S.lightPresets = m.light_presets || [];
+          renderGate(); renderAll(); break;
+        case 'config': S.config = m.config; renderAll(true); break;
+        case 'library': S.models = m.models; S.items = m.items; renderLibrary(); renderInspector(true); if (paneSel === 'png' && !PNG.dirty) loadPng(true); break;
+        case 'runtime': location.reload(); break;
+        case 'stats': if (m.role === 'obs') { S.obsStats = m; renderStats(); } break;
+        case 'activity': log('a', m.avatar, m.cmd + (m.summary ? '  ' + m.summary : '')); trackLive(m); break;
+        case 'event': log(m.event === 'error' || m.event === 'speech_error' ? 'x' : 'e', m.avatar, m.event + (m.message ? '  ' + m.message : m.error ? '  ' + m.error : m.name ? '  ' + m.name : m.duration ? '  ' + m.duration + ' s' : '')); break;
+      }
+    };
+    ws.onclose = function () { setTimeout(connectPanel, 1500); };
+  }
+  function trackLive(m) { if (m.cmd === 'expression' || m.cmd === 'emotion' || m.cmd === 'clear_expressions') refreshLive(); }
+  var refreshLive = debounce(async function () { var j = await fetch('/avatar/api/avatars').then(function (r) { return r.json(); }).catch(function () { return null; }); if (j) { S.live = j.live || {}; renderMood(); } }, 150);
+
+  var logRows = [];
+  function log(kind, avatar, text) {
+    var d = new Date(), t = d.toTimeString().slice(0, 8);
+    logRows.unshift('<div><span class="t">' + t + '</span> <span class="' + kind + '">' + esc(avatar || '') + '</span> ' + esc(text) + '</div>');
+    logRows.length = Math.min(logRows.length, 120);
+    $('log').innerHTML = logRows.join('');
+  }
+  $('log-clear').onclick = function () { logRows = []; $('log').innerHTML = '<div class="t">Nothing yet.</div>'; };
+
+  /* ---------------------------------------------------------------- avatars */
+  function renderAll(fromServer) { renderChips(); renderInspector(fromServer); renderLibrary(); }
+
+  function renderChips() {
+    var html = S.config.avatars.map(function (a) {
+      var m = S.models[a.model], ok = m && m.ok;
+      return '<span class="chip' + (a.name === S.sel ? ' sel' : '') + '" data-n="' + esc(a.name) + '" title="' + esc(m ? m.name : 'no model') + '">' +
+        '<span class="d ' + (!a.visible ? 'hid' : ok ? 'on' : '') + '"></span>' + esc(a.name) + (a.locked ? '<span class="lk">&#128274;</span>' : '') + '</span>';
+    }).join('');
+    $('chips').innerHTML = html;
+    Array.prototype.forEach.call($('chips').children, function (c) { c.onclick = function () { selectAvatar(c.dataset.n); }; });
+  }
+
+  function selectAvatar(name) {
+    if (S.sel === name) return;
+    S.sel = name;
+    try { localStorage.setItem('hexcast.avatar.sel', name || ''); } catch (e) {}
+    if (stage && stage.selected !== name) stage.select(name);
+    renderChips(); renderInspector();
+  }
+
+  $('add-av').onclick = function () {
+    var opts = Object.keys(S.models).map(function (id) { var m = S.models[id]; return '<option value="' + esc(id) + '"' + (m.ok ? '' : ' disabled') + '>' + esc(m.name) + (m.ok ? '' : ' (can\'t be drawn)') + '</option>'; }).join('');
+    var n = S.config.avatars.length ? 'avatar' + (S.config.avatars.length + 1) : 'main';
+    dialog('New avatar', '<p class="hint">The name is how your bot addresses it: lowercase letters, digits, _ and -.</p>' +
+      '<div class="f"><span>Name</span><div class="ctl"><input id="na-name" class="grow" value="' + n + '" maxlength="32"></div></div>' +
+      '<div class="f"><span>Model</span><div class="ctl"><select id="na-model" class="grow">' + (opts || '<option value="">(the library is empty)</option>') + '</select></div></div>',
+      async function () {
+        var r = await api('POST', '/avatar/api/avatars', { name: $('na-name').value.trim().toLowerCase(), model: $('na-model').value });
+        if (!r) return false;
+        selectAvatar(r.avatar.name);
+      });
+  };
+
+  $('i-rename').onclick = function () {
+    var a = cur(); if (!a) return;
+    dialog('Rename ' + a.name, '<p class="hint">Bots that use the old name will need the new one.</p><div class="f"><span>New name</span><div class="ctl"><input id="rn" class="grow" value="' + esc(a.name) + '" maxlength="32"></div></div>',
+      async function () { var r = await api('POST', '/avatar/api/avatars/' + encodeURIComponent(a.name) + '/rename', { to: $('rn').value.trim().toLowerCase() }); if (!r) return false; S.sel = r.avatar.name; });
+  };
+  $('i-delete').onclick = function () {
+    var a = cur(); if (!a) return;
+    dialog('Delete ' + a.name + '?', '<p class="hint">The avatar and its placement, items and settings go. The model stays in the library.</p>',
+      async function () { await api('POST', '/avatar/api/avatars/' + encodeURIComponent(a.name) + '/delete'); S.sel = null; });
+  };
+
+  /* every field with data-k: one avatar setting */
+  var pending = {};
+  var saveSoon = debounce(function () {
+    var name = S.sel, body = pending; pending = {};
+    if (!name || !Object.keys(body).length) return;
+    api('POST', '/avatar/api/avatars/' + encodeURIComponent(name), body);
+  }, 220);
+  function setPath(obj, path, v) { var ks = path.split('.'), o = obj; for (var i = 0; i < ks.length - 1; i++) { o[ks[i]] = o[ks[i]] || {}; o = o[ks[i]]; } o[ks[ks.length - 1]] = v; }
+  function fieldValue(el) { if (el.type === 'checkbox') return el.checked; if (el.type === 'range' || el.type === 'number') return parseFloat(el.value); if (el.dataset.k === 'idle.fps') return parseInt(el.value, 10); return el.value; }
+  document.querySelectorAll('#insp [data-k]').forEach(function (el) {
+    el.addEventListener(el.type === 'checkbox' || el.tagName === 'SELECT' || el.type === 'color' ? 'change' : 'input', function () {
+      var a = cur(); if (!a) return;
+      var k = el.dataset.k, v = fieldValue(el);
+      if (typeof v === 'number' && isNaN(v)) return;
+      setPath(a, k, v);
+      var top = k.split('.')[0];
+      if (top === k) pending[k] = v; else pending[top] = Object.assign({}, pending[top] || {}, a[top]);
+      fillFields(true, el);
+      if (stage && stage.avatars[a.name]) stage.avatars[a.name].setConfig(JSON.parse(JSON.stringify(a)));
+      saveSoon();
+      if (k === 'mouth.source') renderMouth();
+    });
+  });
+  if (document.querySelector('#insp [data-k="light.color"]')) {
+    document.querySelectorAll('#insp input[type=color][data-k]').forEach(function (el) { el.addEventListener('input', function () { el.dispatchEvent(new Event('change')); }); });
+  }
+  function fillFields(fromServer, except) {
+    var a = cur(); if (!a) return;
+    document.querySelectorAll('#insp [data-k]').forEach(function (el) {
+      if (el === except || (fromServer && el === document.activeElement && el.type !== 'range')) return;
+      var v = get(a, el.dataset.k);
+      if (el.type === 'checkbox') el.checked = !!v;
+      else if (v != null) el.value = typeof v === 'number' && el.type === 'number' ? Math.round(v * 1000) / 1000 : v;
+    });
+    document.querySelectorAll('#insp [data-v]').forEach(function (el) { var v = get(a, el.dataset.v); el.textContent = v == null ? '' : fmt(v); });
+  }
+
+  function renderInspector(fromServer) {
+    var a = cur();
+    if (!a && S.config.avatars.length) { S.sel = S.config.avatars[0].name; a = cur(); if (stage) stage.select(S.sel); }
+    $('insp-none').style.display = a ? 'none' : 'block';
+    $('insp-body').style.display = a ? 'block' : 'none';
+    if (!a) return;
+    $('i-name').textContent = a.name;
+    $('i-visible').checked = a.visible; $('i-locked').checked = a.locked;
+    var sel = $('i-model');
+    sel.innerHTML = '<option value="">(no model)</option>' + Object.keys(S.models).map(function (id) {
+      var m = S.models[id]; return '<option value="' + esc(id) + '"' + (id === a.model ? ' selected' : '') + (m.ok ? '' : ' disabled') + '>' + esc(m.name) + '</option>';
+    }).join('');
+    var m = S.models[a.model];
+    $('i-problem').style.display = m && !m.ok ? 'inline-flex' : 'none';
+    $('i-problem').textContent = m && !m.ok ? m.problem : '';
+    var idx = S.config.avatars.indexOf(a);
+    $('l-pos').textContent = 'layer ' + (idx + 1) + ' of ' + S.config.avatars.length;
+    $('st-fps').value = String((S.config.stage || {}).fps || 60);
+    fillFields(fromServer);
+    var isPng = !!(m && m.type === 'png');
+    $('tab-png').style.display = isPng ? '' : 'none';
+    document.querySelectorAll('#insp .l2d-only').forEach(function (e) { e.style.display = isPng ? 'none' : ''; });
+    $('map-edit').style.display = isPng ? 'none' : '';
+    $('m-exprs-h').firstChild.textContent = isPng ? 'States ' : 'Expressions ';
+    $('m-exprs-h').querySelector('span').textContent = isPng ? '(one at a time)' : "(the model's own - several can be on)";
+    if (!isPng && paneSel === 'png') document.querySelector('#tabs [data-p=place]').click();
+    if (isPng && paneSel === 'png') loadPng();
+    renderMood(); renderMouth(); renderItems(); renderLight(); renderApi();
+    if (paneSel === 'params') loadInfo();
+  }
+  $('i-visible').onchange = function () { var a = cur(); if (a) api('POST', '/avatar/api/avatars/' + encodeURIComponent(a.name), { visible: this.checked }); };
+  $('i-locked').onchange = function () { var a = cur(); if (a) api('POST', '/avatar/api/avatars/' + encodeURIComponent(a.name), { locked: this.checked }); };
+  $('i-reload').onclick = function () { cmd('reload').then(function (r) { if (r) toast('Reloaded'); }); };
+  $('i-model').onchange = function () { var a = cur(); if (a) api('POST', '/avatar/api/avatars/' + encodeURIComponent(a.name), { model: this.value }); };
+  $('st-fps').onchange = function () { api('POST', '/avatar/api/stage', { fps: parseInt(this.value, 10) }); };
+  function move(dir) {
+    var names = S.config.avatars.map(function (x) { return x.name; }), i = names.indexOf(S.sel), j = i + dir;
+    if (i < 0 || j < 0 || j >= names.length) return;
+    names.splice(j, 0, names.splice(i, 1)[0]);
+    api('POST', '/avatar/api/order', { names: names });
+  }
+  $('l-up').onclick = function () { move(1); };
+  $('l-down').onclick = function () { move(-1); };
+  $('p-center').onclick = function () { var a = cur(); if (a) api('POST', '/avatar/api/avatars/' + encodeURIComponent(a.name), { x: 50, y: 55 }); };
+  $('p-reset').onclick = function () { var a = cur(); if (a) api('POST', '/avatar/api/avatars/' + encodeURIComponent(a.name), { x: 50, y: 55, scale: 1, rotation: 0, flip: false }); };
+
+  var paneSel = 'place';
+  $('tabs').addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b) return;
+    paneSel = b.dataset.p;
+    Array.prototype.forEach.call($('tabs').children, function (x) { x.classList.toggle('sel', x === b); });
+    document.querySelectorAll('.pane').forEach(function (p) { p.classList.toggle('sel', p.dataset.p === paneSel); });
+    if (paneSel === 'params') loadInfo();
+    if (paneSel === 'mouth') loadDevices();
+    if (paneSel === 'png') loadPng();
+  });
+
+  /* ---------------------------------------------------------------- face & mood */
+  var EMO_DEFAULT = ['neutral', 'happy', 'sad', 'angry', 'surprised', 'smug', 'sleepy', 'thinking', 'embarrassed'];
+  function renderMood() {
+    var a = cur(); if (!a) return;
+    var m = S.models[a.model] || {}, live = S.live[a.name] || {}, onExpr = live.expressions || {};
+    var emoNames = EMO_DEFAULT.concat(Object.keys(a.emotions || {}).filter(function (n) { return EMO_DEFAULT.indexOf(n) < 0; }));
+    var curEmo = (live.emotion && live.emotion.name) || 'neutral';
+    $('m-emos').innerHTML = emoNames.map(function (n) { return '<button class="sm' + (n === curEmo ? ' on' : '') + '" data-e="' + esc(n) + '">' + esc(n) + '</button>'; }).join('');
+    if (S.pickFor !== a.name) { S.picks = {}; S.pickFor = a.name; }
+    $('m-exprs').innerHTML = (m.expressions || []).map(function (e) { return '<button class="sm' + (e.name in onExpr ? ' on' : '') + (S.picks[e.name] ? ' pick' : '') + '" data-x="' + esc(e.name) + '">' + esc(e.name) + '</button>'; }).join('') ||
+      '<span class="empty">This model has no expressions.</span>';
+    $('m-motions').innerHTML = (m.motions || []).map(function (x) { return '<button class="sm" data-mo="' + esc(x.name) + '" title="group ' + esc(x.group) + ' #' + x.index + '">&#9654; ' + esc(x.name) + '</button>'; }).join('') +
+      ((m.motions || []).length ? '<button class="sm ghost" id="mo-stop">Stop</button>' : '<span class="empty">This model has no motions.</span>');
+    $('m-gest').innerHTML = (S.gestures.length ? S.gestures : ['nod', 'shake', 'tilt', 'bounce', 'lean_left', 'lean_right', 'look_away', 'double_nod'])
+      .map(function (g) { return '<button class="sm" data-g="' + esc(g) + '">' + esc(g.replace('_', ' ')) + '</button>'; }).join('');
+    renderEmoTable(a, m, emoNames);
+  }
+  $('m-emos').onclick = function (e) { var b = e.target.closest('[data-e]'); if (b) cmd('emotion', { name: b.dataset.e }).then(function () { refreshLive(); }); };
+  /* an expression button toggles that one; with "Pick several" it picks it instead, and the picked
+     ones go out in one call (as {"names": [...]}) */
+  S.picks = {};
+  function pickedNames() { return Object.keys(S.picks).filter(function (k) { return S.picks[k]; }); }
+  function updatePickButtons() {
+    var n = pickedNames().length;
+    $('x-fire').disabled = $('x-only').disabled = !n;
+    $('x-fire').textContent = n ? 'Fire ' + n + ' together' : 'Fire together';
+  }
+  $('m-exprs').onclick = function (e) {
+    var b = e.target.closest('[data-x]'); if (!b) return;
+    if ($('x-pick').checked) { S.picks[b.dataset.x] = !S.picks[b.dataset.x]; b.classList.toggle('pick', !!S.picks[b.dataset.x]); updatePickButtons(); return; }
+    cmd('expression', { name: b.dataset.x, state: 'toggle' }).then(function () { refreshLive(); });
+  };
+  $('x-pick').onchange = function () { if (!this.checked) { S.picks = {}; $('m-exprs').querySelectorAll('.pick').forEach(function (b) { b.classList.remove('pick'); }); } updatePickButtons(); };
+  $('x-fire').onclick = function () { cmd('expression', { names: pickedNames(), state: 'on' }).then(function () { refreshLive(); }); };
+  $('x-only').onclick = function () { cmd('expression', { names: pickedNames(), state: 'on', only: true }).then(function () { refreshLive(); }); };
+  $('x-clear').onclick = function () { cmd('clear_expressions').then(function () { refreshLive(); }); };
+  $('m-motions').onclick = function (e) { if (e.target.id === 'mo-stop') { cmd('stop_motion'); return; } var b = e.target.closest('[data-mo]'); if (b) cmd('motion', { name: b.dataset.mo }); };
+  $('m-gest').onclick = function (e) { var b = e.target.closest('[data-g]'); if (b) cmd('gesture', { name: b.dataset.g }); };
+  (function () {
+    var pad = $('lookpad'), dot = pad.querySelector('i'), down = false;
+    var send = throttle(function (x, y) { cmd('look', { x: x, y: y }); }, 80);
+    function at(e) {
+      var r = pad.getBoundingClientRect(), x = (e.clientX - r.left) / r.width * 2 - 1, y = -((e.clientY - r.top) / r.height * 2 - 1);
+      x = Math.max(-1, Math.min(1, x)); y = Math.max(-1, Math.min(1, y));
+      dot.style.display = 'block'; dot.style.left = ((x + 1) / 2 * 100) + '%'; dot.style.top = ((1 - y) / 2 * 100) + '%';
+      send(Math.round(x * 100) / 100, Math.round(y * 100) / 100);
+    }
+    pad.addEventListener('pointerdown', function (e) { down = true; pad.setPointerCapture(e.pointerId); at(e); });
+    pad.addEventListener('pointermove', function (e) { if (down) at(e); });
+    pad.addEventListener('pointerup', function () { down = false; });
+    $('look-cam').onclick = function () { dot.style.display = 'block'; dot.style.left = '50%'; dot.style.top = '50%'; cmd('look', { at: 'camera' }); };
+    $('look-rel').onclick = function () { dot.style.display = 'none'; cmd('look', { release: true }); };
+  })();
+
+  var FACE_KEYS = [['smile', -1, 1], ['brows', -1, 1], ['eyes', 0, 1.6], ['mouth_open', 0, 1], ['cheek', 0, 1], ['tilt', -1, 1]];
+  var EMO_FACE = { neutral: {}, happy: { smile: 1, brows: 0.3, eyes: 0.85 }, sad: { smile: -0.7, brows: -0.6, eyes: 0.75 }, angry: { smile: -0.45, brows: -1, eyes: 0.95 },
+                   surprised: { brows: 1, eyes: 1.3, mouth_open: 0.35 }, smug: { smile: 0.6, brows: 0.25, eyes: 0.62, tilt: 0.35 }, sleepy: { eyes: 0.3, brows: -0.3, smile: 0.05 },
+                   thinking: { brows: 0.45, smile: -0.1, tilt: -0.3 }, embarrassed: { smile: 0.35, brows: -0.2, eyes: 0.7, cheek: 0.8 } };
+  function renderEmoTable(a, m, names) {
+    var label = function (list) { return list.length ? list.join(' + ') : 'face only'; };
+    var motOpts = function (v) { return '<option value="">no motion</option>' + (m.motions || []).map(function (x) { return '<option' + (x.name === v ? ' selected' : '') + '>' + esc(x.name) + '</option>'; }).join(''); };
+    $('emo-rows').innerHTML = names.filter(function (n) { return n !== 'neutral'; }).map(function (n) {
+      var e = (a.emotions || {})[n] || { face: EMO_FACE[n] || {}, expressions: [], motion: '' };
+      var face = e.face || {};
+      var exs = e.expressions || [];
+      return '<div class="emo" data-n="' + esc(n) + '"><span class="mono">' + esc(n) + '</span>' +
+        '<button class="sm ghost xp" data-f="xp" title="Expressions this emotion switches on - pick any number"' + ((m.expressions || []).length ? '' : ' disabled') + '>' + esc(label(exs)) + '</button>' +
+        '<select data-f="motion">' + motOpts(e.motion || '') + '</select><button class="sm ghost" data-f="face" title="Face shape">face</button></div>' +
+        '<div class="emo-x" data-n="' + esc(n) + '" style="display:none;padding:2px 0 8px 96px"><div class="btns">' +
+        (m.expressions || []).map(function (x) { return '<button class="sm' + (exs.indexOf(x.name) >= 0 ? ' on' : '') + '" data-ex="' + esc(x.name) + '">' + esc(x.name) + '</button>'; }).join('') + '</div></div>' +
+        '<div class="emo-face" data-n="' + esc(n) + '" style="display:none;padding:2px 0 8px 96px">' + FACE_KEYS.map(function (fk) {
+          var v = face[fk[0]] == null ? (fk[0] === 'eyes' ? 1 : 0) : face[fk[0]];
+          return '<div class="f" style="grid-template-columns:80px 1fr;margin:3px 0"><span>' + fk[0].replace('_', ' ') + '</span><div class="ctl"><input type="range" min="' + fk[1] + '" max="' + fk[2] + '" step="0.05" data-fk="' + fk[0] + '" value="' + v + '"><span class="val">' + fmt(v) + '</span></div></div>';
+        }).join('') + '</div>';
+    }).join('') + '<div class="row" style="margin-top:6px"><button class="sm" id="emo-add">+ Emotion</button><button class="sm act" id="emo-save">Save the table</button></div>';
+    $('emo-rows').querySelectorAll('[data-f=xp]').forEach(function (b) { b.onclick = function () { var d = $('emo-rows').querySelector('.emo-x[data-n="' + b.parentNode.dataset.n + '"]'); d.style.display = d.style.display === 'none' ? 'block' : 'none'; }; });
+    $('emo-rows').querySelectorAll('.emo-x').forEach(function (box) {
+      box.onclick = function (ev) {
+        var c = ev.target.closest('[data-ex]'); if (!c) return;
+        c.classList.toggle('on');
+        var on = Array.prototype.map.call(box.querySelectorAll('[data-ex].on'), function (x) { return x.dataset.ex; });
+        $('emo-rows').querySelector('.emo[data-n="' + box.dataset.n + '"] [data-f=xp]').textContent = label(on);
+      };
+    });
+    $('emo-rows').querySelectorAll('[data-f=face]').forEach(function (b) { b.onclick = function () { var d = $('emo-rows').querySelector('.emo-face[data-n="' + b.parentNode.dataset.n + '"]'); d.style.display = d.style.display === 'none' ? 'block' : 'none'; }; });
+    $('emo-rows').querySelectorAll('[data-fk]').forEach(function (r) { r.oninput = function () { r.nextElementSibling.textContent = fmt(parseFloat(r.value)); }; });
+    $('emo-add').onclick = function () {
+      dialog('New emotion', '<div class="f"><span>Name</span><div class="ctl"><input id="ne" class="grow" maxlength="32" placeholder="e.g. excited"></div></div>', function () {
+        var n = $('ne').value.trim().toLowerCase(); if (!n) return false;
+        a.emotions = a.emotions || {}; a.emotions[n] = { face: {}, expressions: [], motion: '' }; renderMood();
+      });
+    };
+    $('emo-save').onclick = function () {
+      var out = {};
+      $('emo-rows').querySelectorAll('.emo').forEach(function (row) {
+        var n = row.dataset.n, face = {};
+        $('emo-rows').querySelectorAll('.emo-face[data-n="' + n + '"] [data-fk]').forEach(function (r) {
+          var v = parseFloat(r.value); if (!(r.dataset.fk === 'eyes' ? v === 1 : v === 0)) face[r.dataset.fk] = v; });
+        var exs = Array.prototype.map.call($('emo-rows').querySelectorAll('.emo-x[data-n="' + n + '"] [data-ex].on'), function (x) { return x.dataset.ex; });
+        out[n] = { face: face, expressions: exs, motion: row.querySelector('[data-f=motion]').value };
+      });
+      api('POST', '/avatar/api/avatars/' + encodeURIComponent(a.name), { emotions: out }).then(function (r) { if (r) toast('Emotions saved'); });
+    };
+  }
+
+  /* ---------------------------------------------------------------- mouth */
+  async function loadDevices(force) {
+    if (S.devices && !force) { renderMouth(); return; }
+    var j = await fetch('/avatar/api/devices').then(function (r) { return r.json(); }).catch(function () { return null; });
+    S.devices = j || { available: false, devices: [] };
+    renderMouth();
+  }
+  $('dev-ref').onclick = function () { loadDevices(true); };
+  function renderMouth() {
+    var a = cur(); if (!a) return;
+    var m = a.mouth || {};
+    $('dev-row').style.display = m.source === 'device' ? '' : 'none';
+    var d = S.devices, sel = $('dev-sel');
+    if (m.source === 'device') {
+      if (!d) { loadDevices(); return; }
+      if (!d.available) sel.innerHTML = '<option value="">Needs numpy + soundcard (press Repair on the card in +)</option>';
+      else sel.innerHTML = '<option value="">- pick a device -</option>' + d.devices.map(function (x) { return '<option value="' + esc(x.id) + '"' + (x.id === m.device ? ' selected' : '') + '>' + esc(x.label) + '</option>'; }).join('') +
+        (m.device && !d.devices.some(function (x) { return x.id === m.device; }) ? '<option value="' + esc(m.device) + '" selected>' + esc(m.device) + ' (not there now)</option>' : '');
+    }
+    var cal = m.calibration;
+    $('t-voice').textContent = cal ? 'tuned to a voice (' + cal.frames + ' frames)' : 'self-tuning';
+  }
+  setInterval(function () {
+    if (paneSel !== 'mouth' || !stage || !S.sel) return;
+    var av = stage.avatars[S.sel]; if (!av) return;
+    var o = av.lip.out, vals = [o.level, o.A, o.I, o.U, o.E, o.O, Math.min(1, o.open)];
+    var bars = $('meters').querySelectorAll('i');
+    for (var i = 0; i < bars.length; i++) bars[i].style.height = Math.round((vals[i] || 0) * 100) + '%';
+  }, 50);
+  $('t-speak').onclick = function () { $('f-audio').dataset.mode = 'speak'; $('f-audio').click(); };
+  $('t-learn').onclick = function () { $('f-audio').dataset.mode = 'learn'; $('f-audio').click(); };
+  $('t-stop').onclick = function () { cmd('stop_speaking'); };
+  $('t-forget').onclick = function () { var a = cur(); if (a) api('POST', '/avatar/api/avatars/' + encodeURIComponent(a.name), { mouth: Object.assign({}, a.mouth, { calibration: null }) }); };
+  $('f-audio').onchange = async function () {
+    var f = this.files[0], mode = this.dataset.mode; this.value = '';
+    if (!f || !S.sel) return;
+    if (mode === 'speak') {
+      var fd = new FormData(); fd.append('audio', f, f.name);
+      var r = await fetch('/avatar/api/avatars/' + encodeURIComponent(S.sel) + '/speak', { method: 'POST', body: fd }).then(function (x) { return x.json(); }).catch(function () { return null; });
+      if (!r || !r.ok) toast((r && r.error) || 'speak failed', true); else toast(r.warning || 'Speaking');
+      return;
+    }
+    toast('Listening to the recording...');
+    try {
+      var ctx = new (window.AudioContext || window.webkitAudioContext)();
+      var buf = await ctx.decodeAudioData(await f.arrayBuffer());
+      var ch = buf.getChannelData(0), voice = window.HexLipsync.learnVoice(ch, buf.sampleRate);
+      ctx.close();
+      if (!voice) { toast('Not enough clear speech in that file - try a longer one', true); return; }
+      var a = cur();
+      await api('POST', '/avatar/api/avatars/' + encodeURIComponent(a.name), { mouth: Object.assign({}, a.mouth, { calibration: voice }) });
+      toast('Voice learned');
+    } catch (e) { toast('Could not read that audio: ' + e.message, true); }
+  };
+
+  /* ---------------------------------------------------------------- parameters */
+  async function loadInfo() {
+    var a = cur(); if (!a) return;
+    var j = await fetch('/avatar/api/avatars/' + encodeURIComponent(a.name) + '/info').then(function (r) { return r.json(); }).catch(function () { return null; });
+    if (!j) return;
+    S.info[a.name] = j;
+    renderParams(); renderParts(); renderMappings();
+  }
+  function infoChanged(mid) { var a = cur(); if (a && a.model === mid && paneSel === 'params') setTimeout(loadInfo, 300); }
+  var dragging = null;
+  function renderParts() {
+    var a = cur(), info = a && S.info[a.name];
+    if (!info) return;
+    var q = $('pf').value.trim().toLowerCase();
+    $('partlist').innerHTML = (info.parts || []).filter(function (p) { return !q || p.id.toLowerCase().indexOf(q) >= 0 || (p.name || '').toLowerCase().indexOf(q) >= 0; }).map(function (p) {
+      return '<div class="prow" data-part="' + esc(p.id) + '" style="grid-template-columns:22px minmax(0,1fr) 40px 22px"><input type="checkbox" checked>' +
+        '<div class="pn" title="' + esc(p.id) + '">' + esc(p.id) + (p.name ? '<small>' + esc(p.name) + '</small>' : '') + '</div><span class="pv"></span><button class="ghost" title="Release">&times;</button></div>';
+    }).join('') || '<div class="empty">' + esc(info.note || 'No parts.') + '</div>';
+  }
+  $('partlist').addEventListener('change', function (e) {
+    var row = e.target.closest('.prow'); if (!row) return;
+    var v = {}; v[row.dataset.part] = e.target.checked ? 1 : 0;
+    row.classList.add('held');
+    cmd('parts', { values: v });
+  });
+  $('partlist').addEventListener('click', function (e) {
+    if (e.target.tagName !== 'BUTTON') return;
+    var row = e.target.closest('.prow'); row.classList.remove('held');
+    cmd('release_parts', { ids: [row.dataset.part] });
+  });
+
+  function renderParams() {
+    var a = cur(), info = a && S.info[a.name];
+    if (!info) return;
+    if (!info.parameters.length) { $('plist').innerHTML = '<div class="empty">' + esc(info.note || 'No parameters.') + '</div>'; return; }
+    var q = $('pf').value.trim().toLowerCase();
+    $('plist').innerHTML = info.parameters.filter(function (p) { return !q || p.id.toLowerCase().indexOf(q) >= 0 || (p.name || '').toLowerCase().indexOf(q) >= 0; }).map(function (p) {
+      return '<div class="prow" data-id="' + esc(p.id) + '"><div class="pn" title="' + esc(p.id) + '">' + esc(p.id) + (p.name ? '<small>' + esc(p.name) + (p.group ? ' \u00b7 ' + esc(p.group) : '') + '</small>' : '') + '</div>' +
+        '<input type="range" min="' + p.min + '" max="' + p.max + '" step="' + ((p.max - p.min) / 200) + '" value="' + p.default + '"><span class="pv"></span><button class="ghost" title="Release">&times;</button></div>';
+    }).join('');
+  }
+  $('pf').oninput = debounce(function () { renderParams(); renderParts(); }, 120);
+  var sendParam = throttle(function (id, v) { cmd('params', { values: (function () { var o = {}; o[id] = v; return o; })() }); }, 50);
+  $('plist').addEventListener('input', function (e) {
+    var row = e.target.closest('.prow'); if (!row) return;
+    dragging = row.dataset.id; row.classList.add('held');
+    sendParam(row.dataset.id, parseFloat(e.target.value));
+  });
+  $('plist').addEventListener('change', function () { dragging = null; });
+  $('plist').addEventListener('click', function (e) {
+    if (e.target.tagName !== 'BUTTON') return;
+    var row = e.target.closest('.prow'); row.classList.remove('held');
+    cmd('release', { ids: [row.dataset.id] });
+  });
+  $('p-rel').onclick = function () { cmd('release', {}); $('plist').querySelectorAll('.prow.held').forEach(function (r) { r.classList.remove('held'); }); };
+  setInterval(function () {
+    if (paneSel !== 'params' || !stage || !S.sel) return;
+    var avp = stage.avatars[S.sel];
+    if (avp && avp.model && $('parts-edit').open) {
+      var pcm = avp.model.internalModel.coreModel;
+      $('partlist').querySelectorAll('.prow').forEach(function (row) {
+        var pi = avp.Parts.index[row.dataset.part]; if (pi === undefined) return;
+        var op = pcm.getPartOpacityByIndex(pi), box = row.querySelector('input');
+        row.querySelector('.pv').textContent = fmt(op);
+        row.classList.toggle('held', !!(avp.partOv[row.dataset.part] && avp.partOv[row.dataset.part].to > 0));
+        if (document.activeElement !== box) box.checked = op > 0.5;
+      });
+    }
+    var av = stage.avatars[S.sel]; if (!av || !av.model) return;
+    var vals = av.paramValues(), held = av.ov;
+    $('plist').querySelectorAll('.prow').forEach(function (row) {
+      var id = row.dataset.id, v = vals[id];
+      if (v == null) return;
+      row.querySelector('.pv').textContent = fmt(v);
+      row.classList.toggle('held', !!(held[id] && held[id].to > 0));
+      if (dragging !== id) row.querySelector('input').value = v;
+    });
+  }, 120);
+
+  function renderMappings() {
+    var a = cur(), info = a && S.info[a.name]; if (!info) return;
+    var m = S.models[a.model] || {};
+    $('map-from').textContent = { vts: 'Taken from the model\'s VTube Studio settings.', default: 'VTube Studio\'s defaults (the model came without VTS settings).', custom: 'Edited here.' }[m.mappings_from] || '';
+    var inputs = [''].concat(S.inputs);
+    var pids = info.parameters.map(function (p) { return p.id; });
+    $('map-rows').innerHTML = (info.mappings || []).map(function (r, i) {
+      var missing = pids.length && pids.indexOf(r.output) < 0;
+      return '<div class="row" data-i="' + i + '" style="margin:4px 0;gap:5px;flex-wrap:nowrap' + (missing ? ';opacity:.45' : '') + '" title="' + esc(r.name) + (missing ? ' - this model has no ' + esc(r.output) : '') + '">' +
+        '<select data-m="input" style="width:150px">' + inputs.map(function (x) { return '<option' + (x === r.input ? ' selected' : '') + '>' + esc(x) + '</option>'; }).join('') + '</select>' +
+        '<input data-m="in0" type="number" step="0.1" value="' + r.in[0] + '" style="width:58px"><input data-m="in1" type="number" step="0.1" value="' + r.in[1] + '" style="width:58px">' +
+        '<span class="dim">&rarr;</span><input data-m="output" value="' + esc(r.output) + '" style="width:130px" class="mono">' +
+        '<input data-m="out0" type="number" step="0.1" value="' + r.out[0] + '" style="width:58px"><input data-m="out1" type="number" step="0.1" value="' + r.out[1] + '" style="width:58px">' +
+        '<input data-m="smoothing" type="number" min="0" max="100" value="' + r.smoothing + '" style="width:50px" title="smoothing 0-100"></div>';
+    }).join('');
+  }
+  $('map-save').onclick = function () {
+    var a = cur(), info = a && S.info[a.name]; if (!info) return;
+    var rows = (info.mappings || []).map(function (r, i) {
+      var el = $('map-rows').querySelector('[data-i="' + i + '"]'), v = function (k) { return el.querySelector('[data-m=' + k + ']').value; };
+      return Object.assign({}, r, { input: v('input'), output: v('output'), in: [parseFloat(v('in0')), parseFloat(v('in1'))], out: [parseFloat(v('out0')), parseFloat(v('out1'))], smoothing: parseInt(v('smoothing'), 10) || 0 });
+    });
+    api('POST', '/avatar/api/models/' + encodeURIComponent(a.model) + '/settings', { mappings: rows }).then(function (r) { if (r) { toast('Mappings saved'); loadInfo(); } });
+  };
+  $('map-reset').onclick = function () { var a = cur(); if (a) api('POST', '/avatar/api/models/' + encodeURIComponent(a.model) + '/settings', { reset_mappings: true }).then(function (r) { if (r) { toast('Mappings reset'); loadInfo(); } }); };
+
+  /* ---------------------------------------------------------------- items */
+  function itemsById() { var o = {}; S.items.forEach(function (it) { o[it.id] = it; }); return o; }
+  function renderItems() {
+    var a = cur(); if (!a) return;
+    var lib = itemsById();
+    $('it-add-sel').innerHTML = S.items.length ? S.items.map(function (it) { return '<option value="' + esc(it.id) + '"' + (it.ok ? '' : ' disabled') + '>' + esc(it.name) + ' (' + it.kind + ')</option>'; }).join('')
+      : '<option value="">The item library is empty - add some below</option>';
+    var open = {};
+    $('it-list').querySelectorAll('.it.open').forEach(function (e) { open[e.dataset.id] = 1; });
+    $('it-list').innerHTML = (a.items || []).map(function (it) {
+      var meta = lib[it.item] || {}, pic = meta.icon || meta.url || '';
+      var f = function (k, label, min, max, step) { return '<div class="f"><span>' + label + '</span><div class="ctl"><input type="range" min="' + min + '" max="' + max + '" step="' + step + '" data-ik="' + k + '" value="' + it[k] + '"><span class="val">' + fmt(it[k]) + '</span></div></div>'; };
+      return '<div class="it' + (open[it.id] ? ' open' : '') + '" data-id="' + esc(it.id) + '"><div class="thumb" style="background-image:url(\'' + esc(pic) + '\')"></div>' +
+        '<div style="min-width:0"><b>' + esc(meta.name || it.item) + '</b> <span class="dim mono">' + esc(it.id) + '</span><br><span class="dim" style="font-size:12px">' + (it.pin ? '&#128204; pinned to ' + esc(it.pin.mesh) : it.layer === 'back' ? 'behind the model' : 'in front') + '</span></div>' +
+        '<div class="btns"><button class="sm" data-a="vis">' + (it.visible ? 'Hide' : 'Show') + '</button><button class="sm" data-a="edit">Edit</button><button class="sm danger" data-a="del">&times;</button></div>' +
+        '<div class="ctls">' + (it.pin ? '' : f('x', 'Across %', -60, 160, 0.5) + f('y', 'Down %', -60, 160, 0.5)) + f('scale', 'Size', 0.05, 6, 0.01) + f('rotation', 'Rotation', -180, 180, 1) + f('opacity', 'Opacity', 0, 1, 0.01) +
+        '<div class="f"><span>Layer</span><div class="ctl"><select data-ik="layer"><option value="front"' + (it.layer === 'front' ? ' selected' : '') + '>in front</option><option value="back"' + (it.layer === 'back' ? ' selected' : '') + '>behind</option></select>' +
+        '<label class="sw"><input type="checkbox" data-ik="flip"' + (it.flip ? ' checked' : '') + '> flip</label></div></div>' +
+        (meta.kind === 'sequence' ? f('fps', 'Frames / s', 1, 60, 1) : '') +
+        '<div class="row" style="margin-top:6px">' + (it.pin ? '<button class="sm" data-a="unpin">Unpin</button>' : '<button class="sm" data-a="pin" title="Glue it to the part of the model under it">&#128204; Pin to the model here</button>') + '</div></div></div>';
+    }).join('') || '<div class="empty">No items on this avatar.</div>';
+  }
+  $('it-add').onclick = function () {
+    var id = $('it-add-sel').value; if (!id) return;
+    cmd('item_add', { item: id, x: 50, y: 25, scale: 1, layer: 'front' }).then(function (r) { if (r) toast('Item added'); });
+  };
+  var itemSend = throttle(function (id, patch) { cmd('item_update', Object.assign({ id: id }, patch)); }, 90);
+  $('it-list').addEventListener('input', function (e) {
+    var el = e.target, row = el.closest('.it'); if (!row || !el.dataset.ik) return;
+    var v = el.type === 'checkbox' ? el.checked : el.tagName === 'SELECT' ? el.value : parseFloat(el.value);
+    if (el.nextElementSibling && el.nextElementSibling.classList.contains('val')) el.nextElementSibling.textContent = fmt(v);
+    var a = cur(), it = (a.items || []).filter(function (x) { return x.id === row.dataset.id; })[0];
+    if (it) it[el.dataset.ik] = v;
+    if (stage && stage.avatars[a.name]) stage.avatars[a.name]._syncItems();
+    var p = {}; p[el.dataset.ik] = v; itemSend(row.dataset.id, p);
+  });
+  $('it-list').addEventListener('change', function (e) { if (e.target.tagName === 'SELECT' || e.target.type === 'checkbox') e.target.dispatchEvent(new Event('input', { bubbles: true })); });
+  $('it-list').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-a]'); if (!b) return;
+    var row = b.closest('.it'), id = row.dataset.id, a = cur(), it = (a.items || []).filter(function (x) { return x.id === id; })[0];
+    switch (b.dataset.a) {
+      case 'edit': row.classList.toggle('open'); break;
+      case 'del': cmd('item_remove', { id: id }); break;
+      case 'vis': cmd('item_update', { id: id, visible: !it.visible }); break;
+      case 'unpin': cmd('item_update', { id: id, pin: null }); break;
+      case 'pin': pinItem(a, it); break;
+    }
+  });
+  function pinItem(a, it) {
+    var av = stage && stage.avatars[a.name], live = av && av.items.filter(function (x) { return x.cfg.id === it.id; })[0];
+    if (!av || !av.model || !live) { toast('The preview has to show the avatar to pin', true); return; }
+    var pin = av.pinAt(live);
+    if (!pin) { toast('There is no part of the model under the item - move it onto the model first', true); return; }
+    cmd('item_update', { id: it.id, pin: pin }).then(function (r) { if (r) toast('Pinned to ' + pin.mesh); });
+  }
+
+  /* ---------------------------------------------------------------- PNGtuber editor */
+  var PNG = { mid: null, rig: null, dirty: false };
+  var ROLE_LABEL = { idle: 'Quiet', talk: 'Talking', blink: 'Blinking', talk_blink: 'Talking + blinking', half: 'Half-open mouth',
+                     A: 'Mouth for A', I: 'Mouth for I', U: 'Mouth for U', E: 'Mouth for E', O: 'Mouth for O' };
+  var TALK_RULE = ['always', 'only quiet', 'only talking', 'only talking softly'], BLINK_RULE = ['always', 'only eyes open', 'only blinking'];
+  async function loadPng(force) {
+    var a = cur(), m = a && S.models[a.model];
+    if (!m || m.type !== 'png') return;
+    if (PNG.mid === m.id && PNG.rig && !force) { renderPng(); return; }
+    var j = await fetch('/avatar/api/models/' + encodeURIComponent(m.id), { cache: 'no-store' }).then(function (r) { return r.json(); }).catch(function () { return null; });
+    if (!j || !j.settings || !j.settings.rig) return;
+    PNG.mid = m.id; PNG.rig = JSON.parse(JSON.stringify(j.settings.rig)); setDirty(false);
+    renderPng();
+  }
+  function pngPics() { return (S.models[PNG.mid] || {}).pictures || []; }
+  function picUrl(f) { return '/avatar/lib/models/' + encodeURIComponent(PNG.mid) + '/' + String(f).split('/').map(encodeURIComponent).join('/'); }
+  function picSelect(val, attrs) {
+    return '<select ' + attrs + '><option value="">- none -</option>' + pngPics().map(function (f) { return '<option' + (f === val ? ' selected' : '') + '>' + esc(f) + '</option>'; }).join('') + '</select>';
+  }
+  function pthumb(f) { return '<div class="thumb" style="width:40px;height:40px;background-image:url(\'' + (f ? esc(picUrl(f)) : '') + '\')"></div>'; }
+  function setDirty(d) { PNG.dirty = d; $('png-dirty').style.display = d ? '' : 'none'; $('png-save').disabled = !d; }
+  var pngPreview = debounce(function () {
+    if (!stage || !PNG.rig) return;
+    for (var n in stage.avatars) { var av = stage.avatars[n]; if (av.cfg.model === PNG.mid && av.previewRig) av.previewRig(PNG.rig); }
+  }, 150);
+  function pngChanged(rerender) { setDirty(true); pngPreview(); if (rerender) renderPng(); }
+
+  function renderPng() {
+    var r = PNG.rig; if (!r) return;
+    $('png-style').textContent = r.style === 'simple' ? 'Simple PNGtuber - pictures per state' : 'Layered PNGtuber' + (r.source ? ' (from ' + r.source + ')' : '');
+    document.querySelectorAll('#insp [data-pg]').forEach(function (el) {
+      var v = r[el.dataset.pg];
+      if (el.type === 'checkbox') el.checked = !!v; else el.value = v;
+    });
+    document.querySelectorAll('#insp [data-pv]').forEach(function (el) { el.textContent = fmt(r[el.dataset.pv]); });
+    $('png-convert').style.display = r.style === 'simple' ? '' : 'none';
+    $('png-simple').style.display = r.style === 'simple' ? '' : 'none';
+    $('png-layered').style.display = r.style === 'simple' ? 'none' : '';
+    if (r.style === 'simple') renderPngSimple(r); else renderPngLayered(r);
+  }
+
+  function renderPngSimple(r) {
+    var role = function (st, k) {
+      var f = (r.states[st] || {})[k] || '';
+      return '<div class="prole">' + pthumb(f) + '<div style="min-width:0"><span>' + ROLE_LABEL[k] + '</span>' + picSelect(f, 'data-st="' + esc(st) + '" data-role="' + k + '"') + '</div></div>';
+    };
+    $('png-simple').innerHTML = Object.keys(r.states).map(function (st) {
+      return '<div class="pst"><div class="row"><b class="mono">' + esc(st) + '</b>' +
+        '<label class="sw dim" style="font-size:12px"><input type="radio" name="png-def" data-def="' + esc(st) + '"' + (r.default_state === st ? ' checked' : '') + '> default</label>' +
+        '<span class="grow"></span><button class="sm ghost" data-ren="' + esc(st) + '">Rename</button><button class="sm danger" data-del="' + esc(st) + '"' + (Object.keys(r.states).length < 2 ? ' disabled' : '') + '>&times;</button></div>' +
+        '<div class="prole-grid">' + ['idle', 'talk', 'blink', 'talk_blink'].map(function (k) { return role(st, k); }).join('') + '</div>' +
+        '<details style="margin-top:8px"><summary>More mouths (half-open, a mouth per vowel)</summary><div class="prole-grid">' +
+        ['half', 'A', 'I', 'U', 'E', 'O'].map(function (k) { return role(st, k); }).join('') + '</div></details></div>';
+    }).join('') + '<div class="row"><button class="sm" id="png-add-state">+ State</button><span class="dim" style="font-size:12px">States are switched like expressions (<span class="mono">expression</span> / <span class="mono">emotion</span>), e.g. a "happy" set of pictures.</span></div>';
+  }
+
+  function renderPngLayered(r) {
+    var opts = function (list, val) { return list.map(function (t, i) { return '<option value="' + i + '"' + (+val === i ? ' selected' : '') + '>' + t + '</option>'; }).join(''); };
+    var parentOpts = function (l) { return '<option value="">(none)</option>' + r.layers.filter(function (x) { return x.id !== l.id; }).map(function (x) { return '<option value="' + esc(x.id) + '"' + (x.id === l.parent ? ' selected' : '') + '>' + esc(x.name || x.id) + '</option>'; }).join(''); };
+    var num = function (l, k, step, label) { return '<label class="dim" style="font-size:11.5px">' + label + ' <input type="number" step="' + step + '" data-lk="' + k + '" value="' + l[k] + '"></label>'; };
+    var states = '<div class="row" style="margin:6px 0"><span class="dim" style="font-size:12px">States (costumes):</span>' + r.states.map(function (st) {
+      return '<span class="pill' + (st === r.default_state ? ' good' : '') + '">' + esc(st) + ' <a href="#" data-sdef="' + esc(st) + '" title="Make it the default">&#9733;</a> <a href="#" data-sren="' + esc(st) + '">&#9998;</a>' +
+        (r.states.length > 1 ? ' <a href="#" data-sdel="' + esc(st) + '">&times;</a>' : '') + '</span>';
+    }).join(' ') + '<button class="sm" id="png-add-state">+</button></div>';
+    $('png-layered').innerHTML = states + r.layers.map(function (l) {
+      var open = PNG.open && PNG.open[l.id];
+      return '<div class="ly' + (open ? ' open' : '') + '" data-id="' + esc(l.id) + '">' + pthumb(l.image) +
+        '<div style="min-width:0"><div class="nm2">' + esc(l.name || l.id) + '</div><div class="sub">' + TALK_RULE[l.talk] + (l.blink ? ' \u00b7 ' + BLINK_RULE[l.blink] : '') +
+        (l.parent ? ' \u00b7 on ' + esc((r.layers.filter(function (x) { return x.id === l.parent; })[0] || {}).name || l.parent) : '') + '</div></div>' +
+        '<div class="btns"><button class="sm" data-la="edit">Edit</button><button class="sm danger" data-la="del">&times;</button></div>' +
+        '<div class="ly-ctl">' +
+        '<div class="f"><span>Name</span><div class="ctl"><input data-lk="name" value="' + esc(l.name || '') + '" class="grow"></div></div>' +
+        '<div class="f"><span>Picture</span><div class="ctl">' + picSelect(l.image, 'data-lk="image" class="grow"') + '</div></div>' +
+        '<div class="f"><span>Attached to</span><div class="ctl"><select data-lk="parent" class="grow">' + parentOpts(l) + '</select></div></div>' +
+        '<div class="f"><span>Shows</span><div class="ctl"><select data-lk="talk">' + opts(TALK_RULE, l.talk) + '</select><select data-lk="blink">' + opts(BLINK_RULE, l.blink) + '</select></div></div>' +
+        '<div class="f"><span>Vowel mouth</span><div class="ctl"><select data-lk="vowel">' + ['', 'A', 'I', 'U', 'E', 'O'].map(function (v) { return '<option' + (v === (l.vowel || '') ? ' selected' : '') + ' value="' + v + '">' + (v || '-') + '</option>'; }).join('') + '</select></div></div>' +
+        '<div class="f"><span>In states</span><div class="ctl btns">' + r.states.map(function (st) { return '<label class="sw dim" style="font-size:12px"><input type="checkbox" data-lst="' + esc(st) + '"' + (!l.states.length || l.states.indexOf(st) >= 0 ? ' checked' : '') + '> ' + esc(st) + '</label>'; }).join('') + '</div></div>' +
+        '<div class="f"><span>Position</span><div class="ctl nums">' + num(l, 'x', 1, 'x') + num(l, 'y', 1, 'y') + num(l, 'z', 1, 'depth') + '</div></div>' +
+        '<div class="f"><span>Pivot offset</span><div class="ctl nums">' + num(l, 'ox', 1, 'x') + num(l, 'oy', 1, 'y') + '</div></div>' +
+        '<div class="f"><span>Wobble</span><div class="ctl nums"><label class="dim" style="font-size:11.5px">x <input type="number" step="1" data-lw="0" value="' + l.wobble[0] + '"></label><label class="dim" style="font-size:11.5px">speed <input type="number" step="0.001" data-lw="1" value="' + l.wobble[1] + '"></label>' +
+        '<label class="dim" style="font-size:11.5px">y <input type="number" step="1" data-lw="2" value="' + l.wobble[2] + '"></label><label class="dim" style="font-size:11.5px">speed <input type="number" step="0.001" data-lw="3" value="' + l.wobble[3] + '"></label></div></div>' +
+        '<div class="f"><span>Follow / swing</span><div class="ctl nums">' + num(l, 'drag', 0.5, 'lag') + num(l, 'rot_drag', 0.1, 'swing') + num(l, 'rot_min', 1, 'min') + num(l, 'rot_max', 1, 'max') + num(l, 'stretch', 0.05, 'squash') + '</div></div>' +
+        '<div class="f"><span>Frames</span><div class="ctl nums">' + num(l, 'frames', 1, 'count') + num(l, 'fps', 0.5, 'fps') + '</div></div>' +
+        '<div class="f"><span>Options</span><div class="ctl btns"><label class="sw dim" style="font-size:12px"><input type="checkbox" data-lk="clip"' + (l.clip ? ' checked' : '') + '> clip attached layers to it</label>' +
+        '<label class="sw dim" style="font-size:12px"><input type="checkbox" data-lk="ignore_bounce"' + (l.ignore_bounce ? ' checked' : '') + '> no swing from the bounce</label></div></div>' +
+        '</div></div>';
+    }).join('') + '<div class="row" style="margin-top:6px"><button class="sm" id="png-add-layer">+ Layer</button><span class="dim" style="font-size:12px">Depth: higher draws in front. Lag: how far it trails behind when it moves. Swing: how much it tilts with that movement.</span></div>';
+  }
+
+  // edits
+  document.querySelectorAll('#insp [data-pg]').forEach(function (el) {
+    el.addEventListener(el.type === 'checkbox' ? 'change' : 'input', function () {
+      if (!PNG.rig) return;
+      PNG.rig[el.dataset.pg] = el.type === 'checkbox' ? el.checked : parseFloat(el.value);
+      var v = document.querySelector('#insp [data-pv="' + el.dataset.pg + '"]'); if (v) v.textContent = fmt(PNG.rig[el.dataset.pg]);
+      pngChanged(false);
+    });
+  });
+  $('png-simple').addEventListener('change', function (e) {
+    var el = e.target, r = PNG.rig;
+    if (el.dataset.role) { var st = r.states[el.dataset.st]; if (el.value) st[el.dataset.role] = el.value; else delete st[el.dataset.role]; pngChanged(true); }
+    if (el.dataset.def) { r.default_state = el.dataset.def; pngChanged(false); }
+  });
+  $('png-simple').addEventListener('click', function (e) {
+    var b = e.target.closest('button'), r = PNG.rig; if (!b) return;
+    if (b.id === 'png-add-state') return addPngState();
+    if (b.dataset.ren) return renamePngState(b.dataset.ren);
+    if (b.dataset.del) { delete r.states[b.dataset.del]; if (r.default_state === b.dataset.del) r.default_state = Object.keys(r.states)[0]; pngChanged(true); }
+  });
+  $('png-layered').addEventListener('click', function (e) {
+    var r = PNG.rig, a = e.target.closest('a');
+    if (a) {
+      e.preventDefault();
+      if (a.dataset.sdef) { r.default_state = a.dataset.sdef; pngChanged(true); }
+      if (a.dataset.sren) renamePngState(a.dataset.sren);
+      if (a.dataset.sdel) { var d = a.dataset.sdel; r.states = r.states.filter(function (x) { return x !== d; }); r.layers.forEach(function (l) { l.states = l.states.filter(function (x) { return x !== d; }); });
+                            if (r.default_state === d) r.default_state = r.states[0]; pngChanged(true); }
+      return;
+    }
+    var b = e.target.closest('button'); if (!b) return;
+    if (b.id === 'png-add-state') return addPngState();
+    if (b.id === 'png-add-layer') {
+      var id = 'layer' + Date.now().toString(36);
+      r.layers.push({ id: id, name: 'new layer', image: pngPics()[0] || '', parent: null, x: 0, y: 0, ox: 0, oy: 0, z: 0, talk: 0, blink: 0, vowel: '', states: [],
+                      wobble: [0, 0, 0, 0], drag: 0, rot_drag: 0, rot_min: -180, rot_max: 180, stretch: 0, ignore_bounce: false, frames: 1, fps: 0, clip: false, toggle: '' });
+      PNG.open = PNG.open || {}; PNG.open[id] = true;
+      return pngChanged(true);
+    }
+    var row = b.closest('.ly'); if (!row) return;
+    if (b.dataset.la === 'edit') { PNG.open = PNG.open || {}; PNG.open[row.dataset.id] = !row.classList.contains('open'); row.classList.toggle('open'); }
+    if (b.dataset.la === 'del') {
+      var gone = row.dataset.id;
+      r.layers = r.layers.filter(function (l) { return l.id !== gone; });
+      r.layers.forEach(function (l) { if (l.parent === gone) l.parent = null; });
+      pngChanged(true);
+    }
+  });
+  $('png-layered').addEventListener('change', function (e) {
+    var el = e.target, row = el.closest('.ly'); if (!row) return;
+    var l = PNG.rig.layers.filter(function (x) { return x.id === row.dataset.id; })[0]; if (!l) return;
+    if (el.dataset.lk) {
+      var k = el.dataset.lk, v = el.type === 'checkbox' ? el.checked : el.value;
+      if (['x', 'y', 'z', 'ox', 'oy', 'drag', 'rot_drag', 'rot_min', 'rot_max', 'stretch', 'frames', 'fps', 'talk', 'blink'].indexOf(k) >= 0) v = parseFloat(v) || 0;
+      if (k === 'parent') v = v || null;
+      l[k] = v;
+    }
+    if (el.dataset.lw) l.wobble[+el.dataset.lw] = parseFloat(el.value) || 0;
+    if (el.dataset.lst) {
+      var all = PNG.rig.states, on = Array.prototype.filter.call(row.querySelectorAll('[data-lst]'), function (c) { return c.checked; }).map(function (c) { return c.dataset.lst; });
+      l.states = on.length === all.length ? [] : on;
+    }
+    pngChanged(['image', 'parent', 'talk', 'blink', 'name'].indexOf(el.dataset.lk) >= 0);
+  });
+  function addPngState() {
+    dialog('New state', '<p class="hint">A set of pictures (simple) or of layers (layered) the bot can switch to - e.g. "happy".</p><div class="f"><span>Name</span><div class="ctl"><input id="nps" class="grow" maxlength="32"></div></div>', function () {
+      var n = $('nps').value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '_'); if (!n) return false;
+      var r = PNG.rig;
+      if (r.style === 'simple') { if (r.states[n]) return false; r.states[n] = {}; }
+      else { if (r.states.indexOf(n) >= 0) return false; r.states.push(n); }
+      pngChanged(true);
+    });
+  }
+  function renamePngState(old) {
+    dialog('Rename ' + old, '<div class="f"><span>New name</span><div class="ctl"><input id="nps" class="grow" maxlength="32" value="' + esc(old) + '"></div></div>', function () {
+      var n = $('nps').value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '_'), r = PNG.rig; if (!n || n === old) return;
+      if (r.style === 'simple') {
+        if (r.states[n]) return false;
+        var out = {}; Object.keys(r.states).forEach(function (k) { out[k === old ? n : k] = r.states[k]; }); r.states = out;
+      } else {
+        if (r.states.indexOf(n) >= 0) return false;
+        r.states = r.states.map(function (x) { return x === old ? n : x; });
+        r.layers.forEach(function (l) { l.states = l.states.map(function (x) { return x === old ? n : x; }); });
+      }
+      if (r.default_state === old) r.default_state = n;
+      pngChanged(true);
+    });
+  }
+  $('png-convert').onclick = function () {
+    var r = PNG.rig; if (!r || r.style !== 'simple') return;
+    var layers = [];
+    Object.keys(r.states).forEach(function (st) {
+      var s = r.states[st], talks = !!(s.talk || s.talk_blink || s.half || s.A || s.I || s.U || s.E || s.O);
+      function add(role, talk, blink, vowel) { if (s[role]) layers.push({ id: st + '_' + role, name: st + ' ' + (ROLE_LABEL[role] || role).toLowerCase(), image: s[role], parent: null, x: 0, y: 0, ox: 0, oy: 0, z: 0,
+        talk: talk, blink: blink, vowel: vowel || '', states: [st], wobble: [0, 0, 0, 0], drag: 0, rot_drag: 0, rot_min: -180, rot_max: 180, stretch: 0, ignore_bounce: false, frames: 1, fps: 0, clip: false, toggle: '' }); }
+      add('idle', talks ? 1 : 0, s.blink ? 1 : 0); add('blink', talks ? 1 : 0, 2); add('talk', 2, s.talk_blink ? 1 : 0); add('talk_blink', 2, 2); add('half', 3, 0);
+      ['A', 'I', 'U', 'E', 'O'].forEach(function (v) { add(v, 2, 0, v); });
+    });
+    PNG.rig = Object.assign({}, r, { style: 'layered', layers: layers, states: Object.keys(r.states) });
+    pngChanged(true);
+  };
+  $('png-save').onclick = async function () {
+    if (!PNG.rig) return;
+    var res = await api('POST', '/avatar/api/models/' + encodeURIComponent(PNG.mid) + '/settings', { rig: PNG.rig });
+    if (res) { PNG.rig = JSON.parse(JSON.stringify(res.settings.rig)); setDirty(false); renderPng(); toast('PNGtuber saved'); }
+  };
+  $('png-add-pics').onclick = function () { $('f-pngpics').dataset.mode = 'add'; $('f-pngpics').click(); };
+  $('m-png').onclick = function () { $('f-pngpics').dataset.mode = 'new'; $('f-pngpics').click(); };
+  $('f-pngpics').onchange = async function () {
+    var files = Array.prototype.slice.call(this.files), mode = this.dataset.mode; this.value = '';
+    if (!files.length) return;
+    if (mode === 'add') {
+      var fd = new FormData(); files.forEach(function (f) { fd.append('files', f, f.name); });
+      var r = await fetch('/avatar/api/models/' + encodeURIComponent(PNG.mid) + '/pictures', { method: 'POST', body: fd, headers: { 'X-Hexcast-From': 'panel' } })
+        .then(function (x) { return x.json(); }).catch(function () { return null; });
+      if (!r || !r.ok) { toast((r && r.error) || 'upload failed', true); return; }
+      S.models[PNG.mid] = r.model; renderPng(); toast(r.added.length + ' added - pick them below');
+      return;
+    }
+    dialog('New PNGtuber', '<p class="hint">' + files.length + ' picture' + (files.length === 1 ? '' : 's') + '. Named like <span class="mono">idle / talk / blink / talk_blink</span> they are placed by themselves; otherwise set them on its PNGtuber tab.</p>' +
+      '<div class="f"><span>Name</span><div class="ctl"><input id="npn" class="grow" maxlength="40" value="My PNGtuber"></div></div>', async function () {
+      var name = $('npn').value.trim() || 'PNGtuber';
+      var fd = new FormData();
+      files.forEach(function (f) { fd.append('files', f, f.name); fd.append('paths', name + '/' + f.name); });
+      var r = await upload('/avatar/api/models/upload', fd, $('m-prog'), $('m-up-msg'));
+      if (r && r.ok) toast('Made ' + r.model.name + (r.model.ok ? '' : ' - set its pictures on its PNGtuber tab'));
+    });
+  };
+
+  /* ---------------------------------------------------------------- light */
+  function renderLight() {
+    var sel = $('lt-preset'), a = cur(); if (!a) return;
+    var names = S.lightPresets.length ? S.lightPresets : ['none'];
+    if (sel.options.length !== names.length) sel.innerHTML = names.map(function (n) { return '<option value="' + n + '">' + (n === 'none' ? 'Steady' : n) + '</option>'; }).join('');
+    sel.value = (a.light || {}).preset || 'none';
+  }
+
+  /* ---------------------------------------------------------------- API examples */
+  function renderApi() {
+    var a = cur(); if (!a) return;
+    var b = location.origin + '/avatar/api/avatars/' + a.name, m = S.models[a.model] || {};
+    var ex = (m.expressions || [])[0], mo = (m.motions || [])[0];
+    var rows = [
+      ['Say something (lipsync from the audio)', 'curl -X POST "' + b + '/speak?wait=1" -F "audio=@line.wav"'],
+      ['...or from a URL', 'curl -X POST ' + b + '/speak -H "Content-Type: application/json" -d "{\\"url\\": \\"https://example.com/line.mp3\\"}"'],
+      ['Emotion', 'curl -X POST ' + b + '/emotion -H "Content-Type: application/json" -d "{\\"name\\": \\"happy\\", \\"for\\": 5}"'],
+      ['Any parameter (here: the mouth, held until released)', 'curl -X POST ' + b + '/params -H "Content-Type: application/json" -d "{\\"values\\": {\\"ParamMouthOpenY\\": 0.8, \\"MouthSmile\\": 1}}"'],
+      ['Release it', 'curl -X POST ' + b + '/release -H "Content-Type: application/json" -d "{}"'],
+      ['Look at a point', 'curl -X POST ' + b + '/look -H "Content-Type: application/json" -d "{\\"x\\": 0.6, \\"y\\": 0.2, \\"for\\": 3}"'],
+      ['Gesture', 'curl -X POST ' + b + '/gesture -H "Content-Type: application/json" -d "{\\"name\\": \\"nod\\"}"'],
+      ['Slide in from the side', 'curl -X POST ' + b + '/transform -H "Content-Type: application/json" -d "{\\"x\\": ' + Math.round(a.x) + ', \\"duration\\": 1.2, \\"ease\\": \\"out\\"}"']
+    ];
+    if (ex) rows.splice(3, 0, ['Expression "' + ex.name + '"', 'curl -X POST ' + b + '/expression -H "Content-Type: application/json" -d "{\\"name\\": \\"' + ex.name + '\\", \\"state\\": \\"toggle\\"}"']);
+    if (mo) rows.splice(4, 0, ['Motion "' + mo.name + '"', 'curl -X POST ' + b + '/motion -H "Content-Type: application/json" -d "{\\"name\\": \\"' + mo.name + '\\"}"']);
+    rows.push(['WebSocket (stream values every frame)', 'ws://' + location.host + '/avatar/ws/control\n{"cmd": "params", "avatar": "' + a.name + '", "values": {"FaceAngleX": 12, "MouthOpen": 0.4}, "hold": false}']);
+    $('api-ex').innerHTML = rows.map(function (r) { return '<div class="dim" style="font-size:12px;margin-top:8px">' + esc(r[0]) + '</div><pre class="code">' + esc(r[1]) + '</pre>'; }).join('');
+  }
+
+  /* ---------------------------------------------------------------- library */
+  var libTab = 'm';
+  $('lib-tab-m').onclick = function () { libTab = 'm'; renderLibrary(); };
+  $('lib-tab-i').onclick = function () { libTab = 'i'; renderLibrary(); loadVts(); };
+  function size(n) { return n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.round(n / 1024) + ' KB'; }
+  function renderLibrary() {
+    $('lib-m').style.display = libTab === 'm' ? '' : 'none';
+    $('lib-i').style.display = libTab === 'i' ? '' : 'none';
+    $('lib-tab-m').classList.toggle('on', libTab === 'm'); $('lib-tab-i').classList.toggle('on', libTab === 'i');
+    var used = {};
+    S.config.avatars.forEach(function (a) { (used[a.model] = used[a.model] || []).push(a.name); });
+    var ids = Object.keys(S.models);
+    $('m-grid').innerHTML = ids.map(function (id) {
+      var m = S.models[id];
+      return '<div class="lib' + (m.ok ? '' : ' bad') + '"><div class="thumb" style="background-image:url(\'' + esc(m.icon || '') + '\')"></div>' +
+        '<div class="t" title="' + esc(m.name) + '">' + esc(m.name) + '</div>' +
+        '<div class="s">' + esc(id) + (m.editor && m.type !== 'png' ? ' \u00b7 Cubism ' + m.editor : '') + ' \u00b7 ' + size(m.size || 0) + '</div>' +
+        (m.type === 'png' ? '<div class="s">PNGtuber \u00b7 ' + (m.style === 'layered' ? m.layers + ' layers' : (m.pictures || []).length + ' pictures') + ' \u00b7 ' + (m.states || []).length + ' state' + ((m.states || []).length === 1 ? '' : 's') + (m.source ? ' \u00b7 ' + esc(m.source) : '') + '</div>'
+          : '<div class="s">' + (m.expressions || []).length + ' expressions \u00b7 ' + (m.motions || []).length + ' motions' + (m.mappings_from === 'vts' ? ' \u00b7 VTS' : '') + '</div>') +
+        (m.ok ? '' : '<div class="s" style="color:var(--bad);white-space:normal">' + esc(m.problem) + '</div>') +
+        '<div class="row"><span class="dim grow" style="font-size:11.5px">' + (used[id] ? 'on ' + esc(used[id].join(', ')) : 'not used') + '</span>' +
+        '<button class="sm danger" data-del="' + esc(id) + '">Delete</button></div></div>';
+    }).join('') || '<div class="empty">No models yet - import one above' + (S.vts && S.vts.found ? ', or from VTube Studio' : '') + '.</div>';
+    $('i-grid').innerHTML = S.items.map(function (it) {
+      return '<div class="lib' + (it.ok ? '' : ' bad') + '"><div class="thumb" style="background-image:url(\'' + esc(it.icon || it.url || '') + '\')"></div>' +
+        '<div class="t">' + esc(it.name) + '</div><div class="s">' + esc(it.kind) + (it.w ? ' \u00b7 ' + it.w + '\u00d7' + it.h : '') + (it.frames ? ' \u00b7 ' + it.frames.length + ' frames' : '') + '</div>' +
+        '<div class="row"><span class="grow"></span><button class="sm danger" data-idel="' + esc(it.id) + '">Delete</button></div></div>';
+    }).join('') || '<div class="empty">No items yet.</div>';
+    renderVts();
+  }
+  $('m-grid').onclick = function (e) {
+    var b = e.target.closest('[data-del]'); if (!b) return;
+    var id = b.dataset.del, m = S.models[id];
+    dialog('Delete ' + (m ? m.name : id) + '?', '<p class="hint">Removes the model\'s folder from <span class="mono">media/avatars/models/</span>. Avatars using it are left without a model.</p>',
+      function () { return api('POST', '/avatar/api/models/' + encodeURIComponent(id) + '/delete').then(function (r) { return !!r; }); });
+  };
+  $('i-grid').onclick = function (e) {
+    var b = e.target.closest('[data-idel]'); if (!b) return;
+    api('POST', '/avatar/api/items/' + encodeURIComponent(b.dataset.idel) + '/delete');
+  };
+
+  async function loadVts() {
+    if (S.vts) return;
+    S.vts = await fetch('/avatar/api/vts').then(function (r) { return r.json(); }).catch(function () { return { found: false }; });
+    renderVts();
+  }
+  function renderVts() {
+    var v = S.vts;
+    if (!v || !v.found) { $('m-vts').innerHTML = ''; $('i-vts').innerHTML = ''; return; }
+    var have = {}; Object.keys(S.models).forEach(function (id) { have[S.models[id].name.toLowerCase()] = 1; });
+    $('m-vts').innerHTML = '<details style="margin-top:10px"' + (Object.keys(S.models).length ? '' : ' open') + '><summary>VTube Studio is on this PC - import its models (' + v.models.length + ')</summary><div class="vts">' +
+      v.models.map(function (m, i) { var got = have[m.name.toLowerCase()]; return '<label><input type="checkbox" data-vm="' + i + '"' + (got || !m.ok ? ' disabled' : '') + '> ' + esc(m.name) + ' <span class="dim mono" style="font-size:11px">' + esc(m.folder) + '</span>' +
+        (got ? ' <span class="pill good">imported</span>' : '') + (m.ok ? '' : ' <span class="pill bad">Cubism 5.3 - not yet</span>') + '</label>'; }).join('') +
+      '</div><div class="row" style="margin-top:8px"><button class="sm act" id="vm-go">Import selected</button></div></details>';
+    $('i-vts').innerHTML = '<details style="margin-top:10px"><summary>VTube Studio items on this PC (' + v.items.length + ')</summary><div class="vts">' +
+      v.items.map(function (it, i) { return '<label><input type="checkbox" data-vi="' + i + '"> ' + esc(it.name) + '</label>'; }).join('') +
+      '</div><div class="row" style="margin-top:8px"><button class="sm" id="vi-all">Select all</button><button class="sm act" id="vi-go">Import selected</button></div></details>';
+    $('vm-go').onclick = async function () {
+      var picks = Array.prototype.map.call($('m-vts').querySelectorAll('[data-vm]:checked'), function (c) { return v.models[+c.dataset.vm]; });
+      for (var i = 0; i < picks.length; i++) {
+        $('m-up-msg').textContent = 'Importing ' + picks[i].name + '...';
+        var r = await api('POST', '/avatar/api/models/import', { path: picks[i].path });
+        if (r) toast('Imported ' + r.model.name);
+      }
+      $('m-up-msg').textContent = '';
+    };
+    $('vi-all').onclick = function () { $('i-vts').querySelectorAll('[data-vi]').forEach(function (c) { c.checked = true; }); };
+    $('vi-go').onclick = async function () {
+      var picks = Array.prototype.map.call($('i-vts').querySelectorAll('[data-vi]:checked'), function (c) { return v.items[+c.dataset.vi].path; });
+      if (!picks.length) return;
+      $('i-up-msg').textContent = 'Importing ' + picks.length + ' items...';
+      var r = await api('POST', '/avatar/api/items/import', { paths: picks });
+      $('i-up-msg').textContent = '';
+      if (r) toast(r.items.length + ' items imported');
+    };
+  }
+
+  /* uploads with progress */
+  function upload(url, fd, prog, msg) {
+    return new Promise(function (resolve) {
+      var x = new XMLHttpRequest();
+      x.open('POST', url);
+      prog.style.display = 'block'; prog.firstElementChild.style.width = '0';
+      x.upload.onprogress = function (e) { if (e.lengthComputable) { prog.firstElementChild.style.width = Math.round(e.loaded / e.total * 100) + '%'; msg.textContent = 'Uploading ' + Math.round(e.loaded / e.total * 100) + '%'; } };
+      x.upload.onload = function () { msg.textContent = 'Unpacking...'; };
+      x.onload = function () { prog.style.display = 'none'; msg.textContent = ''; var j = {}; try { j = JSON.parse(x.responseText); } catch (e) {} if (x.status >= 400 || !j.ok) toast(j.error || 'upload failed', true); resolve(j); };
+      x.onerror = function () { prog.style.display = 'none'; msg.textContent = ''; toast('upload failed', true); resolve(null); };
+      x.send(fd);
+    });
+  }
+  var upKind = 'models';
+  $('m-zip').onclick = function () { upKind = 'models'; $('f-zip').click(); };
+  $('m-dir').onclick = function () { upKind = 'models'; $('f-dir').click(); };
+  $('i-zip').onclick = function () { upKind = 'items'; $('f-zip').click(); };
+  $('i-dir').onclick = function () { upKind = 'items'; $('f-dir').click(); };
+  $('i-file').onclick = function () { $('f-pics').click(); };
+  function upTarget() { return upKind === 'models' ? ['/avatar/api/models/upload', $('m-prog'), $('m-up-msg')] : ['/avatar/api/items/upload', $('i-prog'), $('i-up-msg')]; }
+  $('f-zip').onchange = async function () {
+    var f = this.files[0]; this.value = ''; if (!f) return;
+    var t = upTarget(), fd = new FormData(); fd.append('file', f, f.name);
+    var r = await upload(t[0], fd, t[1], t[2]);
+    if (r && r.ok) toast('Imported ' + ((r.model || r.item || {}).name || ''));
+  };
+  $('f-dir').onchange = async function () {
+    var files = Array.prototype.slice.call(this.files); this.value = ''; if (!files.length) return;
+    var t = upTarget(), fd = new FormData();
+    files.forEach(function (f) { if (/\.(psd|cmo3|can3)$/i.test(f.name)) return; fd.append('files', f, f.name); fd.append('paths', f.webkitRelativePath || f.name); });
+    var r = await upload(t[0], fd, t[1], t[2]);
+    if (r && r.ok) toast('Imported ' + ((r.model || r.item || {}).name || ''));
+  };
+  $('f-pics').onchange = async function () {
+    var files = Array.prototype.slice.call(this.files); this.value = '';
+    for (var i = 0; i < files.length; i++) {
+      var fd = new FormData(); fd.append('file', files[i], files[i].name);
+      await upload('/avatar/api/items/upload', fd, $('i-prog'), $('i-up-msg'));
+    }
+    if (files.length) toast(files.length + ' added');
+  };
+
+  loadVts();
+  connectPanel();
+  startPreview();
+})();
+</script>
+</body></html>

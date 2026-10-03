@@ -1,0 +1,6 @@
+# Hexcast - Avatars plugin
+#
+# Only for lipsync from an audio device (a microphone, a virtual cable, or what a playback
+# device plays). Speech the bot hands to Hexcast, and everything else, needs nothing extra.
+numpy>=1.26
+soundcard>=0.4.3

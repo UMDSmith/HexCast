@@ -1,0 +1,33 @@
+{
+  "id": "avatar",
+  "name": "Avatars",
+  "version": "1.0.0",
+  "api": 1,
+  "description": "Live2D avatars and PNGtubers your AI drives through the API - a lighter VTube Studio without face tracking. Any number on screen, vowel lipsync, expressions, motions, emotions, gaze, items and light, with a live preview to place them.",
+  "icon": "🎭",
+  "color": "#ff5fa2",
+  "category": "Overlays",
+  "author": "UMDSmith",
+  "nav": {
+    "label": "Avatars",
+    "href": "/avatar",
+    "order": 35,
+    "key": "avatar",
+    "status_url": "/avatar/api/status",
+    "status_js": "nav.js"
+  },
+  "help": {
+    "file": "help.html",
+    "toc": [
+      {
+        "id": "avatar",
+        "label": "Avatars"
+      },
+      {
+        "id": "avatar-api",
+        "label": "API"
+      }
+    ]
+  },
+  "order": 35
+}

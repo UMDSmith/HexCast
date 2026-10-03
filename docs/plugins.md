@@ -1,6 +1,6 @@
 # Plugins
 
-Hexcast is two things: the **soundboard** (the core, always there) and **plugins** - everything else. Twitch, Music, Discord, Clips, Countdown, Games and Ticker are all plugins. A fresh install has one tab, **Soundboard**, and a **+** tab next to it. Click **+**, pick what you want, and it installs itself.
+Hexcast is two things: the **soundboard** (the core, always there) and **plugins** - everything else. Twitch, Music, Avatars, Discord, Clips, Countdown, Games and Ticker are all plugins. A fresh install has one tab, **Soundboard**, and a **+** tab next to it. Click **+**, pick what you want, and it installs itself.
 
 Games goes one level further: the **Games** plugin gives you a Games tab, and each game (Roulette, Craps, Russian Roulette, Trivia, Hexfall, Soul Climb, Blackjack) is its own add-on, installed from the **+** inside the Games tab.
 

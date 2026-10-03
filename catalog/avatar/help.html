@@ -1,0 +1,88 @@
+<section id="avatar">
+<div class="card">
+  <h2>Avatars <span class="tag">/avatar</span></h2>
+  <p class="hint">Live2D avatars your AI drives through the API — a lighter VTube Studio without face
+    tracking: the bot is the tracker. Any number of avatars, each a named slot (<code>main</code>,
+    <code>guest</code> …) showing a model from the library; the name is what the bot uses. Between commands
+    each avatar keeps itself alive (blinking, breathing, sway, wandering eyes, head motion while talking),
+    through the model's own mappings (its VTube Studio setup, or VTube Studio's defaults).</p>
+  <h3>Setting up</h3>
+  <p class="hint">Open the Avatars tab, accept Live2D's license (Hexcast then downloads Live2D's Cubism Core
+    and the renderer once, into <code>config/avatar_runtime/</code>), add a model (a zip, a folder, or straight
+    from VTube Studio if it is installed) and press <b>+ Avatar</b>. In OBS add a Browser source,
+    1920×1080, with <b>Control audio via OBS</b> ticked:</p>
+  <pre>http://localhost:4747/avatar/overlay                 every avatar
+http://localhost:4747/avatar/overlay?avatar=main     one (or ?avatar=main,guest)
+http://localhost:4747/avatar/overlay?audio=0         silent (another source plays the speech)</pre>
+  <h3>The tab</h3>
+  <p class="hint">The live preview is the OBS renderer itself: drag an avatar to move it, scroll to zoom,
+    drag the dot to rotate, double-click to reset, Shift to snap; items drag and scroll the same way. The
+    inspector has Placement, Face &amp; Mood (emotions, expressions, motions, gestures, a look-at pad, the
+    emotion table), Mouth (lipsync source, meters, tuning, "learn this voice"), Idle, Parameters (every
+    parameter live — drag one to take it over — and the mappings), Items (add, place, pin to the model),
+    Light and API (ready-made calls for that avatar).</p>
+  <h3>PNGtubers</h3>
+  <p class="hint">An avatar can be a PNGtuber instead: <b>simple</b> (pictures for quiet / talking / blinking / talking +
+    blinking per state, optional half-open and per-vowel mouths - made from pictures with <b>New PNGtuber from
+    pictures</b>) or <b>layered</b> (PNGTuber Plus style: import its <code>.save</code>). Its <b>PNGtuber</b> tab sets the
+    pictures or layers, bounce, gravity, how loud talking is and breathing. The API is the same: speech and
+    <code>MouthOpen</code> make it talk, <code>expression</code> / <code>emotion</code> switch its state (one at a time),
+    <code>gesture</code> / <code>look</code> move it, <code>parts</code> shows / hides layers; <code>motion</code> is for Live2D only.</p>
+  <h3>Mouth</h3>
+  <p class="hint">Per avatar: <b>speech sent to Hexcast</b> (the <code>speak</code> call — the OBS overlay plays it
+    and lip-syncs from the very samples it plays), <b>an audio device</b> (a mic, a virtual cable or a loopback —
+    Hexcast records it and streams it to the overlays), or <b>nothing</b> (the bot moves the mouth with
+    <code>params</code> / <code>face</code>). The analysis gives VTube Studio's advanced-lipsync inputs
+    (<code>VoiceA</code> … <code>VoiceO</code>, <code>VoiceVolume</code>, <code>VoiceSilence</code>,
+    <code>VoiceFrequency</code>) plus <code>MouthOpen</code> and a mouth form for any model.</p>
+  <h3>Files</h3>
+  <p class="hint">Models in <code>media/avatars/models/</code>, items in <code>media/avatars/items/</code>,
+    settings in <code>config/avatar.json</code>. Full guide: <code>docs/avatar.md</code>.</p>
+</div>
+</section>
+
+<section id="avatar-api">
+<div class="card">
+  <h2>Avatars API <span class="tag">/avatar/api</span></h2>
+  <p class="hint">Every call takes the avatar's name (<code>*</code> = all of them); JSON bodies; times in
+    seconds; errors are <code>{"ok": false, "error": …}</code> with a 4xx status. <code>GET /avatar/api</code>
+    lists it all. Each command is <code>POST /avatar/api/avatars/&lt;name&gt;/&lt;command&gt;</code>:</p>
+  <table class="api">
+    <tr><td>params</td><td><code>{"values": {"ParamMouthOpenY": 0.8, "MouthSmile": 1}, "weight": 1, "duration": 0.3, "for": 2, "hold": true, "mode": "set|add", "layer": "input|final"}</code> — any Live2D parameter, or a tracker input (VTube Studio's names, through the model's mappings); held until released unless <code>for</code> / <code>"hold": false</code></td></tr>
+    <tr><td>release</td><td><code>{"ids": ["ParamMouthOpenY"], "fade": 0.3}</code> — <code>{}</code> releases everything</td></tr>
+    <tr><td>expression</td><td><code>{"name": "Smile", "state": "on|off|toggle", "for": 5}</code> — several can be on at once; several in one call: <code>{"names": ["Smile", "Blush"]}</code>, <code>"only": true</code> switches the others off</td></tr>
+    <tr><td>parts · release_parts</td><td><code>{"values": {"PartArmA": 0, "PartArmB": 1}}</code> — show / hide whole parts (a second arm set, a prop …), held until <code>release_parts</code></td></tr>
+    <tr><td>clear_expressions</td><td></td></tr>
+    <tr><td>motion</td><td><code>{"name": "wave"}</code> or <code>{"group": "TapBody", "index": 0}</code>, <code>"loop": true</code></td></tr>
+    <tr><td>stop_motion</td><td></td></tr>
+    <tr><td>emotion</td><td><code>{"name": "happy", "intensity": 1, "for": 6}</code> — neutral, happy, sad, angry, surprised, smug, sleepy, thinking, embarrassed, or your own</td></tr>
+    <tr><td>face</td><td><code>{"smile": 0.6, "brows": 0.3, "eyes": 0.9, "mouth_open": 0, "cheek": 0, "mouth_x": 0, "tilt": 0, "wink_left": 0, "wink_right": 0, "for": 3}</code> or <code>{"release": true}</code></td></tr>
+    <tr><td>look</td><td><code>{"x": 0.7, "y": 0.2}</code> · <code>{"at": "camera"}</code> · <code>{"stage_x": 85, "stage_y": 30}</code>, <code>"head"</code>, <code>"for"</code> · <code>{"release": true}</code></td></tr>
+    <tr><td>gesture</td><td><code>{"name": "nod|double_nod|shake|tilt|bounce|lean_left|lean_right|look_away", "amount": 1}</code></td></tr>
+    <tr><td>transform</td><td><code>{"x": 70, "y": 55, "scale": 1.2, "rotation": 0, "flip": false, "duration": 1, "ease": "out"}</code>, <code>by_x</code> … relative, <code>"save": true</code> to keep, <code>{"reset": true}</code></td></tr>
+    <tr><td>show · hide</td><td><code>{"fade": 0.4}</code></td></tr>
+    <tr><td>speak</td><td>multipart field <code>audio</code>, raw audio, <code>{"url": …}</code> or <code>{"audio_b64": …}</code>; <code>volume</code>, <code>text</code>, <code>interrupt</code>; <code>?wait=1</code> answers when it has played</td></tr>
+    <tr><td>stop_speaking</td><td></td></tr>
+    <tr><td>item_add · item_update · item_remove · items_clear</td><td><code>{"item": "halo", "id": "h1", "x": 50, "y": 5, "scale": 1, "layer": "front|back", "pin": null}</code></td></tr>
+    <tr><td>light</td><td><code>{"enabled": true, "preset": "fire", "color": "#ffd9a8", "intensity": 0.8, "angle": -35, "rim_amount": 0.6, "save": false}</code></td></tr>
+    <tr><td>reload</td><td>load the model again</td></tr>
+  </table>
+  <h3>Reading and managing</h3>
+  <table class="api">
+    <tr><td>GET /avatar/api/status</td><td>OBS overlays connected, avatars, fps and cost per avatar</td></tr>
+    <tr><td>GET /avatar/api/avatars</td><td>settings + live state of every avatar</td></tr>
+    <tr><td>GET /avatar/api/avatars/&lt;name&gt;/info</td><td>the model's parameters (with ranges and names), parts, art meshes, expressions, motions, emotions, inputs, mappings</td></tr>
+    <tr><td>GET /avatar/api/avatars/&lt;name&gt;/params/live</td><td>every parameter's value right now</td></tr>
+    <tr><td>POST /avatar/api/avatars</td><td><code>{"name": "guest", "model": "akari"}</code> — create; <code>POST …/&lt;name&gt;</code> changes settings, <code>…/rename</code>, <code>…/delete</code></td></tr>
+    <tr><td>GET /avatar/api/models · /items</td><td>the library; <code>POST …/upload</code> (zip or folder), <code>POST …/import</code> <code>{"path": …}</code></td></tr>
+  </table>
+  <h3>WebSocket</h3>
+  <p class="hint"><code>ws://localhost:4747/avatar/ws/control</code> takes the same commands as JSON
+    (<code>{"cmd": "params", "avatar": "main", "values": {…}, "rid": 1}</code>) — for values every frame — and
+    sends events: <code>speech_start</code>, <code>speech_end</code>, <code>speech_error</code>,
+    <code>motion_start</code>, <code>motion_end</code>, <code>loaded</code>, <code>error</code>.</p>
+  <pre>curl -X POST "http://localhost:4747/avatar/api/avatars/main/speak?wait=1" -F "audio=@line.wav"
+curl -X POST http://localhost:4747/avatar/api/avatars/main/emotion -H "Content-Type: application/json" -d "{\"name\":\"happy\",\"for\":5}"
+curl -X POST http://localhost:4747/avatar/api/avatars/main/params -H "Content-Type: application/json" -d "{\"values\":{\"ParamAngleX\":20},\"duration\":0.5,\"for\":3}"</pre>
+</div>
+</section>
