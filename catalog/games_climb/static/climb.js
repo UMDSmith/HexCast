@@ -290,14 +290,14 @@
   var INK = '#1a0c10';
 
   function ik(sx, sy, tx, ty, l1, l2, side) {
-    // two-bone IK; side -1 = the elbow / knee points left, +1 = right (screen). Returns elbow + the (clamped) end.
+    // two-bone IK; side -1 = the elbow / knee points left, +1 = right, 2 = down (screen). Returns elbow + the (clamped) end.
     var dx = tx - sx, dy = ty - sy, d = Math.sqrt(dx * dx + dy * dy) || 0.001;
     var maxd = l1 + l2 - 0.4, mind = Math.abs(l1 - l2) + 1;
     var dd = clamp(d, mind, maxd), a = Math.atan2(dy, dx);
     var cosA = (l1 * l1 + dd * dd - l2 * l2) / (2 * l1 * dd), ang = Math.acos(clamp(cosA, -1, 1));
     var e1x = sx + Math.cos(a + ang) * l1, e1y = sy + Math.sin(a + ang) * l1;
     var e2x = sx + Math.cos(a - ang) * l1, e2y = sy + Math.sin(a - ang) * l1;
-    var pickFirst = side < 0 ? e1x < e2x : e1x > e2x;
+    var pickFirst = side === 2 ? e1y > e2y : side < 0 ? e1x < e2x : e1x > e2x;     // side 2 = the elbow points down
     return { ex: pickFirst ? e1x : e2x, ey: pickFirst ? e1y : e2y, hx: sx + dx / d * dd, hy: sy + dy / d * dd };
   }
 
@@ -3219,57 +3219,226 @@
     c.restore();
   }
 
-  function bigDemon(I, c, th, x, y, o, T) {
-    // The hex-demon: rises out of the lava on the right (x, y = where his belly meets the lava, screen px).
-    // o: {rise, hx, hy (screen: where the fingertips are), pinch 0..1, flick 0..1, smug 0..1}
-    var rise = easeOut(o.rise), by = y + (1 - rise) * 230, out = '#12061a', col = '#7b45d4', colL = '#a679ee', colD = '#4a2290';
-    c.save();
-    c.translate(x, by);
-    // body
-    var bg = c.createRadialGradient(-30, -110, 10, 0, -70, 130); bg.addColorStop(0, colL); bg.addColorStop(1, colD);
-    c.fillStyle = bg; c.strokeStyle = out; c.lineWidth = 4;
-    c.beginPath(); c.moveTo(-100, 20); c.quadraticCurveTo(-104, -90, -52, -126); c.quadraticCurveTo(0, -142, 52, -126); c.quadraticCurveTo(104, -90, 100, 20); c.closePath(); c.fill(); c.stroke();
-    // the hex on his chest
-    c.beginPath(); for (var i = 0; i < 6; i++) { var a = i / 6 * TAU + TAU / 12; c.lineTo(Math.cos(a) * 26, -66 + Math.sin(a) * 26); } c.closePath();
-    c.fillStyle = '#ffd45a'; c.fill(); c.strokeStyle = out; c.lineWidth = 3.4; c.stroke();
-    c.strokeStyle = '#6a3a00'; c.lineWidth = 3.4; c.beginPath(); c.moveTo(-9, -78); c.lineTo(-9, -54); c.moveTo(9, -78); c.lineTo(9, -54); c.moveTo(-9, -66); c.lineTo(9, -66); c.stroke();
-    // head
-    c.save(); c.translate(6, -158); c.rotate(Math.sin(T / 600) * 0.03 + o.smug * 0.06);
-    [-1, 1].forEach(function (sd) {
-      c.fillStyle = '#241437'; c.beginPath(); c.moveTo(sd * 24, -26); c.quadraticCurveTo(sd * 58, -50, sd * 30, -92); c.quadraticCurveTo(sd * 34, -56, sd * 10, -34); c.closePath(); c.fill();
-      c.fillStyle = col; c.strokeStyle = out; c.lineWidth = 3.4; c.beginPath(); c.moveTo(sd * 44, -2); c.lineTo(sd * 78, -16); c.lineTo(sd * 48, 18); c.closePath(); c.fill(); c.stroke();
-    });
-    c.fillStyle = col; c.strokeStyle = out; c.lineWidth = 4; c.beginPath(); c.ellipse(0, 0, 52, 46, 0, 0, TAU); c.fill(); c.stroke();
-    var lookX = 0, lid = o.smug > 0 ? 0.55 : 0.3;
-    [-1, 1].forEach(function (sd) {
-      c.fillStyle = '#ffe66a'; c.strokeStyle = out; c.lineWidth = 3; c.beginPath(); c.ellipse(sd * 21, -6, 13, 12, 0, 0, TAU); c.fill(); c.stroke();
-      c.fillStyle = out; c.beginPath(); c.ellipse(sd * 21 + lookX, -6, 3.4, 10, 0, 0, TAU); c.fill();
-      c.fillStyle = col; c.beginPath(); c.rect(sd * 21 - 14, -20, 28, 16 * lid); c.fill();                     // heavy lids: bored
-      c.strokeStyle = out; c.lineWidth = 5; c.beginPath(); c.moveTo(sd * 36, -24 - o.smug * 3); c.lineTo(sd * 8, -14 + o.smug * 2); c.stroke();
-    });
-    var mo = o.smug > 0 ? 0.2 : 0.55;
-    c.fillStyle = '#4a0a14'; c.strokeStyle = out; c.lineWidth = 3.4; c.beginPath(); c.moveTo(-27, 14); c.quadraticCurveTo(0, 14 + 36 * mo, 27, 14); c.quadraticCurveTo(0, 18, -27, 14); c.closePath(); c.fill(); c.stroke();
-    c.fillStyle = '#fff'; [-16, -5, 6, 17].forEach(function (fx) { c.beginPath(); c.moveTo(fx - 4, 15); c.lineTo(fx + 4, 15); c.lineTo(fx, 25); c.closePath(); c.fill(); });
-    c.restore();
-    c.restore();
-    // the arm reaching out to the left, to a hand with the fingertips at (hx, hy)
-    var sx = x - 76, sy = by - 96, hx = o.hx, hy = o.hy;
-    var A = ik(sx, sy, hx + 46, hy + 8, 118, 112, 1);
-    c.lineCap = 'round'; c.lineJoin = 'round';
-    c.strokeStyle = out; c.lineWidth = 46; c.beginPath(); c.moveTo(sx, sy); c.lineTo(A.ex, A.ey); c.lineTo(A.hx, A.hy); c.stroke();
-    c.strokeStyle = col; c.lineWidth = 38; c.beginPath(); c.moveTo(sx, sy); c.lineTo(A.ex, A.ey); c.lineTo(A.hx, A.hy); c.stroke();
-    c.strokeStyle = 'rgba(255,255,255,.2)'; c.lineWidth = 6; c.beginPath(); c.moveTo(sx, sy - 12); c.lineTo(A.ex, A.ey - 12); c.lineTo(A.hx, A.hy - 12); c.stroke();
-    // the hand: a palm, a thumb below, an index finger above that flicks
-    c.save(); c.translate(A.hx, A.hy);
-    c.fillStyle = col; c.strokeStyle = out; c.lineWidth = 4;
-    c.beginPath(); c.ellipse(0, 0, 30, 24, 0, 0, TAU); c.fill(); c.stroke();
-    var gap = (1 - o.pinch) * 22 + 3, fa = -0.15 - (1 - o.flick) * 0.0 + (o.flick < 0.1 ? 0.55 * (o.pinch) : -0.5 * o.flick);
-    c.save(); c.translate(-14, 8); c.rotate(-0.1);   // thumb
-    c.beginPath(); c.ellipse(-34 + gap * 0.1, 4, 36, 11, 0.12, 0, TAU); c.fill(); c.stroke(); c.restore();
-    c.save(); c.translate(-14, -8); c.rotate(fa - 0.12 * (1 - o.pinch));   // index finger
-    c.beginPath(); c.ellipse(-36, -2 - gap * 0.4, 38, 10.5, 0, 0, TAU); c.fill(); c.stroke(); c.restore();
+  // ---- the hex-demon: a hulking purple brute rising out of the lava, drawn with the soul's lighting (a cool light from above,
+  // a hot rim from the lava below): a muscled torso, a tapered arm with a real elbow and wrist, a clawed hand that pinches
+  // the soul and flicks him away.
+  var DEMON_SK = { hi: '#b8a0f4', a: '#7342bd', b: '#2c1460' };
+  var DEMON_OUT = '#0d0516';
+
+  // a gradient whose axis stays screen-vertical inside a context rotated by `ang` (and y-flipped when fl = -1)
+  function skinGrad(c, sk, L, ang, fl, cx, cy, r) {
+    var ux = -Math.sin(ang) * r, uy = -Math.cos(ang) * fl * r, g = c.createLinearGradient(cx + ux, cy + uy, cx - ux, cy - uy);
+    skinStops(g, sk, L, false);
+    return g;
+  }
+
+  // a limb segment from (x0, y0) to (x1, y1) whose half-widths follow prof = [[u, w], ...], shaded across its width
+  function demonLimb(c, x0, y0, x1, y1, prof, sk, L) {
+    var dx = x1 - x0, dy = y1 - y0, len = Math.sqrt(dx * dx + dy * dy) || 0.01, a = Math.atan2(dy, dx), n = 16, i, k, top = [], bot = [], wm = 0;
+    function wAt(u) { for (k = 1; k < prof.length; k++) if (u <= prof[k][0]) return lerp(prof[k - 1][1], prof[k][1], smooth(prof[k - 1][0], prof[k][0], u)); return prof[prof.length - 1][1]; }
+    c.save(); c.translate(x0, y0); c.rotate(a);
+    for (i = 0; i <= n; i++) { var w = wAt(i / n); wm = Math.max(wm, w); top.push([i / n * len, -w]); bot.push([i / n * len, w]); }
+    c.beginPath(); c.moveTo(top[0][0], top[0][1]);
+    for (i = 1; i <= n; i++) c.lineTo(top[i][0], top[i][1]);
+    for (i = n; i >= 0; i--) c.lineTo(bot[i][0], bot[i][1]);
+    c.closePath(); c.fillStyle = skinGrad(c, sk, L, a, 1, len / 2, 0, wm); c.fill();
+    c.lineJoin = 'round'; c.lineWidth = 2.2; c.strokeStyle = DEMON_OUT; c.stroke();
+    var lo = Math.cos(a) >= 0 ? bot : top, hi = Math.cos(a) >= 0 ? top : bot;
+    c.beginPath(); for (i = 1; i < n; i++) c[i === 1 ? 'moveTo' : 'lineTo'](lo[i][0], lo[i][1] * 0.9); c.strokeStyle = rimCol(L, 0.55); c.lineWidth = 1.6; c.stroke();     // the lava's rim light underneath
+    c.beginPath(); for (i = 2; i < n - 1; i++) c[i === 2 ? 'moveTo' : 'lineTo'](hi[i][0], hi[i][1] * 0.78); c.strokeStyle = 'rgba(235,225,255,.22)'; c.lineWidth = 2; c.stroke();   // the sheen on top
     c.restore();
   }
+
+  // a tapered capsule between two points, filled with the skin gradient and outlined
+  function demonCap(c, x0, y0, x1, y1, w0, w1, g) {
+    var a = Math.atan2(y1 - y0, x1 - x0), nx = -Math.sin(a), ny = Math.cos(a);
+    c.beginPath();
+    c.moveTo(x0 + nx * w0 / 2, y0 + ny * w0 / 2); c.lineTo(x1 + nx * w1 / 2, y1 + ny * w1 / 2);
+    c.arc(x1, y1, w1 / 2, a + Math.PI / 2, a - Math.PI / 2, true);
+    c.lineTo(x0 - nx * w0 / 2, y0 - ny * w0 / 2); c.arc(x0, y0, w0 / 2, a - Math.PI / 2, a - Math.PI * 1.5, true);
+    c.closePath(); c.fillStyle = g; c.fill(); c.lineWidth = 1.9; c.strokeStyle = DEMON_OUT; c.stroke();
+  }
+
+  // a soft round muscle cap (shoulder, elbow): the same lighting as the limbs, only its outer arc (a0..a1) outlined
+  function demonBall(c, x, y, r, sk, L, a0, a1) {
+    var g = c.createLinearGradient(x, y - r, x, y + r); skinStops(g, sk, L, false);
+    c.fillStyle = g; c.beginPath(); c.arc(x, y, r, 0, TAU); c.fill();
+    c.fillStyle = 'rgba(235,225,255,.15)'; c.beginPath(); c.ellipse(x - r * 0.2, y - r * 0.42, r * 0.5, r * 0.28, -0.3, 0, TAU); c.fill();
+    c.beginPath(); c.arc(x, y, r * 0.86, 0.5, 2.6); c.strokeStyle = rimCol(L, 0.45); c.lineWidth = 1.4; c.stroke();
+    if (a0 != null) { c.beginPath(); c.arc(x, y, r, a0, a1); c.lineWidth = 2.2; c.strokeStyle = DEMON_OUT; c.stroke(); }
+  }
+
+  // The demon's hand, drawn from the wrist (x, y). In its own frame it points along +x with the index finger on the -y side and the
+  // thumb on +y (fl = -1 mirrors that for an arm that reaches left). o: {pinch 0..1: index and thumb close on the soul, flick 0..1}.
+  // part: 'back' = the palm and the three curled fingers, 'front' = the index finger and thumb (drawn over the soul that they
+  // pinch), anything else = all of it.
+  var HAND_S = 1.1;
+  function demonHand(c, x, y, ang, fl, sk, L, o, part) {
+    var rel = clamp(o.flick * 3, 0, 1), curl = o.pinch * (1 - rel), snap = Math.sin(rel * Math.PI) * (1 - o.flick), i;
+    c.save(); c.translate(x, y); c.rotate(ang); c.scale(HAND_S, fl * HAND_S); c.lineJoin = 'round'; c.lineCap = 'round';
+    function G(cx, cy, r) { return skinGrad(c, sk, L, ang, fl, cx, cy, r); }
+    function claw(px, py, a, hook, k) {
+      var nx = -Math.sin(a), ny = Math.cos(a), ca = Math.cos(a), sa = Math.sin(a), bx = px + ca * 1.5, by = py + sa * 1.5;
+      c.beginPath(); c.moveTo(bx + nx * 3.2 * k, by + ny * 3.2 * k);
+      c.quadraticCurveTo(bx + ca * 7 * k + nx * 3 * hook * k, by + sa * 7 * k + ny * 3 * hook * k, bx + ca * 12 * k + nx * 7 * hook * k, by + sa * 12 * k + ny * 7 * hook * k);
+      c.quadraticCurveTo(bx + ca * 6 * k - nx * 0.6, by + sa * 6 * k - ny * 0.6, bx - nx * 3.2 * k, by - ny * 3.2 * k); c.closePath();
+      c.fillStyle = '#2a1238'; c.fill(); c.lineWidth = 1.3; c.strokeStyle = DEMON_OUT; c.stroke();
+      c.beginPath(); c.moveTo(bx + nx * 1.4 * k, by + ny * 1.4 * k); c.lineTo(bx + ca * 8.5 * k + nx * 4.6 * hook * k, by + sa * 8.5 * k + ny * 4.6 * hook * k);
+      c.strokeStyle = 'rgba(205,175,240,.5)'; c.lineWidth = 0.9; c.stroke();
+    }
+    // a finger of tapered phalanges from (bx, by): first angle a1, then the bends; ws = the widths at the joints; the claw hooks to `hook`
+    function finger(bx, by, lens, a1, bends, ws, hook, k) {
+      var px = bx, py = by, a = a1, j;
+      for (j = 0; j < lens.length; j++) {
+        if (j) a += bends[j - 1];
+        var nx = px + Math.cos(a) * lens[j], ny = py + Math.sin(a) * lens[j];
+        demonCap(c, px, py, nx, ny, ws[j], ws[j + 1], G((px + nx) / 2, (py + ny) / 2, Math.max(ws[j], ws[j + 1]) * 0.62));
+        c.strokeStyle = 'rgba(235,225,255,.2)'; c.lineWidth = 1.2; c.beginPath();                                          // a sheen along the top of the phalanx
+        c.moveTo(px + Math.sin(a) * ws[j] * 0.22 + Math.cos(a) * 2, py - Math.cos(a) * ws[j] * 0.22 + Math.sin(a) * 2); c.lineTo(nx + Math.sin(a) * ws[j + 1] * 0.22 - Math.cos(a) * 2, ny - Math.cos(a) * ws[j + 1] * 0.22 - Math.sin(a) * 2); c.stroke();
+        px = nx; py = ny;
+      }
+      claw(px, py, a, hook, k);
+    }
+    if (part !== 'front') {
+      // the palm and the back of the hand
+      c.beginPath(); c.moveTo(-3, -13); c.bezierCurveTo(14, -18, 32, -21, 48, -19); c.lineTo(52, -4); c.lineTo(50, 14); c.bezierCurveTo(40, 21, 24, 28, 8, 22); c.bezierCurveTo(2, 20, -2, 16, -3, 13); c.closePath();
+      c.fillStyle = G(20, 2, 26); c.fill(); c.lineWidth = 2.2; c.strokeStyle = DEMON_OUT; c.stroke();
+      c.strokeStyle = 'rgba(14,6,22,.32)'; c.lineWidth = 1.1;                                                                // the tendons on the back of the hand
+      for (i = 0; i < 4; i++) { c.beginPath(); c.moveTo(4, -8 + i * 6); c.quadraticCurveTo(26, -11 + i * 7, 46, -10 + i * 8); c.stroke(); }
+      // the middle, ring and little fingers: spread and relaxed, then curled into the palm as he pinches
+      var cf = [[46, 15, [15, 12, 9.5], 0.16, [12, 10.6, 9, 7.6]], [49, 7, [19, 15, 11.5], 0.0, [13, 11.6, 10, 8.4]], [50, -2, [21, 16, 12.5], -0.17, [14, 12.6, 11, 9]]];
+      for (i = 0; i < 3; i++) {
+        var q = cf[i];
+        finger(q[0], q[1], q[2], lerp(q[3], 0.95, curl) - 0.18 * snap, [lerp(0.1, 1.0, curl), lerp(0.12, 0.95, curl)], q[4], 1, 0.85);
+      }
+      c.fillStyle = 'rgba(235,225,255,.28)'; for (i = 0; i < 3; i++) { c.beginPath(); c.arc(cf[2 - i][0] - 1, cf[2 - i][1] - 6, 2.2, 0, TAU); c.fill(); }
+    }
+    if (part !== 'back') {
+      // the index finger (open -> pinched -> snapping out) and the thumb
+      finger(48, -11, [20, 16, 12], lerp(-0.34, 0.0, curl) - 0.55 * snap, [lerp(-0.04, 0.3, curl) - 0.18 * snap, lerp(0.04, 0.55, curl) - 0.2 * snap], [14.5, 12.5, 10.5, 8], 1, 1);
+      finger(27, 12, [29, 27], lerp(0.55, -0.05, curl) + 0.1 * snap, [lerp(-0.05, -0.27, curl)], [18, 14.5, 10], -1, 1);
+    }
+    c.restore();
+  }
+
+  // where the demon's shoulder, elbow and wrist are: the arm reaches out to the left to the hand that pinches the soul at (hx, hy)
+  function demonPose(x, y, o) {
+    var rise = easeOut(o.rise), by = y + (1 - rise) * 230, sx = x - 70, sy = by - 84;
+    var A = ik(sx, sy, o.hx - 2 + 88 * HAND_S, o.hy + 2 + 4.8 * HAND_S, 82, 80, 2);
+    return { by: by, sx: sx, sy: sy, A: A, ang: Math.PI + 0.1 };
+  }
+
+  // the index finger and thumb, drawn over the soul they pinch
+  function bigDemonFront(I, c, th, x, y, o, T) {
+    var P = demonPose(x, y, o);
+    demonHand(c, P.A.hx, P.A.hy, P.ang, -1, DEMON_SK, { glow: th.glow, rim: 0.9, rot: 0 }, o, 'front');
+  }
+
+  function bigDemon(I, c, th, x, y, o, T) {
+    // The hex-demon: rises out of the lava on the right (x, y = where his belly meets the lava, screen px).
+    // o: {rise, hx, hy (screen: where the soul is pinched), pinch 0..1, flick 0..1, smug 0..1}
+    var P = demonPose(x, y, o), by = P.by, out = DEMON_OUT, sk = DEMON_SK, L = { glow: th.glow, rim: 0.9, rot: 0 }, i, sd;
+    c.save();
+    c.translate(x, by);
+    c.lineJoin = 'round'; c.lineCap = 'round';
+    // ---- the torso: shoulders and trapezius, pecs, ribs, a gut that melts into the lava
+    function torsoPath() {
+      c.beginPath(); c.moveTo(-92, 24);
+      c.bezierCurveTo(-98, -30, -98, -72, -78, -98); c.bezierCurveTo(-66, -112, -44, -116, -24, -126); c.lineTo(24, -126);
+      c.bezierCurveTo(44, -116, 66, -112, 78, -98); c.bezierCurveTo(98, -72, 98, -30, 92, 24); c.closePath();
+    }
+    torsoPath(); var tg = c.createLinearGradient(0, -126, 0, 24); skinStops(tg, sk, L, false); c.fillStyle = tg; c.fill();
+    c.save(); torsoPath(); c.clip();
+    var sh = c.createLinearGradient(-98, 0, 98, 0); sh.addColorStop(0, 'rgba(10,4,24,.55)'); sh.addColorStop(0.28, 'rgba(10,4,24,0)'); sh.addColorStop(0.72, 'rgba(10,4,24,0)'); sh.addColorStop(1, 'rgba(10,4,24,.55)');
+    c.fillStyle = sh; c.fillRect(-100, -130, 200, 160);                                                    // roundness: the flanks fall into shadow
+    var hl = c.createRadialGradient(-26, -88, 4, -26, -88, 70); hl.addColorStop(0, 'rgba(235,225,255,.22)'); hl.addColorStop(1, 'rgba(235,225,255,0)');
+    c.fillStyle = hl; c.fillRect(-100, -130, 200, 160);
+    var lv = c.createLinearGradient(0, -22, 0, 24); lv.addColorStop(0, 'rgba(' + th.glow + ',0)'); lv.addColorStop(1, 'rgba(' + th.glow + ',.7)');
+    c.fillStyle = lv; c.fillRect(-100, -24, 200, 50);                                                      // lit from below by the lava
+    for (sd = -1; sd <= 1; sd += 2) {
+      c.strokeStyle = 'rgba(12,4,26,.55)'; c.lineWidth = 2.4;
+      c.beginPath(); c.moveTo(sd * 4, -74); c.quadraticCurveTo(sd * 36, -56, sd * 66, -78); c.stroke();      // the underside of each pec
+      c.beginPath(); c.moveTo(sd * 10, -112); c.lineTo(sd * 54, -106); c.stroke();                           // the collarbones
+      c.strokeStyle = 'rgba(235,225,255,.2)'; c.lineWidth = 1.4;
+      c.beginPath(); c.moveTo(sd * 4, -71); c.quadraticCurveTo(sd * 36, -53, sd * 66, -75); c.stroke();
+      c.beginPath(); c.moveTo(sd * 10, -110); c.lineTo(sd * 54, -104); c.stroke();
+      c.strokeStyle = 'rgba(12,4,26,.35)'; c.lineWidth = 2;
+      for (var r = 0; r < 3; r++) { c.beginPath(); c.moveTo(sd * 4, -42 + r * 15); c.quadraticCurveTo(sd * 20, -38 + r * 15, sd * 30, -44 + r * 15); c.stroke(); }     // the abs
+    }
+    c.strokeStyle = 'rgba(12,4,26,.3)'; c.lineWidth = 2; c.beginPath(); c.moveTo(0, -60); c.lineTo(0, 22); c.stroke();
+    c.restore();
+    torsoPath(); c.lineWidth = 3.4; c.strokeStyle = out; c.stroke();
+    // the gold chain and the hex on his chest
+    c.strokeStyle = '#7a5410'; c.lineWidth = 3.2; c.beginPath(); c.moveTo(-26, -122); c.quadraticCurveTo(-30, -78, 0, -88); c.quadraticCurveTo(30, -78, 26, -122); c.stroke();
+    c.strokeStyle = '#e8b83a'; c.lineWidth = 1.7; c.stroke();
+    c.beginPath(); for (i = 0; i < 6; i++) { var a = i / 6 * TAU + TAU / 12; c.lineTo(Math.cos(a) * 26, -62 + Math.sin(a) * 26); } c.closePath();
+    var hg = c.createLinearGradient(0, -90, 0, -34); hg.addColorStop(0, '#ffe98a'); hg.addColorStop(0.55, '#e6b02e'); hg.addColorStop(1, '#a56f12');
+    c.fillStyle = hg; c.fill(); c.strokeStyle = out; c.lineWidth = 3.2; c.stroke();
+    c.beginPath(); for (i = 0; i < 6; i++) { var a2 = i / 6 * TAU + TAU / 12; c.lineTo(Math.cos(a2) * 20, -62 + Math.sin(a2) * 20); } c.closePath(); c.strokeStyle = 'rgba(255,248,200,.5)'; c.lineWidth = 1.2; c.stroke();
+    c.strokeStyle = '#5a3606'; c.lineWidth = 3.2; c.beginPath(); c.moveTo(-9, -74); c.lineTo(-9, -50); c.moveTo(9, -74); c.lineTo(9, -50); c.moveTo(-9, -62); c.lineTo(9, -62); c.stroke();
+    // neck
+    c.fillStyle = mixc(sk.a, sk.b, 0.35); c.strokeStyle = out; c.lineWidth = 3; c.beginPath(); c.moveTo(-26, -124); c.lineTo(-22, -152); c.lineTo(34, -152); c.lineTo(38, -124); c.closePath(); c.fill(); c.stroke();
+    // ---- the head
+    c.save(); c.translate(6, -160); c.rotate(Math.sin(T / 600) * 0.03 + o.smug * 0.06);
+    for (sd = -1; sd <= 1; sd += 2) {
+      // the horns: ridged, dark at the root, paler at the tip
+      var hgr = c.createLinearGradient(sd * 24, -30, sd * 40, -100); hgr.addColorStop(0, '#1b0d2e'); hgr.addColorStop(0.6, '#4a3566'); hgr.addColorStop(1, '#a692c4');
+      c.fillStyle = hgr; c.strokeStyle = out; c.lineWidth = 2.6;
+      c.beginPath(); c.moveTo(sd * 22, -30); c.bezierCurveTo(sd * 62, -38, sd * 66, -76, sd * 40, -104); c.bezierCurveTo(sd * 42, -74, sd * 38, -52, sd * 10, -40); c.closePath(); c.fill(); c.stroke();
+      c.strokeStyle = 'rgba(10,4,20,.55)'; c.lineWidth = 1.4;
+      for (var rg = 0; rg < 4; rg++) { var ry = -42 - rg * 13; c.beginPath(); c.moveTo(sd * (24 + 9 * rg * 0.5), ry + 3); c.lineTo(sd * (40 + 7 * rg * 0.6 - rg), ry - 3); c.stroke(); }
+      // the ears: pointed, with a darker hollow
+      var eg2 = c.createLinearGradient(0, -20, 0, 22); skinStops(eg2, sk, L, false); c.fillStyle = eg2; c.strokeStyle = out; c.lineWidth = 3;
+      c.beginPath(); c.moveTo(sd * 42, -6); c.lineTo(sd * 84, -20); c.lineTo(sd * 50, 20); c.closePath(); c.fill(); c.stroke();
+      c.fillStyle = 'rgba(20,6,34,.55)'; c.beginPath(); c.moveTo(sd * 48, -2); c.lineTo(sd * 72, -13); c.lineTo(sd * 52, 12); c.closePath(); c.fill();
+    }
+    c.beginPath(); c.moveTo(-50, -8); c.bezierCurveTo(-52, -36, -26, -48, 0, -48); c.bezierCurveTo(26, -48, 52, -36, 50, -8); c.bezierCurveTo(50, 22, 28, 46, 0, 46); c.bezierCurveTo(-28, 46, -50, 22, -50, -8); c.closePath();
+    var hd = c.createLinearGradient(0, -48, 0, 46); skinStops(hd, sk, L, false); c.fillStyle = hd; c.fill();
+    c.save(); c.clip();
+    var hs = c.createLinearGradient(-52, 0, 52, 0); hs.addColorStop(0, 'rgba(10,4,24,.5)'); hs.addColorStop(0.3, 'rgba(10,4,24,0)'); hs.addColorStop(0.7, 'rgba(10,4,24,0)'); hs.addColorStop(1, 'rgba(10,4,24,.5)');
+    c.fillStyle = hs; c.fillRect(-54, -50, 108, 98);
+    c.fillStyle = 'rgba(20,6,34,.28)'; for (sd = -1; sd <= 1; sd += 2) { c.beginPath(); c.ellipse(sd * 32, 14, 10, 14, sd * 0.3, 0, TAU); c.fill(); }      // hollow cheeks
+    c.fillStyle = 'rgba(235,225,255,.16)'; c.beginPath(); c.ellipse(-8, -34, 24, 8, -0.1, 0, TAU); c.fill();                                       // forehead sheen
+    c.restore();
+    c.beginPath(); c.moveTo(-50, -8); c.bezierCurveTo(-52, -36, -26, -48, 0, -48); c.bezierCurveTo(26, -48, 52, -36, 50, -8); c.bezierCurveTo(50, 22, 28, 46, 0, 46); c.bezierCurveTo(-28, 46, -50, 22, -50, -8); c.closePath();
+    c.lineWidth = 3.6; c.strokeStyle = out; c.stroke();
+    var lid = o.smug > 0 ? 0.55 : 0.3;
+    for (sd = -1; sd <= 1; sd += 2) {
+      var eg = c.createRadialGradient(sd * 21, -6, 1, sd * 21, -6, 24); eg.addColorStop(0, 'rgba(255,225,90,.38)'); eg.addColorStop(1, 'rgba(255,225,90,0)'); c.fillStyle = eg; c.fillRect(sd * 21 - 26, -32, 52, 52);
+      var ey = c.createRadialGradient(sd * 21 - 2, -8, 1, sd * 21, -6, 13); ey.addColorStop(0, '#fff7b0'); ey.addColorStop(0.7, '#ffd23a'); ey.addColorStop(1, '#d9901a');
+      c.fillStyle = ey; c.strokeStyle = out; c.lineWidth = 2.6; c.beginPath(); c.ellipse(sd * 21, -6, 13, 12, 0, 0, TAU); c.fill(); c.stroke();
+      c.fillStyle = out; c.beginPath(); c.ellipse(sd * 21, -6, 3.2, 10, 0, 0, TAU); c.fill();
+      c.save(); c.beginPath(); c.ellipse(sd * 21, -6, 12.5, 11.5, 0, 0, TAU); c.clip();
+      c.fillStyle = mixc(sk.a, sk.b, 0.2); c.fillRect(sd * 21 - 14, -20, 28, 16 * lid); c.fillStyle = 'rgba(0,0,0,.35)'; c.fillRect(sd * 21 - 14, -20 + 16 * lid - 1.5, 28, 2.4);       // heavy lids: bored
+      c.restore();
+      c.strokeStyle = out; c.lineWidth = 6.4; c.beginPath(); c.moveTo(sd * 38, -25 - o.smug * 3); c.lineTo(sd * 7, -15 + o.smug * 2); c.stroke();     // the brow ridge
+      c.strokeStyle = 'rgba(235,225,255,.28)'; c.lineWidth = 1.6; c.beginPath(); c.moveTo(sd * 36, -29 - o.smug * 3); c.lineTo(sd * 10, -19 + o.smug * 2); c.stroke();
+    }
+    c.fillStyle = 'rgba(14,5,26,.65)'; for (sd = -1; sd <= 1; sd += 2) { c.beginPath(); c.ellipse(sd * 5, 5, 2.6, 3.4, sd * 0.3, 0, TAU); c.fill(); }          // nostrils
+    var mo = o.smug > 0 ? 0.2 : 0.55;
+    c.fillStyle = '#44070f'; c.strokeStyle = out; c.lineWidth = 3.4; c.beginPath(); c.moveTo(-27, 14); c.quadraticCurveTo(0, 14 + 36 * mo, 27, 14); c.quadraticCurveTo(0, 18, -27, 14); c.closePath(); c.fill(); c.stroke();
+    c.fillStyle = '#f4ecdc'; c.strokeStyle = 'rgba(20,6,30,.8)'; c.lineWidth = 1; [-16, -5, 6, 17].forEach(function (fx) { c.beginPath(); c.moveTo(fx - 4, 15); c.lineTo(fx + 4, 15); c.lineTo(fx, 25); c.closePath(); c.fill(); c.stroke(); });
+    c.restore();
+    // the deltoid of the far shoulder
+    demonBall(c, 70, -86, 27, sk, L, Math.PI * 1.1, Math.PI * 1.9);
+    c.restore();
+    // ---- the arm: upper arm, deltoid, forearm, elbow, a gold bracer, then the hand
+    var sx = P.sx, sy = P.sy, A = P.A;
+    demonLimb(c, sx, sy, A.ex, A.ey, [[0, 27], [0.3, 30], [0.62, 26], [1, 19]], sk, L);
+    demonBall(c, sx, sy, 28, sk, L, Math.PI * 0.85, Math.PI * 1.75);                                         // the deltoid caps the top of the upper arm
+    c.strokeStyle = 'rgba(12,4,26,.4)'; c.lineWidth = 2; c.beginPath(); c.moveTo(sx - 18, sy + 26); c.quadraticCurveTo(sx - 26, sy + 38, sx - 28, sy + 50); c.stroke();    // where the bicep meets the shoulder
+    demonLimb(c, A.ex, A.ey, A.hx, A.hy, [[0, 20], [0.25, 23.5], [0.62, 17.5], [1, 13.5]], sk, L);
+    demonBall(c, A.ex, A.ey, 14, sk, L, -0.4, Math.PI * 0.8);                                                // the elbow
+    var fa = Math.atan2(A.hy - A.ey, A.hx - A.ex);
+    c.save(); c.translate(A.hx, A.hy); c.rotate(fa);
+    var bg = c.createLinearGradient(0, -16, 0, 16); bg.addColorStop(0, '#ffe98a'); bg.addColorStop(0.5, '#d9a22a'); bg.addColorStop(1, '#8a5a0c');
+    c.fillStyle = bg; c.strokeStyle = out; c.lineWidth = 2.4; rr(c, -15, -16, 17, 32, 5); c.fill(); c.stroke();
+    c.strokeStyle = 'rgba(255,248,200,.5)'; c.lineWidth = 1.2; c.beginPath(); c.moveTo(-12, -11); c.lineTo(-1, -11); c.stroke();
+    c.restore();
+    // the hand points left, a little downward, mirrored so that the index finger stays on top; its palm and curled fingers are here, the pinch is drawn over the soul
+    demonHand(c, A.hx, A.hy, P.ang, -1, sk, L, o, 'back');
+  }
+
 
   function trampDraw(I, c, th, x, y, arr, T, sag, sc) {
     var bx = x + (1 - arr) * 440, out = '#0b0710';
@@ -3334,6 +3503,14 @@
     textPop(c, th, 'SPLASH!', x, ys - 70, age - 80, 1000, th.lava2, 30, -0.08);
   }
 
+  // the hex-demon of the 'flick' finale: his body and arm sit behind the soul, his pinching finger and thumb in front of it
+  function flickDemon(I, c, th, fi, pose, S, T, front) {
+    var d = S(DEMON.x + 232, LAVA_Y + 6), fx = pose.fx && pose.fx.flick, hp = S(DEMON.x - 38 + 6, DEMON.handY + 18);
+    if (d.y >= VH + 320) return;
+    var o = { rise: fi.arr, hx: hp.x, hy: hp.y, pinch: fx ? (fx.post < 0.24 ? smooth(0, 0.06, fx.post) : 0) : 0.0, flick: fx ? fx.flick : 0, smug: fx && fx.post > 0.5 ? 1 : 0 };
+    (front ? bigDemonFront : bigDemon)(I, c, th, d.x, d.y, o, T);
+  }
+
   DRAW.finaleBack = function (I, c, sc, T) {
     var fi = finaleInfo(sc), th = I.th, pose = sc.pose;
     if (!fi || !pose) return;
@@ -3343,8 +3520,7 @@
     else if (fi.style === 'boing') { var q = S(TRAMP.x, TRAMP.y); if (q.y < VH + 140) { var f = pose.fx && pose.fx.boing; var sag = 4; if (f) { var cf = Math.min(f.f, 1 - f.f); sag = 4 + (f.post < 0.94 ? 30 * Math.exp(-f.f * 9) * Math.pow(0.6, f.k) : 4); } trampDraw(I, c, th, q.x, q.y, fi.arr, T, sag, sc); } }
     else if (fi.style === 'grinder') { var g = S(GRIND.x, GRIND.hopperY + 10); if (g.y < VH + 220) grinderDraw(I, c, th, g.x, g.y, fi.arr, T, { post: pose.fx && pose.fx.grind ? pose.fx.grind.post : 0, d: fi.b.d }); }
     else if (fi.style === 'flick') {
-      var d = S(DEMON.x + 90, LAVA_Y + 6), fx = pose.fx && pose.fx.flick, hp = S(DEMON.x - 38 + 6, DEMON.handY + 18);
-      if (d.y < VH + 320) bigDemon(I, c, th, d.x, d.y, { rise: fi.arr, hx: hp.x, hy: hp.y, pinch: fx ? (fx.post < 0.24 ? smooth(0, 0.06, fx.post) : 0) : 0.0, flick: fx ? fx.flick : 0, smug: fx && fx.post > 0.5 ? 1 : 0 }, T);
+      flickDemon(I, c, th, fi, pose, S, T, false);
     }
     else if (fi.style === 'umbrella' && pose.fx && pose.fx.umb && !pose.hidden) {
       var sp = I.soulScreen, u = pose.fx.umb, gh = pose.hands[1]; if (u.open > 0 && u.burn < 0.995 && u.u < FALL_IMPACT.umbrella + 0.02) umbrellaDraw(I, c, th, sp.x + gh.x - pose.x, sp.y - (gh.y - pose.y), u, T);
@@ -3408,6 +3584,7 @@
     }
     else if (fi.style === 'flick') {
       var fx = pose.fx && pose.fx.flick;
+      flickDemon(I, c, th, fi, pose, S, T, true);
       if (fx && fx.post > 0.24 && fx.post < 0.7) {
         var fp = S(DEMON.x - 38 + 6, DEMON.handY + 18), age = (fx.post - 0.24) * fi.b.d;
         ring(c, fp.x, fp.y, age, 500, 6, 60, '#fff', 4);
