@@ -214,8 +214,21 @@ def cache_path(entry: dict) -> Path:
     return CLIPS_MEDIA_DIR / f"{entry['id']}.mp4"
 
 
+TITLE_MAX = 200
+
+
+def entry_title(entry: dict) -> str:
+    """What the item is called: the title its user gave it, else the one yt-dlp
+    found. entry["title"] stays yt-dlp's, so a re-resolve never overwrites a
+    rename and clearing the rename brings the original back."""
+    return entry.get("custom_title") or entry.get("title") or ""
+
+
 def public_entry(entry: dict) -> dict:
     out = dict(entry)
+    if entry.get("custom_title"):
+        out["title"] = entry["custom_title"]            # what the panel and overlay show
+        out["original_title"] = entry.get("title") or ""
     p = cache_path(entry)
     if p.exists():
         try:
@@ -660,7 +673,7 @@ async def download_clip(entry: dict) -> None:
     if tmp.exists():
         CLIPS_MEDIA_DIR.mkdir(parents=True, exist_ok=True)
         shutil.move(str(tmp), str(target))
-        STATE.note(f"cached #{entry['num']} {entry['title'] or entry['slug']} "
+        STATE.note(f"cached #{entry['num']} {entry_title(entry) or entry['slug']} "
                    f"({target.stat().st_size // 1024} KB)")
         await HUB.broadcast_queue()
 
@@ -820,7 +833,7 @@ async def play_entry(entry: dict) -> dict:
                           "src": src, "volume": settings().get("volume", 1.0),
                           "level": _level_for(entry)})
     await HUB.broadcast_player()
-    STATE.note(f"playing #{entry['num']} {entry['title'] or entry['slug']} ({src['mode']})")
+    STATE.note(f"playing #{entry['num']} {entry_title(entry) or entry['slug']} ({src['mode']})")
 
     if src["mode"] == "iframe" and entry.get("duration"):
         # The iframe can't report ended; clear it ourselves when it should be done.
@@ -1105,6 +1118,27 @@ async def api_mark(request: Request):
     entry["status"] = "played" if body.get("played") else "queued"
     save_store()
     await HUB.broadcast_queue()
+    return {"ok": True, "entry": public_entry(entry)}
+
+
+@router.post("/api/title")
+async def api_title(request: Request):
+    """Rename a queued item (panel list, Now Playing and the overlay's credit
+    line). An empty title - or the original one - removes the rename."""
+    body = await request.json()
+    entry = entry_by_ref(str(body.get("ref") or ""))
+    if entry is None:
+        return JSONResponse({"ok": False, "error": "no such item"}, status_code=404)
+    title = " ".join(str(body.get("title") or "").split())[:TITLE_MAX]
+    if title and title != (entry.get("title") or ""):
+        entry["custom_title"] = title
+    else:
+        entry.pop("custom_title", None)
+    save_store()
+    await HUB.broadcast_queue()
+    if entry["id"] == PLAYER["item_id"] and PLAYER["state"] != "idle":
+        await HUB.to_overlay({"type": "item", "item": public_entry(entry)})
+        await HUB.broadcast_player()
     return {"ok": True, "entry": public_entry(entry)}
 
 

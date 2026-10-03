@@ -85,6 +85,12 @@ soundboard overlay uses.
      *not* marked played.
    - Drag rows to reorder; the per-row buttons toggle played state and remove
      items (removal also deletes the cached MP4).
+   - **Rename** on a row lets you give a clip your own title (Enter saves, Esc
+     cancels). It shows in the list, the Now Playing strip and — with the clip
+     title line on — the overlay's credit, live if that clip is playing. The
+     original title is kept: a **renamed** badge marks the row, **Original** (or
+     saving an empty title) restores it, and a re-resolve never overwrites your
+     title.
 
 Playback state is owned by the server and pushed to every open panel and
 overlay over websockets, so multiple panels stay in sync and a reloaded OBS
@@ -217,6 +223,7 @@ exact clip slug, or `next` (the first still-queued item).
 | `GET /clips/api/pause` · `resume` · `toggle` · `stop` | transport |
 | `GET /clips/api/status` | player state, current item, queue counts |
 | `GET /clips/api/remove/{ref}` | remove an item (`DELETE /clips/api/queue/{ref}` also works) |
+| `POST /clips/api/title` | body `{"ref": "7", "title": "My title"}` — rename an item (up to 200 characters); an empty title restores the original. The response is the updated entry, whose `title` is the one shown and `original_title` the one yt-dlp found |
 | `POST /clips/api/reset_numbers` | renumber the queue 1..N and restart the counter |
 | `POST /clips/api/update_ytdlp` | upgrade yt-dlp in place (pip for the bundled module, `-U` for a standalone binary) |
 | `POST /clips/api/login/link` | body `{"browser": "firefox"}` or `"chrome"` — test the browser's YouTube sign-in, then link it if the test passes (see [YouTube sign-in](#youtube-sign-in-optional)) |
@@ -239,8 +246,8 @@ So a channel-point redeem or a `!playclip 7` chat command is one HTTP call.
 ## Storage
 
 Everything persists in `config/clips.json` — settings, the number counter,
-and the queue itself (each entry: id, num, url, kind `clip|vod`, title,
-channel + credit (the attribution label), duration, thumbnail, status
+and the queue itself (each entry: id, num, url, kind `clip|vod`, title (yt-dlp's)
+and `custom_title` (your rename, if any), channel + credit (the attribution label), duration, thumbnail, status
 `queued|played`, start offset, error, source `manual|api`). Cached clip MP4s live in `media/clips/` and are served through
 the existing `/media` mount; they're deleted when their queue item is removed
 or cleared.

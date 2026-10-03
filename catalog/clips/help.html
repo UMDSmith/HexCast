@@ -17,6 +17,7 @@
     <tr><td>GET /clips/api/pause · resume · toggle · stop</td><td>transport; Stop clears the overlay without marking the item played</td></tr>
     <tr><td>GET /clips/api/status</td><td>player state, current item, queue counts</td></tr>
     <tr><td>GET /clips/api/remove/{ref}</td><td>remove an item (also DELETE /clips/api/queue/{ref})</td></tr>
+    <tr><td>POST /clips/api/title</td><td>rename an item: <code>{"ref": "7", "title": "My title"}</code>; an empty title restores the original</td></tr>
     <tr><td>POST /clips/api/reset_numbers</td><td>renumber the queue 1..N and restart the counter</td></tr>
     <tr><td>GET /clips/api/shoutout/{channel}?count=2</td><td>play random clips from a Twitch channel back to back, ephemerally (never queued or saved)</td></tr>
   </table>

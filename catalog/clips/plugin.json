@@ -1,7 +1,7 @@
 {
   "id": "clips",
   "name": "Clips",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A hand-fired queue of Twitch clips and VODs, YouTube videos or any yt-dlp link, played full-window on an OBS overlay - with optional pre-download, an auto-leveler for consistent volume, and random-clip shoutouts for the Twitch !so command.",
   "icon": "🎬",
   "color": "#1fc7a8",

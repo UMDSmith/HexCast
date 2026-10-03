@@ -79,6 +79,9 @@
   .qrow .meta .t{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .qrow .meta .t a{color:inherit;text-decoration:none}
   .qrow .meta .t a:hover{color:var(--clips)}
+  .qrow .meta .t.edit{display:flex;gap:6px;overflow:visible}
+  .qrow .meta .t.edit input{flex:1;min-width:0;padding:6px 9px;font-weight:600}
+  .qrow .meta .t.edit button{padding:6px 11px;font-size:12.5px;white-space:nowrap}
   .qrow .meta .s{color:var(--dim);font:12px var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .qrow .meta .s .err{color:var(--warn)}
   .qrow .btns{display:flex;gap:6px;flex:0 0 auto}
@@ -88,6 +91,7 @@
   .badge.kind{color:var(--clips);border-color:#164d43}
   .badge.cached{color:var(--good);border-color:#1d4d33}
   .badge.errb{color:var(--warn);border-color:#4d3a10}
+  .badge.renamed{color:var(--ink);border-color:#3a3a4a}
 
   code{color:var(--good);font:12.5px var(--mono)}
   table.api{width:100%;border-collapse:collapse;font-size:13px}
@@ -321,33 +325,78 @@ document.querySelectorAll('nav button').forEach(function(b){
 });
 
 /* ---- queue list -------------------------------------------------------- */
+var EDITING=null;   // id of the row whose title is being edited; queue re-renders are held meanwhile
 function rowHtml(e){
+  var editing = EDITING===e.id;
   var badges='<span class="badge kind">'+e.kind+'</span>';
+  if(e.custom_title) badges+='<span class="badge renamed" title="Original title: '+esc(e.original_title||e.slug)+'">renamed</span>';
   if(e.cached) badges+='<span class="badge cached">cached</span>';
   if(e.error) badges+='<span class="badge errb" title="'+esc(e.error)+'">error</span>';
   var sub=badges+' '+(e.duration!=null?fmtDur(e.duration):'')
          +(e.credit?' &middot; '+esc(e.credit):'')+' &middot; '+esc(e.slug);
   if(e.error) sub+=' <span class="err">'+esc(e.error)+'</span>';
   var playing = PLAYER.item && PLAYER.item.id===e.id && PLAYER.state!=='idle';
-  return '<div class="qrow '+e.status+(playing?' playing':'')+'" draggable="true" data-id="'+e.id+'">'
+  var titleHtml = editing
+    ? '<div class="t edit">'
+      + '<input type="text" class="tedit" maxlength="200" data-id="'+e.id+'" value="'+esc(e.title||'')
+      +   '" placeholder="'+esc((e.custom_title?e.original_title:e.title)||e.slug)+'" aria-label="Clip title">'
+      + '<button class="act" data-tsave="'+e.id+'">Save</button>'
+      + (e.custom_title?'<button class="sec" data-treset="'+e.id+'" title="Go back to the original title">Original</button>':'')
+      + '<button class="sec" data-tcancel="1">Cancel</button>'
+      + '</div>'
+    : '<div class="t"><a href="'+esc(e.url)+'" target="_blank" rel="noopener">'+esc(e.title||e.slug)+'</a></div>';
+  return '<div class="qrow '+e.status+(playing?' playing':'')+'" draggable="'+(editing?'false':'true')+'" data-id="'+e.id+'">'
     + '<span class="num">#'+e.num+'</span>'
     + (e.thumbnail?'<img class="thumb" src="'+esc(e.thumbnail)+'" alt="">':'<span class="thumb"></span>')
     + '<div class="meta">'
-    +   '<div class="t"><a href="'+esc(e.url)+'" target="_blank" rel="noopener">'+esc(e.title||e.slug)+'</a></div>'
+    +   titleHtml
     +   '<div class="s">'+sub+'</div>'
     + '</div>'
     + '<div class="btns">'
     +   '<button class="act" data-play="'+e.id+'">Play</button>'
+    +   '<button class="sec" data-edit="'+e.id+'" title="Change the title shown in the panel and on the overlay">Rename</button>'
     +   '<button class="sec" data-mark="'+e.id+'">'+(e.status==='played'?'Unplay':'Played')+'</button>'
     +   '<button class="sec danger" data-rm="'+e.id+'">&#10005;</button>'
     + '</div>'
     + '</div>';
 }
-function renderQueue(){
+function renderQueue(force){
+  // The player ticks twice a second while a clip plays and each tick redraws the
+  // list - which would throw away a title being typed, so hold redraws until the
+  // edit ends (unless the row was removed meanwhile).
+  if(EDITING && !force){
+    if(QUEUE.some(function(e){ return e.id===EDITING; })) return;
+    EDITING=null;
+  }
   var c=$('qlist');
   if(!QUEUE.length){ c.innerHTML='<p class="hint">Queue is empty.</p>'; return; }
   c.innerHTML=QUEUE.map(rowHtml).join('');
 }
+
+/* rename a queue item */
+function startEdit(id){
+  EDITING=id; renderQueue(true);
+  var inp=document.querySelector('#qlist .tedit');
+  if(inp){ inp.focus(); inp.select(); }
+}
+function endEdit(){ EDITING=null; renderQueue(true); }
+async function saveTitle(id, title){
+  var d;
+  try{
+    var r=await fetch('/clips/api/title',{method:'POST',headers:{'Content-Type':'application/json'},
+                                          body:JSON.stringify({ref:id, title:title})});
+    d=await r.json();
+  }catch(_){ d={ok:false}; }
+  if(!d.ok){ toast(d.error||'could not rename'); return; }   // stay in the editor
+  QUEUE=QUEUE.map(function(e){ return e.id===id ? d.entry : e; });
+  endEdit();
+  toast(d.entry.custom_title ? 'Renamed' : 'Original title restored');
+}
+$('qlist').addEventListener('keydown', function(e){
+  if(!e.target.classList.contains('tedit')) return;
+  if(e.key==='Enter'){ e.preventDefault(); saveTitle(e.target.dataset.id, e.target.value); }
+  else if(e.key==='Escape'){ e.preventDefault(); endEdit(); }
+});
 
 /* drag to reorder */
 var dragEl=null;
@@ -388,6 +437,14 @@ document.addEventListener('click', async function(ev){
     if(!d.ok) toast(d.error||'could not play');
     return;
   }
+  if(t.dataset.edit){ startEdit(t.dataset.edit); return; }
+  if(t.dataset.tsave){
+    var inp=document.querySelector('#qlist .tedit');
+    saveTitle(t.dataset.tsave, inp?inp.value:'');
+    return;
+  }
+  if(t.dataset.treset){ saveTitle(t.dataset.treset, ''); return; }
+  if(t.dataset.tcancel){ endEdit(); return; }
   if(t.dataset.mark){
     var e=QUEUE.find(function(x){ return x.id===t.dataset.mark; }); if(!e) return;
     await fetch('/clips/api/mark',{method:'POST',headers:{'Content-Type':'application/json'},
