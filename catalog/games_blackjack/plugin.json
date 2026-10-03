@@ -1,0 +1,24 @@
+{
+  "id": "games_blackjack",
+  "name": "Blackjack",
+  "version": "1.1.0",
+  "parent": "games",
+  "description": "A Vegas shoe blackjack table dealt by Hex's skeleton hand: up to 14 chatters around a half-moon felt (the overflow queues), everyone acts at once in timed rounds, chip stacks and hexcoin bets against the bank, a shoe that grows with the table.",
+  "icon": "🃏",
+  "color": "#8f6bff",
+  "category": "Games",
+  "author": "UMDSmith",
+  "help": {
+    "file": "help.html",
+    "toc": [
+      {
+        "id": "blackjack",
+        "label": "Blackjack"
+      }
+    ]
+  },
+  "legacy_config": [
+    "games.json"
+  ],
+  "order": 70
+}

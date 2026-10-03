@@ -2,7 +2,7 @@
   "id": "games",
   "name": "Games",
   "version": "1.0.0",
-  "description": "Bot-driven casino games on stream - roulette, craps, russian roulette and trivia - with their own overlays, a shared ledger and a bank API. Each game is a separate add-on you install inside the Games tab.",
+  "description": "Bot-driven casino games on stream - roulette, craps, russian roulette, trivia, hexfall, soul climb and blackjack - with their own overlays, a shared ledger and a bank API. Each game is a separate add-on you install inside the Games tab.",
   "icon": "🎰",
   "color": "#d4af37",
   "category": "Games",

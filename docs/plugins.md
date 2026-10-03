@@ -2,7 +2,7 @@
 
 Hexcast is two things: the **soundboard** (the core, always there) and **plugins** - everything else. Twitch, Music, Discord, Clips, Countdown, Games and Ticker are all plugins. A fresh install has one tab, **Soundboard**, and a **+** tab next to it. Click **+**, pick what you want, and it installs itself.
 
-Games goes one level further: the **Games** plugin gives you a Games tab, and each game (Roulette, Craps, Russian Roulette, Trivia) is its own add-on, installed from the **+** inside the Games tab.
+Games goes one level further: the **Games** plugin gives you a Games tab, and each game (Roulette, Craps, Russian Roulette, Trivia, Hexfall, Soul Climb, Blackjack) is its own add-on, installed from the **+** inside the Games tab.
 
 - [Using plugins](#using-plugins)
 - [Where things live](#where-things-live)
@@ -12,6 +12,8 @@ Games goes one level further: the **Games** plugin gives you a Games tab, and ea
 - [What `setup(ctx)` gets](#what-setupctx-gets)
 - [Add-ons (plugins of a plugin)](#add-ons-plugins-of-a-plugin)
 - [The top-bar dot and the help page](#the-top-bar-dot-and-the-help-page)
+- [Versions and updates](#versions-and-updates)
+- [Releasing a module update](#releasing-a-module-update)
 - [Catalogs](#catalogs)
 - [Upgrading from a Hexcast without plugins](#upgrading-from-a-hexcast-without-plugins)
 - [Troubleshooting](#troubleshooting)
@@ -24,7 +26,7 @@ Games goes one level further: the **Games** plugin gives you a Games tab, and ea
 | --- | --- |
 | **Install** | Copies the plugin in, installs its Python packages if it needs any (the card shows the progress), and starts it. Nothing to restart. If it needs another plugin, that one is installed with it. |
 | **Open** | Goes to the plugin's tab. |
-| **Update** | Shown when the catalog has a newer copy (after a `git pull`, say). The new files and their Python packages are prepared first while the plugin keeps running; it is stopped only for the swap and started again. If anything goes wrong the old version stays as it was. |
+| **Update to 1.1** | Shown when a newer version exists - in the local `catalog/` folder (after a `git pull`) or on GitHub (see [Versions and updates](#versions-and-updates); no git needed). The new files and their Python packages are prepared first while the plugin keeps running; it is stopped only for the swap and started again. Your settings are kept. If anything goes wrong the old version stays as it was. |
 | **Disable / Enable** | Stops the plugin and hides its tab without deleting anything. |
 | **Remove** | Deletes the plugin's files (the confirmation names anything that goes with it). **Your settings and secrets in `config/` are kept**, so installing it again brings everything back. A plugin somebody wrote or copied in by hand has no other copy, so its folder is moved to `plugins/.removed/` instead of being deleted. |
 | **Repair** | Re-installs the plugin's Python packages (shown when they went missing). |
@@ -32,11 +34,11 @@ Games goes one level further: the **Games** plugin gives you a Games tab, and ea
 **From a terminal** (same thing, no browser - handy for scripts and Docker builds):
 
 ```bash
-python hexcast.py plugins list
+python hexcast.py plugins list                # installed vs latest version, and where the newer one comes from
 python hexcast.py plugins install twitch music
 python hexcast.py plugins install games games_roulette games_craps
 python hexcast.py plugins install --all
-python hexcast.py plugins update --all
+python hexcast.py plugins update --all        # or: update twitch games_craps   (checks GitHub too, unless turned off)
 python hexcast.py plugins repair music
 python hexcast.py plugins remove clips        # add --with-dependents if others need it
 ```
@@ -51,7 +53,8 @@ hexcast_core/         the plugin system itself
 static/               the soundboard's own web files, the top bar, the + store page
 catalog/<id>/         every plugin that ships with Hexcast (what the + tab installs from)
 plugins/<id>/         installed plugins - a copy of the catalog folder; this is what runs
-config/               settings and secrets, for the core and every plugin (never committed)
+config/               settings and secrets, for the core and every plugin (never committed); plugins.json is the plugin host's own
+VERSION               the Hexcast (core) version shown in the top bar
 media/                your sounds and videos
 ```
 
@@ -76,8 +79,9 @@ Every plugin's `static/` folder is served at `/plugins/<id>/static/...`.
 - **The top bar is data, not code.** `GET /api/plugins/nav` lists the tabs of the installed plugins; each plugin's own
   `nav.js` decides its dot. `/help` is assembled the same way: an index plus one page (`/help/<page>`) per running plugin, built from its `help.html`.
 - **Installing is copying.** The catalog folder is never imported, only copied; `plugins/<id>/.hexcast-plugin.json` remembers
-  where a copy came from and a digest of its files, which is how a card knows an **Update** is available (a `git pull` that
-  changes `catalog/` puts a dot on the **+** tab - nothing changes on a running stream until you press Update).
+  where a copy came from, its version and a digest of its files, which is how a card knows an **Update** is available (a newer
+  version in `catalog/` or on GitHub, or a `catalog/` folder that changed, puts a dot on the **+** tab - nothing changes on a
+  running stream until you press Update).
 - **Packages are the plugin's business.** `requirements.txt` is checked (cheaply) at start and installed with pip on Install or
   Repair; in a fresh virtualenv the missing ones are restored in the background.
 - **Add-ons import their parent** (`from hexcast_plugins.games import core`) and register with it; the parent's routes, pages and
@@ -132,7 +136,7 @@ A plugin that fails to start (bad import, exception in `setup`) is reported on i
 | Field | | |
 | --- | --- | --- |
 | `id` | required | 2-32 lowercase letters, digits, `_`. Must be the folder name. |
-| `name`, `version` | required | Shown on the card. A newer `version` in the catalog offers an update. |
+| `name`, `version` | required | Shown on the card and in the top bar (`1.0.0` is shown as `1.0`). A newer `version` in the catalog or upstream offers an update - **bump it whenever you change the module**. |
 | `api` | | Plugin API version this was written for. Currently `1`. |
 | `description`, `icon`, `color`, `category`, `author`, `homepage` | | Card details. `color` is a hex colour; `icon` an emoji. |
 | `parent` | | Another plugin's id: this is an [add-on](#add-ons-plugins-of-a-plugin) of it. |
@@ -181,7 +185,7 @@ Set `"parent": "games"` and the plugin is an **add-on** of Games: its card shows
 
 ### A game for Games
 
-Roulette, Craps, Russian Roulette and Trivia are each an add-on of Games. To write another one:
+Roulette, Craps, Russian Roulette, Trivia, Hexfall, Soul Climb and Blackjack are each an add-on of Games. To write another one:
 
 ```
 games_bingo/
@@ -252,6 +256,67 @@ The key is `nav.key` (or the plugin id). Without a script the dot is green whene
 
 **Help.** While the plugin is running its `help.html` is its own page at `/help/<page>`, listed on the help index and in the sidebar (under the parent's name for an add-on). `<page>` is the first `id` in `help.toc`, and the index card uses your manifest `description`. Write full `<section id="..." class="card">...</section>` blocks; `<h3>` headings become an "On this page" row of links, so use them to split a long reference. Link to another page with `/help/<page>`.
 
+## Versions and updates
+
+Every module (plugin) has a `version` in its `plugin.json`, and Hexcast itself has one in the `VERSION` file. They are all shown where you can see them:
+
+- **Top bar, top right** - `Hexcast Version: 2.0`, and next to it the version of the module whose tab you are on (`Games Version: 1.0`, `Twitch Version: 1.0`; nothing extra on the Soundboard). `X.Y.0` is shown as `X.Y`, anything else as it is (`1.2.3`). On a narrow window the word *Version:* is dropped.
+- **Games** - each game's tab shows that add-on's version at the right end of the tab row (`Craps Version: 1.0`), and each game card in the game store shows it too.
+- **The + store** - every card shows its version.
+
+**Updating, without git.** When a newer version of a module exists an **Update to 1.1** button appears: next to its version in the top bar (on that module's own tab), on the game's tab in Games, on its card in the **+** store, and as a green dot on the **+** tab (and on a game's tab in Games). Pressing it updates **that module only** - the same safe path as the store's Update button: the new files and Python packages are prepared while the old version keeps running, the module is stopped only for the swap, your settings in `config/` stay, and if anything fails the old version is left running. The page then shows the new version by itself; there is nothing to restart. Updating one game add-on (`games_craps`) touches only that add-on, not Games or the other games.
+
+For **Hexcast itself** the top bar reads `Hexcast Version: 2.0` with an **Update to 2.1** link. It opens the repository's ZIP download: unpack it over your Hexcast folder (your `media/`, `config/` and `plugins/` are not in the ZIP and stay). Hexcast never overwrites its own core files.
+
+**Where "newer" comes from.** Two places are compared with what is installed, and the newest wins:
+
+1. the `catalog/` folder next to Hexcast (what `git pull` or a new ZIP refreshes). A catalog copy whose files changed without a version bump is still offered as an update.
+2. **upstream**: the project's GitHub repository. Hexcast asks GitHub for the `plugin.json` of each plugin you have installed. This is what tells ZIP users that a newer module exists without having to download everything again.
+
+An update is offered only when the version is **semver-greater** than the installed one (`1.10.0` beats `1.9.0`; `1.2.0-beta` is older than `1.2.0`); never a downgrade.
+
+**Applying an upstream update.** Hexcast downloads the repository archive from GitHub (`https`, size-capped, streamed to a temporary file), unpacks **only** `catalog/<plugin id>/` from it (no `..`, no absolute paths, no links; nothing else in the archive is touched), and then it goes through the ordinary update path described above.
+
+### The Settings page and the `upstream` setting
+
+The **gear** at the top right of every page opens **Settings** (`/options`), the master settings for all of Hexcast (Updates is the first section; later global options go there too). It has:
+
+- **Check GitHub for updates** - on by default. Off = Hexcast makes **no update requests at all** (no module check, no Hexcast-version check, nothing in the background); version numbers still show, and an update that arrives in the local `catalog/` folder (`git pull`) is still offered. Upstream updates are not offered while it is off.
+- **GitHub repository** and **Branch** - where to look (default `UMDSmith/hexcast`, `main`); validated before they are saved (a pasted `https://github.com/owner/name` is accepted).
+- **Check now** - asks GitHub right away; the page shows when it last asked, the source, the latest Hexcast version and which installed modules have an update (or that GitHub could not be reached).
+
+It saves to `config/plugins.json`, which you can also edit by hand:
+
+```json
+{ "check_updates": true, "upstream": { "repo": "UMDSmith/hexcast", "branch": "main" } }
+```
+
+- `check_updates` - `true` (the default if the key is missing) or `false`.
+- `upstream` - left out (or `true`, or `{}`) = the default repository; set `repo` (`owner/name`) and `branch` to follow a fork. `"upstream": false` is the older way to say the same as `"check_updates": false`.
+- A value that is not usable (a bad repo name, a non-GitHub address) is ignored with a warning in the console and the default is used.
+- For testing against your own local server `raw_url` and `archive_url` (templates with `{repo}`, `{branch}`, `{id}`) can be added to `upstream`; like everything here they must be `https` GitHub or `http` `localhost`.
+- The environment variable `HEXCAST_NO_UPSTREAM=1` switches the check off without touching the file (Docker builds, offline machines); Settings then shows the switch as locked.
+
+**The Options API** (what the page uses; built so future global options are one more entry in `hexcast_core/options.py`): `GET /api/options` returns `{"options": {...}, "defaults": {...}, "locked": {...}, "updates": {checked_at, last_ok_at, error, core_latest, modules}, "available": [...]}`; `POST /api/options` with e.g. `{"check_updates": false}` or `{"upstream_repo": "me/fork", "upstream_branch": "dev"}` validates every value first and saves them all or none (`400` with `errors` per key); `POST /api/options/check-now` fetches the latest versions now (`409` while checking is off). Like the plugin API it only accepts requests from Hexcast's own pages and from scripts.
+
+**How it behaves.** The check runs in a background thread, never while a page loads or while Hexcast starts; the answer is cached for an hour (a failed attempt is retried after five minutes); offline simply means no news, with no error shown. Only `https` to `github.com`, `raw.githubusercontent.com` and `codeload.github.com` is used (also after redirects), and only for plugins you have installed that came from Hexcast.
+
+**Privacy.** What is sent to GitHub: ordinary HTTPS GET requests for `VERSION` and for the `plugin.json` of each plugin you have installed (so GitHub can see your IP address and which module files were requested, like any download from it), plus - only when you press an update - the repository ZIP. Nothing about you, your streams or your settings is sent. Turn all of it off with the switch in Settings (the gear), or `"check_updates": false`.
+
+**From a terminal.** `python hexcast.py plugins list` shows installed vs latest versions and where an update would come from (`catalog` or `upstream`); `plugins update <id>` / `plugins update --all` applies it (`--all` only touches plugins that have something newer).
+
+**API.** `GET /api/plugins`, `/api/plugins/nav` and the Games registry carry `installed_version`, `latest_version` (and `installed_label` / `latest_label`, the display form), `update_available` and `update_source` (`"catalog"` or `"upstream"`); the existing fields are unchanged. `GET /api/version` also returns `repo_url` and `download_url` (where Hexcast core's latest download is) and `check_enabled`.
+
+## Releasing a module update
+
+For the person who ships the code:
+
+1. Change the module (`catalog/<id>/...`).
+2. Bump `"version"` in `catalog/<id>/plugin.json` (`1.0.0` -> `1.1.0`). For Hexcast core, bump the `VERSION` file instead.
+3. Push to `main` (the branch users follow).
+
+Within an hour (the cache time) everybody who has the module installed sees **Update to 1.1** and can apply it with one click - no git needed. Without the version bump nobody is told, so remember step 2.
+
 ## Catalogs
 
 The **+** tab lists the *catalog*. Two sources:
@@ -290,4 +355,5 @@ The first start after upgrading looks in `config/` for the settings of each bund
 - **An install failed** - nothing is left half-installed: the card is back to **Install** with the log of what went wrong (usually pip and the internet connection). An update that fails leaves the old version running.
 - **Files in `plugins/.trash/`** - Windows had a file open while removing a plugin; they are deleted on the next start.
 - **Plugin changes from other web pages are refused** - the plugin API only accepts requests from the pages Hexcast serves (and from scripts and `curl`, which send no `Origin`), so a site open in another tab cannot install or remove plugins.
+- **No "Update to ..." appears though a newer version is on GitHub** - the check is cached for an hour and needs the internet; check **Check GitHub for updates** is on in Settings (the gear), and that the new `plugin.json` has a higher `version`.
 - **Developing a plugin in `catalog/`** - start Hexcast with `HEXCAST_DEV=1` and changed plugins are re-installed from the catalog on every start.

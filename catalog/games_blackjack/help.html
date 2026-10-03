@@ -1,0 +1,33 @@
+<section id="blackjack">
+<div class="card">
+  <h2>Blackjack <span class="tag">/games#blackjack</span></h2>
+  <p class="hint">A half-moon felt table on the games overlay (<code>/games/overlay</code>, or <code>?game=blackjack</code>) with <b>Hex</b>'s
+    skeleton hand dealing, a shoe and a discard tray. Up to 14 chatters sit down (the rest wait in a queue) and play standard Vegas blackjack
+    against the bank (your bot) — hit, stand, double, split, insurance, surrender — all through the shared <b>ledger</b>: a bet,
+    a double, a split and insurance are debits, a payout is a credit. Everybody plays <b>at the same time</b>: each action round is
+    a short window (12 s, then 8 s) in which every hand sends one choice; the server then deals them out in seat order, and
+    no choice means stand. The shoe (2–8 decks by how many are seated) is shuffled by the server with a cryptographic RNG and the
+    overlay never gets a card that isn't turned over. A seat is kept between hands only if its player bets again (<code>rebet</code>).
+    The rules (dealer S17/H17, blackjack 3:2 / 6:5, double, splits, insurance, surrender …) are settings and the house edge is
+    computed from them. Placement, look and the plaque's title (<code>title</code>, your branding) live in the Games panel's
+    Edit Mode. Details: <code>docs/blackjack.md</code>.</p>
+  <table class="api">
+    <tr><td>GET|POST /games/api/blackjack/start</td><td><code>{seconds, seats, test}</code> — open the table; <code>test</code> writes nothing to the ledger; 409 while one is open</td></tr>
+    <tr><td>GET|POST /games/api/blackjack/bet</td><td><code>{user, amount, seat?, balance?}</code> — the ante: takes a seat (the first free one, or <code>seat</code>), else the queue; more on a stake adds to it → <code>debits</code>, <code>player</code>; 409 <code>bets_closed</code> outside the betting window</td></tr>
+    <tr><td>GET|POST /games/api/blackjack/rebet</td><td><code>{user}</code> (alias <code>/ditto</code>) — the same ante as last hand</td></tr>
+    <tr><td>GET|POST /games/api/blackjack/action</td><td><code>{user, action: hit|stand|double|split|surrender|insurance|decline, hand?, balance?}</code> — one choice per hand per round, final; double / split / insurance debit at once; 409 <code>actions_closed</code> · shortcuts <code>/hit /stand /double /split /surrender /insurance</code></td></tr>
+    <tr><td>GET|POST /games/api/blackjack/remove · leave</td><td><code>{user, amount?}</code> — take back (part of) the stake before the deal (<code>refund</code>) · <code>{user}</code> — get up (alias <code>/cashout</code>): stake back before the deal; during a hand it stands and leaves after the settle</td></tr>
+    <tr><td>GET|POST /games/api/blackjack/next · close</td><td>end the current window now · close the table after this hand</td></tr>
+    <tr><td>GET /games/api/blackjack/table · seats · user/{name} · ledger · history · bets</td><td>the STATE · seats + queue · one player (hands and <code>can[]</code>, what they may do now) · this game's ledger events · finished tables + stats · rules, payouts, house edge, deck table</td></tr>
+    <tr><td>GET|POST /games/api/blackjack/stop</td><td>end the table now: every stake still on the line is returned (a hand in progress is a no-contest)</td></tr>
+    <tr><td>GET|POST /games/api/blackjack/preview</td><td><code>{overrides, seconds}</code> — Edit Mode's Test in OBS: the table on screen for a few seconds with that look (<code>STATE.preview</code>); never touches the game · <code>/preview/clear</code></td></tr>
+  </table>
+  <pre>curl -X POST http://localhost:4747/games/api/blackjack/start -H "Content-Type: application/json" -d "{\"seats\":10}"
+curl "http://localhost:4747/games/api/blackjack/bet?user=alice&amp;amount=100"
+curl "http://localhost:4747/games/api/blackjack/bet?user=bob&amp;amount=50&amp;seat=3"
+curl "http://localhost:4747/games/api/blackjack/action?user=alice&amp;action=hit"
+curl "http://localhost:4747/games/api/blackjack/action?user=bob&amp;action=double"
+curl "http://localhost:4747/games/api/blackjack/rebet?user=alice"
+curl "http://localhost:4747/games/api/blackjack/ledger?since=0"</pre>
+</div>
+</section>

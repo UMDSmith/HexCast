@@ -21,6 +21,7 @@ _SESSION = Path(tempfile.mkdtemp(prefix="hexcast-tests-"))
 os.environ["HEXCAST_CONFIG_DIR"] = str(_SESSION / "config")
 os.environ["SOUNDBOARD_MEDIA_DIR"] = str(_SESSION / "media")
 os.environ["HEXCAST_PLUGINS_DIR"] = str(_SESSION / "plugins")
+os.environ["HEXCAST_NO_UPSTREAM"] = "1"          # no test ever talks to GitHub (test_versions uses fakes)
 SESSION_CONFIG = _SESSION / "config"
 
 from hexcast_core import Installer, PluginHost  # noqa: E402

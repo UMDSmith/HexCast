@@ -48,7 +48,7 @@ self-contained, with its own overlay and settings panel, and gets its own tab in
 the top bar once installed. Add as many or as few as you like; none of them
 changes how the soundboard behaves, and a plugin you never install costs you
 nothing — not even its Python packages. **Games** goes one level further: each
-game (Roulette, Craps, Russian Roulette, Trivia) is its own add-on, installed from
+game (Roulette, Craps, Russian Roulette, Trivia, Hexfall, Soul Climb, Blackjack) is its own add-on, installed from
 the **+** inside the Games tab. See [docs/plugins.md](docs/plugins.md).
 
 Everything runs on your own machine and streams to OBS over your LAN.
@@ -212,8 +212,21 @@ the Games panel and placed with the same **Edit Mode** as the soundboard:
   out. 15 questions from easy to hard, from **Open Trivia DB** and your own
   lore questions, never repeated in a night. See
   [docs/trivia.md](docs/trivia.md).
+- **Hexfall** — a hex-themed plinko: one glowing token drops through a pyramid of
+  hexagonal pegs into slots of **multipliers** and **busts**. Chat puts up a bet
+  before every drop and the landing slot pays it (or doesn't). Three drops a
+  game. See [docs/hexfall.md](docs/hexfall.md).
+- **Soul Climb** — a damned soul climbs out of a hell pit while chat bets
+  **how high he gets**: pass your height and you're paid its multiplier, fall
+  short and the stake is gone. Near-falls, demons, bats, a skeleton hand and a
+  different way to fall every time. See [docs/climb.md](docs/climb.md).
+- **Blackjack** — a half-moon felt table with Hex as the dealer, Vegas rules, a
+  shoe that grows with the player count (2 to 8 decks), up to 14 seats and a
+  queue. Everyone acts at once in short action rounds; names, cards and chip
+  stacks sit at each seat, and you keep your seat by ante-ing up each hand.
+  See [docs/blackjack.md](docs/blackjack.md).
 
-Both round games are placed and styled in the same **Edit Mode** editor as
+All the round games (Russian Roulette, Trivia, Hexfall, Soul Climb, Blackjack) are placed and styled in the same **Edit Mode** editor as
 roulette and craps (sample game, ▶ Preview, **Test in OBS**), and carry your
 branding, not ours: the title (`title`: "Russian Roulette" / "TRIVIA") and
 trivia's name for your own questions (`lore_label`: "Channel Lore") are
@@ -231,7 +244,8 @@ right moment. A spin or roll is one HTTP call, and `wait=true` holds the
 response until it lands. **Launch/landing clips play on the base soundboard
 overlay (`/overlay`)** — keep both browser sources in your scene. See
 [docs/games.md](docs/games.md), [docs/craps.md](docs/craps.md),
-[docs/russian_roulette.md](docs/russian_roulette.md) and [docs/trivia.md](docs/trivia.md).
+[docs/russian_roulette.md](docs/russian_roulette.md), [docs/trivia.md](docs/trivia.md),
+[docs/hexfall.md](docs/hexfall.md), [docs/climb.md](docs/climb.md) and [docs/blackjack.md](docs/blackjack.md).
 Every bet in every game is against the bank (the bot), paid through the same
 ledger; Hexcast never reads chat — your bot turns chat commands into API calls,
 so any AI vtuber's bot can run them.
@@ -332,7 +346,7 @@ installs its own Python packages, so nothing is downloaded for a plugin you don'
 ```bash
 python hexcast.py plugins list
 python hexcast.py plugins install twitch music discord
-python hexcast.py plugins install games games_roulette games_craps games_russian games_trivia
+python hexcast.py plugins install games games_roulette games_craps games_russian games_trivia games_hexfall games_climb games_blackjack
 python hexcast.py plugins install --all
 ```
 
@@ -364,8 +378,34 @@ linux/amd64,linux/arm64,linux/arm/v7 -t your-registry/hexcast:latest --push .`.
 ### Upgrading
 
 Your library (`media/`), all settings/secrets (`config/`) and the plugins you installed (`plugins/`) are git-ignored, so
-updating never touches them. The top bar of every panel shows your version; when
-a newer release is out it turns green and reads **• update**.
+updating never touches them.
+
+**What the top bar shows.** At the top right of every page: `Hexcast Version: 2.0`, and next to it the version of the
+module (plugin) of the tab you are on - `Games Version: 1.0`, `Twitch Version: 1.0` (nothing extra on the Soundboard).
+`1.0.0` is shown as `1.0`; anything else as it is (`1.2.3`). Inside Games, each game's tab shows its own version
+(`Craps Version: 1.0`) and each game card in the game store shows it too. On a narrow window the word *Version* is dropped.
+
+**Update links.** When a newer version exists, an **Update to 1.1** button appears: next to that module's version in the
+top bar, on the game's tab in Games, on its card in the **+** store, and as a green dot on the **+** tab. Pressing it updates
+*that module only* - the new files and Python packages are prepared while the old version keeps running, your settings
+are kept, nothing needs restarting, and if anything goes wrong the old version stays. For Hexcast itself the top bar shows
+`Hexcast Version: 2.0` with **Update to 2.1**, a link to the GitHub ZIP: download it and unpack it over your Hexcast folder
+(Hexcast never overwrites its own core files; your `media/`, `config/` and `plugins/` are not in the ZIP).
+
+**No git needed.** Hexcast checks GitHub itself:
+- **How often:** at most once an hour. The answer is cached, and the check runs in the background - it never delays start-up
+  or a page load, and when you are offline it just stays quiet.
+- **What is fetched:** the repository's `VERSION` file (the newest Hexcast) and the small `plugin.json` of each module you have
+  installed (to read its version). When you press **Update to ...** on a module, its folder is downloaded from the repository
+  ZIP (https, github.com only, size-capped, nothing outside that module's folder is unpacked). Nothing about you, your
+  streams or your settings is sent - it is the same as opening those files in a browser.
+- **Turn it off:** click the **gear** at the top right of the top bar (Settings) and switch **Check GitHub for updates** off
+  (or put `{"check_updates": false}` in `config/plugins.json`). Then Hexcast makes no update requests at all; version numbers
+  still show, and updates that arrive in the local `catalog/` folder (git users: `git pull`) are still offered. The same page
+  has **Check now** (with the time of the last check and what it found) and the repository / branch to follow (default
+  `UMDSmith/hexcast`, `main`).
+
+More in [docs/plugins.md](docs/plugins.md#versions-and-updates).
 
 - **Git:** `git pull`, then run the launcher.
 - **ZIP:** download the latest from **`< > Code`** and extract over your existing folder (keep `media/`, `config/` and `plugins/`), then run the launcher.
@@ -374,8 +414,8 @@ a newer release is out it turns green and reads **• update**.
 The launcher notices when requirements changed and re-installs automatically —
 no manual `pip` to remember.
 
-**Plugins update on your say-so.** An update brings a newer copy of the plugin folder into `catalog/`, but what
-runs is the installed copy in `plugins/` — a plugin's card shows **Update** when the catalog has something newer, and
+**Plugins update on your say-so.** An update brings a newer copy of the plugin folder into `catalog/` (or is fetched from GitHub), but what
+runs is the installed copy in `plugins/` — a plugin's card shows **Update to 1.1** when something newer exists, and
 pressing it swaps the files and restarts just that plugin, so nothing changes in the middle of a stream.
 
 **Coming from a version without plugins?** Nothing to do: the first start keeps every tab you were already using (it
@@ -543,6 +583,17 @@ GET|POST /games/api/russian/stop               → end it: stakes refunded, surv
 GET|POST /games/api/russian/preview            → {overrides, seconds} → Test in OBS: that look on screen for a few seconds (never the game)
 ```
 
+**Games (Hexfall, Soul Climb, Blackjack)** — round games with the same shape as Russian Roulette's API above
+(`/start`, `/bet`, `/remove`, `/next`, `/stop`, `/preview`, `/table`, `/user/{name}`, `/ledger`, `/history`, `/bets`):
+
+```
+GET|POST /games/api/hexfall/bet                → {user, amount} → debits; the next drop pays amount × the landing slot's multiplier (409 bets_closed)
+GET|POST /games/api/climb/bet                  → {user, amount, height} → debits; paid the height's multiplier if the soul reaches it (up to 5 bets each)
+GET|POST /games/api/blackjack/bet              → {user, amount, seat?} → takes a seat (or the queue) and debits; also /rebet /leave
+GET|POST /games/api/blackjack/action           → {user, action: hit|stand|double|split|insurance|surrender} (also /hit /stand /double /split)
+GET  /games/api/blackjack/seats                → who sits where, their cards, chips and the queue
+```
+
 **Games (Trivia)** — bet before each question, answer, ride or cash out:
 
 ```
@@ -623,7 +674,7 @@ hexcast/
 ├── static/                    # the core's web files: control panel, top bar, the + store page, help
 ├── catalog/                   # every plugin that ships with Hexcast — what the + tab installs from
 │   ├── twitch/  music/  discord/  clips/  countdown/  ticker/  ytdlp/
-│   └── games/  games_roulette/  games_craps/  games_russian/  games_trivia/
+│   └── games/  games_roulette/  games_craps/  games_russian/  games_trivia/  games_hexfall/  games_climb/  games_blackjack/
 │                              #   each: plugin.json, its Python, static/ (panel + overlay), help.html, requirements.txt
 ├── plugins/                   # the plugins you installed (a copy of their catalog folder; gitignored)
 ├── docs/                      # plugins.md + one doc per plugin: twitch, music, discord, clips, countdown, games, craps, ticker …
@@ -657,7 +708,7 @@ can hand-edit the JSON; the watcher ignores `.json` writes.
 
 - **Repository & downloads:** <https://github.com/UMDSmith/hexcast>
 - **Plugins:** [how plugins work & how to write one](docs/plugins.md)
-- **Plugin docs:** [Twitch](docs/twitch.md) · [Music](docs/music.md) · [Discord](docs/discord.md) · [Clips](docs/clips.md) · [Countdown](docs/countdown.md) · [Games & Roulette](docs/games.md) · [Craps](docs/craps.md) · [Russian Roulette](docs/russian_roulette.md) · [Trivia](docs/trivia.md) · [Ticker](docs/ticker.md)
+- **Plugin docs:** [Twitch](docs/twitch.md) · [Music](docs/music.md) · [Discord](docs/discord.md) · [Clips](docs/clips.md) · [Countdown](docs/countdown.md) · [Games & Roulette](docs/games.md) · [Craps](docs/craps.md) · [Russian Roulette](docs/russian_roulette.md) · [Trivia](docs/trivia.md) · [Hexfall](docs/hexfall.md) · [Soul Climb](docs/climb.md) · [Blackjack](docs/blackjack.md) · [Ticker](docs/ticker.md)
 - **License:** MIT — see [LICENSE](LICENSE)
 
 <p align="center">

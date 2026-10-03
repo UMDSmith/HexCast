@@ -607,7 +607,7 @@ def test_every_page_of_every_shipped_plugin_finds_its_assets(real_world):
     """Every script/style/image a page of a shipped plugin names is actually served."""
     import re
     real_world.app.mount("/static", StaticFiles(directory=str(ROOT / "static")))          # what hexcast.py mounts
-    for pid in ("games", "games_roulette", "games_craps", "games_russian", "games_trivia",
+    for pid in ("games", "games_roulette", "games_craps", "games_russian", "games_trivia", "games_hexfall", "games_climb", "games_blackjack",
                 "countdown", "ticker", "twitch", "clips", "discord", "music"):
         real_world.installer.install(pid, packages=False)
     real_world.host.load_all()

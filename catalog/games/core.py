@@ -2359,6 +2359,23 @@ def _asset_url(fe: dict, name: str) -> str:
     return f"{fe['static_url']}/{name}?v={v}"
 
 
+def _version_fields(plugin_id: str | None) -> dict:
+    """The add-on's version / update info for the registry: installed_version, latest_version,
+    *_label (1.0.0 shown as 1.0), update_available, update_source. Empty values when Hexcast's
+    plugin host is not around (the games core used on its own, in a test)."""
+    info = None
+    if plugin_id:
+        try:
+            from hexcast_core.host import plugin_versions
+            info = plugin_versions(plugin_id)
+        except Exception:
+            info = None
+    info = info or {}
+    return {"version": info.get("installed_version"), "version_label": info.get("installed_label"),
+            "latest_version": info.get("latest_version"), "latest_label": info.get("latest_label"),
+            "update_available": bool(info.get("update_available")), "update_source": info.get("update_source")}
+
+
 def registry_view() -> dict:
     """GET /games/api/registry: the installed games, in tab order, with their scripts."""
     games = []
@@ -2369,6 +2386,7 @@ def registry_view() -> dict:
         games.append({
             "key": key, "plugin": fe.get("plugin"), "title": fe.get("title") or GAMES[key].title,
             "order": fe.get("order", 100),
+            **_version_fields(fe.get("plugin")),
             "panel_js": _asset_url(fe, fe["panel_js"]) if fe.get("panel_js") else None,
             "overlay": {"script": _asset_url(fe, ov["script"]) if ov.get("script") else None,
                         "appearance": list(ov.get("appearance") or GAMES[key].APPEARANCE),

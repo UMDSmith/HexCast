@@ -25,7 +25,23 @@
              font:600 13px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;
              padding:10px 14px;cursor:pointer}
   #gtabs button.sel{color:var(--ink);border-bottom-color:var(--accent)}
+  #gtabs{align-items:center}
+  /* the selected game's version, always in the same spot: the right end of the tab row */
+  #gver{margin-left:auto;display:flex;align-items:center;gap:0;padding:0 4px;font:600 11.5px/1 var(--mono);
+        letter-spacing:.03em;color:var(--dim);white-space:nowrap}
+  #gver:empty{display:none}
+  #gver b{color:var(--hb-muted);font-weight:700;margin-left:5px}
+  #gver .gv-name{color:var(--hb-muted)}
+  #gver .gv-up{margin-left:9px;padding:5px 9px;border-radius:99px;border:1px solid #1d4d33;background:#0e2118;color:var(--good);
+               font:700 10.5px/1 var(--mono);letter-spacing:.04em;text-transform:none;cursor:pointer}
+  #gver .gv-up:hover{border-color:var(--good);filter:brightness(1.15)}
+  #gver .gv-up.busy{color:var(--warn);border-color:#5a4210;background:#231a08;cursor:default}
+  #gver .gv-up.err{color:#ff6b62;border-color:#5a2420;background:#241010;cursor:help}
+  /* a game with a newer version gets a small dot on its tab (the "+" too: the store has the button) */
+  #gtabs button.upd::after{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;margin-left:7px;
+        background:var(--good);box-shadow:0 0 6px -1px var(--good);vertical-align:2px}
   section.gtab{display:none} section.gtab.sel{display:block}
+  @media (max-width: 560px){ #gver .gv-w{display:none} #gver{flex:1 1 100%;justify-content:flex-end;padding-top:6px} }
   /* the "+" tab (the game store) sits last, like the top bar's */
   #gtabs button.plus{font-size:17px;font-weight:700;padding:8px 14px}
   #gtabs button.plus:hover{color:var(--good)}
@@ -289,6 +305,7 @@
      is the game store: every game is its own add-on, installed from there. -->
 <nav id="gtabs">
   <button data-tab="__store" class="plus" title="Add games" aria-label="Add games">+</button>
+  <div id="gver" aria-live="polite"></div>
 </nav>
 
 <main>
@@ -354,6 +371,7 @@ function showTab(key){
   if(!btn) return false;
   document.querySelectorAll('#gtabs button').forEach(function(b){ b.classList.toggle('sel', b === btn); });
   document.querySelectorAll('section.gtab').forEach(function(s){ s.classList.toggle('sel', s.id === 'tab-' + key); });
+  renderGver();
   gpEach('onTab', key);
   return true;
 }
@@ -368,6 +386,41 @@ var TABS = {};            // game key -> { info, btn, sec, scripts: [<script> el
 var ADDED = [];           // [{key, at}]: the tabs added lately (which add-on did the store just install?)
 var WANT = null;          // {id, at}: the store just installed this add-on: open its tab once it shows up
 var _regLoaded = false, _regBusy = false, _regAgain = false, _regWaiters = [];
+
+/* ---------- the selected game's version + its Update link ---------- */
+// "Craps Version: 1.0" (1.0.0 shows as 1.0) at the right end of the tab row, with "Update to 1.1" when the
+// registry says there is a newer version (from the catalog, or from GitHub). Pressing it updates that add-on
+// only (the same staged update as the store's button); the registry then re-announces the rebuilt game.
+var GVER = {};            // game key -> {busy} | {err}
+function fmtV(v){ var m = /^(\d+)\.(\d+)\.0$/.exec(String(v == null ? '' : v)); return m ? m[1] + '.' + m[2] : String(v == null ? '' : v); }
+function renderGver(){
+  var el = $('gver'), key = currentTab(), e = key && TABS[key], g = e && e.info;
+  if(!g || !g.version_label){ el.innerHTML = ''; return; }
+  var st = GVER[key], extra = '';
+  if(st && st.busy) extra = '<span class="gv-up busy">Updating ...</span>';
+  else if(st && st.err) extra = '<span class="gv-up err" title="' + GP.esc(st.err) + '">Update failed</span>';
+  else if(g.update_available) extra = '<button type="button" class="gv-up" data-up="' + GP.esc(key) + '" title="Updates only ' + GP.esc(g.title || key) +
+    (g.update_source === 'upstream' ? ' (downloaded from GitHub)' : '') + '; your settings are kept">Update to ' + GP.esc(g.latest_label || fmtV(g.latest_version)) + '</button>';
+  var html = '<span class="gv-name">' + GP.esc(g.title || key) + '</span><span class="gv-w">&nbsp;Version:</span><b>' + GP.esc(g.version_label) + '</b>' + extra;
+  if(el.innerHTML !== html) el.innerHTML = html;
+}
+$('gver').addEventListener('click', function(ev){
+  var b = ev.target.closest('[data-up]');
+  if(!b) return;
+  var key = b.getAttribute('data-up'), g = TABS[key] && TABS[key].info;
+  if(!g || !g.plugin || !window.HexbarUpdate) return;
+  GVER[key] = { busy: true };
+  renderGver();
+  window.HexbarUpdate(g.plugin).then(function(r){
+    if(r.ok) delete GVER[key]; else GVER[key] = { err: r.error || 'The update failed.' };
+    renderGver();
+    if(!r.ok) setTimeout(function(){ delete GVER[key]; renderGver(); }, 8000);
+    if(window.HexbarRefresh) window.HexbarRefresh();
+    loadRegistry();
+  });
+});
+// the GitHub check finishes in the background: look again now and then (cheap, local)
+setInterval(function(){ if(_regLoaded) loadRegistry(); }, 30000);
 
 function validKey(k){ return typeof k === 'string' && /^[\w-]+$/.test(k); }
 // GET /games/api/registry, applied as a diff. Several calls at once (a socket message + the store's
@@ -414,8 +467,12 @@ function applyRegistry(games){
   list.forEach(function(g){
     if(TABS[g.key]){ TABS[g.key].info = g; TABS[g.key].btn.textContent = g.title || g.key; }
     else addGame(g);
+    TABS[g.key].btn.classList.toggle('upd', !!g.update_available);
+    TABS[g.key].btn.title = g.version_label ? (g.title || g.key) + ' ' + g.version_label + (g.update_available ? ' - update to ' + (g.latest_label || g.latest_version) + ' available' : '') : '';
   });
   orderTabs(list);
+  plusBtn.classList.toggle('upd', list.some(function(g){ return g.update_available; }));
+  plusBtn.title = plusBtn.classList.contains('upd') ? 'Add games - some have updates' : 'Add games';
   // which tab is showing now?
   $('gempty').classList.toggle('on', !list.length);
   var first_key = list.length ? list[0].key : STORE;
@@ -423,6 +480,7 @@ function applyRegistry(games){
   else if(first){ var h = location.hash.slice(1); if(!(h && showTab(h))) showTab(first_key); }
   else if(!currentTab()) showTab(was && TABS[was] ? was : first_key);   // the tab we were on was rebuilt (an update) or is gone
   selectWanted();
+  renderGver();
 }
 
 function orderTabs(list){
