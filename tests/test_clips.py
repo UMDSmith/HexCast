@@ -22,7 +22,10 @@ def world(real_world):
     real_world.installer.install("clips")
     real_world.host.load_all()
     assert "clips" in real_world.host.loaded, real_world.host.errors
-    return real_world
+    yield real_world
+    # clips.json is a legacy config: left in the shared test config folder it would make a later test's
+    # Hexcast (test_core_app's "fresh download") install Clips on its own
+    (real_world.config / "clips.json").unlink(missing_ok=True)
 
 
 @pytest.fixture

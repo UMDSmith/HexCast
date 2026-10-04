@@ -32,7 +32,7 @@ One source shows every avatar. For one avatar per source (to put them in differe
 - **Avatars** are named slots — `main`, `guest`, `cat` … — each showing a model. The name is what your bot uses. There is no limit on how many; the same model can be on two avatars. Chips above the preview select one; **Bring forward** / **Send back** change which is in front.
 - **The inspector** (right) for the selected avatar: Placement · Face & Mood (emotion, expression, motion and gesture buttons, a look-at pad, the emotion table) · Mouth (lipsync source, meters, tuning, "learn this voice") · Idle · Parameters (every parameter of the model, live; drag one to take it over) · Items · Light · API (ready-made calls for this avatar).
 - **Lock** an avatar so it can't be dragged by accident; untick **Visible** to take it off stream.
-- **Activity** at the bottom lists what bots asked for and what happened on stream (speech started / ended, motion finished, errors).
+- **Activity** at the bottom lists what bots asked for and what happened on stream (speech started / ended, motion finished, errors). A bot that streams `params` (or `release`) many times a second gets one line per avatar every few seconds — `x104 (26/s): MyHeadX, MyMouthOpen` — instead of one per message.
 
 ## Models and items
 
@@ -145,7 +145,11 @@ POST /avatar/api/avatars/<name>/params
 POST /avatar/api/avatars/<name>/release   {"ids": ["ParamMouthOpenY"], "fade": 0.3}   ({} = all)
 ```
 
-A key is a **Live2D parameter id** (`GET .../info` lists the model's, with ranges and display names) or a **tracker input** — VTube Studio's input names (`FaceAngleX`, `MouthOpen`, `MouthSmile`, `EyeOpenLeft`, `VoiceA` …, in VTube Studio's ranges), which then go through the model's mappings like the built-in tracker's. For values every frame (your own lipsync, head motion from a tracker of your own) use the WebSocket with `"hold": false` — or hold and keep updating.
+A key is a **Live2D parameter id** (`GET .../info` lists the model's, with ranges and display names) or a **tracker input** — VTube Studio's input names (`FaceAngleX`, `MouthOpen`, `MouthSmile`, `EyeOpenLeft`, `VoiceA` …, in VTube Studio's ranges), which then go through the model's mappings like the built-in tracker's.
+
+A model's own mappings can name **custom inputs** too — VTube Studio's *custom parameters* (`MyHeadX`, `MyMouthOpen` … whatever the model's `.vtube.json` maps; `GET .../info` lists them as `custom_inputs`, and in `inputs` after the standard ones). Send them like any other input: the row's input range, output range and smoothing apply. Nothing in the tracker moves a custom input, so hold the value and keep it updated; until you send one it rests where the output parameter's default puts it. A name that is both a mapping's input and a Live2D parameter id is the **input** — the mapping wins, as in VTube Studio. A row marked *use blinking* (a custom eye input, say) blinks — toward the low end of its output range — on top of the value you hold, whenever **Blink by itself** is on in the avatar's Idle settings.
+
+For values every frame (your own lipsync, head motion from a tracker of your own) use the WebSocket with `"hold": false` — or hold and keep updating.
 
 ### Everything else
 
@@ -180,7 +184,7 @@ A key is a **Live2D parameter id** (`GET .../info` lists the model's, with range
 | --- | --- |
 | `GET /avatar/api/status` | OBS overlays connected, avatars, frame rate and cost per avatar |
 | `GET /avatar/api/avatars` | every avatar's settings and its live state (held parameters, expressions, emotion, gaze …) |
-| `GET /avatar/api/avatars/<name>/info` | the model's parameters (`id`, `name`, `group`, `min`, `max`, `default`), parts, art meshes, hit areas, expressions, motions, emotions, gestures, tracker inputs, face controls, mappings |
+| `GET /avatar/api/avatars/<name>/info` | the model's parameters (`id`, `name`, `group`, `min`, `max`, `default`), parts, art meshes, hit areas, expressions, motions, emotions, gestures, tracker inputs (`inputs`: VTube Studio's, then the model's custom ones, also listed alone as `custom_inputs`), face controls, mappings |
 | `GET /avatar/api/avatars/<name>/params/live` | every parameter's value right now (from the OBS overlay) |
 | `GET /avatar/api/models` · `GET /avatar/api/items` | the library |
 

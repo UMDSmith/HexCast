@@ -13,7 +13,9 @@
  * sway, wandering eyes, head motion while talking, gestures, gaze targets, emotions, lipsync. It
  * produces VTube Studio's tracking inputs (FaceAngleX, EyeOpenLeft, MouthSmile, VoiceA ...), and the
  * model's mappings (from its .vtube.json, or VTube Studio's defaults) turn them into parameters -
- * relative to each model's own neutral pose, so the same "smile" looks right on any rig.
+ * relative to each model's own neutral pose, so the same "smile" looks right on any rig. Any other
+ * name a mapping takes as its input is a custom input (VTube Studio's custom parameters): nothing
+ * in the tracker drives it, only the API's `params` does, through the same range mapping and smoothing.
  *
  * Idle motion is seeded by the avatar's name and the wall clock, so OBS and the preview (two pages,
  * one machine) move in step.
@@ -453,6 +455,7 @@
     this.lip = new window.HexLipsync.Analyzer();
     this.speech = { queue: [], cur: null };
     this.ov = {};                // param / input overrides
+    this.inputs = Object.create(null);   // the input names the model's mappings take (set by _setInputs)
     this.partOv = {};            // part opacity overrides (the `parts` command)
     this.exprs = {};             // active expressions
     this.emo = { name: 'neutral', face: {}, intensity: 1, until: 0, tau: 0.4 };
@@ -622,8 +625,9 @@
     this.meta = meta;
     this.spec = spec;
     this.mset = {};
-    this.P = { ids: [], index: {}, min: [], max: [], def: [] };
+    this.P = { ids: [], index: Object.create(null), min: [], max: [], def: [] };
     this.maps = [];
+    this._setInputs([]);
     this.Parts = rig.parts;
     this.baseScale = H / rig.box.h;
     rig.root.scale.set(this.baseScale);
@@ -657,6 +661,31 @@
     return o.mode === 'add' ? base + o.value * w : lerp(base, o.value, w);
   };
 
+  /* Is a `params` key a tracker input, or a Live2D parameter to override? An input is one of VTube
+     Studio's standard names or the input of any of the model's mappings (a custom input) - and a
+     mapping wins over a parameter of the same id, as in VTube Studio. This is decided where the
+     value is applied, not once when the command arrives: a held command can arrive before the model
+     (and so its mappings) has loaded, and the model can change. */
+  Avatar.prototype._classify = function (k, o) {
+    var inp = Object.prototype.hasOwnProperty.call(INPUTS, k) || this.inputs[k] === 1;
+    if (o.isInput === inp) return;
+    o.isInput = inp;
+    o.rateIn = o.duration > 0 && !o.restore ? (inp ? o.duration : 0.0001) : 0.0001;
+    o.dur = inp || o.restore ? 0 : o.duration;
+    if (inp) o.from = null;
+    else if (o.from == null && this.model && this.P && this.P.index[k] !== undefined) {
+      o.from = this.model.internalModel.coreModel.getParameterValueByIndex(this.P.index[k]);
+      o.started = performance.now();
+    }
+  };
+
+  Avatar.prototype._setInputs = function (names) {
+    var set = Object.create(null);
+    for (var i = 0; i < names.length; i++) set[names[i]] = 1;
+    this.inputs = set;
+    for (var k in this.ov) this._classify(k, this.ov[k]);       // overrides that arrived earlier
+  };
+
   /* the model's box width in avatar units (items are placed in % of it) */
   Avatar.prototype.boxWidth = function () {
     if (this.png) return this.png.box.w * this.baseScale;
@@ -672,23 +701,24 @@
 
   /* every parameter of the model: id <-> index, range, default */
   Avatar.prototype._table = function (im) {
-    var cm = im.coreModel, n = cm.getParameterCount(), P = { ids: [], index: {}, min: [], max: [], def: [] };
+    var cm = im.coreModel, n = cm.getParameterCount(), P = { ids: [], index: Object.create(null), min: [], max: [], def: [] };   // (no prototype: a key like "constructor" is no parameter)
     for (var i = 0; i < n; i++) {
       var id = cm.getParameterId(i).getString().s;
       P.ids.push(id); P.index[id] = i;
       P.min.push(cm.getParameterMinimumValue(i)); P.max.push(cm.getParameterMaximumValue(i)); P.def.push(cm.getParameterDefaultValue(i));
     }
     this.P = P;
-    var parts = { ids: [], index: {} };
+    var parts = { ids: [], index: Object.create(null) };
     for (i = 0; i < cm.getPartCount(); i++) { var pid = cm.getPartId(i).getString().s; parts.ids.push(pid); parts.index[pid] = i; }
     this.Parts = parts;
   };
 
   /* the model's mappings, ready to run: neutral input per mapping from the output's default */
   Avatar.prototype._compile = function () {
-    var P = this.P, rows = (this.mset && this.mset.mappings) || [], out = [];
+    var P = this.P, rows = (this.mset && this.mset.mappings) || [], out = [], names = [];
     for (var i = 0; i < rows.length; i++) {
       var r = rows[i], idx = P.index[r.output];
+      if (r.input) names.push(String(r.input));            // a row that cannot run still names its input
       if (idx === undefined) continue;
       var in0 = +r.in[0], in1 = +r.in[1], o0 = +r.out[0], o1 = +r.out[1];
       if (in0 === in1 || o0 === o1) continue;
@@ -702,6 +732,7 @@
                  neutral: neutral, s: null, lo: Math.min(o0, o1), hi: Math.max(o0, o1) });
     }
     this.maps = out;
+    this._setInputs(names);
   };
 
   Avatar.prototype._reportInfo = async function () {
@@ -882,7 +913,7 @@
       eyeL: fn.eyes * bl * (1 - fn.wink_left), eyeR: fn.eyes * bl * (1 - fn.wink_right),
       Brows: fn.brows * 0.5 + browLift * 0.5,
       MouthSmile: fn.smile * 0.5 + (talking ? lip.form * 0.32 : 0), MouthX: fn.mouth_x,
-      MouthOpen: mopen, CheekPuff: fn.cheek, lip: lip, breath: breath
+      MouthOpen: mopen, CheekPuff: fn.cheek, lip: lip, breath: breath, blink: bl
     };
   };
 
@@ -954,6 +985,10 @@
       var val = mp.s, own1 = own[mp.idx];
       if (own1 && own1.w > 0 && !(MOUTH_KEEP[mp.input] && (idleAnim || talking)) && !(idleAnim && FACE_KEEP[mp.input]))
         val = lerp(val, cm.getParameterValueByIndex(mp.idx), own1.w);
+      // "use blinking" on a row whose input is not EyeOpenLeft/Right (a custom eye input the API holds):
+      // the blink closes its output (toward out[0]) on top of that value. The standard eye rows get
+      // their blink through the input itself (kind 'factor').
+      if (mp.blink && F.blink < 1 && mp.kind !== 'factor' && mp.kind !== 'breath') val = lerp(mp.o0, val, F.blink);
       cm.setParameterValueByIndex(mp.idx, val);
     }
     // expressions, stacked (Cubism's own Add / Multiply / Overwrite)
@@ -1190,13 +1225,13 @@
       case 'params': {
         var vals = c.values || {};
         for (k in vals) {
-          var isInput = !!INPUTS[k], prev = this.ov[k];
-          var from = null;
-          if (!isInput && this.model && this.P && this.P.index[k] !== undefined) from = this.model.internalModel.coreModel.getParameterValueByIndex(this.P.index[k]);
+          var prev = this.ov[k];
           this.ov[k] = { value: vals[k], mode: c.mode || 'set', layer: c.layer || 'input', weight: c.weight == null ? 1 : c.weight,
-                         isInput: isInput, w: c.restore ? 1 : (prev ? prev.w : 0), to: 1, rateIn: c.duration > 0 && !c.restore ? (isInput ? c.duration : 0.0001) : 0.0001,
-                         rate: 0.3, fade: c.fade == null ? 0.3 : c.fade, until: c.until || 0, dur: isInput || c.restore ? 0 : (c.duration || 0),
-                         from: from, started: performance.now(), ease: c.ease || 'smooth' };
+                         isInput: null, duration: c.duration || 0, restore: !!c.restore,       // isInput, rateIn, dur and from: _classify
+                         w: c.restore ? 1 : (prev ? prev.w : 0), to: 1, rateIn: 0.0001,
+                         rate: 0.3, fade: c.fade == null ? 0.3 : c.fade, until: c.until || 0, dur: 0,
+                         from: null, started: performance.now(), ease: c.ease || 'smooth' };
+          this._classify(k, this.ov[k]);
           if (c.hold === false && !c.until) this.ov[k].until = now + Math.max(0.05, c.duration || 0) + 0.05;
         }
         break;

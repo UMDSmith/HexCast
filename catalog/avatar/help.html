@@ -48,7 +48,7 @@ http://localhost:4747/avatar/overlay?audio=0         silent (another source play
     seconds; errors are <code>{"ok": false, "error": …}</code> with a 4xx status. <code>GET /avatar/api</code>
     lists it all. Each command is <code>POST /avatar/api/avatars/&lt;name&gt;/&lt;command&gt;</code>:</p>
   <table class="api">
-    <tr><td>params</td><td><code>{"values": {"ParamMouthOpenY": 0.8, "MouthSmile": 1}, "weight": 1, "duration": 0.3, "for": 2, "hold": true, "mode": "set|add", "layer": "input|final"}</code> — any Live2D parameter, or a tracker input (VTube Studio's names, through the model's mappings); held until released unless <code>for</code> / <code>"hold": false</code></td></tr>
+    <tr><td>params</td><td><code>{"values": {"ParamMouthOpenY": 0.8, "MouthSmile": 1}, "weight": 1, "duration": 0.3, "for": 2, "hold": true, "mode": "set|add", "layer": "input|final"}</code> — any Live2D parameter, or a tracker input (VTube Studio's names, or a <b>custom input</b> that one of the model's mappings takes - see <code>custom_inputs</code> in <code>/info</code> - through the model's mappings; a mapping wins over a parameter of the same id); held until released unless <code>for</code> / <code>"hold": false</code>. Streamed <code>params</code> show in Activity as one line every few seconds</td></tr>
     <tr><td>release</td><td><code>{"ids": ["ParamMouthOpenY"], "fade": 0.3}</code> — <code>{}</code> releases everything</td></tr>
     <tr><td>expression</td><td><code>{"name": "Smile", "state": "on|off|toggle", "for": 5}</code> — several can be on at once; several in one call: <code>{"names": ["Smile", "Blush"]}</code>, <code>"only": true</code> switches the others off</td></tr>
     <tr><td>parts · release_parts</td><td><code>{"values": {"PartArmA": 0, "PartArmB": 1}}</code> — show / hide whole parts (a second arm set, a prop …), held until <code>release_parts</code></td></tr>
@@ -71,7 +71,7 @@ http://localhost:4747/avatar/overlay?audio=0         silent (another source play
   <table class="api">
     <tr><td>GET /avatar/api/status</td><td>OBS overlays connected, avatars, fps and cost per avatar</td></tr>
     <tr><td>GET /avatar/api/avatars</td><td>settings + live state of every avatar</td></tr>
-    <tr><td>GET /avatar/api/avatars/&lt;name&gt;/info</td><td>the model's parameters (with ranges and names), parts, art meshes, expressions, motions, emotions, inputs, mappings</td></tr>
+    <tr><td>GET /avatar/api/avatars/&lt;name&gt;/info</td><td>the model's parameters (with ranges and names), parts, art meshes, expressions, motions, emotions, inputs (VTube Studio's, then the model's custom ones - also <code>custom_inputs</code>), mappings</td></tr>
     <tr><td>GET /avatar/api/avatars/&lt;name&gt;/params/live</td><td>every parameter's value right now</td></tr>
     <tr><td>POST /avatar/api/avatars</td><td><code>{"name": "guest", "model": "akari"}</code> — create; <code>POST …/&lt;name&gt;</code> changes settings, <code>…/rename</code>, <code>…/delete</code></td></tr>
     <tr><td>GET /avatar/api/models · /items</td><td>the library; <code>POST …/upload</code> (zip or folder), <code>POST …/import</code> <code>{"path": …}</code></td></tr>

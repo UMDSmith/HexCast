@@ -29,9 +29,9 @@ header's name is yours (`title`, default **Soul Climb**) — see
 | Payout | amount × the height's multiplier, rounded **down** to whole coins; lost stake = gone |
 | Multiplier | `(1 − house edge) / S(h)`, floored to 2 decimals, never below ×1.00 — every height's chance and multiplier is at `GET /games/api/climb/bets` and live on the overlay |
 | House edge | 5% (setting `house_edge_pct`) |
-| Timings | 30 s first bet window · 20 s before each later climb · the climb itself 6–80 s (it depends on how high he gets) · 8 s result · 12 s game-over card |
+| Timings | 30 s first bet window · 20 s before each later climb · the climb itself 6–110 s (it depends on how high he gets; a longer script is replayed faster to fit) · 8 s result · 12 s game-over card |
 | No bets | when a window closes with nothing on the line, the game ends |
-| Typical game | ~1:30 (one climb; the longest one-climb game is ~2:15) |
+| Typical game | ~1:30 (one climb; the longest one-climb game is ~2:40) |
 
 ---
 

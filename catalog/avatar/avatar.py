@@ -51,7 +51,8 @@ STATIC_URL = "/plugins/avatar/static"          # set by attach() from the plugin
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 
 # The inputs of the built-in "virtual tracker" - VTube Studio's own names, so a model's VTS
-# parameter setup works as it is. A key of a `params` command that is one of these sets the input
+# parameter setup works as it is. A key of a `params` command that is one of these - or the input of
+# one of the model's own mappings, a VTube Studio custom parameter (custom_inputs) - sets that input
 # (before the model's mappings); any other key is a Live2D parameter id.
 INPUTS = [
     "FaceAngleX", "FaceAngleY", "FaceAngleZ", "FacePositionX", "FacePositionY", "FacePositionZ",
@@ -818,8 +819,7 @@ async def _command_one(name: str, kind: str, cmd: dict, source: str) -> dict:
     msg = {"type": "cmd", "avatar": name, "source": source, "at": now, **out}
     await HUB.renderers(msg, name)
     if source != "panel":
-        await HUB.panels({"type": "activity", "avatar": name, "cmd": kind, "at": now,
-                          "summary": _summary(kind, out)})
+        await _activity(name, kind, out, now)
     return {"ok": True, "avatar": name, **out}
 
 
@@ -864,6 +864,58 @@ def _summary(kind: str, out: dict) -> str:
     if kind == "transform":
         return ", ".join(f"{k}={v:g}" if isinstance(v, (int, float)) else f"{k}={v}" for k, v in out["transform"].items())
     return ""
+
+
+# A bot that drives a model streams `params` (and `release`) 20-50 times a second. Every one still goes
+# to the renderers at once, but the panels get one Activity line per avatar and kind per window: the
+# first command at once (a lone command shows up as it always did), the rest as a single line when the
+# window ends - "x104 (26/s): MyHeadX, MyMouthOpen".
+ACTIVITY_WINDOW = 4.0
+STREAMING = ("params", "release")
+BURSTS: dict[tuple[str, str], dict] = {}
+
+
+async def _activity(name: str, kind: str, out: dict, now: float) -> None:
+    """The Activity line for a command that did not come from a panel."""
+    if kind not in STREAMING:
+        await HUB.panels({"type": "activity", "avatar": name, "cmd": kind, "at": now,
+                          "summary": _summary(kind, out)})
+        return
+    b = BURSTS.setdefault((name, kind), {"last": 0.0, "n": 0, "first": now, "to": now, "keys": {},
+                                         "out": None, "timer": None, "task": None})
+    if not b["n"]:
+        b["first"] = now
+    b["n"] += 1
+    b["to"], b["out"] = now, out
+    for k in (list(out.get("values") or {}) if kind == "params" else list(out.get("ids") or ["*"]))[:64]:
+        b["keys"].setdefault(k, None)
+    wait = b["last"] + ACTIVITY_WINDOW - now
+    if wait <= 0:
+        await _flush_burst(name, kind)
+    elif b["timer"] is None:                       # the stream's tail is reported when the window ends
+        loop = asyncio.get_running_loop()
+
+        def fire() -> None:
+            b["timer"] = None
+            b["task"] = loop.create_task(_flush_burst(name, kind))
+        b["timer"] = loop.call_later(wait, fire)
+
+
+async def _flush_burst(name: str, kind: str) -> None:
+    b = BURSTS.get((name, kind))
+    if b is None or not b["n"]:
+        return
+    if b["timer"] is not None:
+        b["timer"].cancel()
+        b["timer"] = None
+    n, keys, out, span, now = b["n"], list(b["keys"]), b["out"], b["to"] - b["first"], time.time()
+    b.update(n=0, keys={}, out=None, last=now)
+    if n == 1:
+        summary = _summary(kind, out)
+    else:
+        shown = ", ".join(keys[:6]) + (f" +{len(keys) - 6}" if len(keys) > 6 else "")
+        summary = f"x{n}" + (f" ({n / span:.0f}/s)" if span >= 1 else "") + (f": {shown}" if shown else "")
+    await HUB.panels({"type": "activity", "avatar": name, "cmd": kind, "at": now, "summary": summary})
 
 
 async def speak(name: str, data: bytes, mime: str, opts: dict) -> dict:
@@ -946,6 +998,17 @@ def model_info(mid: str) -> dict:
     return {}
 
 
+def custom_inputs(mappings: list[dict]) -> list[str]:
+    """The inputs a model's mappings take that are not the tracker's own (VTube Studio's custom
+    parameters: a bot streams values for them with `params`), in the order the mappings list them."""
+    out: list[str] = []
+    for row in mappings:
+        name = str(row.get("input") or "")
+        if name and name not in INPUTS and name not in out:
+            out.append(name)
+    return out
+
+
 def avatar_info(name: str) -> dict:
     a = avatar(name)
     meta: dict = {}
@@ -956,14 +1019,17 @@ def avatar_info(name: str) -> dict:
             meta = {}
     info = model_info(a["model"]) if a["model"] else {}
     emotions = sorted(set(a["emotions"]) | set(DEFAULT_EMOTIONS))
+    mappings = library.model_settings(a["model"]).get("mappings", []) if meta else []
+    custom = custom_inputs(mappings)
     return {
         "avatar": name, "model": a["model"], "model_name": meta.get("name", ""),
         "loaded": bool(info), "parameters": info.get("parameters", []), "parts": info.get("parts", []),
         "art_meshes": info.get("drawables", []), "hit_areas": info.get("hit_areas", []),
         "expressions": [e["name"] for e in meta.get("expressions", [])],
         "motions": [{"name": m["name"], "group": m["group"], "index": m["index"]} for m in meta.get("motions", [])],
-        "emotions": emotions, "gestures": GESTURES, "inputs": INPUTS, "face": {k: list(v) for k, v in FACE.items()},
-        "mappings": (library.model_settings(a["model"]).get("mappings", []) if meta else []),
+        "emotions": emotions, "gestures": GESTURES, "inputs": INPUTS + custom, "custom_inputs": custom,
+        "face": {k: list(v) for k, v in FACE.items()},
+        "mappings": mappings,
         "note": "" if info else "parameters, parts and art meshes appear once an overlay or the Avatars tab has drawn this model",
     }
 
@@ -1646,6 +1712,11 @@ async def detach() -> None:
         if not fut.done():
             fut.cancel()
     WAITERS.clear()
+    for b in BURSTS.values():                 # Activity lines still waiting for their window to end
+        for h in (b.get("timer"), b.get("task")):
+            if h is not None and not getattr(h, "done", lambda: False)():
+                h.cancel()
+    BURSTS.clear()
     for c in list(HUB.clients):
         try:
             await c.ws.close()
