@@ -65,7 +65,7 @@ def av(real_world):
     import shutil
     shutil.rmtree(library.ROOT, ignore_errors=True)               # a fresh library for every test
     library.ensure_dirs()
-    avatar.CONFIG.update({"avatars": [], "stage": avatar.norm_stage({})})
+    avatar.CONFIG.update({"avatars": [], "overlays": ["main"], "stage": avatar.norm_stage({})})
     avatar.LIVE.clear()
     c = TestClient(real_world.app)
     c.mod, c.lib = avatar, library
@@ -262,6 +262,192 @@ def test_speak_without_an_overlay_says_nobody_heard_it(av):
     assert av.get(f"/avatar/speech/{j['id']}").content == wav
     assert av.post("/avatar/api/avatars/main/speak", json={"url": "file:///etc/passwd"}).status_code == 400
     assert av.post("/avatar/api/avatars/*/speak", content=wav).status_code == 400
+
+
+# ---------------------------------------------------------------- overlays: one OBS source each
+
+def _wav() -> bytes:
+    return b"RIFF" + struct.pack("<I", 36) + b"WAVEfmt " + struct.pack("<IHHIIHH", 16, 1, 1, 16000, 32000, 2, 16) + b"data" + struct.pack("<I", 0)
+
+
+def _overlay(av, name):
+    r = av.post("/avatar/api/overlays", json={"name": name})
+    assert r.status_code == 200, r.text
+    return r.json()["overlay"]
+
+
+def _avatar(av, name, **kw):
+    r = av.post("/avatar/api/avatars", json={"name": name, **kw})
+    assert r.status_code == 200, r.text
+    return r.json()["avatar"]
+
+
+class _FakeWS:
+    """A renderer's end of the socket: everything the hub sent it."""
+    def __init__(self):
+        self.sent = []
+
+    async def send_text(self, text):
+        self.sent.append(json.loads(text))
+
+    async def send_bytes(self, data):
+        self.sent.append(data)
+
+
+@pytest.fixture
+def renderers(av):
+    """Renderers as the hub sees them: renderers(overlay="guest", audio=False), or role="preview"."""
+    hub = av.mod.HUB
+
+    def add(overlay="main", role="obs", only=None, audio=True):
+        c = av.mod.Client(_FakeWS(), "render", role, only, audio, overlay if role == "obs" else None)
+        hub.clients.add(c)
+        return c
+
+    yield add
+    hub.clients.clear()
+
+
+def _cmds(c):
+    return [m["avatar"] for m in c.ws.sent if isinstance(m, dict) and m.get("type") == "cmd"]
+
+
+def test_overlays_start_with_main_and_are_made_and_deleted(av):
+    assert av.get("/avatar/api/overlays").json()["overlays"] == [{"id": "main", "path": "/avatar/overlay", "avatars": [], "sources": 0}]
+    made = _overlay(av, "Guest")                                          # any case, stored lower
+    assert made["id"] == "guest" and made["path"] == "/avatar/overlay/guest"
+    assert av.post("/avatar/api/overlays", json={"name": "guest"}).status_code == 409
+    assert av.post("/avatar/api/overlays", json={"name": "main"}).status_code == 409
+    assert av.post("/avatar/api/overlays", json={"name": "No Good!"}).status_code == 400
+    assert av.post("/avatar/api/overlays", json={}).status_code == 400
+    for i in range(av.mod.MAX_OVERLAYS - 2):
+        _overlay(av, f"o{i}")
+    assert av.post("/avatar/api/overlays", json={"name": "one-too-many"}).status_code == 400
+    assert len(av.get("/avatar/api/overlays").json()["overlays"]) == av.mod.MAX_OVERLAYS
+    assert av.post("/avatar/api/overlays/main/delete").status_code == 400            # main is every avatar's home
+    assert av.post("/avatar/api/overlays/nope/delete").status_code == 404
+    assert av.post("/avatar/api/overlays/guest/delete").json() == {"ok": True, "moved": []}
+    assert "guest" not in av.mod.CONFIG["overlays"] and "o0" in av.mod.CONFIG["overlays"]
+    saved = json.loads(av.mod.CONFIG_PATH.read_text(encoding="utf-8"))
+    assert saved["overlays"] == av.mod.CONFIG["overlays"]                 # kept across a restart
+
+
+def test_an_avatar_is_on_one_overlay_and_can_be_moved(av):
+    _overlay(av, "guest")
+    assert _avatar(av, "a")["overlay"] == "main"                          # the default
+    assert _avatar(av, "g", overlay="guest")["overlay"] == "guest"
+    assert av.post("/avatar/api/avatars", json={"name": "x", "overlay": "nope"}).status_code == 404
+    assert av.get("/avatar/api/avatars/x").status_code == 404             # not created
+    assert av.post("/avatar/api/avatars/a", json={"overlay": "guest"}).json()["avatar"]["overlay"] == "guest"
+    assert av.post("/avatar/api/avatars/a", json={"overlay": "nope"}).status_code == 404
+    assert av.get("/avatar/api/avatars/a").json()["avatar"]["overlay"] == "guest"     # the refusal changed nothing
+    assert av.post("/avatar/api/avatars/a", json={"visible": False}).json()["avatar"]["overlay"] == "guest"   # other edits keep it
+    assert av.post("/avatar/api/avatars/a", json={"overlay": ""}).json()["avatar"]["overlay"] == "main"
+    assert [o["avatars"] for o in av.get("/avatar/api/overlays").json()["overlays"]] == [["a"], ["g"]]
+    saved = json.loads(av.mod.CONFIG_PATH.read_text(encoding="utf-8"))
+    assert {a["name"]: a["overlay"] for a in saved["avatars"]} == {"a": "main", "g": "guest"}
+
+
+def test_a_new_avatar_is_spread_out_among_those_on_its_own_overlay(av):
+    _overlay(av, "guest")
+    _avatar(av, "a")
+    _avatar(av, "b")
+    assert [a["x"] for a in av.mod.CONFIG["avatars"]] == [50, 25]
+    assert _avatar(av, "g", overlay="guest")["x"] == 50                   # first on a fresh overlay: the middle
+    assert _avatar(av, "h", overlay="guest")["x"] == 25
+
+
+def test_deleting_an_overlay_moves_its_avatars_to_main(av):
+    _overlay(av, "guest")
+    _avatar(av, "g", overlay="guest")
+    _avatar(av, "h", overlay="guest")
+    _avatar(av, "a")
+    assert av.post("/avatar/api/overlays/guest/delete").json() == {"ok": True, "moved": ["g", "h"]}
+    assert {a["name"]: a["overlay"] for a in av.mod.CONFIG["avatars"]} == {"a": "main", "g": "main", "h": "main"}
+    assert av.mod.CONFIG["overlays"] == ["main"]
+
+
+def test_a_config_from_before_overlays_loads_onto_main(av, monkeypatch, tmp_path):
+    p = tmp_path / "avatar.json"
+    monkeypatch.setattr(av.mod, "CONFIG_PATH", p)
+    p.write_text(json.dumps({"avatars": [{"name": "a"}, {"name": "b", "x": 20}]}), encoding="utf-8")        # an old file
+    cfg = av.mod.load_config()
+    assert cfg["overlays"] == ["main"] and [a["overlay"] for a in cfg["avatars"]] == ["main", "main"]
+    p.write_text(json.dumps({"overlays": ["guest", "Guest", "bad name", "main", None, "-x", "second"],
+                             "avatars": [{"name": "a"}, {"name": "b", "overlay": "gone"}, {"name": "c", "overlay": "Guest"}]}), encoding="utf-8")
+    cfg = av.mod.load_config()
+    assert cfg["overlays"] == ["main", "guest", "second"]                 # main first, junk and repeats dropped
+    assert {a["name"]: a["overlay"] for a in cfg["avatars"]} == {"a": "main", "b": "main", "c": "guest"}    # an unknown overlay -> main
+
+
+def test_the_overlay_page_is_the_same_page_for_every_name(av):
+    main, named, typo = (av.get(u) for u in ("/avatar/overlay", "/avatar/overlay/guest", "/avatar/overlay/not-made-yet"))
+    assert main.status_code == named.status_code == typo.status_code == 200      # a typo is not an error page: OBS would show its text
+    assert main.text == named.text and "role=obs&overlay=" in main.text
+
+
+def test_commands_go_only_to_the_overlays_that_show_the_avatar(av, renderers):
+    _overlay(av, "guest")
+    _avatar(av, "a")
+    _avatar(av, "g", overlay="guest")
+    on_main, on_guest, preview = renderers("main"), renderers("guest"), renderers(role="preview")
+    narrowed = renderers("main", only={"g"})                              # ?avatar=g on the main overlay: g is not there
+    assert av.post("/avatar/api/avatars/a/gesture", json={"name": "nod"}).status_code == 200
+    assert av.post("/avatar/api/avatars/g/gesture", json={"name": "nod"}).status_code == 200
+    assert av.post("/avatar/api/avatars/*/gesture", json={"name": "shake"}).status_code == 200
+    assert _cmds(on_main) == ["a", "a"] and _cmds(on_guest) == ["g", "g"]
+    assert _cmds(preview) == ["a", "g", "a", "g"] and _cmds(narrowed) == []
+    av.post("/avatar/api/avatars/g", json={"overlay": "main"})            # moved: the commands follow it
+    av.post("/avatar/api/avatars/g/gesture", json={"name": "nod"})
+    assert _cmds(on_main)[-1] == "g" and _cmds(on_guest)[-1] == "g" and len(_cmds(on_guest)) == 2   # ... and not one more to guest
+    assert _cmds(narrowed) == ["g"]
+
+
+def test_speech_plays_only_through_a_source_that_shows_the_avatar(av, renderers):
+    _overlay(av, "guest")
+    _avatar(av, "a")
+    _avatar(av, "g", overlay="guest")
+    renderers("main"), renderers("guest")
+
+    def say(name):
+        return av.post(f"/avatar/api/avatars/{name}/speak", files={"audio": ("hi.wav", _wav(), "audio/wav")}).json()
+
+    assert say("a")["overlays"] == 1 and say("g")["overlays"] == 1       # each heard by the one source that shows it
+    for c in list(av.mod.HUB.obs()):
+        c.audio = False                                                   # both sources muted (?audio=0)
+    quiet = say("g")
+    assert quiet["overlays"] == 0 and "warning" in quiet
+    av.mod.HUB.clients.clear()
+    assert say("a")["overlays"] == 0                                      # no source at all
+
+
+def test_the_render_socket_takes_its_overlay_from_the_url(av):
+    _overlay(av, "guest")
+    with av.websocket_connect("/avatar/ws/render?role=obs&overlay=Guest") as ws:
+        snap = ws.receive_json()
+        assert snap["config"]["overlays"] == ["main", "guest"]
+        assert [c.overlay for c in av.mod.HUB.obs()] == ["guest"]
+        with av.websocket_connect("/avatar/ws/render?role=obs") as ws2:   # no overlay in the URL: main
+            ws2.receive_json()
+            assert sorted(c.overlay for c in av.mod.HUB.obs()) == ["guest", "main"]
+            with av.websocket_connect("/avatar/ws/render?role=preview&overlay=guest") as ws3:
+                ws3.receive_json()                                        # the tab's preview draws any overlay, whatever the URL says
+                assert [c.overlay for c in av.mod.HUB.of("render") if c.role == "preview"] == [None]
+                st = av.get("/avatar/api/status").json()
+                assert st["by_overlay"] == {"main": 1, "guest": 1} and st["overlays"] == 2 and st["previews"] == 1
+                assert {o["id"]: o["sources"] for o in av.get("/avatar/api/overlays").json()["overlays"]} == {"main": 1, "guest": 1}
+
+
+def test_a_config_message_carries_the_live_state_for_an_avatar_that_arrives(av):
+    _overlay(av, "guest")
+    _avatar(av, "g")
+    assert av.post("/avatar/api/avatars/g/emotion", json={"name": "happy", "for": 60}).status_code == 200
+    with av.websocket_connect("/avatar/ws/render?role=obs&overlay=guest") as ws:
+        ws.receive_json()
+        av.post("/avatar/api/avatars/g", json={"overlay": "guest"})       # g appears here, mid-emotion
+        msg = ws.receive_json()
+        assert msg["type"] == "config" and msg["live"]["g"]["emotion"]["name"] == "happy"
+        assert msg["config"]["avatars"][0]["overlay"] == "guest"
 
 
 def test_items(av):
@@ -524,6 +710,17 @@ def test_blinking_reaches_custom_eye_rows(engine):
 def test_release_lets_a_custom_input_go_and_odd_keys_do_no_harm(engine):
     assert engine["held"] == pytest.approx(20, abs=0.01) and abs(engine["released"]) < 0.5 and engine["cleared"]
     assert engine["oddKeysFinite"]
+
+
+def test_a_stage_draws_the_avatars_of_its_own_overlay(engine):
+    assert engine["ovMain"] == ["a", "b"] and engine["ovGuest"] == ["c"]  # `a` has no overlay (an old config): it is on main
+    assert engine["ovEvery"] == ["a", "b", "c"]                           # a stage with no overlay (the tab) draws them all
+    assert engine["ovNarrow"] == ["a"]                                    # ?avatar= narrows an overlay, it does not reach into another
+    assert engine["ovMovedMain"] == ["a"] and engine["ovMovedGuest"] == ["b", "c"]       # moving b: it leaves one stage, joins the other
+    assert engine["ovPreviewMain"] == ["a"] and engine["ovPreviewGuest"] == ["b", "c"] and engine["ovPreviewBack"] == ["a"]
+    assert engine["ovLeavesTheSelectionOutline"]                          # `stage.overlay` is the selection graphics: switching overlays must not touch it
+    assert engine["ovSameOverlayKeepsAvatars"]                            # switching to the overlay it is on redraws nothing
+    assert engine["ovArrivedEmotion"] == "happy"                          # an avatar that arrives starts in its live state
 
 
 def test_standard_inputs_and_raw_parameters_are_unchanged(engine):

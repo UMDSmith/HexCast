@@ -6,12 +6,15 @@ const fs = require('fs'), vm = require('vm');
 
 function load(file) {
   const env = { clock: 1.7e9 };
-  class C { constructor() { this.children = []; this.style = {}; } addChild() {} addChildAt() {} removeChild() {} }
+  class C {
+    constructor() { this.children = []; this.style = {}; this.position = { set() {} }; this.scale = { set() {} }; }
+    addChild() {} addChildAt() {} removeChild() {} destroy() {}
+  }
   const sb = { console, window: {}, document: {}, setTimeout, clearTimeout,
     performance: { now: () => env.clock * 1000, timeOrigin: 0 }, PIXI: new Proxy({}, { get: () => C }) };
   sb.window.HexLipsync = { Analyzer: function () {
     this.out = { level: 0, open: 0, form: 0, volume: 0, frequency: 0.5, silence: 1, A: 0, I: 0, U: 0, E: 0, O: 0 };
-    this.update = () => this.out; this.reset = () => {}; } };
+    this.update = () => this.out; this.reset = () => {}; this.configure = () => {}; this.attachAnalyser = () => {}; } };
   vm.createContext(sb);
   vm.runInContext(fs.readFileSync(file, 'utf8'), sb);
   return { HA: sb.window.HexAvatar, env };

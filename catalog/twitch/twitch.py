@@ -340,6 +340,7 @@ class Account:
     def __init__(self, rec: dict) -> None:
         self.rec = rec
         self.lock = asyncio.Lock()          # one token refresh at a time: Twitch rotates the refresh token
+        self.gen = 0                        # bumped when the user signs in again: a new token, maybe new scopes
 
     @property
     def access_token(self) -> str:
@@ -416,6 +417,7 @@ class Secrets:
         if have:
             have.rec.clear()
             have.rec.update(acct.rec)
+            have.gen += 1
             acct = have
         else:
             self.accounts[acct.user_id] = acct
@@ -572,10 +574,18 @@ class State:
         self.channels: dict[str, ChannelRT] = {}      # login -> runtime, in config order: the first is the primary
         self.log: list[str] = []
 
-    def sync_channels(self) -> None:
-        """A fresh runtime for every configured channel (the connections restart whenever the list changes)."""
-        self.channels = {r["login"]: ChannelRT(r["login"], r.get("label", ""), r.get("enabled", True))
-                         for r in configured_channels()}
+    def sync_channels(self, keep: set[str] | frozenset = frozenset()) -> None:
+        """A runtime for every configured channel, in config order. The channels in `keep` (their connection
+        is running and stays up) keep theirs, with the label and switch refreshed; the rest get a fresh one."""
+        new: dict[str, ChannelRT] = {}
+        for r in configured_channels():
+            rt = self.channels.get(r["login"]) if r["login"] in keep else None
+            if rt is None:
+                rt = ChannelRT(r["login"], r.get("label", ""), r.get("enabled", True))
+            else:
+                rt.label, rt.enabled = r.get("label", ""), r.get("enabled", True)
+            new[r["login"]] = rt
+        self.channels = new
 
     def primary(self) -> ChannelRT | None:
         return next(iter(self.channels.values()), None)
@@ -1548,90 +1558,131 @@ async def irc_loop(ch: ChannelRT, stop: asyncio.Event) -> None:
 # supervisor
 # --------------------------------------------------------------------------
 
+RETRY_MIN, RETRY_MAX = 2, 60        # seconds a channel waits before trying again when it could not even start
+
+
 class Runner:
+    """One connection task per enabled channel. A channel is only (re)started when something that concerns
+    it changed, so editing the beta channel - or signing in as its account - never reconnects the primary.
+    restart() is the big hammer: the Reconnect button, and the first start."""
+
     def __init__(self) -> None:
-        self.task: asyncio.Task | None = None
+        self.tasks: dict[str, tuple[tuple, asyncio.Task]] = {}     # login -> (what it was started with, its task)
         self.task_queue: asyncio.Task | None = None
         self.stop = asyncio.Event()
         self.lock = asyncio.Lock()
         self.started = False
 
+    @staticmethod
+    def _wanted() -> dict[str, tuple]:
+        """login -> what a running channel depends on, for every enabled channel: the account it runs as and
+        that account's sign-in generation (a new sign-in is a new token, maybe with new scopes)."""
+        out: dict[str, tuple] = {}
+        for r in configured_channels():
+            if r.get("enabled", True):
+                a = account_for(r["login"])
+                out[r["login"]] = (a.user_id, a.gen) if a else ("", 0)
+        return out
+
+    @staticmethod
+    async def _cancel(*tasks: asyncio.Task) -> None:
+        for t in tasks:
+            t.cancel()
+        for t in tasks:
+            try:
+                await t
+            except (asyncio.CancelledError, Exception):
+                pass
+
     async def restart(self) -> None:
         async with self.lock:
             await self._stop()
             self.stop = asyncio.Event()
-            STATE.sync_channels()
-            self.task = asyncio.create_task(self._run(self.stop))
+            await self._sync()
+
+    async def sync(self) -> None:
+        """Bring the connections in line with the config and the signed-in accounts, touching only the
+        channels that changed."""
+        async with self.lock:
+            await self._sync()
+
+    async def _sync(self) -> None:
+        wanted = self._wanted()
+        gone = [login for login, (sig, task) in self.tasks.items() if wanted.get(login) != sig or task.done()]
+        await self._cancel(*(self.tasks.pop(login)[1] for login in gone))
+        STATE.sync_channels(keep=set(self.tasks))
+        if self.task_queue is None or self.task_queue.done():
             self.task_queue = asyncio.create_task(queue_loop(self.stop))
-            self.started = True
+        for login, sig in wanted.items():
+            if login not in self.tasks:
+                self.tasks[login] = (sig, asyncio.create_task(self._watch(STATE.channels[login], self.stop)))
+        self.started = True
+        if not wanted:
+            STATE.note("no channel set - open the Twitch panel and enter your channel name")
+        await HUB.broadcast_status()
 
     async def _stop(self) -> None:
         self.stop.set()
-        if self.task:
-            self.task.cancel()
-            try:
-                await self.task
-            except (asyncio.CancelledError, Exception):
-                pass
-            self.task = None
+        await self._cancel(*(task for _, task in self.tasks.values()))
+        self.tasks.clear()
         if self.task_queue:
-            self.task_queue.cancel()
-            try:
-                await self.task_queue
-            except (asyncio.CancelledError, Exception):
-                pass
+            await self._cancel(self.task_queue)
             self.task_queue = None
         for ch in STATE.channels.values():
             ch.connected = False
             ch.source = "none"
 
-    async def _run(self, stop: asyncio.Event) -> None:
-        rows = [r for r in configured_channels() if r.get("enabled", True)]
-        if not rows:
-            STATE.note("no channel set - open the Twitch panel and enter your channel name")
-            await HUB.broadcast_status()
-            return
-
-        # every login in use, checked once: a stale token is refreshed before any channel connects
-        used = {a.user_id: a for a in (account_for(r["login"]) for r in rows) if a}
-        for acct in used.values():
+    async def _check(self, acct: Account) -> None:
+        """Make sure an account's token is good before a channel connects with it (a stale one is refreshed).
+        Trouble here is logged and the channel carries on with what it has - it must not stop anything."""
+        stale = acct.access_token
+        try:
             if not await validate_token(acct):
-                await refresh_token(acct)
+                await refresh_token(acct, stale)
                 await validate_token(acct)
-
-        await asyncio.gather(*(self._watch(STATE.channels[r["login"]], stop)
-                               for r in rows if r["login"] in STATE.channels))
+        except Exception as exc:
+            STATE.note(f"could not check the login of {acct.user_login or 'an account'}: {exc}")
 
     async def _watch(self, ch: ChannelRT, stop: asyncio.Event) -> None:
-        """One channel, for as long as Hexcast runs: EventSub when there is a login for it, else anonymous
-        chat. A channel that fails stops alone; the others carry on."""
-        name = ch.name if len(STATE.channels) > 1 else ""
-        try:
-            acct = account_for(ch.login)
-            ch.account_login = acct.user_login if acct else ""
-            if acct:
-                cid = await resolve_channel_id(ch.login, acct)
-                if cid:
-                    ch.id = cid
-                    await ch.assets.load(cid, acct, name)
-                    await HUB.broadcast_status()
-                    await eventsub_loop(ch, acct, stop)
-                    return
-                STATE.note(f"channel lookup failed for {ch.login}, falling back to anonymous chat")
+        """One channel, for as long as it runs. If it cannot even start (no network at boot, say) it tries
+        again with a growing pause; it never gives up, and nothing it does reaches another channel."""
+        wait = RETRY_MIN
+        while not stop.is_set():
+            try:
+                await self._connect(ch, stop)
+                return
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                ch.connected = False
+                ch.last_error = str(exc)
+                STATE.note(f"{ch.login} could not start: {exc} - trying again in {wait} s")
+                await HUB.broadcast_status()
+                await asyncio.sleep(wait)
+                wait = min(wait * 2, RETRY_MAX)
 
-            # no login (or the lookup failed): chat-only via anonymous IRC.
-            # Channel-specific emote/badge lookups need a numeric id, so only the
-            # global 7TV/BTTV/FFZ sets load here. Channel emotes arrive after sign-in.
-            await ch.assets.load(ch.id or "", None, name)
-            await HUB.broadcast_status()
-            await irc_loop(ch, stop)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            ch.connected = False
-            ch.last_error = str(exc)
-            STATE.note(f"{ch.login} stopped: {exc}")
-            await HUB.broadcast_status()
+    async def _connect(self, ch: ChannelRT, stop: asyncio.Event) -> None:
+        """EventSub when there is a login for the channel, else anonymous chat. Runs until `stop`."""
+        name = ch.name if len(STATE.channels) > 1 else ""
+        acct = account_for(ch.login)
+        ch.account_login = acct.user_login if acct else ""
+        if acct:
+            await self._check(acct)
+            cid = await resolve_channel_id(ch.login, acct)
+            if cid:
+                ch.id = cid
+                await ch.assets.load(cid, acct, name)
+                await HUB.broadcast_status()
+                await eventsub_loop(ch, acct, stop)
+                return
+            STATE.note(f"channel lookup failed for {ch.login}, falling back to anonymous chat")
+
+        # no login (or the lookup failed): chat-only via anonymous IRC.
+        # Channel-specific emote/badge lookups need a numeric id, so only the
+        # global 7TV/BTTV/FFZ sets load here. Channel emotes arrive after sign-in.
+        await ch.assets.load(ch.id or "", None, name)
+        await HUB.broadcast_status()
+        await irc_loop(ch, stop)
 
     async def ensure_started(self) -> None:
         if not self.started:
@@ -1768,7 +1819,7 @@ async def api_set_config(request: Request):
     CONFIG = save_config(_deep_merge(CONFIG, incoming))
     await HUB.broadcast_config()
     if [(r["login"], r["label"], r["enabled"]) for r in CONFIG["channels"]] != old:
-        await RUNNER.restart()
+        await RUNNER.sync()                          # only the channels that changed reconnect
     await HUB.broadcast_status()
     return {"ok": True, "config": CONFIG}
 
@@ -1853,7 +1904,7 @@ async def auth_callback(request: Request, code: str = "", state: str = "", error
     if not CONFIG.get("channels"):                       # the first sign-in sets the channel to watch
         CONFIG = save_config({**CONFIG, "channels": [{"login": acct.user_login.lower()}]})
     STATE.note(f"signed in as {acct.user_login}")
-    await RUNNER.restart()
+    await RUNNER.sync()                              # only the channels that now run as this account reconnect
     return HTMLResponse("<body style='font:16px system-ui;padding:40px;background:#0b0b10;color:#eee'>Connected. <a style='color:#ff3b30' href='/twitch'>Back to the panel</a><script>setTimeout(()=>location.href='/twitch',900)</script></body>")
 
 
@@ -1862,7 +1913,7 @@ async def auth_logout(request: Request):
     """Sign one account out (body {"login": "name"}), or all of them (no body)."""
     body = await request.json() if await request.body() else {}
     SECRETS.clear_tokens(str((body or {}).get("login") or ""))
-    await RUNNER.restart()
+    await RUNNER.sync()
     return {"ok": True}
 
 

@@ -4,6 +4,7 @@ Live2D avatars — and PNGtubers — that your AI drives through Hexcast's API �
 
 - [Set up](#set-up)
 - [The Avatars tab](#the-avatars-tab)
+- [Overlays: one OBS source per avatar, or several together](#overlays-one-obs-source-per-avatar-or-several-together)
 - [Models and items](#models-and-items)
 - [What keeps a model alive](#what-keeps-a-model-alive)
 - [Mouth and lipsync](#mouth-and-lipsync)
@@ -24,15 +25,31 @@ Live2D avatars — and PNGtubers — that your AI drives through Hexcast's API �
 3. **Add a model** to the library (a zip, a folder, or straight from VTube Studio if it is on this PC) and press **+ Avatar**.
 4. **OBS**: add a Browser source with `http://localhost:4747/avatar/overlay`, 1920×1080, and tick **Control audio via OBS** — speech the bot sends plays through this source.
 
-One source shows every avatar. For one avatar per source (to put them in different scenes, or under different filters) add `?avatar=main` — or `?avatar=main,guest` for some of them. `?audio=0` keeps a source silent when another one already plays the speech.
+That source shows the avatars on the **main overlay** — all of them, until you make another overlay. To size and place avatars in OBS one by one, give each its own overlay ([below](#overlays-one-obs-source-per-avatar-or-several-together)). `?audio=0` keeps a source silent when another one already plays the speech.
 
 ## The Avatars tab
 
 - **The live preview** is the same renderer as OBS, so what you see is what is on stream. **Drag** an avatar to move it, **scroll** to zoom around the cursor, drag the **dot** above it to rotate, **double-click** to reset; hold **Shift** to snap. Items drag and scroll the same way. The bar above it shows the OBS source's frame rate and what each avatar costs.
-- **Avatars** are named slots — `main`, `guest`, `cat` … — each showing a model. The name is what your bot uses. There is no limit on how many; the same model can be on two avatars. Chips above the preview select one; **Bring forward** / **Send back** change which is in front.
+- **Avatars** are named slots — `main`, `guest`, `cat` … — each showing a model. The name is what your bot uses. There is no limit on how many; the same model can be on two avatars. Chips above the preview select one (the ones on the overlay you are looking at); **Bring forward** / **Send back** change which is in front of the others on its overlay.
+- **Overlays** are the row above the chips: one tab per OBS source, a green dot when that source is connected, **+ Overlay** to add one. The preview shows the selected overlay only.
 - **The inspector** (right) for the selected avatar: Placement · Face & Mood (emotion, expression, motion and gesture buttons, a look-at pad, the emotion table) · Mouth (lipsync source, meters, tuning, "learn this voice") · Idle · Parameters (every parameter of the model, live; drag one to take it over) · Items · Light · API (ready-made calls for this avatar).
 - **Lock** an avatar so it can't be dragged by accident; untick **Visible** to take it off stream.
 - **Activity** at the bottom lists what bots asked for and what happened on stream (speech started / ended, motion finished, errors). A bot that streams `params` (or `release`) many times a second gets one line per avatar every few seconds — `x104 (26/s): MyHeadX, MyMouthOpen` — instead of one per message.
+
+## Overlays: one OBS source per avatar, or several together
+
+An **overlay** is one OBS Browser source: a 1920×1080 stage with the avatars you put on it. Every avatar is on exactly one overlay (the **main** overlay unless you say otherwise).
+
+Why more than one: OBS scales, crops and moves a *source* as a whole. Two avatars on one overlay always move and scale together, and cropping the source to fit one cuts off the other. Give an avatar its own overlay and it is its own source — size it, move it, crop it, put it in another scene or under a filter, and nothing else on stream changes.
+
+- **+ Overlay** (above the preview) makes one and asks for a name — `guest`, say. Its OBS source URL is `http://localhost:4747/avatar/overlay/guest`; main's stays `http://localhost:4747/avatar/overlay`. The URL under the preview is always the overlay you are looking at.
+- **+ Avatar** adds the new avatar to the overlay you are looking at. To move an existing one: select it and use **Overlay** at the top of its **Placement** tab (or `POST /avatar/api/avatars/<name>` with `{"overlay": "guest"}`). It leaves one source and appears on the other at once, in the state it is in (held parameters, expression, emotion …); its position (X, Y, zoom) is kept, so check it in the preview.
+- **Position and zoom are inside the overlay.** Dragging an avatar in the preview places it on its own overlay's stage; where that stage sits on the stream is OBS's business, and the tab does not show how overlays stack against each other.
+- Each source only plays the speech of its own avatars, and only the commands for them reach it. An avatar a bot addresses by name works the same wherever it is — the API never mentions overlays.
+- **Delete overlay** (not for main) removes it; its avatars are not deleted but move to main. Remove the OBS source too — the URL then draws nothing.
+- At most 12 overlays. A name is 1–32 lowercase letters, digits, `_` or `-`.
+- `?avatar=a,b` on any overlay URL narrows that source to some of *its* avatars (an avatar on another overlay is not drawn there). Sources made this way before overlays existed keep working: everything was on main, and `?avatar=` still picks from it — move the avatar to its own overlay instead if you want to scale it on its own.
+- A typo in the URL (`/overlay/gust`) draws nothing and shows no error on stream; add `?note=1` to see what is wrong. `GET /avatar/api/overlays` lists the overlays, what is on them and how many OBS sources are connected to each.
 
 ## Models and items
 
@@ -182,7 +199,8 @@ For values every frame (your own lipsync, head motion from a tracker of your own
 
 | Call | Answer |
 | --- | --- |
-| `GET /avatar/api/status` | OBS overlays connected, avatars, frame rate and cost per avatar |
+| `GET /avatar/api/status` | OBS sources connected (`overlays`, and `by_overlay`: how many for each overlay), avatars, frame rate and cost per avatar |
+| `GET /avatar/api/overlays` | each overlay: `id`, the OBS `path`, its `avatars`, the number of OBS `sources` connected |
 | `GET /avatar/api/avatars` | every avatar's settings and its live state (held parameters, expressions, emotion, gaze …) |
 | `GET /avatar/api/avatars/<name>/info` | the model's parameters (`id`, `name`, `group`, `min`, `max`, `default`), parts, art meshes, hit areas, expressions, motions, emotions, gestures, tracker inputs (`inputs`: VTube Studio's, then the model's custom ones, also listed alone as `custom_inputs`), face controls, mappings |
 | `GET /avatar/api/avatars/<name>/params/live` | every parameter's value right now (from the OBS overlay) |
@@ -194,11 +212,13 @@ Parameters and art meshes appear once the model has been drawn (by an overlay or
 
 | Call | Body |
 | --- | --- |
-| `POST /avatar/api/avatars` | `{"name": "guest", "model": "akari"}` — create |
-| `POST /avatar/api/avatars/<name>` | any settings: `model`, `visible`, `locked`, `x`, `y`, `scale`, `rotation`, `flip`, `idle {…}`, `mouth {…}`, `emotions {…}`, `light {…}` |
+| `POST /avatar/api/avatars` | `{"name": "guest", "model": "akari", "overlay": "guest"}` — create (`overlay` is optional: main; an overlay that doesn't exist is a 404) |
+| `POST /avatar/api/avatars/<name>` | any settings: `model`, `overlay`, `visible`, `locked`, `x`, `y`, `scale`, `rotation`, `flip`, `idle {…}`, `mouth {…}`, `emotions {…}`, `light {…}` |
 | `POST /avatar/api/avatars/<name>/rename` | `{"to": "host"}` |
 | `POST /avatar/api/avatars/<name>/delete` | |
-| `POST /avatar/api/order` | `{"names": ["back", "middle", "front"]}` — draw order |
+| `POST /avatar/api/overlays` | `{"name": "guest"}` — a new overlay, an OBS source at `/avatar/overlay/guest` |
+| `POST /avatar/api/overlays/<name>/delete` | its avatars move to main; main itself can't be deleted |
+| `POST /avatar/api/order` | `{"names": ["back", "middle", "front"]}` — draw order (among the avatars of one overlay, the later is in front) |
 | `POST /avatar/api/models/upload` | multipart `file` (zip) or `files` + `paths` (a folder) |
 | `POST /avatar/api/models/import` | `{"path": "C:/…/my model"}` — a folder on the Hexcast PC |
 | `POST /avatar/api/models/<id>/settings` | `{"name": …, "mappings": […], "physics": true, "idle_motion": "…"}` or `{"reset_mappings": true}` |
@@ -232,7 +252,7 @@ Any REST command works as `{"cmd": …, "avatar": …, …}` (plus `list` and `i
 
 | | |
 | --- | --- |
-| `config/avatar.json` | every avatar's settings (placement, idle, mouth, emotions, items, light) and the stage settings |
+| `config/avatar.json` | every avatar's settings (its overlay, placement, idle, mouth, emotions, items, light), the list of overlays and the stage settings |
 | `config/avatar_runtime/` | the downloaded Live2D runtime and when its license was accepted |
 | `media/avatars/models/<id>/` (PNGtuber) | its pictures and `pngtuber.json` (the rig: states, roles or layers, bounce ...) |
 | `media/avatars/models/<id>/` | a model as shipped, plus `hexcast.json` (Hexcast's settings for it: mappings, idle animation, physics) and `hexcast.info.json` (its parameters, cached) |
@@ -244,7 +264,8 @@ Live2D's Cubism Core is Live2D Inc.'s software under the [Live2D Proprietary Sof
 
 ## Troubleshooting
 
-- **The overlay stays empty** — the Live2D runtime isn't set up (open the tab), the avatar is hidden, or its model can't be drawn (the tab says why). `?note=1` on the overlay URL shows problems on the overlay itself.
+- **The overlay stays empty** — the Live2D runtime isn't set up (open the tab), the avatar is hidden, or its model can't be drawn (the tab says why). Or the avatar is on another overlay: each source shows only its own (the tab says which overlay you are looking at, and its URL). `?note=1` on the overlay URL shows problems on the overlay itself.
+- **Two avatars scale and move together in OBS** — they are on the same overlay, which is one source. Make an overlay for one of them (**+ Overlay**, then **Overlay** on its Placement tab) and add that URL as its own Browser source.
 - **No sound from speech** — tick **Control audio via OBS** on the browser source (or OBS plays nothing from it), and check `overlays` in the `speak` answer.
 - **The mouth moves too little / all the time** — raise **Gain** / raise **Cutoff** on the Mouth tab; watch the meters.
 - **"saved by Cubism Editor 5.3"** — export the model again for Cubism 5.0 – 5.2.

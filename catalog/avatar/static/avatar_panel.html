@@ -61,6 +61,11 @@
   .chip .d{width:8px;height:8px;border-radius:50%;background:#555}
   .chip .d.on{background:var(--good)} .chip .d.hid{background:transparent;border:1px solid var(--dim)}
   .chip .lk{font-size:11px;opacity:.7}
+  .ovt{display:inline-flex;gap:7px;align-items:center;padding:4px 11px;border-radius:8px;border:1px solid var(--line);background:var(--card);
+       cursor:pointer;font-weight:600;font-size:12.5px;color:var(--muted);user-select:none}
+  .ovt:hover{color:var(--ink);border-color:var(--line-hi)}
+  .ovt.sel{color:var(--ink);border-color:var(--accent);background:#25121c}
+  .ovt .d{width:8px;height:8px;border-radius:50%;background:#555} .ovt .d.on{background:var(--good)}
   #pv{position:relative;width:100%;aspect-ratio:16/9;border:1px solid var(--line);border-radius:10px;overflow:hidden;
       background-color:#14141b;background-image:linear-gradient(45deg,#1a1a23 25%,transparent 25%),linear-gradient(-45deg,#1a1a23 25%,transparent 25%),
       linear-gradient(45deg,transparent 75%,#1a1a23 75%),linear-gradient(-45deg,transparent 75%,#1a1a23 75%);
@@ -173,6 +178,11 @@
   <div class="top">
     <!-- the stage -->
     <section class="card" style="margin-bottom:0">
+      <div class="bar" title="An overlay is one OBS browser source. Avatars on different overlays can be scaled, cropped and moved in OBS independently.">
+        <span class="dim" style="font-size:12px">Overlay</span>
+        <div id="ovs" class="row"></div>
+        <button class="sm" id="add-ov" title="A new OBS source with avatars of its own">+ Overlay</button>
+      </div>
       <div class="bar">
         <div id="chips" class="row"></div>
         <button class="sm" id="add-av">+ Avatar</button>
@@ -188,8 +198,8 @@
           <option value="">Checkerboard</option><option value="bg-dark">Dark</option><option value="bg-light">Light</option><option value="bg-green">Green</option>
         </select>
       </div>
-      <div class="url"><a id="u-ov" target="_blank" rel="noopener"></a><button class="sm" id="cp-ov">Copy</button></div>
-      <div class="dim" style="font-size:12px;margin-top:4px">OBS: Browser source, 1920&times;1080, tick <b>Control audio via OBS</b> (speech plays through it). One avatar per source: add <span class="mono">?avatar=name</span> (several: <span class="mono">?avatar=a,b</span>).</div>
+      <div class="url"><a id="u-ov" target="_blank" rel="noopener"></a><button class="sm" id="cp-ov">Copy</button><button class="sm danger" id="del-ov" style="display:none" title="Delete this overlay (its avatars move to main)">Delete overlay</button></div>
+      <div class="dim" style="font-size:12px;margin-top:4px">OBS: Browser source, 1920&times;1080, tick <b>Control audio via OBS</b> (speech plays through it). Every overlay is its own source: scale, crop and move one in OBS without touching the others, so give an avatar its own overlay to size it on its own. Position inside an overlay is set by dragging in the preview.</div>
     </section>
 
     <!-- the selected avatar -->
@@ -224,6 +234,7 @@
         </div>
 
         <div class="pane sel" data-p="place">
+          <div class="f" id="f-overlay"><span>Overlay</span><div class="ctl"><select id="i-overlay" class="grow" title="Which OBS source shows this avatar"></select></div></div>
           <div class="f"><span>Position X %</span><div class="ctl"><input type="range" min="-20" max="120" step="0.1" data-k="x"><input type="number" step="0.1" data-k="x"></div></div>
           <div class="f"><span>Position Y %</span><div class="ctl"><input type="range" min="-20" max="160" step="0.1" data-k="y"><input type="number" step="0.1" data-k="y"></div></div>
           <div class="f"><span>Zoom</span><div class="ctl"><input type="range" min="0.05" max="4" step="0.01" data-k="scale"><input type="number" step="0.01" data-k="scale"></div></div>
@@ -397,9 +408,10 @@
 (function () {
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
-  var S = { config: { avatars: [], stage: {} }, models: {}, items: [], live: {}, runtime: null, sel: null, info: {}, devices: null,
-            inputs: [], gestures: [], lightPresets: [], vts: null };
-  try { S.sel = localStorage.getItem('hexcast.avatar.sel') || null; } catch (e) {}
+  var S = { config: { avatars: [], overlays: ['main'], stage: {} }, models: {}, items: [], live: {}, runtime: null, sel: null, info: {}, devices: null,
+            inputs: [], gestures: [], lightPresets: [], vts: null, ov: 'main', obsStats: {} };
+  try { S.sel = localStorage.getItem('hexcast.avatar.sel') || null; S.ov = localStorage.getItem('hexcast.avatar.ov') || 'main'; } catch (e) {}
+  var INSP_NONE = $('insp-none').innerHTML;                  // the "no avatar yet" text, for when it has been replaced
 
   /* ---------------------------------------------------------------- helpers */
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -416,6 +428,11 @@
   }
   function cmd(name, body) { return api('POST', '/avatar/api/avatars/' + encodeURIComponent(S.sel) + '/' + name, body || {}); }
   function cur() { return S.config.avatars.filter(function (a) { return a.name === S.sel; })[0] || null; }
+  /* overlays: each is one OBS source; the preview shows the one in S.ov */
+  function ovList() { return S.config.overlays && S.config.overlays.length ? S.config.overlays : ['main']; }
+  function ovOf(a) { return a.overlay || 'main'; }
+  function inOv(id) { return S.config.avatars.filter(function (a) { return ovOf(a) === id; }); }
+  function ovPath(id) { return id === 'main' ? '/avatar/overlay' : '/avatar/overlay/' + encodeURIComponent(id); }
   function get(obj, path) { return path.split('.').reduce(function (o, k) { return o == null ? undefined : o[k]; }, obj); }
   function fmt(v) { return typeof v === 'number' ? (Math.abs(v) >= 100 ? v.toFixed(0) : Math.abs(v) >= 10 ? v.toFixed(1) : v.toFixed(2)) : v; }
   function debounce(fn, ms) { var t; return function () { var a = arguments, s = this; clearTimeout(t); t = setTimeout(function () { fn.apply(s, a); }, ms); }; }
@@ -428,9 +445,59 @@
   }
   $('dlg').addEventListener('keydown', function (e) { if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA') $('dlg-ok').click(); if (e.key === 'Escape') $('dlg-no').click(); });
 
-  var ovUrl = location.origin + '/avatar/overlay';
-  $('u-ov').textContent = ovUrl; $('u-ov').href = ovUrl;
-  $('cp-ov').onclick = function () { navigator.clipboard.writeText(ovUrl).then(function () { toast('Copied'); }); };
+  $('cp-ov').onclick = function () { navigator.clipboard.writeText(location.origin + ovPath(S.ov)).then(function () { toast('Copied'); }); };
+
+  /* ---------------------------------------------------------------- overlays */
+  function renderOverlays() {
+    var list = ovList(), a = cur();
+    if (a && ovOf(a) !== S.ov) S.ov = ovOf(a);              // the selection leads: an avatar moved to another overlay takes the view along
+    if (list.indexOf(S.ov) < 0) S.ov = 'main';
+    $('ovs').innerHTML = list.map(function (id) {
+      var n = inOv(id).length;
+      return '<span class="ovt' + (id === S.ov ? ' sel' : '') + '" data-o="' + esc(id) + '" title="' + n + (n === 1 ? ' avatar' : ' avatars') + ' - OBS source ' + esc(ovPath(id)) + '">' +
+        '<span class="d"></span>' + esc(id) + '</span>';
+    }).join('');
+    Array.prototype.forEach.call($('ovs').children, function (t) { t.onclick = function () { gotoOverlay(t.dataset.o); }; });
+    var url = location.origin + ovPath(S.ov);
+    $('u-ov').textContent = url; $('u-ov').href = url;
+    $('del-ov').style.display = S.ov === 'main' ? 'none' : '';
+    $('f-overlay').style.display = list.length > 1 ? '' : 'none';
+    paintSources(); renderStats();
+    if (stage) stage.setOverlay(S.ov);
+    try { localStorage.setItem('hexcast.avatar.ov', S.ov); } catch (e) {}
+  }
+  /* a green dot on an overlay whose OBS source is connected */
+  function paintSources() {
+    var now = Date.now() / 1000;
+    Array.prototype.forEach.call($('ovs').children, function (t) {
+      var s = S.obsStats[t.dataset.o];
+      t.firstChild.classList.toggle('on', !!(s && now - s.at < 6));
+    });
+  }
+  function gotoOverlay(id) {
+    if (id === S.ov) return;
+    S.ov = id; S.sel = null;
+    try { localStorage.setItem('hexcast.avatar.sel', ''); } catch (e) {}
+    renderAll();
+  }
+  $('add-ov').onclick = function () {
+    var n = 2; while (ovList().indexOf('overlay' + n) >= 0) n++;
+    dialog('New overlay', '<p class="hint">An overlay is its own OBS browser source with avatars of its own, so you can scale, crop and move it in OBS without touching the others. The name is part of its URL: lowercase letters, digits, _ and -.</p>' +
+      '<div class="f"><span>Name</span><div class="ctl"><input id="no-name" class="grow" value="overlay' + n + '" maxlength="32"></div></div>',
+      async function () {
+        var r = await api('POST', '/avatar/api/overlays', { name: $('no-name').value.trim().toLowerCase() });
+        if (!r) return false;
+        if (ovList().indexOf(r.overlay.id) < 0) S.config.overlays = ovList().concat(r.overlay.id);      // the config message may not be here yet
+        gotoOverlay(r.overlay.id);
+      });
+  };
+  $('del-ov').onclick = function () {
+    var id = S.ov, n = inOv(id).length;
+    if (id === 'main') return;
+    dialog('Delete overlay ' + id + '?', '<p class="hint">' + (n ? 'Its ' + n + (n === 1 ? ' avatar goes' : ' avatars go') + ' to <b>main</b> (they are not deleted). ' : '') +
+      'Remove its OBS source too: this URL will draw nothing.</p>',
+      async function () { var r = await api('POST', '/avatar/api/overlays/' + encodeURIComponent(id) + '/delete'); if (!r) return false; S.ov = 'main'; S.sel = null; });
+  };
 
   /* ---------------------------------------------------------------- runtime gate */
   function renderGate() {
@@ -465,7 +532,7 @@
   var stage = null, rws = null, rready = false, rqueue = [];
   function startPreview() {
     if (!window.HexAvatar || !window.PIXI || !window.Live2DCubismCore) { $('pv-msg').textContent = 'Set up Live2D above to see the preview.'; return; }
-    stage = new HexAvatar.Stage({ mount: $('pv'), role: 'preview', editable: true, audio: false });
+    stage = new HexAvatar.Stage({ mount: $('pv'), role: 'preview', editable: true, audio: false, overlay: S.ov });
     stage.on('select', function (name) { if (name) selectAvatar(name); });
     stage.on('transform', function (e) { onTransform(e); });
     stage.on('item', function (e) { onItemDrag(e); });
@@ -494,7 +561,7 @@
       case 'snapshot':                                    // the plugin was updated: load the new page
         if (m.build && window.HEXCAST_AVATAR_BUILD && m.build !== window.HEXCAST_AVATAR_BUILD) { location.reload(); return; }
         stage.snapshot(m); break;
-      case 'config': stage.setConfig(m.config); break;
+      case 'config': stage.setConfig(m.config, m.live); break;
       case 'library': stage.setLibrary(m.models, m.items); break;
       case 'cmd': if (!(m.source === 'panel' && m.cmd === 'transform' && !m.duration)) stage.command(m); break;   // our own drags are already shown
       case 'reload_model': for (var n in stage.avatars) if (stage.avatars[n].cfg.model === m.model) stage.avatars[n].load(m.model); break;
@@ -536,9 +603,9 @@
   }
 
   function renderStats() {
-    var obs = S.obsStats, pv = S.pvStats, parts = [];
-    if (obs && Date.now() / 1000 - obs.at < 6) parts.push('OBS ' + obs.fps + ' fps \u00b7 ' + obs.frame_ms + ' ms');
-    else parts.push('OBS not connected');
+    var obs = S.obsStats[S.ov], pv = S.pvStats, parts = [], src = ovList().length > 1 ? 'OBS ' + S.ov : 'OBS';
+    if (obs && Date.now() / 1000 - obs.at < 6) parts.push(src + ' ' + obs.fps + ' fps \u00b7 ' + obs.frame_ms + ' ms');
+    else parts.push(src + ' not connected');
     if (pv) parts.push('preview ' + pv.fps + ' fps');
     var a = S.sel && obs && obs.avatars && obs.avatars[S.sel];
     if (a && a.visible) parts.push(S.sel + ' ' + a.ms + ' ms');
@@ -559,7 +626,7 @@
         case 'config': S.config = m.config; renderAll(true); break;
         case 'library': S.models = m.models; S.items = m.items; renderLibrary(); renderInspector(true); if (paneSel === 'png' && !PNG.dirty) loadPng(true); break;
         case 'runtime': location.reload(); break;
-        case 'stats': if (m.role === 'obs') { S.obsStats = m; renderStats(); } break;
+        case 'stats': if (m.role === 'obs') { S.obsStats[m.overlay || 'main'] = m; renderStats(); paintSources(); } break;
         case 'activity': log('a', m.avatar, m.cmd + (m.summary ? '  ' + m.summary : '')); trackLive(m); break;
         case 'event': log(m.event === 'error' || m.event === 'speech_error' ? 'x' : 'e', m.avatar, m.event + (m.message ? '  ' + m.message : m.error ? '  ' + m.error : m.name ? '  ' + m.name : m.duration ? '  ' + m.duration + ' s' : '')); break;
       }
@@ -579,10 +646,12 @@
   $('log-clear').onclick = function () { logRows = []; $('log').innerHTML = '<div class="t">Nothing yet.</div>'; };
 
   /* ---------------------------------------------------------------- avatars */
-  function renderAll(fromServer) { renderChips(); renderInspector(fromServer); renderLibrary(); }
+  function renderAll(fromServer) { renderOverlays(); renderChips(); renderInspector(fromServer); renderLibrary(); }
+  // an OBS source that closes stops sending stats: show it going quiet
+  setInterval(function () { paintSources(); renderStats(); }, 3000);
 
   function renderChips() {
-    var html = S.config.avatars.map(function (a) {
+    var html = inOv(S.ov).map(function (a) {
       var m = S.models[a.model], ok = m && m.ok;
       return '<span class="chip' + (a.name === S.sel ? ' sel' : '') + '" data-n="' + esc(a.name) + '" title="' + esc(m ? m.name : 'no model') + '">' +
         '<span class="d ' + (!a.visible ? 'hid' : ok ? 'on' : '') + '"></span>' + esc(a.name) + (a.locked ? '<span class="lk">&#128274;</span>' : '') + '</span>';
@@ -595,6 +664,7 @@
     if (S.sel === name) return;
     S.sel = name;
     try { localStorage.setItem('hexcast.avatar.sel', name || ''); } catch (e) {}
+    renderOverlays();                                       // follows the avatar if it is on another overlay
     if (stage && stage.selected !== name) stage.select(name);
     renderChips(); renderInspector();
   }
@@ -606,7 +676,7 @@
       '<div class="f"><span>Name</span><div class="ctl"><input id="na-name" class="grow" value="' + n + '" maxlength="32"></div></div>' +
       '<div class="f"><span>Model</span><div class="ctl"><select id="na-model" class="grow">' + (opts || '<option value="">(the library is empty)</option>') + '</select></div></div>',
       async function () {
-        var r = await api('POST', '/avatar/api/avatars', { name: $('na-name').value.trim().toLowerCase(), model: $('na-model').value });
+        var r = await api('POST', '/avatar/api/avatars', { name: $('na-name').value.trim().toLowerCase(), model: $('na-model').value, overlay: S.ov });
         if (!r) return false;
         selectAvatar(r.avatar.name);
       });
@@ -661,11 +731,16 @@
   }
 
   function renderInspector(fromServer) {
-    var a = cur();
-    if (!a && S.config.avatars.length) { S.sel = S.config.avatars[0].name; a = cur(); if (stage) stage.select(S.sel); }
+    var a = cur(), mine = inOv(S.ov);
+    if (!a && mine.length) { S.sel = mine[0].name; a = cur(); if (stage) stage.select(S.sel); }
     $('insp-none').style.display = a ? 'none' : 'block';
     $('insp-body').style.display = a ? 'block' : 'none';
-    if (!a) return;
+    if (!a) {
+      $('insp-none').innerHTML = S.config.avatars.length
+        ? '<b style="color:var(--ink)">No avatar on this overlay yet.</b><br>Press <b>+ Avatar</b> to add one here, or pick an avatar on another overlay and move it here from its Placement tab.'
+        : INSP_NONE;
+      return;
+    }
     $('i-name').textContent = a.name;
     $('i-visible').checked = a.visible; $('i-locked').checked = a.locked;
     var sel = $('i-model');
@@ -675,8 +750,8 @@
     var m = S.models[a.model];
     $('i-problem').style.display = m && !m.ok ? 'inline-flex' : 'none';
     $('i-problem').textContent = m && !m.ok ? m.problem : '';
-    var idx = S.config.avatars.indexOf(a);
-    $('l-pos').textContent = 'layer ' + (idx + 1) + ' of ' + S.config.avatars.length;
+    $('l-pos').textContent = 'layer ' + (mine.indexOf(a) + 1) + ' of ' + mine.length;
+    $('i-overlay').innerHTML = ovList().map(function (id) { return '<option value="' + esc(id) + '"' + (id === ovOf(a) ? ' selected' : '') + '>' + esc(id) + '</option>'; }).join('');
     $('st-fps').value = String((S.config.stage || {}).fps || 60);
     fillFields(fromServer);
     var isPng = !!(m && m.type === 'png');
@@ -695,10 +770,14 @@
   $('i-reload').onclick = function () { cmd('reload').then(function (r) { if (r) toast('Reloaded'); }); };
   $('i-model').onchange = function () { var a = cur(); if (a) api('POST', '/avatar/api/avatars/' + encodeURIComponent(a.name), { model: this.value }); };
   $('st-fps').onchange = function () { api('POST', '/avatar/api/stage', { fps: parseInt(this.value, 10) }); };
-  function move(dir) {
-    var names = S.config.avatars.map(function (x) { return x.name; }), i = names.indexOf(S.sel), j = i + dir;
-    if (i < 0 || j < 0 || j >= names.length) return;
-    names.splice(j, 0, names.splice(i, 1)[0]);
+  $('i-overlay').onchange = function () { var a = cur(); if (a) api('POST', '/avatar/api/avatars/' + encodeURIComponent(a.name), { overlay: this.value }); };
+  function move(dir) {                                      // stacking is among the avatars of one overlay
+    var a = cur(); if (!a) return;
+    var names = S.config.avatars.map(function (x) { return x.name; }), mine = inOv(ovOf(a)).map(function (x) { return x.name; });
+    var i = mine.indexOf(a.name), j = i + dir;
+    if (i < 0 || j < 0 || j >= mine.length) return;
+    var pi = names.indexOf(mine[i]), pj = names.indexOf(mine[j]);
+    names[pi] = mine[j]; names[pj] = mine[i];
     api('POST', '/avatar/api/order', { names: names });
   }
   $('l-up').onclick = function () { move(1); };

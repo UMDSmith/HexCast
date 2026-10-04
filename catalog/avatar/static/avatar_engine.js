@@ -97,6 +97,7 @@
     this.mount = this.opts.mount;
     this.audioOn = this.opts.audio !== false;
     this.only = this.opts.only || null;              // [names] or null = every avatar
+    this.overlayId = this.opts.overlay == null ? null : this.opts.overlay;   // the overlay this stage draws; null = every overlay (`this.overlay` is the selection graphics)
     this.avatars = {};
     this.order = [];
     this.config = { avatars: [], stage: {} };
@@ -166,7 +167,18 @@
     return this._audio;
   };
 
-  Stage.prototype.shown = function (name) { return !this.only || this.only.indexOf(name) >= 0; };
+  /* does this stage draw the avatar (its config entry)? the ?avatar= filter, then the avatar's overlay (`main` if it has none) */
+  Stage.prototype.shown = function (a) {
+    if (this.only && this.only.indexOf(a.name) < 0) return false;
+    return this.overlayId == null || (a.overlay || 'main') === this.overlayId;
+  };
+
+  /* the tab's preview draws one overlay at a time: switch it (the avatars of the others go, the new ones come) */
+  Stage.prototype.setOverlay = function (id) {
+    if (this.overlayId === id) return;
+    this.overlayId = id;
+    this.setConfig(this.config);
+  };
 
   /* everything from the server: config, models, items, live state */
   Stage.prototype.snapshot = function (s) {
@@ -186,14 +198,17 @@
     for (var n in this.avatars) this.avatars[n].libraryChanged();
   };
 
-  Stage.prototype.setConfig = function (cfg) {
-    if (!this.app) { var self0 = this; this.pending.push(function () { self0.setConfig(cfg); }); return; }
+  /* `live` (the config message carries it): the state an avatar that appears now - created, or moved here from
+     another overlay - starts in. Without it the state from the snapshot is kept. */
+  Stage.prototype.setConfig = function (cfg, live) {
+    if (!this.app) { var self0 = this; this.pending.push(function () { self0.setConfig(cfg, live); }); return; }
+    if (live) this.live = live;
     this.config = cfg || { avatars: [] };
     var st = this.config.stage || {};
     this.app.ticker.maxFPS = st.fps || 60;
     var keep = {}, self = this;
     (this.config.avatars || []).forEach(function (a) {
-      if (!self.shown(a.name)) return;
+      if (!self.shown(a)) return;
       keep[a.name] = 1;
       var av = self.avatars[a.name];
       if (!av) {

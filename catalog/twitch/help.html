@@ -19,7 +19,9 @@
     account, else anonymous chat. Every chat line and alert carries its <code>channel</code>. A source
     with no <code>?channel=</code> in its URL shows what the panel's <b>Chat and alert sources show</b>
     says — the primary only, by default; <code>…/twitch/chat?channel=name</code> shows one channel and
-    <code>?channel=all</code> every channel (same for <code>/twitch/events</code>).</p>
+    <code>?channel=all</code> every channel (same for <code>/twitch/events</code>). Channels are independent:
+    editing one, or signing an account in or out, reconnects only the channels it concerns, and a channel
+    that cannot start keeps retrying without affecting the others; <b>Reconnect</b> reconnects all.</p>
   <h3>Feeding a bot</h3>
   <p class="hint">Set <b>Forward URL</b> on the Connection tab and every chat message and alert is
     POSTed there as JSON — <code>{"type": "chat", "user": {...}, "flags": {"mod": true, ...},

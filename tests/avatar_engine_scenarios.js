@@ -96,4 +96,33 @@ const frames = (r, seconds) => { for (let i = 0; i < Math.round(seconds * 60); i
   for (let i = 0; i < 60 * 30; i++) { b.step(); min = Math.min(min, b.val('ParamEyeLOpen')); }
   out.stdBlinkMin = +min.toFixed(3);
 }
+{ // a stage draws the avatars of its own overlay (and of ?avatar=), follows an avatar that is moved, and starts it as it is now
+  const { HA } = load(file);
+  const stage = (opts) => { const st = new HA.Stage(opts); st.app = { ticker: {} }; st.root = { addChild() {} }; return st; };
+  const av = (name, overlay) => Object.assign({ name, x: 50, y: 50, scale: 1, rotation: 0, flip: false, visible: true, idle: {},
+                                                mouth: { lipsync: false } }, overlay === undefined ? {} : { overlay });
+  const cfg = (list) => ({ avatars: list, overlays: ['main', 'guest'] });
+  const names = (st) => Object.keys(st.avatars).sort();
+  const main = stage({ overlay: 'main' }), guest = stage({ overlay: 'guest' }), every = stage({}), narrow = stage({ overlay: 'main', only: ['a'] });
+  const before = [av('a'), av('b', 'main'), av('c', 'guest')];      // `a` has no overlay: an avatar from before overlays is on main
+  [main, guest, every, narrow].forEach((s) => s.setConfig(cfg(before)));
+  out.ovMain = names(main); out.ovGuest = names(guest); out.ovEvery = names(every); out.ovNarrow = names(narrow);
+  const after = [av('a'), av('b', 'guest'), av('c', 'guest')];      // b is moved to guest
+  [main, guest].forEach((s) => s.setConfig(cfg(after)));
+  out.ovMovedMain = names(main); out.ovMovedGuest = names(guest);
+  const keptA = main.avatars.a;
+  const preview = stage({ overlay: 'main' });                       // the tab's preview switches between overlays
+  preview.setConfig(cfg(after));
+  out.ovPreviewMain = names(preview);
+  const outline = { clear() {} }; preview.overlay = outline;        // init() puts the selection outline's graphics here; switching must leave it alone
+  preview.setOverlay('guest'); out.ovPreviewGuest = names(preview);
+  preview.setOverlay('main'); out.ovPreviewBack = names(preview);
+  out.ovLeavesTheSelectionOutline = preview.overlay === outline;
+  main.setOverlay('main'); out.ovSameOverlayKeepsAvatars = main.avatars.a === keptA;
+  const late = stage({ overlay: 'guest' });                         // an avatar that arrives is in the state the config message carries
+  late.setConfig(cfg([av('a'), av('b', 'main')]), {});
+  late.setConfig(cfg([av('a'), av('b', 'guest')]),
+                 { b: { emotion: { name: 'happy', face: { smile: 1 }, expressions: [], intensity: 1, until: null } } });
+  out.ovArrivedEmotion = late.avatars.b.emo.name;
+}
 console.log(JSON.stringify(out));

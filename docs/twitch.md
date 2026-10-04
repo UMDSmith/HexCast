@@ -111,6 +111,20 @@ The Channels card says which of these each channel is using. Twitch allows three
 EventSub connections per login, and each channel is one: don't put more than
 three channels on one login.
 
+**Channels are independent, so the primary keeps working whatever the others do.**
+Every channel has a connection of its own:
+
+- A channel that cannot start — no network yet at boot, a login Twitch no longer
+  accepts, a mistyped name — is retried with a growing pause (2 s up to 60 s) and
+  never delays or stops the others. A problem checking one login is logged and
+  does not hold anything up.
+- Changing the channel list, a label or an on/off switch, or signing an account in
+  or out, reconnects **only the channels it concerns**: switching the beta channel
+  off or renaming it never touches the primary's connection, and signing in as the
+  beta channel's own account reconnects beta alone. A label change reconnects
+  nothing; the new label shows on the next line.
+- The **Reconnect** button reconnects everything, on purpose.
+
 **What the overlays show.** Every chat line and alert is tagged with its
 channel. A source with no `?channel=` in its URL shows what **Chat and alert
 sources show** says — by default the primary only, so adding a second channel

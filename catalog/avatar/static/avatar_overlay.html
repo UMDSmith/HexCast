@@ -13,13 +13,17 @@
 <div id="stage"></div>
 <div id="note"></div>
 <script>
-/* OBS browser source (1920x1080). Every avatar, or ?avatar=main,guest for some of them.
+/* OBS browser source (1920x1080). It draws one overlay - /avatar/overlay is `main`, /avatar/overlay/guest is
+   `guest` - which is the avatars the Avatars tab put on it, so each overlay can be scaled and moved in OBS
+   on its own. ?avatar=a,b narrows a source to some of its avatars.
    ?audio=0 keeps this source silent (another source plays the speech). ?note=1 shows problems
    (a missing runtime, a lost connection) on the overlay itself - off by default, so nothing but
    avatars ever appears on stream. */
 (function () {
   var q = new URLSearchParams(location.search);
   var only = (q.get('avatar') || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+  var named = location.pathname.match(/\/overlay\/([^\/]+)\/?$/);
+  var overlay = named ? decodeURIComponent(named[1]).toLowerCase() : 'main';
   var audio = q.get('audio') !== '0', showNote = q.get('note') === '1';
   var note = document.getElementById('note');
   function say(t) { if (showNote) { note.textContent = t; note.style.display = t ? 'block' : 'none'; } }
@@ -29,18 +33,22 @@
     setTimeout(function () { location.reload(); }, 15000);
     return;
   }
-  var stage = new HexAvatar.Stage({ mount: document.getElementById('stage'), role: 'obs', audio: audio, only: only.length ? only : null });
+  var stage = new HexAvatar.Stage({ mount: document.getElementById('stage'), role: 'obs', audio: audio, overlay: overlay, only: only.length ? only : null });
   var ws = null, backoff = 500, ready = false, queue = [];
   function send(o) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
   stage.on('event', function (e) { send(Object.assign({ type: 'event' }, e)); });
   stage.on('model_info', function (m) { send({ type: 'model_info', model: m.model, info: m.info }); });
   stage.on('stats', function (s) { send(Object.assign({ type: 'stats' }, s)); });
+  function checkOverlay(cfg) {                            // a typo in the URL (or a deleted overlay) draws nothing - say so
+    var known = cfg && cfg.overlays;
+    if (known) say(known.indexOf(overlay) < 0 ? 'Avatars: there is no overlay called "' + overlay + '" (overlays: ' + known.join(', ') + ').' : '');
+  }
   function handle(m) {
     switch (m.type) {
       case 'snapshot':                                    // Hexcast was updated: load the new renderer
         if (m.build && window.HEXCAST_AVATAR_BUILD && m.build !== window.HEXCAST_AVATAR_BUILD) { location.reload(); return; }
-        stage.snapshot(m); break;
-      case 'config': stage.setConfig(m.config); break;
+        stage.snapshot(m); checkOverlay(m.config); break;
+      case 'config': stage.setConfig(m.config, m.live); checkOverlay(m.config); break;
       case 'library': stage.setLibrary(m.models, m.items); break;
       case 'cmd': stage.command(m); break;
       case 'reload_model': for (var n in stage.avatars) if (stage.avatars[n].cfg.model === m.model) stage.avatars[n].load(m.model); break;
@@ -49,7 +57,7 @@
     }
   }
   function connect() {
-    var url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/avatar/ws/render?role=obs' +
+    var url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/avatar/ws/render?role=obs&overlay=' + encodeURIComponent(overlay) +
       (only.length ? '&avatar=' + encodeURIComponent(only.join(',')) : '') + (audio ? '' : '&audio=0');
     ws = new WebSocket(url);
     ws.binaryType = 'arraybuffer';

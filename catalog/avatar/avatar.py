@@ -6,11 +6,13 @@ Live2D avatars that an AI vtuber (any bot) drives through Hexcast's API - a ligh
 with no face tracking: the bot is the tracker. A Hexcast plugin (see plugin.py):
 
     http://localhost:4747/avatar           -> the Avatars tab (live preview, placement, settings)
-    http://localhost:4747/avatar/overlay   -> OBS browser source (every avatar; ?avatar=name for one)
+    http://localhost:4747/avatar/overlay   -> OBS browser source (the avatars on the `main` overlay)
+    http://localhost:4747/avatar/overlay/guest -> another overlay: its own source, its own avatars
     http://localhost:4747/avatar/api       -> the API (GET it for the full list)
 
 Each avatar has a name (`main`, `guest`, `cat` ...) and shows a model from the library; any number
-of them can be on screen. The renderer (avatar_engine.js, the same in OBS and in the tab's preview)
+of them can be on screen. Each sits on one overlay - a 1920x1080 stage that is one OBS source - so
+avatars that must be sized and moved in OBS on their own go on their own overlays. The renderer (avatar_engine.js, the same in OBS and in the tab's preview)
 keeps a model alive by itself - blinking, breathing, idle sway, eyes that wander, head motion while
 talking - and the API steers it: any parameter, expressions, motions, emotions, gaze, gestures,
 placement, speech with lipsync (vowels, like VTube Studio's advanced lipsync), items and light.
@@ -50,6 +52,11 @@ STATIC_URL = "/plugins/avatar/static"          # set by attach() from the plugin
 
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 
+# An overlay is one OBS browser source: a stage of its own holding some of the avatars. `main` is
+# always there (the plain /avatar/overlay URL); it cannot be deleted, so an avatar always has a home.
+DEFAULT_OVERLAY = "main"
+MAX_OVERLAYS = 12
+
 # The inputs of the built-in "virtual tracker" - VTube Studio's own names, so a model's VTS
 # parameter setup works as it is. A key of a `params` command that is one of these - or the input of
 # one of the model's own mappings, a VTube Studio custom parameter (custom_inputs) - sets that input
@@ -88,7 +95,7 @@ EMOTION_WORDS = {
 GESTURES = ["nod", "shake", "tilt", "bounce", "lean_left", "lean_right", "look_away", "double_nod"]
 
 AVATAR_DEFAULTS: dict[str, Any] = {
-    "name": "", "model": "", "visible": True, "locked": False,
+    "name": "", "model": "", "visible": True, "locked": False, "overlay": DEFAULT_OVERLAY,
     # placement on the 1920x1080 stage: the model's centre at x/y (% of the stage); scale 1 = the
     # model's full height fills the stage height
     "x": 50.0, "y": 55.0, "scale": 1.0, "rotation": 0.0, "flip": False,
@@ -104,7 +111,7 @@ AVATAR_DEFAULTS: dict[str, Any] = {
 
 STAGE_DEFAULTS = {"fps": 60, "quality": "high", "show_fps": False}
 
-DEFAULT_CONFIG: dict[str, Any] = {"avatars": [], "stage": STAGE_DEFAULTS}
+DEFAULT_CONFIG: dict[str, Any] = {"avatars": [], "overlays": [DEFAULT_OVERLAY], "stage": STAGE_DEFAULTS}
 
 
 # --------------------------------------------------------------------------------------------
@@ -200,9 +207,11 @@ def _norm_item(it: Any) -> dict | None:
 def norm_avatar(d: dict, existing: dict | None = None) -> dict:
     a = _deep_merge(AVATAR_DEFAULTS, existing or {})
     a = _deep_merge(a, {k: v for k, v in (d or {}).items() if k not in ("emotions", "items")})
+    home = str(a.get("overlay") or "").strip().lower()
     out = {
         "name": str(a.get("name") or ""), "model": library.slug(str(a.get("model") or ""), "") if a.get("model") else "",
         "visible": bool(a.get("visible", True)), "locked": bool(a.get("locked")),
+        "overlay": home if NAME_RE.match(home) else DEFAULT_OVERLAY,
         "x": _num(a.get("x"), -100, 200, 50), "y": _num(a.get("y"), -100, 200, 55),
         "scale": _num(a.get("scale"), 0.02, 20, 1), "rotation": _num(a.get("rotation"), -360, 360, 0),
         "flip": bool(a.get("flip")),
@@ -248,6 +257,16 @@ def norm_stage(d: dict) -> dict:
             "show_fps": bool(s.get("show_fps"))}
 
 
+def norm_overlays(raw: Any) -> list[str]:
+    """The overlay ids: `main` first, then the others as listed (valid, unique, at most MAX_OVERLAYS)."""
+    out = [DEFAULT_OVERLAY]
+    for o in raw if isinstance(raw, list) else []:
+        o = str(o or "").strip().lower()
+        if NAME_RE.match(o) and o not in out and len(out) < MAX_OVERLAYS:
+            out.append(o)
+    return out
+
+
 def load_config() -> dict:
     raw: dict = {}
     if CONFIG_PATH.exists():
@@ -260,7 +279,11 @@ def load_config() -> dict:
         if isinstance(a, dict) and NAME_RE.match(str(a.get("name") or "")) and a["name"] not in seen:
             seen.add(a["name"])
             avatars.append(norm_avatar({}, a))
-    return {"avatars": avatars, "stage": norm_stage(raw.get("stage") or {})}
+    overlays = norm_overlays(raw.get("overlays"))          # a config from before overlays: everything is on `main`
+    for a in avatars:
+        if a["overlay"] not in overlays:
+            a["overlay"] = DEFAULT_OVERLAY
+    return {"avatars": avatars, "overlays": overlays, "stage": norm_stage(raw.get("stage") or {})}
 
 
 def save_config() -> None:
@@ -278,6 +301,29 @@ def avatar(name: str) -> dict:
         if a["name"] == name:
             return a
     raise CommandError(f"no avatar named {name!r} (avatars: {', '.join(x['name'] for x in CONFIG['avatars']) or 'none yet'})", 404)
+
+
+def overlay_of(name: str) -> str | None:
+    """The overlay an avatar is on (None: there is no such avatar)."""
+    for a in CONFIG["avatars"]:
+        if a["name"] == name:
+            return a.get("overlay") or DEFAULT_OVERLAY
+    return None
+
+
+def overlay_id(raw: Any) -> str:
+    """An overlay that exists (any case); an error that lists the overlays otherwise. Empty is `main`."""
+    o = str(raw or "").strip().lower() or DEFAULT_OVERLAY
+    if o not in CONFIG["overlays"]:
+        raise CommandError(f"no overlay named {o!r} (overlays: {', '.join(CONFIG['overlays'])})", 404)
+    return o
+
+
+def overlay_info(oid: str) -> dict:
+    """What a bot or the tab needs to know about an overlay: where its OBS source points, what is on it."""
+    return {"id": oid, "path": "/avatar/overlay" if oid == DEFAULT_OVERLAY else f"/avatar/overlay/{oid}",
+            "avatars": [a["name"] for a in CONFIG["avatars"] if a["overlay"] == oid],
+            "sources": sum(1 for c in HUB.obs() if c.overlay == oid)}
 
 
 def _targets(name: str) -> list[str]:
@@ -468,13 +514,22 @@ async def _speech_bytes(request: Request) -> tuple[bytes, str, dict]:
 # --------------------------------------------------------------------------------------------
 
 class Client:
-    def __init__(self, ws: WebSocket, kind: str, role: str = "", only: set[str] | None = None, audio: bool = True):
+    def __init__(self, ws: WebSocket, kind: str, role: str = "", only: set[str] | None = None, audio: bool = True,
+                 overlay: str | None = None):
         self.ws, self.kind, self.role, self.only, self.audio = ws, kind, role, only, audio
+        self.overlay = overlay                    # an OBS source draws one overlay; None (the tab's preview) draws any
         self.stats: dict = {}
         self.id = uuid.uuid4().hex[:8]
 
     def wants(self, name: str) -> bool:
-        return not self.only or name in self.only
+        """Does this renderer draw the avatar? Everything that goes to renderers (commands, speech, the
+        audio devices to record) is sent by this - the `?avatar=` filter, then the avatar's overlay."""
+        if self.only and name not in self.only:
+            return False
+        if self.overlay is None:
+            return True
+        home = overlay_of(name)
+        return home is None or home == self.overlay
 
 
 class Hub:
@@ -551,7 +606,8 @@ def snapshot() -> dict:
 
 
 async def broadcast_config() -> None:
-    await HUB.everyone({"type": "config", "config": CONFIG})
+    # `live` too: an avatar that appears on an overlay (moved there, or created) starts in the state it is in now
+    await HUB.everyone({"type": "config", "config": CONFIG, "live": live_snapshot()})
     HUB.sync_captures()
 
 
@@ -977,7 +1033,7 @@ async def on_render_message(c: Client, msg: dict) -> None:
     elif t == "stats":
         c.stats = {k: msg.get(k) for k in ("fps", "frame_ms", "avatars", "gpu", "w", "h")}
         c.stats["at"] = time.time()
-        await HUB.panels({"type": "stats", "client": c.id, "role": c.role, **c.stats})
+        await HUB.panels({"type": "stats", "client": c.id, "role": c.role, "overlay": c.overlay, **c.stats})
     elif t == "live_params":
         rid = str(msg.get("rid") or "")
         fut = WAITERS.get("live:" + rid)
@@ -1069,7 +1125,10 @@ async def panel_page():
 
 
 @router.get("/overlay", response_class=HTMLResponse)
-async def overlay_page():
+@router.get("/overlay/{oid}", response_class=HTMLResponse)
+async def overlay_page(oid: str = DEFAULT_OVERLAY):
+    # one page for every overlay; it reads its own name from the URL. An unknown name is not an error page
+    # (OBS would put its text on stream): the page draws nothing, and says why with ?note=1
     return HTMLResponse(_page("avatar_overlay.html"), headers=_NOCACHE)
 
 
@@ -1126,6 +1185,7 @@ async def api_status():
     st = runtime.status()
     obs = HUB.obs()
     return {"connected": bool(obs), "overlays": len(obs), "previews": len([c for c in HUB.of("render") if c.role != "obs"]),
+            "by_overlay": {o: sum(1 for c in obs if c.overlay == o) for o in CONFIG["overlays"]},     # OBS sources drawing each
             "controls": len(HUB.of("control")), "avatars": [a["name"] for a in CONFIG["avatars"]],
             "runtime": st["installed"], "stats": [c.stats for c in obs if c.stats],
             "capture": {"available": capture.AVAILABLE, "running": HUB.captures.status()}}
@@ -1383,11 +1443,12 @@ async def api_avatar_create(request: Request):
     mid = str(body.get("model") or "")
     if mid:
         library.model_dir(mid)
-    a = norm_avatar({**body, "name": name, "model": mid})
+    a = norm_avatar({**body, "name": name, "model": mid, "overlay": overlay_id(body.get("overlay"))})
     if mid and not body.get("emotions"):
         a["emotions"] = suggest_emotions(mid)
-    if "x" not in body and CONFIG["avatars"]:      # spread new avatars out
-        a["x"] = [50, 25, 75, 15, 85][len(CONFIG["avatars"]) % 5]
+    neighbours = sum(1 for x in CONFIG["avatars"] if x["overlay"] == a["overlay"])
+    if "x" not in body and neighbours:             # spread new avatars out (on their own overlay)
+        a["x"] = [50, 25, 75, 15, 85][neighbours % 5]
     CONFIG["avatars"].append(a)
     save_config()
     await broadcast_config()
@@ -1407,6 +1468,8 @@ async def api_avatar_update(name: str, request: Request):
     a = avatar(name)
     if "model" in body and body["model"]:
         library.model_dir(str(body["model"]))
+    if "overlay" in body:
+        body = {**body, "overlay": overlay_id(body["overlay"])}
     new = norm_avatar({k: v for k, v in body.items() if k != "name"}, a)
     new["name"] = name
     if body.get("model") and body["model"] != a["model"] and "emotions" not in body:
@@ -1473,6 +1536,47 @@ async def api_stage(request: Request):
     save_config()
     await broadcast_config()
     return {"ok": True, "stage": CONFIG["stage"]}
+
+
+# ---- overlays: one OBS source each, so each can be scaled and moved in OBS on its own ----
+
+@router.get("/api/overlays")
+async def api_overlays():
+    return {"overlays": [overlay_info(o) for o in CONFIG["overlays"]]}
+
+
+@router.post("/api/overlays")
+@guarded
+async def api_overlay_create(request: Request):
+    body = await _json(request)
+    oid = str(body.get("name") or body.get("id") or "").strip().lower()
+    if not NAME_RE.match(oid):
+        raise CommandError("a name is 1-32 lowercase letters, digits, _ or - (starting with a letter or digit)")
+    if oid in CONFIG["overlays"]:
+        raise CommandError(f"there is already an overlay called {oid!r}", 409)
+    if len(CONFIG["overlays"]) >= MAX_OVERLAYS:
+        raise CommandError(f"that is enough overlays (at most {MAX_OVERLAYS})")
+    CONFIG["overlays"].append(oid)
+    save_config()
+    await broadcast_config()
+    return {"ok": True, "overlay": overlay_info(oid)}
+
+
+@router.post("/api/overlays/{oid}/delete")
+@guarded
+async def api_overlay_delete(oid: str):
+    """The avatars on it are not deleted: they go to `main` (where OBS shows them again)."""
+    oid = overlay_id(oid)
+    if oid == DEFAULT_OVERLAY:
+        raise CommandError("the main overlay cannot be deleted")
+    moved = [a["name"] for a in CONFIG["avatars"] if a["overlay"] == oid]
+    for a in CONFIG["avatars"]:
+        if a["overlay"] == oid:
+            a["overlay"] = DEFAULT_OVERLAY
+    CONFIG["overlays"].remove(oid)
+    save_config()
+    await broadcast_config()
+    return {"ok": True, "moved": moved}
 
 
 @router.get("/api/avatars/{name}/info")
@@ -1557,7 +1661,10 @@ router.add_api_route("/api/avatars/{name}/hide", _make_visibility_route(False), 
 API_ROUTES = [
     "GET  /avatar/api/status",
     "GET  /avatar/api/avatars                      every avatar's settings + live state",
-    "POST /avatar/api/avatars                      {name, model} - create",
+    "POST /avatar/api/avatars                      {name, model, overlay} - create; POST /avatar/api/avatars/<name> {overlay} moves it",
+    "GET  /avatar/api/overlays                     each overlay: its OBS path, its avatars, how many OBS sources draw it",
+    "POST /avatar/api/overlays                     {name} - a new overlay (its own OBS source at /avatar/overlay/<name>)",
+    "POST /avatar/api/overlays/<name>/delete       its avatars move to main",
     "GET  /avatar/api/avatars/<name>/info          the model's parameters, expressions, motions, art meshes",
     "GET  /avatar/api/avatars/<name>/params/live   parameter values right now",
     "POST /avatar/api/avatars/<name>/params        {values:{ParamMouthOpenY:1, MouthSmile:0.8}, weight, duration, for, layer}",
@@ -1588,7 +1695,9 @@ async def ws_render(ws: WebSocket):
     await ws.accept()
     q = ws.query_params
     only = {n.strip() for n in (q.get("avatar") or "").split(",") if n.strip()} or None
-    c = Client(ws, "render", "obs" if q.get("role", "obs") == "obs" else "preview", only, q.get("audio", "1") != "0")
+    role = "obs" if q.get("role", "obs") == "obs" else "preview"
+    overlay = ((q.get("overlay") or "").strip().lower() or DEFAULT_OVERLAY) if role == "obs" else None
+    c = Client(ws, "render", role, only, q.get("audio", "1") != "0", overlay)
     HUB.loop = asyncio.get_running_loop()
     HUB.clients.add(c)
     HUB.sync_captures()

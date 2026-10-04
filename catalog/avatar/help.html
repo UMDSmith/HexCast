@@ -11,9 +11,18 @@
     and the renderer once, into <code>config/avatar_runtime/</code>), add a model (a zip, a folder, or straight
     from VTube Studio if it is installed) and press <b>+ Avatar</b>. In OBS add a Browser source,
     1920×1080, with <b>Control audio via OBS</b> ticked:</p>
-  <pre>http://localhost:4747/avatar/overlay                 every avatar
-http://localhost:4747/avatar/overlay?avatar=main     one (or ?avatar=main,guest)
+  <pre>http://localhost:4747/avatar/overlay                 the avatars on the main overlay (all, to begin with)
+http://localhost:4747/avatar/overlay/guest           another overlay: its own source, its own avatars
+http://localhost:4747/avatar/overlay?avatar=main     only some of an overlay's avatars (?avatar=main,guest)
 http://localhost:4747/avatar/overlay?audio=0         silent (another source plays the speech)</pre>
+  <h3>Overlays</h3>
+  <p class="hint">OBS scales, crops and moves a source as a whole, so avatars that share one source move and scale
+    together. An <b>overlay</b> is one source: press <b>+ Overlay</b> above the preview, name it, and put avatars on
+    it (<b>+ Avatar</b> adds to the overlay you are looking at; an existing avatar moves with <b>Overlay</b> on its
+    Placement tab). Add each overlay's URL to OBS as its own Browser source and size, crop and place it there
+    without touching the others. An avatar's position inside its overlay is set by dragging in the preview;
+    where overlays sit relative to each other is up to OBS. Deleting an overlay moves its avatars to main.
+    The API addresses avatars by name, wherever they are.</p>
   <h3>The tab</h3>
   <p class="hint">The live preview is the OBS renderer itself: drag an avatar to move it, scroll to zoom,
     drag the dot to rotate, double-click to reset, Shift to snap; items drag and scroll the same way. The
@@ -69,11 +78,12 @@ http://localhost:4747/avatar/overlay?audio=0         silent (another source play
   </table>
   <h3>Reading and managing</h3>
   <table class="api">
-    <tr><td>GET /avatar/api/status</td><td>OBS overlays connected, avatars, fps and cost per avatar</td></tr>
+    <tr><td>GET /avatar/api/status</td><td>OBS sources connected (also <code>by_overlay</code>), avatars, fps and cost per avatar</td></tr>
+    <tr><td>GET /avatar/api/overlays</td><td>each overlay: id, OBS path, its avatars, OBS sources connected · <code>POST</code> <code>{"name": "guest"}</code> makes one, <code>POST …/&lt;name&gt;/delete</code> removes it (its avatars go to main)</td></tr>
     <tr><td>GET /avatar/api/avatars</td><td>settings + live state of every avatar</td></tr>
     <tr><td>GET /avatar/api/avatars/&lt;name&gt;/info</td><td>the model's parameters (with ranges and names), parts, art meshes, expressions, motions, emotions, inputs (VTube Studio's, then the model's custom ones - also <code>custom_inputs</code>), mappings</td></tr>
     <tr><td>GET /avatar/api/avatars/&lt;name&gt;/params/live</td><td>every parameter's value right now</td></tr>
-    <tr><td>POST /avatar/api/avatars</td><td><code>{"name": "guest", "model": "akari"}</code> — create; <code>POST …/&lt;name&gt;</code> changes settings, <code>…/rename</code>, <code>…/delete</code></td></tr>
+    <tr><td>POST /avatar/api/avatars</td><td><code>{"name": "guest", "model": "akari", "overlay": "guest"}</code> — create; <code>POST …/&lt;name&gt;</code> changes settings (<code>{"overlay": "main"}</code> moves it to another overlay), <code>…/rename</code>, <code>…/delete</code></td></tr>
     <tr><td>GET /avatar/api/models · /items</td><td>the library; <code>POST …/upload</code> (zip or folder), <code>POST …/import</code> <code>{"path": …}</code></td></tr>
   </table>
   <h3>WebSocket</h3>
