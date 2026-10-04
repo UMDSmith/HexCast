@@ -49,7 +49,7 @@ Open <http://localhost:4747/twitch>.
 
 ### Chat works with no setup at all
 
-Type your channel name on the Connection tab and save. Chat starts flowing
+Add your channel under **Channels** on the Connection tab and save. Chat starts flowing
 immediately over anonymous Twitch IRC — display names, colours, badges, Twitch
 emotes, and global 7TV/BTTV/FFZ emotes. Add
 `http://localhost:4747/twitch/chat` as a browser source and you're live.
@@ -76,12 +76,75 @@ one registered entry covers both.
 
 ---
 
+## Watching several channels
+
+A Hexcast can watch up to five channels at once — your main one and a second
+or test channel, say. Add them under **Channels** on the Connection tab (a
+login, an optional label like `beta`, and an on/off switch); the first is the
+**primary**. Everything below is also in `config/twitch.json`:
+
+```json
+"channels": [
+  {"login": "mainchannel", "label": "primary", "enabled": true},
+  {"login": "testchannel", "label": "beta",    "enabled": true}
+],
+"overlay_channels": "primary"
+```
+
+(`"channel"` is still there and always mirrors the primary's login; an older
+config that only has `"channel"` becomes a one-entry list by itself.)
+
+**Who Hexcast acts as.** Sign in once per Twitch account (**Connect a Twitch
+account** — to add a second account, be signed in to Twitch as that user in the
+browser first; a private window works). A channel uses
+
+1. the account with its **own name**, if you have signed in as it — all of that
+   channel's alerts (subs, bits, redeems, hype trains, follows …), chat, and
+   shoutouts as the broadcaster;
+2. otherwise your **default account** (the primary's own account if it is
+   signed in, else the first one you signed in with) — that channel's chat, plus
+   whatever that user may see there as a moderator (follows, for one). The Status
+   tab lists which subscriptions the channel could not get;
+3. with nobody signed in, anonymous chat.
+
+The Channels card says which of these each channel is using. Twitch allows three
+EventSub connections per login, and each channel is one: don't put more than
+three channels on one login.
+
+**What the overlays show.** Every chat line and alert is tagged with its
+channel. A source with no `?channel=` in its URL shows what **Chat and alert
+sources show** says — by default the primary only, so adding a second channel
+never changes what is on your stream. Choose *every channel* there, or decide
+per source:
+
+| URL | Shows |
+| --- | --- |
+| `…/twitch/chat` | the panel's setting (the primary, or every channel) |
+| `…/twitch/chat?channel=testchannel` | that channel only |
+| `…/twitch/chat?channel=all` | every channel |
+
+The same goes for `/twitch/events`. The Connection tab lists a ready-made URL
+for each channel. Tick **Tag each line with its channel** on the Chat overlay
+tab to label merged lines with the channel's label, and use `{channel}` in an
+alert's title or body to name it. A chat clear or a deleted message only
+affects the channel it happened in. An alert for a channel that no connected
+source shows is not waited for, so it cannot hold up the queue.
+
+**Shoutouts** work per channel: `!so` typed in a channel is made in that
+channel, as the account Hexcast uses there (which has to be its broadcaster or
+a moderator).
+
+---
+
 ## Browser sources
 
 | Source | URL |
 | --- | --- |
 | Chat | `http://localhost:4747/twitch/chat` |
 | Alerts | `http://localhost:4747/twitch/events` |
+
+(With several channels, add `?channel=name` or `?channel=all` —
+[see above](#watching-several-channels).)
 
 For both: set Width/Height to the box size you want, uncheck **Shutdown source
 when not visible**, uncheck **Refresh browser when scene becomes active**.
@@ -194,7 +257,7 @@ The Alerts tab is a table of every event type with four things you can set:
 
 - **On** — whether it fires at all
 - **Secs** — how long it stays on screen
-- **Title / Body** — templates supporting `{user} {amount} {tier} {months} {reward}`
+- **Title / Body** — templates supporting `{user} {amount} {tier} {months} {reward} {channel}`
 - **Clip** — a Hexcast clip name to fire alongside the alert
 
 The Clip column goes through the same `GET /api/play/{name}` endpoint the bot
@@ -262,7 +325,9 @@ is POSTed there as JSON:
   "bits": 0,
   "reply": null,
   "text": "hey there",
-  "fragments": [{"t": "text", "v": "hey there"}]
+  "fragments": [{"t": "text", "v": "hey there"}],
+  "channel": "mainchannel",
+  "channel_label": "primary"
 }
 ```
 
@@ -270,15 +335,20 @@ Alerts arrive as:
 
 ```json
 {"type": "event", "kind": "raid", "title": "Raid", "body": "SomeStreamer raided with 42",
- "user": "SomeStreamer", "amount": "42", "duration": 9.0}
+ "user": "SomeStreamer", "amount": "42", "duration": 9.0,
+ "channel": "mainchannel", "channel_label": "primary"}
 ```
+
+`channel` is the login of the channel it came from (`channel_label` is its label,
+or the login when it has none) — with several channels watched, that is how a bot
+tells them apart; every channel is forwarded, whatever the overlays are set to show.
 
 ---
 
 ## Security
 
 Same posture as the rest of Hexcast: no authentication. This module adds a
-Twitch client secret and a user OAuth token in `config/twitch_secrets.json`.
+Twitch client secret and the OAuth tokens of every account you sign in with in `config/twitch_secrets.json`.
 The API never returns either, but anyone who can reach port 4747 can
 reconfigure your overlays and read your chat. Keep it on the LAN, and keep
 `config/` out of git.
@@ -289,6 +359,15 @@ reconfigure your overlays and read your chat. Keep it on the LAN, and keep
 
 **Panel says "chat only (anonymous)" after signing in.** The channel name
 didn't resolve, or the token expired. Hit Reconnect and check the Status log.
+
+**A second channel gets chat but no alerts.** It is running on your default
+account, and Twitch only shows subs, bits, redeems and hype trains to the
+channel's own account. Sign in as that channel's user (Connect a Twitch
+account, as that user), then Reconnect.
+
+**A channel never connects while others do.** Twitch allows three EventSub
+connections per login; a fourth channel on the same login is refused. Give it a
+login of its own, or turn another channel off.
 
 **A subscription failed with 403.** Missing scope. Sign out and back in so
 Twitch re-prompts for the full list.

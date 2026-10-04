@@ -5,16 +5,26 @@
     Alerts can fire any soundboard clip by name — set it in the Clip column of the Alerts
     table on the Twitch panel.</p>
   <table class="api">
-    <tr><td>GET /twitch/api/status</td><td>connection state, signed-in user, granted scopes, log</td></tr>
+    <tr><td>GET /twitch/api/status</td><td>connection state (the primary channel's at the top level, every channel under <code>channels</code>), the accounts signed in, granted scopes, log</td></tr>
+    <tr><td>POST /twitch/api/config</td><td><code>{"channels": [{"login": "name", "label": "beta", "enabled": true}], "overlay_channels": "primary|all"}</code> — the channels to watch (first = primary, up to 5); <code>{"channel": "name"}</code> still sets the primary</td></tr>
+    <tr><td>POST /twitch/auth/logout</td><td><code>{"login": "name"}</code> signs that account out; no body signs out all</td></tr>
     <tr><td>GET /twitch/api/queue</td><td>the alert queue (playing + waiting)</td></tr>
     <tr><td>POST /twitch/api/queue/skip · clear</td><td>skip the current alert / drop the whole queue</td></tr>
-    <tr><td>POST /twitch/api/test/chat</td><td><code>{"text": "..."}</code> — fake a chat line (runs commands like <code>!so</code> as the broadcaster)</td></tr>
-    <tr><td>POST /twitch/api/test/event</td><td><code>{"kind": "follow"}</code> — fire a sample alert</td></tr>
+    <tr><td>POST /twitch/api/test/chat</td><td><code>{"text": "...", "channel": "name"}</code> — fake a chat line (runs commands like <code>!so</code> as the broadcaster); <code>channel</code> is optional, the primary by default</td></tr>
+    <tr><td>POST /twitch/api/test/event</td><td><code>{"kind": "follow", "channel": "name"}</code> — fire a sample alert</td></tr>
   </table>
+  <h3>Several channels</h3>
+  <p class="hint">Add channels under <b>Channels</b> on the Connection tab (up to 5; the first is the
+    primary). Each uses the account with its own name if you have signed in as it, else your default
+    account, else anonymous chat. Every chat line and alert carries its <code>channel</code>. A source
+    with no <code>?channel=</code> in its URL shows what the panel's <b>Chat and alert sources show</b>
+    says — the primary only, by default; <code>…/twitch/chat?channel=name</code> shows one channel and
+    <code>?channel=all</code> every channel (same for <code>/twitch/events</code>).</p>
   <h3>Feeding a bot</h3>
   <p class="hint">Set <b>Forward URL</b> on the Connection tab and every chat message and alert is
     POSTed there as JSON — <code>{"type": "chat", "user": {...}, "flags": {"mod": true, ...},
-    "text": "..."}</code> for chat, <code>{"type": "event", "kind": "raid", ...}</code> for alerts.</p>
+    "text": "...", "channel": "name"}</code> for chat, <code>{"type": "event", "kind": "raid", "channel": "name", ...}</code>
+    for alerts — <code>channel</code> says which watched channel it came from.</p>
 </div>
 </section>
 
@@ -22,7 +32,7 @@
 <div class="card">
   <h2>Shoutouts <span class="tag">!so</span></h2>
   <p class="hint">You or a mod types <code>!so channelname</code> (or <code>@channelname</code>) in
-    your own chat, and three things happen:</p>
+    your own chat (with several channels: in the one you want it made in), and three things happen:</p>
   <table class="api">
     <tr><td>1 — official shoutout</td><td>the real Twitch <code>/shoutout</code> banner (Twitch only accepts these while you're live)</td></tr>
     <tr><td>2 — chat line</td><td>posted from your account; template configurable with <code>{name}</code>, <code>{login}</code>, <code>{url}</code></td></tr>

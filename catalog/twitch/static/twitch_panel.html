@@ -53,6 +53,16 @@
             text-decoration:none}
   .url a:hover{border-color:var(--accent);text-decoration:underline}
 
+  /* channels and accounts */
+  .chrow{display:grid;grid-template-columns:minmax(120px,1.2fr) minmax(100px,1fr) auto auto auto;gap:9px;
+         align-items:center;margin:8px 0 2px}
+  .chrow .chs{grid-column:1/-1;font:12px var(--mono);color:var(--dim);margin:-2px 0 8px}
+  .chrow .chs.ok{color:var(--good)} .chrow .chs.bad{color:var(--warn)}
+  .chrow .tag{font:700 11px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--accent);padding:0 6px}
+  .acct{display:flex;gap:9px;align-items:center;margin:6px 0;font-size:14px}
+  .acct code{color:var(--good);font:13px var(--mono)}
+  @media (max-width:760px){ .chrow{grid-template-columns:1fr 1fr} }
+
   table.al{width:100%;border-collapse:collapse;font-size:13px}
   table.al th{text-align:left;font:600 11px var(--mono);letter-spacing:.1em;text-transform:uppercase;
               color:var(--dim);padding:8px 6px;border-bottom:1px solid var(--line)}
@@ -136,14 +146,32 @@
   </div>
 
   <div class="card">
-    <h2>Sign in</h2>
-    <p class="hint">Signing in unlocks follows, subs, gifts, bits, raids and channel point redeems. Without it you still get chat, read anonymously.</p>
-    <div class="grid">
-      <label class="f">Channel to watch<input id="channel" placeholder="your twitch username"></label>
-    </div>
+    <h2>Channels</h2>
+    <p class="hint">The channels HexCast watches (up to 5). The first is the <b>primary</b>: the chat and alert sources show it unless their URL says otherwise. A channel uses the account with its own name if you have signed in as it - all its alerts, shoutouts as the broadcaster. Otherwise it uses your default account (its chat, and whatever that user may see there as a moderator), or anonymous chat when nobody is signed in.</p>
+    <div id="ch-rows"></div>
     <div class="row">
-      <button class="act" id="login">Connect Twitch account</button>
-      <button class="sec" id="logout">Sign out</button>
+      <button class="sec" id="ch-add">Add channel</button>
+      <button class="act" id="ch-save">Save channels</button>
+    </div>
+    <div class="grid" style="margin-top:16px">
+      <label class="f">Chat and alert sources show
+        <select id="overlay_channels">
+          <option value="primary">the primary channel only</option>
+          <option value="all">every channel</option>
+        </select></label>
+      <label class="f" id="test-ch-wrap" style="display:none">Test chat and alerts go to
+        <select id="test-channel"></select></label>
+    </div>
+    <p class="hint" style="margin-top:10px">A source can also choose for itself: add <code>?channel=name</code> to its URL for one channel, or <code>?channel=all</code> for every channel. Tick <b>Tag each line with its channel</b> on the Chat overlay tab to tell merged lines apart.</p>
+  </div>
+
+  <div class="card">
+    <h2>Sign in</h2>
+    <p class="hint">Signing in unlocks follows, subs, gifts, bits, raids and channel point redeems, for the channels that account owns. Without it you still get chat, read anonymously. To add another account, sign in to Twitch as that user in this browser first (a private window works), then connect.</p>
+    <div id="acct-rows"></div>
+    <div class="row">
+      <button class="act" id="login">Connect a Twitch account</button>
+      <button class="sec" id="logout">Sign out of all</button>
       <button class="sec" id="reconnect">Reconnect</button>
     </div>
   </div>
@@ -153,6 +181,7 @@
     <p class="hint">Add each as a Browser source in OBS. Size the source however you want the box to be, then drag it into place. Turn off "Shutdown source when not visible".</p>
     <div class="url"><a id="u-chat" target="_blank" rel="noopener"></a><button class="sec" data-copy="u-chat">Copy</button></div>
     <div class="url"><a id="u-events" target="_blank" rel="noopener"></a><button class="sec" data-copy="u-events">Copy</button></div>
+    <div id="u-per"></div>
   </div>
 
   <div class="card">
@@ -233,7 +262,7 @@
 <section id="tab-alerts">
   <div class="card">
     <h2>What fires, and what it says</h2>
-    <p class="hint">Placeholders: <code style="color:var(--good);font-family:var(--mono)">{user} {amount} {tier} {months} {reward}</code>. Put a HexCast clip name in the last column to fire a sound or gif with the alert.</p>
+    <p class="hint">Placeholders: <code style="color:var(--good);font-family:var(--mono)">{user} {amount} {tier} {months} {reward} {channel}</code>. Put a HexCast clip name in the last column to fire a sound or gif with the alert.</p>
     <table class="al"><thead><tr>
       <th>Event</th><th style="width:52px">On</th><th style="width:74px">Secs</th>
       <th>Title</th><th>Body</th><th>Clip</th><th style="width:60px"></th>
@@ -376,6 +405,7 @@ var CHAT_BEHAVE = [
   ['animation','Entrance',{t:'sel',opts:[['slide','Slide'],['fade','Fade'],['pop','Pop'],['none','None']]}],
   ['show_badges','Show badges',{t:'bool'}],
   ['show_timestamps','Show timestamps',{t:'bool'}],
+  ['show_channel','Tag each line with its channel',{t:'bool'}],
   ['highlight_first','Mark first-time chatters',{t:'bool'}]
 ];
 var CHAT_FILTER = [
@@ -802,19 +832,94 @@ async function saveConfig(patch, msg){
     method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(patch)
   });
   var d = await r.json();
+  if(!r.ok){ toast(d.error || 'Not saved'); return false; }
   CFG = d.config;
   toast(msg || 'Saved');
+  return true;
+}
+
+/* ---------- channels and accounts ---------- */
+var CH_ROWS = [];          // the channel rows as edited (saved with "Save channels")
+var LAST_STATUS = null;
+
+function syncRows(){       // what is typed in the rows right now, empty ones included
+  CH_ROWS = [].map.call(document.querySelectorAll('#ch-rows .chrow'), function(row){
+    return {login: row.querySelector('.ch-login').value.trim().replace(/^#/,'').toLowerCase(),
+            label: row.querySelector('.ch-label').value.trim(),
+            enabled: row.querySelector('.ch-on').checked,
+            saved: row.dataset.saved || ''};
+  });
+}
+function renderChannels(){
+  $('ch-rows').innerHTML = CH_ROWS.map(function(r, i){
+    return '<div class="chrow" data-saved="' + esc(r.saved || '') + '">'
+      + '<input class="ch-login" value="' + esc(r.login) + '" placeholder="channel name" maxlength="25">'
+      + '<input class="ch-label" value="' + esc(r.label || '') + '" placeholder="label (optional)" maxlength="24">'
+      + '<label class="f sw"><input type="checkbox" class="ch-on"' + (r.enabled !== false ? ' checked' : '') + '> on</label>'
+      + (i ? '<button class="sec" data-chup="' + i + '" title="Make this the primary channel">Make primary</button>'
+           : '<span class="tag">primary</span>')
+      + '<button class="sec" data-chdel="' + i + '" title="Remove this channel">&times;</button>'
+      + '<div class="chs" data-login="' + esc(r.saved || '') + '"></div></div>';
+  }).join('') || '<p class="hint">No channel yet - add one here, or sign in and your own channel is used.</p>';
+  paintChannelStatus();
+}
+function fillTestChannels(){
+  var chans = CFG.channels || [], sel = $('test-channel'), keep = sel.value;
+  $('test-ch-wrap').style.display = chans.length > 1 ? '' : 'none';
+  sel.innerHTML = '<option value="">the primary channel</option>' + chans.map(function(c){
+    return '<option value="' + esc(c.login) + '">' + esc(c.label ? c.label + ' (' + c.login + ')' : c.login) + '</option>';
+  }).join('');
+  sel.value = chans.some(function(c){ return c.login === keep; }) ? keep : '';
+}
+function testChannel(){ return $('test-channel').value; }
+function renderUrls(){
+  var base = location.origin, chans = CFG.channels || [], html = '';
+  chans.forEach(function(c, i){
+    if(chans.length < 2) return;
+    if(!i) html += '<p class="hint" style="margin-top:14px">One source per channel. These always show just that channel, whatever the setting above says:</p>';
+    ['chat', 'events'].forEach(function(k){
+      var id = 'u-' + k + '-' + i, url = base + '/twitch/' + k + '?channel=' + c.login;
+      html += '<div class="url"><a id="' + id + '" href="' + esc(url) + '" target="_blank" rel="noopener">' + esc(url)
+            + '</a><button class="sec" data-copy="' + id + '">Copy</button></div>';
+    });
+  });
+  $('u-per').innerHTML = html;
+}
+function paintChannelStatus(s){
+  var by = {};
+  ((s || LAST_STATUS || {}).channels || []).forEach(function(c){ by[c.login] = c; });
+  document.querySelectorAll('#ch-rows .chs').forEach(function(el){
+    var c = by[el.dataset.login], t = '', cls = 'chs';
+    if(!c){ t = el.dataset.login ? '' : 'not saved yet'; }
+    else if(!c.enabled){ t = 'off'; }
+    else if(!c.connected){ t = 'not connected' + (c.last_error ? ' - ' + c.last_error : ''); cls += ' bad'; }
+    else if(c.source === 'eventsub'){
+      t = 'connected - ' + (c.own_account ? 'full access, as its own account (' + c.account + ')'
+                                          : 'chat as ' + c.account + ' - sign in as ' + c.login + ' for its alerts');
+      cls += ' ok';
+    } else { t = 'connected - chat only (anonymous)'; cls += ' ok'; }
+    el.textContent = t; el.className = cls;
+  });
+}
+function paintAccounts(s){
+  var a = s.accounts || [];
+  $('acct-rows').innerHTML = a.length ? a.map(function(x){
+    return '<div class="acct"><span>signed in as <code>' + esc(x.login) + '</code></span>'
+         + '<button class="sec" data-logout="' + esc(x.login) + '">Sign out</button></div>';
+  }).join('') : '<p class="hint">Not signed in - chat is read anonymously.</p>';
 }
 
 async function loadAll(){
   CFG = await (await fetch('/twitch/api/config')).json();
   await loadBackgrounds();
-  $('channel').value = CFG.channel || '';
   $('forward_url').value = CFG.forward_url || '';
   $('hexcast_url').value = CFG.hexcast_url || '';
   var chatUrl = location.origin + '/twitch/chat', eventsUrl = location.origin + '/twitch/events';
   $('u-chat').textContent = chatUrl;   $('u-chat').href = chatUrl;
   $('u-events').textContent = eventsUrl; $('u-events').href = eventsUrl;
+  CH_ROWS = (CFG.channels || []).map(function(c){ return {login: c.login, label: c.label, enabled: c.enabled, saved: c.login}; });
+  renderChannels(); fillTestChannels(); renderUrls();
+  $('overlay_channels').value = CFG.overlay_channels || 'primary';
   renderGroup('g-chat-type','chat',CHAT_TYPE);
   renderGroup('g-chat-look','chat',CHAT_LOOK);
   initPlacement();
@@ -826,26 +931,37 @@ async function loadAll(){
 }
 
 function paintStatus(s){
+  LAST_STATUS = s;
+  var all = s.channels || [], on = all.filter(function(c){ return c.enabled; });
+  var multi = all.length > 1, up = on.filter(function(c){ return c.connected; }).length;
+  var live = multi ? (on.length > 0 && up === on.length) : s.connected;
   var c = $('st-conn'), src = $('st-src');
-  c.textContent = s.connected ? 'connected' : 'not connected';
-  c.className = 'pill ' + (s.connected ? 'on' : 'off');
+  c.textContent = multi ? up + ' of ' + on.length + ' connected' : (s.connected ? 'connected' : 'not connected');
+  c.className = 'pill ' + (live ? 'on' : 'off');
   var label = s.source === 'eventsub' ? 'full access'
             : s.source === 'irc' ? 'chat only (anonymous)' : 'idle';
-  src.textContent = label + (s.channel_login ? ' - #' + s.channel_login : '');
+  src.textContent = label + (s.channel_login ? ' - #' + s.channel_login : '') + (multi ? ' (+' + (all.length - 1) + ')' : '');
   src.className = 'pill';
   $('log').textContent = (s.log || []).join('\n');
   var html = '';
-  (s.subs_ok || []).forEach(function(x){ html += '<div style="color:var(--good)">ok &nbsp;' + esc(x) + '</div>'; });
-  (s.subs_failed || []).forEach(function(x){ html += '<div style="color:var(--warn)">-- &nbsp;' + esc(x) + '</div>'; });
+  all.forEach(function(ch){
+    if(multi) html += '<div style="margin-top:8px;color:var(--ink)">#' + esc(ch.login) + (ch.label ? ' (' + esc(ch.label) + ')' : '') + '</div>';
+    (ch.subs_ok || []).forEach(function(x){ html += '<div style="color:var(--good)">ok &nbsp;' + esc(x) + '</div>'; });
+    (ch.subs_failed || []).forEach(function(x){ html += '<div style="color:var(--warn)">-- &nbsp;' + esc(x) + '</div>'; });
+  });
   if(!html) html = 'Nothing subscribed yet. Sign in on the Connection tab.';
   $('subs').innerHTML = html;
+  paintChannelStatus(s);
+  paintAccounts(s);
 }
 
 function pushPreview(m){
   var p = $('preview');
   var d = document.createElement('div');
   d.className = 'm';
-  d.innerHTML = '<b>' + esc(m.user.name) + '</b>: ' + esc(m.text);
+  var tag = (LAST_STATUS && (LAST_STATUS.channels || []).length > 1 && (m.channel_label || m.channel))
+          ? '<span style="color:var(--dim)">[' + esc(m.channel_label || m.channel) + ']</span> ' : '';
+  d.innerHTML = tag + '<b>' + esc(m.user.name) + '</b>: ' + esc(m.text);
   p.appendChild(d);
   while(p.children.length > 60) p.removeChild(p.firstChild);
   p.scrollTop = p.scrollHeight;
@@ -904,8 +1020,14 @@ document.addEventListener('click', function(e){
   if(t.dataset && t.dataset.test){
     fetch('/twitch/api/test/event', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({kind: t.dataset.test})
+      body: JSON.stringify({kind: t.dataset.test, channel: testChannel()})
     }).then(function(r){ if(!r.ok) toast('That alert is switched off'); });
+  }
+  if(t.dataset && t.dataset.chdel != null){ syncRows(); CH_ROWS.splice(+t.dataset.chdel, 1); renderChannels(); }
+  if(t.dataset && t.dataset.chup != null){ syncRows(); var i = +t.dataset.chup; CH_ROWS.unshift(CH_ROWS.splice(i, 1)[0]); renderChannels(); }
+  if(t.dataset && t.dataset.logout){
+    fetch('/twitch/auth/logout', {method:'POST', headers:{'Content-Type':'application/json'},
+                                  body: JSON.stringify({login: t.dataset.logout})}).then(function(){ toast('Signed out'); });
   }
 });
 
@@ -919,11 +1041,26 @@ $('save-creds').onclick = async function(){
   toast('Credentials saved');
 };
 $('login').onclick = function(){ location.href = '/twitch/auth/login'; };
-$('logout').onclick = async function(){ await fetch('/twitch/auth/logout', {method:'POST'}); toast('Signed out'); };
+$('logout').onclick = async function(){ await fetch('/twitch/auth/logout', {method:'POST'}); toast('Signed out of all accounts'); };
 $('reconnect').onclick = async function(){ await fetch('/twitch/api/reconnect', {method:'POST'}); toast('Reconnecting'); };
+$('ch-add').onclick = function(){
+  syncRows();
+  if(CH_ROWS.length >= 5){ toast('At most 5 channels'); return; }
+  CH_ROWS.push({login:'', label:'', enabled:true, saved:''});
+  renderChannels();
+};
+$('ch-save').onclick = async function(){
+  syncRows();
+  var rows = CH_ROWS.filter(function(r){ return r.login; }).map(function(r){
+    return {login: r.login, label: r.label, enabled: r.enabled};
+  });
+  if(await saveConfig({channels: rows, overlay_channels: $('overlay_channels').value}, 'Channels saved')){
+    CH_ROWS = (CFG.channels || []).map(function(c){ return {login: c.login, label: c.label, enabled: c.enabled, saved: c.login}; });
+    renderChannels(); fillTestChannels(); renderUrls();
+  }
+};
 $('save-conn').onclick = function(){
-  saveConfig({channel: $('channel').value.trim().replace(/^#/,''),
-              forward_url: $('forward_url').value.trim(),
+  saveConfig({forward_url: $('forward_url').value.trim(),
               hexcast_url: $('hexcast_url').value.trim()});
 };
 $('save-chat').onclick = function(){
@@ -938,7 +1075,8 @@ $('save-events').onclick = function(){
 };
 $('save-alerts').onclick = function(){ saveConfig({alerts: collectAlerts()}, 'Alerts updated'); };
 $('test-chat').onclick = function(){
-  fetch('/twitch/api/test/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+  fetch('/twitch/api/test/chat', {method:'POST', headers:{'Content-Type':'application/json'},
+                                  body: JSON.stringify({channel: testChannel()})});
 };
 
 loadAll().then(connectPanel);

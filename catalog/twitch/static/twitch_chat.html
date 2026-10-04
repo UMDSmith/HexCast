@@ -130,6 +130,7 @@
   .mention{ color:var(--highlight,#ff3b30); font-weight:800; }
   .cheer{ color:#c99cff; font-weight:800; }
   .time{ opacity:.45; font-size:.7em; margin-right:.4em; font-variant-numeric:tabular-nums; }
+  .chan{ opacity:.6; font-size:.7em; font-weight:700; letter-spacing:.04em; text-transform:uppercase; margin-right:.5em; }
   .reply{ display:block; font-size:.62em; opacity:.55; margin-bottom:2px; }
 
   .msg.leaving{ opacity:0; transition:opacity var(--fadedur,.5s) ease; }
@@ -257,9 +258,11 @@ function addMessage(msg){
   el.className = 'msg anim-' + c.animation + (c.layout === 'stacked' ? ' stacked' : '');
   if(c.highlight_first && msg.flags && msg.flags.first) el.className += ' first';
   el.dataset.id = msg.id;
+  el.dataset.channel = msg.channel || '';
 
   var html = '';
   if(msg.reply) html += '<span class="reply">replying to ' + esc(msg.reply.user) + '</span>';
+  if(c.show_channel && (msg.channel_label || msg.channel)) html += '<span class="chan">' + esc(msg.channel_label || msg.channel) + '</span>';
   if(c.show_timestamps){
     var d = new Date(msg.ts * 1000);
     html += '<span class="time">' + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0') + '</span>';
@@ -294,7 +297,11 @@ function trim(){
 connect('/twitch/ws/chat', function(m){
   if(m.type === 'config') applyConfig(m.config);
   else if(m.type === 'chat') addMessage(m);
-  else if(m.type === 'clear') list.innerHTML = '';
+  else if(m.type === 'clear'){
+    // a chat clear in one channel empties that channel's lines only
+    if(!m.channel) list.innerHTML = '';
+    else [].slice.call(list.children).forEach(function(n){ if(n.dataset.channel === m.channel) n.remove(); });
+  }
   else if(m.type === 'delete'){
     var n = list.querySelector('[data-id="' + m.id + '"]');
     if(n) n.remove();

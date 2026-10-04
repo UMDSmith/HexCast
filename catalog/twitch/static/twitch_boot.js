@@ -11,7 +11,11 @@ function loadFont(name){
 }
 function connect(path, onMsg){
   var proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  var ws = new WebSocket(proto + '://' + location.host + path);
+  // ?channel=name (one channel) or ?channel=all on the source's own URL picks what it shows; without it
+  // the panel's "chat and alert sources show" setting decides
+  var want = new URLSearchParams(location.search).get('channel');
+  var url = path + (want ? (path.indexOf('?') < 0 ? '?' : '&') + 'channel=' + encodeURIComponent(want) : '');
+  var ws = new WebSocket(proto + '://' + location.host + url);
   ws.onmessage = function(e){ try { onMsg(JSON.parse(e.data)); } catch(err){} };
   ws.onclose = function(){ setTimeout(function(){ connect(path, onMsg); }, 1500); };
   ws.onerror = function(){ try { ws.close(); } catch(err){} };
