@@ -11,6 +11,7 @@
     --mono:var(--hb-mono);
   }
   *{box-sizing:border-box}
+  [hidden]{display:none !important}
   body{margin:0;background:var(--bg);color:var(--ink);
        font:15px/1.5 'Segoe UI',system-ui,-apple-system,sans-serif;}
   .pill{font:600 12px/1 var(--mono);padding:6px 10px;border-radius:99px;border:1px solid var(--line);color:var(--dim)}
@@ -23,21 +24,24 @@
              padding:10px 14px;cursor:pointer}
   nav button.sel{color:var(--ink);border-bottom-color:var(--accent)}
 
-  main{padding:18px 22px 60px;max-width:1080px}
+  main{padding:18px 22px 60px}
   section{display:none} section.sel{display:block}
+  section:not(#tab-chat):not(#tab-events){max-width:1080px}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
   .card h2{margin:0 0 4px;font-size:14px;letter-spacing:.14em;text-transform:uppercase}
-  .card p.hint{margin:0 0 14px;color:var(--dim);font-size:13px}
+  .card p.hint,p.hint{margin:0 0 14px;color:var(--dim);font-size:13px}
 
   .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px}
-  label.f{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--dim);
-          letter-spacing:.06em;text-transform:uppercase;font-weight:600}
+  .f{display:flex;flex-direction:column;gap:5px;min-width:0}
+  .f > .lbl,label.f{font-size:12px;color:var(--dim);letter-spacing:.06em;text-transform:uppercase;font-weight:600}
+  label.f{display:flex;flex-direction:column;gap:5px}
+  .f > .tip{font-size:12px;color:var(--dim);letter-spacing:0;text-transform:none;font-weight:400;margin-top:-1px}
   input,select,textarea{background:#08080c;border:1px solid var(--line);color:var(--ink);
         border-radius:8px;padding:9px 10px;font:14px/1.3 inherit;width:100%}
-  input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:var(--accent)}
+  input:focus,select:focus,textarea:focus,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px;border-color:var(--accent)}
   input[type=color]{padding:3px;height:38px;cursor:pointer}
-  label.sw{flex-direction:row;align-items:center;gap:9px;text-transform:none;font-size:14px;color:var(--ink)}
-  label.sw input{width:auto}
+  .f.sw{flex-direction:row;align-items:center;gap:9px;text-transform:none;font-size:14px;color:var(--ink);letter-spacing:0;font-weight:400}
+  .f.sw input{width:auto}
 
   button.act{background:var(--accent);color:#fff;border:0;border-radius:9px;padding:10px 16px;
              font:700 14px inherit;cursor:pointer}
@@ -63,13 +67,6 @@
   .acct code{color:var(--good);font:13px var(--mono)}
   @media (max-width:760px){ .chrow{grid-template-columns:1fr 1fr} }
 
-  table.al{width:100%;border-collapse:collapse;font-size:13px}
-  table.al th{text-align:left;font:600 11px var(--mono);letter-spacing:.1em;text-transform:uppercase;
-              color:var(--dim);padding:8px 6px;border-bottom:1px solid var(--line)}
-  table.al td{padding:6px;border-bottom:1px solid #1a1a22;vertical-align:middle}
-  table.al input{padding:7px 8px;font-size:13px}
-  table.al td.k{font:600 13px var(--mono);color:var(--ink);white-space:nowrap}
-
   #log{font:12px/1.7 var(--mono);color:var(--dim);background:#08080c;border:1px solid var(--line);
        border-radius:8px;padding:12px;max-height:230px;overflow:auto;white-space:pre-wrap}
   #preview{background:#08080c;border:1px solid var(--line);border-radius:8px;padding:12px;
@@ -79,18 +76,125 @@
 
   #toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,80px);background:var(--accent);
          color:#fff;padding:11px 20px;border-radius:99px;font-weight:700;font-size:14px;
-         transition:transform .25s ease;z-index:20}
+         transition:transform .25s ease;z-index:80}
   #toast.up{transform:translate(-50%,0)}
   .warn{border-left:3px solid var(--warn);padding-left:12px;color:var(--dim);font-size:13px;margin-top:10px}
+  ol.steps{margin:0 0 14px;padding-left:20px;color:var(--dim);font-size:13.5px}
+  ol.steps li{margin-bottom:6px}
+  ol.steps code{color:var(--good);font:12.5px var(--mono)}
+
+  /* ---------- the overlay editors (chat, alerts) ---------- */
+  /* --pvw is the preview's width (the size control); it gives way before the settings get narrower than 560px */
+  .ed{--pvw:860px;display:grid;grid-template-columns:minmax(0,1fr) min(var(--pvw),calc(100vw - 640px));gap:20px;align-items:start;max-width:2200px}
+  .ed-side{position:sticky;top:12px;display:flex;flex-direction:column;gap:12px}
+  @media (max-width:1180px){ .ed{grid-template-columns:1fr} .ed-side{position:static;order:-1} }
+
+  .looks{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+  .looks > .lbl{font:600 11px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--dim);margin-right:4px}
+  .look{border:1px solid var(--line);border-radius:10px;padding:7px 13px;cursor:pointer;font-size:15px;line-height:1.2}
+  .look:hover{outline:2px solid var(--accent);outline-offset:1px}
+
+  .subnav{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+  .subnav button{background:#14141c;border:1px solid var(--line);color:var(--dim);border-radius:99px;padding:8px 15px;
+                 font:600 12px var(--mono);letter-spacing:.08em;text-transform:uppercase;cursor:pointer}
+  .subnav button:hover{color:var(--ink)}
+  .subnav button.sel{background:var(--accent);border-color:var(--accent);color:#fff}
+  .subpane{display:none} .subpane.sel{display:block}
+
+  .grp{border:1px solid var(--line);border-radius:12px;padding:14px 16px 16px;margin-bottom:14px;background:var(--panel)}
+  .grp > h3{margin:0 0 12px;font:700 12px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+  .grp > .note{margin:-4px 0 12px;font-size:13px;color:var(--dim)}
+  .grp > .note b{color:var(--ink)}
+  .grp > .note code{color:var(--good);font:12.5px var(--mono)}
+
+  .numc{display:flex;gap:10px;align-items:center}
+  .numc input[type=range]{flex:1;padding:0;height:26px;accent-color:var(--accent);background:none;border:0;min-width:0}
+  .numc input[type=number]{width:78px;flex:none}
+  .numc .u{font:12px var(--mono);color:var(--dim);width:18px}
+  .colc{display:flex;gap:10px;align-items:center}
+  .colc input[type=color]{width:64px;flex:none}
+  .colc label{display:flex;gap:6px;align-items:center;font-size:13px;color:var(--dim);text-transform:none;letter-spacing:0;font-weight:400}
+  .colc label input{width:auto}
+  .colc.isdef input[type=color]{opacity:.35}
+  textarea.css{font:13px/1.5 var(--mono);min-height:240px;resize:vertical;white-space:pre;tab-size:2}
+
+  /* font picker */
+  .fp-btn{display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%;background:#08080c;
+          border:1px solid var(--line);border-radius:8px;padding:7px 12px;color:var(--ink);cursor:pointer;
+          font-size:20px;line-height:1.3;text-align:left;min-height:42px}
+  .fp-btn:hover{border-color:var(--accent)}
+  .fp-btn .fp-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .fp-btn .fp-car{font:12px var(--mono);color:var(--dim)}
+  #fp-pop{position:fixed;z-index:70;width:400px;display:none;flex-direction:column;background:#0e0e14;
+          border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 50px rgba(0,0,0,.65);overflow:hidden}
+  #fp-pop.open{display:flex}
+  .fp-top{padding:10px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:8px}
+  .fp-cats{display:flex;gap:5px;flex-wrap:wrap}
+  .fp-cats button{background:#14141c;border:1px solid var(--line);color:var(--dim);border-radius:99px;padding:4px 10px;
+                  font:600 11px var(--mono);cursor:pointer}
+  .fp-cats button.sel{background:var(--accent);border-color:var(--accent);color:#fff}
+  .fp-list{overflow:auto;flex:1 1 auto;min-height:120px}
+  .fp-top,.fp-foot{flex:none}
+  .fp-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 14px;cursor:pointer}
+  .fp-row .n{font-size:23px;line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .fp-row .s{font:11px var(--mono);color:var(--dim);white-space:nowrap}
+  .fp-row .x{font:700 13px var(--mono);color:var(--dim);padding:2px 8px;border-radius:6px}
+  .fp-row .x:hover{color:var(--warn);background:#1e1810}
+  .fp-row:hover,.fp-row.hl{background:#1b1b26}
+  .fp-row.sel .n::after{content:' ✓';color:var(--good);font:700 15px var(--mono)}
+  .fp-empty{padding:18px;color:var(--dim);font-size:13px}
+  .fp-foot{border-top:1px solid var(--line);padding:10px;display:flex;flex-direction:column;gap:8px}
+  .fp-foot .two{display:flex;gap:8px;align-items:center}
+  .fp-foot .msg{font-size:12px;color:var(--dim);min-height:16px}
+  .fp-foot .msg.bad{color:var(--warn)}
+
+  /* picture picker */
+  .bgp{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:8px}
+  .bgp-t{position:relative;aspect-ratio:16/10;border:2px solid var(--line);border-radius:9px;cursor:pointer;padding:0;
+         overflow:hidden;background:repeating-conic-gradient(#23232c 0 25%,#16161d 0 50%) 0 0/14px 14px;color:var(--dim);
+         font:600 11px var(--mono);display:flex;align-items:center;justify-content:center;text-align:center}
+  .bgp-t:hover{border-color:#44445a}
+  .bgp-t.sel{border-color:var(--accent)}
+  .bgp-t .im{position:absolute;inset:0;background:center/contain no-repeat}
+  .bgp-t .x{position:absolute;top:3px;right:3px;background:rgba(10,10,14,.85);color:var(--ink);border-radius:6px;padding:1px 6px;
+            font:700 12px var(--mono);display:none}
+  .bgp-t:hover .x,.bgp-t .x.arm{display:block}
+  .bgp-t .x.arm{background:var(--warn);color:#000}
+  .bgp-t.up,.bgp-t.none{background:#0c0c11;border-style:dashed}
+
+  /* live preview */
+  .pv{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px}
+  .pv-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+  .pv-head b{font:700 12px var(--mono);letter-spacing:.14em;text-transform:uppercase}
+  .pv-tools{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+  .pv-tools select{width:auto;padding:5px 8px;font-size:12px}
+  .pv-tools button.sec{padding:5px 10px;font-size:12px}
+  .pv-tools button.sel{border-color:var(--accent);color:var(--accent)}
+  .pv-bd{width:20px;height:20px;border-radius:99px;border:2px solid var(--line);padding:0;cursor:pointer}
+  .pv-bd.sel{border-color:var(--accent)}
+  .pv-view{position:relative;overflow:hidden;border-radius:8px;border:1px solid var(--line);width:100%;height:270px}
+  .pv-view iframe{position:absolute;left:0;top:0;width:1920px;height:1080px;border:0;background:transparent;
+                  transform-origin:0 0;pointer-events:none}
+  .bd-dark{background:#14141b}
+  .bd-light{background:#e9e9f0}
+  .bd-checker{background:repeating-conic-gradient(#2a2a33 0 25%,#1c1c24 0 50%) 0 0/20px 20px}
+  .bd-game{background:linear-gradient(135deg,#1d3b2f,#2a2f5a 55%,#6b3a5e)}
+  .pv-note{margin:8px 0 0;font-size:12px;color:var(--dim)}
+  .savebar{display:flex;gap:8px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
+  .savebar .dirty{margin-right:auto;color:var(--warn);font:600 12px var(--mono)}
+  .tests{display:flex;gap:6px;flex-wrap:wrap}
+  .tests button{padding:6px 11px;font-size:12px}
 
   /* placement editor */
-  #pl-stage,#pl-stage-ev{position:relative;width:100%;aspect-ratio:16/9;background:
+  .pl-stage{position:relative;width:100%;aspect-ratio:16/9;background:
       repeating-linear-gradient(0deg,#0c0c11 0 39px,#141420 39px 40px),
       repeating-linear-gradient(90deg,#0c0c11 0 39px,#141420 39px 40px),#0a0a0e;
     border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-top:12px;touch-action:none;user-select:none}
+  .pl-stage.off{opacity:.55}
   .pl-box{position:absolute;box-sizing:border-box;border:2px solid;border-radius:5px;cursor:move;
     font:700 12px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase}
   .pl-box .tag{position:absolute;top:5px;left:7px;pointer-events:none;opacity:.9}
+  .pl-box.bg .tag{top:auto;bottom:6px}      /* the two boxes often start at the same corner */
   .pl-box.chat{border-color:#4ea1ff;background:rgba(78,161,255,.14);color:#8dc4ff}
   .pl-box.bg{border-color:#ff6b6b;background:rgba(255,107,107,.12);color:#ff9d9d}
   .pl-box .h{position:absolute;width:14px;height:14px;background:#fff;border:1px solid #222;border-radius:3px;z-index:3}
@@ -102,9 +206,24 @@
   .pl-box.locked .h{display:none}
   /* width locked to the image: corners only resize vertically */
   .pl-box.wlock .h{cursor:ns-resize}
-  ol.steps{margin:0 0 14px;padding-left:20px;color:var(--dim);font-size:13.5px}
-  ol.steps li{margin-bottom:6px}
-  ol.steps code{color:var(--good);font:12.5px var(--mono)}
+
+  /* alerts list */
+  .al{border:1px solid var(--line);border-radius:12px;margin-bottom:10px;background:var(--panel);overflow:hidden}
+  .al.off .al-head .al-name,.al.off .al-head .al-sum{opacity:.45}
+  .al-head{display:flex;gap:12px;align-items:center;padding:10px 14px;cursor:pointer}
+  .al-head:hover{background:#14141c}
+  .al-head .f.sw{flex:none}
+  .al-name{font:700 13px var(--mono);letter-spacing:.06em;min-width:118px}
+  .al-sum{flex:1;color:var(--dim);font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+  .al-head button{flex:none}
+  .al-car{font:12px var(--mono);color:var(--dim);width:14px;text-align:center}
+  .al-body{display:none;padding:4px 16px 16px;border-top:1px solid var(--line)}
+  .al.open .al-body{display:block}
+  .al-body h4{margin:16px 0 10px;font:700 11px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+  details.help{margin-top:14px;color:var(--dim);font-size:13px}
+  details.help summary{cursor:pointer;color:var(--ink);font-weight:600}
+  details.help code{color:var(--good);font:12.5px var(--mono)}
+  details.help ul{margin:8px 0 0;padding-left:20px}
 </style></head>
 <body>
 
@@ -114,9 +233,8 @@
 
 <nav>
   <button data-tab="conn" class="sel">Connection</button>
-  <button data-tab="chat">Chat overlay</button>
-  <button data-tab="events">Alert overlay</button>
-  <button data-tab="alerts">Alerts</button>
+  <button data-tab="chat">Chat</button>
+  <button data-tab="events">Alerts</button>
   <button data-tab="queue">Alert Queue</button>
   <button data-tab="status">Status</button>
 </nav>
@@ -162,7 +280,7 @@
       <label class="f" id="test-ch-wrap" style="display:none">Test chat and alerts go to
         <select id="test-channel"></select></label>
     </div>
-    <p class="hint" style="margin-top:10px">A source can also choose for itself: add <code>?channel=name</code> to its URL for one channel, or <code>?channel=all</code> for every channel. Tick <b>Tag each line with its channel</b> on the Chat overlay tab to tell merged lines apart.</p>
+    <p class="hint" style="margin-top:10px">A source can also choose for itself: add <code>?channel=name</code> to its URL for one channel, or <code>?channel=all</code> for every channel. Tick <b>Tag each line with its channel</b> on the Chat tab (Text) to tell merged lines apart.</p>
   </div>
 
   <div class="card">
@@ -197,81 +315,54 @@
 
 <!-- ============ CHAT ============ -->
 <section id="tab-chat">
-  <div class="card">
-    <h2>Type</h2>
-    <div class="grid" id="g-chat-type"></div>
-  </div>
-  <div class="card">
-    <h2>Colours and box</h2>
-    <div class="grid" id="g-chat-look"></div>
-  </div>
-  <div class="card">
-    <h2>Placement</h2>
-    <p class="hint">The overlay is a fixed 1920×1080 design that scales to fill the browser source, so everything keeps its proportions at any size. Drag a box to move it, grab a corner to resize. The <b>blue</b> box is where chat text sits (clipped to it); the <b>red</b> box places the background — gradient, glass, solid or an image frame. When an <b>image</b> style is used, the red box's <b>width snaps to the image's width</b> and you set its <b>height</b> by dragging (that height stretches a 9-slice frame). Non-image styles resize freely.</p>
-    <label class="f sw"><input type="checkbox" id="pl-enable"> Position chat &amp; background with these boxes</label>
-    <label class="f sw"><input type="checkbox" id="pl-bgfull"> Background fills the whole screen</label>
-    <div id="pl-stage">
-      <div class="pl-box bg" id="pl-bg"><span class="tag">Background</span><i class="h nw"></i><i class="h ne"></i><i class="h sw"></i><i class="h se"></i></div>
-      <div class="pl-box chat" id="pl-chat"><span class="tag">Chat</span><i class="h nw"></i><i class="h ne"></i><i class="h sw"></i><i class="h se"></i></div>
+  <div class="ed">
+    <div class="ed-main">
+      <div class="looks" id="looks-chat"></div>
+      <div class="subnav" id="sn-chat"></div>
+      <div id="sp-chat"></div>
     </div>
-  </div>
-  <div class="card">
-    <h2>Behaviour</h2>
-    <div class="grid" id="g-chat-behave"></div>
-  </div>
-  <div class="card">
-    <h2>Filters</h2>
-    <div class="grid" id="g-chat-filter"></div>
-    <div class="row">
-      <button class="act" id="save-chat">Save chat settings</button>
-      <button class="sec" id="test-chat">Send a test message</button>
-    </div>
-  </div>
-</section>
-
-<!-- ============ EVENTS LOOK ============ -->
-<section id="tab-events">
-  <div class="card">
-    <h2>Alert appearance</h2>
-    <div class="grid" id="g-events"></div>
-  </div>
-  <div class="card">
-    <h2>Placement</h2>
-    <p class="hint">Same scaled 1920×1080 stage as chat. The <b>blue</b> box is where the alert text sits; the <b>red</b> box places its background — which only appears while an alert is on screen and fades in/out with it (set the times in Alert appearance). When an <b>image</b> style is used the red box's width snaps to the image; drag its height. Leave this off to keep the classic centred alerts.</p>
-    <label class="f sw"><input type="checkbox" id="pl-ev-enable"> Position alerts &amp; background with these boxes</label>
-    <label class="f sw"><input type="checkbox" id="pl-ev-bgfull"> Background fills the whole screen</label>
-    <div id="pl-stage-ev" class="pl-stage">
-      <div class="pl-box bg" id="pl-ev-bg"><span class="tag">Background</span><i class="h nw"></i><i class="h ne"></i><i class="h sw"></i><i class="h se"></i></div>
-      <div class="pl-box chat" id="pl-ev-alert"><span class="tag">Alert</span><i class="h nw"></i><i class="h ne"></i><i class="h sw"></i><i class="h se"></i></div>
-    </div>
-  </div>
-  <div class="card">
-    <h2>Timing &amp; test</h2>
-    <div class="row">
-      <button class="act" id="save-events">Save alert settings</button>
-      <button class="sec" data-test="follow">Test follow</button>
-      <button class="sec" data-test="subscribe">Test sub</button>
-      <button class="sec" data-test="cheer">Test bits</button>
-      <button class="sec" data-test="raid">Test raid</button>
-      <button class="sec" data-test="redeem">Test redeem</button>
-    </div>
+    <aside class="ed-side">
+      <div class="pv">
+        <div class="pv-head"><b>Live preview</b>
+          <div class="pv-tools" id="pvt-chat"></div></div>
+        <div class="pv-view bd-dark" id="pvv-chat"><iframe id="pv-chat" data-src="/twitch/chat?preview=1" title="Chat preview" tabindex="-1"></iframe></div>
+        <p class="pv-note">This is the real chat overlay drawing sample lines with the settings on this tab, saved or not.</p>
+      </div>
+      <div class="savebar"><span class="dirty" id="dirty-chat"></span>
+        <button class="sec" id="rev-chat">Revert</button><button class="act" id="save-chat">Save chat settings</button></div>
+      <div class="tests"><button class="sec" id="test-chat">Send a test message to the stream</button></div>
+    </aside>
   </div>
 </section>
 
 <!-- ============ ALERTS ============ -->
-<section id="tab-alerts">
-  <div class="card">
-    <h2>What fires, and what it says</h2>
-    <p class="hint">Placeholders: <code style="color:var(--good);font-family:var(--mono)">{user} {amount} {tier} {months} {reward} {channel}</code>. Put a HexCast clip name in the last column to fire a sound or gif with the alert.</p>
-    <table class="al"><thead><tr>
-      <th>Event</th><th style="width:52px">On</th><th style="width:74px">Secs</th>
-      <th>Title</th><th>Body</th><th>Clip</th><th style="width:60px"></th>
-    </tr></thead><tbody id="alerts-body"></tbody></table>
-    <div class="row"><button class="act" id="save-alerts">Save alerts</button></div>
+<section id="tab-events">
+  <div class="ed">
+    <div class="ed-main">
+      <div class="looks" id="looks-events"></div>
+      <div class="subnav" id="sn-events"></div>
+      <div id="sp-events"></div>
+    </div>
+    <aside class="ed-side">
+      <div class="pv">
+        <div class="pv-head"><b>Live preview</b>
+          <div class="pv-tools" id="pvt-events"></div></div>
+        <div class="pv-view bd-dark" id="pvv-events"><iframe id="pv-events" data-src="/twitch/events?preview=1" title="Alert preview" tabindex="-1"></iframe></div>
+        <p class="pv-note">This is the real alert overlay showing a sample alert with the settings on this tab, saved or not.</p>
+      </div>
+      <div class="savebar"><span class="dirty" id="dirty-events"></span>
+        <button class="sec" id="rev-events">Revert</button><button class="act" id="save-events">Save alert settings</button></div>
+      <div class="tests"><span style="font:600 11px var(--mono);color:var(--dim);letter-spacing:.1em;text-transform:uppercase;align-self:center">On stream:</span>
+        <button class="sec" data-test="follow">Test follow</button>
+        <button class="sec" data-test="subscribe">Test sub</button>
+        <button class="sec" data-test="cheer">Test bits</button>
+        <button class="sec" data-test="raid">Test raid</button>
+        <button class="sec" data-test="redeem">Test redeem</button></div>
+    </aside>
   </div>
 </section>
 
-<!-- ============ STATUS ============ -->
+<!-- ============ QUEUE ============ -->
 <section id="tab-queue">
   <div class="card">
     <div class="topbar" style="display:flex; justify-content:space-between; align-items:center;">
@@ -292,6 +383,7 @@
   </div>
 </section>
 
+<!-- ============ STATUS ============ -->
 <section id="tab-status">
   <div class="card">
     <h2>Live chat</h2>
@@ -310,246 +402,769 @@
 </main>
 <div id="toast"></div>
 
+<div id="fp-pop" role="dialog" aria-label="Choose a font">
+  <div class="fp-top">
+    <input id="fp-q" placeholder="Search fonts" autocomplete="off" spellcheck="false">
+    <div class="fp-cats" id="fp-cats"></div>
+  </div>
+  <div class="fp-list" id="fp-list"></div>
+  <div class="fp-foot">
+    <div class="two"><input id="fp-g" placeholder="Any Google font, e.g. Bungee Inline" autocomplete="off" spellcheck="false">
+      <button class="sec" id="fp-g-use" type="button">Use</button></div>
+    <div class="two"><button class="sec" id="fp-up" type="button">Upload a font file</button>
+      <span style="font-size:12px;color:var(--dim)">ttf, otf, woff, woff2</span></div>
+    <div class="msg" id="fp-msg"></div>
+  </div>
+</div>
+
+<script src="/twitch/boot.js"></script>
 <script>
 var CFG = null;
 var $ = function(id){ return document.getElementById(id); };
+function clone(o){ return JSON.parse(JSON.stringify(o)); }
+function lsGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+function lsSet(k, v){ try{ localStorage.setItem(k, v); }catch(e){} }
+function _clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
 
 function toast(msg){
   var t = $('toast'); t.textContent = msg; t.classList.add('up');
   clearTimeout(t._t); t._t = setTimeout(function(){ t.classList.remove('up'); }, 1800);
 }
-function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
-/* ---------- field definitions ---------- */
-/* Grouped so the dropdown reads like a font menu. Every name here is a Google
-   font, so loadFont() can fetch it for both the preview and the overlay. */
+/* ======================================================================
+   Fonts: a picker that shows every font in its own face
+   ====================================================================== */
+// Every name here is a Google font (the overlay fetches it by name). Grouped so the list reads like a menu.
 var FONT_GROUPS = [
-  ['Sans-serif',['Inter','Roboto','Open Sans','Lato','Montserrat','Poppins','Rubik','Nunito',
-                 'Work Sans','Manrope','Figtree','Outfit','Sora','Mulish','Comic Neue']],
-  ['Display / Bold',['Oswald','Anton','Bebas Neue','Archivo Black','Righteous','Titan One',
-                     'Fredoka','Baloo 2','Passion One','Russo One','Bungee','Bangers','Luckiest Guy']],
-  ['Handwritten',['Pacifico','Caveat','Permanent Marker','Satisfy','Shadows Into Light']],
-  ['Monospace / Pixel',['JetBrains Mono','Space Mono','Space Grotesk','Press Start 2P','VT323']]
+  ['Sans-serif', ['Inter','Roboto','Open Sans','Lato','Montserrat','Poppins','Rubik','Nunito','Work Sans','Manrope',
+                  'Figtree','Outfit','Sora','Mulish','DM Sans','Plus Jakarta Sans','Quicksand','Barlow','Kanit',
+                  'Urbanist','Comic Neue','Space Grotesk']],
+  ['Display & bold', ['Oswald','Anton','Bebas Neue','Archivo Black','Righteous','Titan One','Fredoka','Baloo 2',
+                      'Passion One','Russo One','Bungee','Bangers','Luckiest Guy','Lilita One','Chango','Staatliches',
+                      'Teko','Alfa Slab One','Paytone One','Rammetto One']],
+  ['Gaming & sci-fi', ['Orbitron','Audiowide','Rajdhani','Saira','Exo 2','Black Ops One','Michroma','Bruno Ace',
+                       'Share Tech','Aldrich','Electrolize','Syncopate','Chakra Petch']],
+  ['Script & handwriting', ['Pacifico','Caveat','Permanent Marker','Satisfy','Shadows Into Light','Dancing Script',
+                            'Kalam','Gloria Hallelujah','Lobster','Sacramento','Amatic SC','Great Vibes','Courgette']],
+  ['Serif', ['Playfair Display','Merriweather','Lora','Cinzel','Cormorant Garamond','Abril Fatface','DM Serif Display',
+             'Crimson Text','Bitter','Libre Baskerville','Special Elite']],
+  ['Mono & pixel', ['JetBrains Mono','Space Mono','Fira Code','IBM Plex Mono','Share Tech Mono','VT323',
+                    'Press Start 2P','Silkscreen','Pixelify Sans']],
+  ['Fun & themed', ['Creepster','Chewy','Fascinate','Frijole','Eater','Nosifer','Metal Mania','Pirata One',
+                    'Rubik Glitch','Bungee Shade','Monoton','Faster One','Henny Penny']]
 ];
-function ensureFont(name){
-  if(!name) return;
-  var id = 'pf-' + name.replace(/[^a-z0-9]/gi,'');
-  if(document.getElementById(id)) return;
-  var l = document.createElement('link'); l.id = id; l.rel = 'stylesheet';
-  l.href = 'https://fonts.googleapis.com/css2?family=' +
-           encodeURIComponent(name).replace(/%20/g,'+') + ':wght@400;600;800&display=swap';
+var FP_ALL = [];
+FONT_GROUPS.forEach(function(g){ g[1].forEach(function(n){ FP_ALL.push(n); }); });
+var FP_UP = [];                 // fonts uploaded to this Hexcast: [{name, file, url, format}]
+var FP_ASKED = {};              // Google fonts already requested for previews
+var FP_ALPHA = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,!?-:&'";
+
+function fpIsUploaded(name){ return FP_UP.some(function(f){ return f.name === name; }); }
+function fpFam(n){ return encodeURIComponent(n).replace(/%20/g, '+'); }
+// Previews ask Google for just the letters the list shows, so a hundred fonts cost a few KB each.
+function fpLink(batch){
+  var seen = {}, txt = '';
+  (FP_ALPHA + batch.join('')).split('').forEach(function(ch){ if(!seen[ch]){ seen[ch] = 1; txt += ch; } });
+  var l = document.createElement('link');
+  l.rel = 'stylesheet';
+  l.href = 'https://fonts.googleapis.com/css2?' + batch.map(function(n){ return 'family=' + fpFam(n); }).join('&') +
+           '&text=' + encodeURIComponent(txt) + '&display=swap';
+  // one name Google does not know must not take the rest of its batch down with it
+  if(batch.length > 1) l.onerror = function(){ batch.forEach(function(n){ fpLink([n]); }); };
   document.head.appendChild(l);
 }
-function buildFontOptions(sel, val){
-  var found = false;
-  FONT_GROUPS.forEach(function(g){
-    var og = document.createElement('optgroup'); og.label = g[0];
-    g[1].forEach(function(f){
-      ensureFont(f);
-      var o = document.createElement('option'); o.value = f; o.textContent = f;
-      o.style.fontFamily = '"' + f + '"';
-      if(f === val){ o.selected = true; found = true; }
-      og.appendChild(o);
-    });
-    sel.appendChild(og);
-  });
-  if(!found && val){
-    var o = document.createElement('option'); o.value = val; o.textContent = val + ' (custom)'; o.selected = true;
-    sel.insertBefore(o, sel.firstChild);
-  }
+function fpLoad(names){
+  var fresh = names.filter(function(n){ n = cleanFont(n); return n && !FP_ASKED[n] && !fpIsUploaded(n); });
+  fresh.forEach(function(n){ FP_ASKED[n] = true; });
+  for(var i = 0; i < fresh.length; i += 20) fpLink(fresh.slice(i, i + 20));
 }
+function fpRegisterUploaded(list){
+  FP_UP = list || [];
+  FP_UP.forEach(function(f){
+    if($('upf-' + f.file)) return;
+    var s = document.createElement('style'); s.id = 'upf-' + f.file;
+    s.textContent = uploadedFaceCss(f);
+    document.head.appendChild(s);
+  });
+}
+async function loadFonts(){ fpRegisterUploaded(await uploadedFonts(true)); }
 
-var CHAT_TYPE = [
-  ['font_family','Font',{t:'font'}],
-  ['font_size','Message size',{t:'num',min:10,max:120}],
-  ['font_weight','Message weight',{t:'sel',opts:[[400,'Regular'],[500,'Medium'],[600,'Semibold'],[700,'Bold'],[800,'Extra bold'],[900,'Black']]}],
-  ['name_weight','Name weight',{t:'sel',opts:[[600,'Semibold'],[700,'Bold'],[800,'Extra bold'],[900,'Black']]}],
-  ['line_height','Line height',{t:'num',min:1,max:2.5,step:0.05}],
-  ['emote_size','Emote size',{t:'num',min:12,max:120}],
-  ['layout','Name placement',{t:'sel',opts:[['inline','Same line'],['stacked','Above message']]}]
-];
-var CHAT_LOOK = [
-  ['text_color','Message colour',{t:'color'}],
-  ['name_color_mode','Name colour',{t:'sel',opts:[['twitch','Viewer\'s own colour'],['custom','Always the same']]}],
-  ['name_color','Name colour (fallback)',{t:'color'}],
-  ['highlight_color','Accent',{t:'color'}],
-  ['bubble','Message background',{t:'bool'}],
-  ['bg_style','Background style',{t:'sel',opts:[['solid','Solid'],['gradient','Gradient'],['animated','Animated gradient'],['glass','Glass / frosted'],['frame','Outlined frame'],['glow','Neon glow'],['image','Image / GIF (fill)'],['slice','Image frame (stretch middle)']]}],
-  ['bubble_color','Background colour',{t:'color'}],
-  ['bubble_opacity','Background opacity',{t:'num',min:0,max:1,step:0.05}],
-  ['bg_color2','Gradient 2nd colour',{t:'color'}],
-  ['bg_gradient_angle','Gradient angle',{t:'num',min:0,max:360}],
-  ['bg_image_url','Image / GIF library',{t:'bgimage'}],
-  ['bg_slice','Frame slice (source px)',{t:'num',min:0,max:300}],
-  ['bg_slice_width','Frame thickness (px)',{t:'num',min:0,max:200}],
-  ['bg_slice_repeat','Frame edges',{t:'sel',opts:[['stretch','Stretch'],['round','Round (tile)'],['repeat','Repeat']]}],
-  ['bg_pad','Image inner padding',{t:'num',min:0,max:120}],
-  ['bg_blur','Glass blur',{t:'num',min:0,max:40}],
-  ['bg_border_color','Frame / glow colour',{t:'color'}],
-  ['bg_border_width','Frame width',{t:'num',min:0,max:14,step:0.5}],
-  ['bubble_radius','Corner radius',{t:'num',min:0,max:60}],
-  ['padding','Padding',{t:'num',min:0,max:60}],
-  ['gap','Space between messages',{t:'num',min:0,max:60}],
-  ['outline','Outline text',{t:'bool'}],
-  ['outline_color','Outline colour',{t:'color'}],
-  ['outline_width','Outline width',{t:'num',min:0,max:8,step:0.5}],
-  ['shadow','Drop shadow',{t:'bool'}]
-];
-var CHAT_BEHAVE = [
-  ['max_messages','Messages on screen',{t:'num',min:1,max:100}],
-  ['fade_after','Remove after (0 = keep)',{t:'num',min:0,max:600}],
-  ['fade_duration','Fade out time',{t:'num',min:0,max:5,step:0.1}],
-  ['direction','Newest message',{t:'sel',opts:[['bottom','At the bottom'],['top','At the top']]}],
-  ['align','Alignment',{t:'sel',opts:[['left','Left'],['center','Centre'],['right','Right']]}],
-  ['width_percent','Width of source',{t:'num',min:10,max:100}],
-  ['animation','Entrance',{t:'sel',opts:[['slide','Slide'],['fade','Fade'],['pop','Pop'],['none','None']]}],
-  ['show_badges','Show badges',{t:'bool'}],
-  ['show_timestamps','Show timestamps',{t:'bool'}],
-  ['show_channel','Tag each line with its channel',{t:'bool'}],
-  ['highlight_first','Mark first-time chatters',{t:'bool'}]
-];
-var CHAT_FILTER = [
-  ['third_party_emotes','7TV / BTTV / FFZ emotes',{t:'bool'}],
-  ['hide_commands','Hide messages starting with !',{t:'bool'}],
-  ['hide_users','Hide these accounts',{t:'text',ph:'nightbot, streamelements'}]
-];
-var EVENT_FIELDS = [
-  ['font_family','Font',{t:'font'}],
-  ['font_size','Main size',{t:'num',min:10,max:160}],
-  ['sub_font_size','Label size',{t:'num',min:8,max:100}],
-  ['text_color','Text colour',{t:'color'}],
-  ['accent_color','Accent colour',{t:'color'}],
-  ['bg_style','Background style',{t:'sel',opts:[['solid','Solid'],['gradient','Gradient'],['animated','Animated gradient'],['glass','Glass / frosted'],['frame','Outlined frame'],['glow','Neon glow'],['image','Image / GIF (fill)'],['slice','Image frame (stretch middle)']]}],
-  ['bubble_color','Background colour',{t:'color'}],
-  ['bubble_opacity','Background opacity',{t:'num',min:0,max:1,step:0.05}],
-  ['bg_color2','Gradient 2nd colour',{t:'color'}],
-  ['bg_gradient_angle','Gradient angle',{t:'num',min:0,max:360}],
-  ['bg_image_url','Image / GIF library',{t:'bgimage'}],
-  ['bg_slice','Frame slice (source px)',{t:'num',min:0,max:300}],
-  ['bg_slice_width','Frame thickness (px)',{t:'num',min:0,max:200}],
-  ['bg_slice_repeat','Frame edges',{t:'sel',opts:[['stretch','Stretch'],['round','Round (tile)'],['repeat','Repeat']]}],
-  ['bg_pad','Image inner padding',{t:'num',min:0,max:120}],
-  ['bg_blur','Glass blur',{t:'num',min:0,max:40}],
-  ['bg_border_color','Frame / glow colour',{t:'color'}],
-  ['bg_border_width','Frame width',{t:'num',min:0,max:14,step:0.5}],
-  ['bubble_radius','Corner radius',{t:'num',min:0,max:60}],
-  ['align','Horizontal position',{t:'sel',opts:[['left','Left'],['center','Centre'],['right','Right']]}],
-  ['valign','Vertical position',{t:'sel',opts:[['top','Top'],['middle','Middle'],['bottom','Bottom']]}],
-  ['animation','Entrance',{t:'sel',opts:[['pop','Pop'],['slide','Slide'],['fade','Fade']]}],
-  ['fade_in','Fade in time',{t:'num',min:0,max:5,step:0.05}],
-  ['fade_out','Fade out time',{t:'num',min:0,max:5,step:0.05}],
-  ['default_duration','Default seconds',{t:'num',min:1,max:60}],
-  ['gap_between','Gap between alerts',{t:'num',min:0,max:10,step:0.1}],
-  ['outline','Outline text',{t:'bool'}],
-  ['outline_color','Outline colour',{t:'color'}],
-  ['show_user_message','Show viewer message',{t:'bool'}]
-];
+var FP = {btn:null, opts:null, cat:'all', q:'', hl:-1};
+function fpEntries(){
+  // [{name, group, up}] for the current search and category
+  var out = [], q = FP.q.toLowerCase();
+  function add(n, group, up){ if(!q || n.toLowerCase().indexOf(q) >= 0) out.push({name:n, group:group, up:up}); }
+  if(FP.cat === 'all' || FP.cat === 'Uploaded') FP_UP.forEach(function(f){ add(f.name, 'uploaded', f); });
+  FONT_GROUPS.forEach(function(g){ if(FP.cat === 'all' || FP.cat === g[0]) g[1].forEach(function(n){ add(n, g[0]); }); });
+  return out;
+}
+function fpRender(){
+  var list = $('fp-list'), cur = FP.opts.value, rows = '';
+  var entries = fpEntries();
+  if(FP.opts.same && !FP.q && (FP.cat === 'all')){
+    rows += '<div class="fp-row' + (cur === '' ? ' sel' : '') + '" data-v=""><span class="n" style="font-family:inherit;font-size:16px">' +
+            esc(FP.opts.same) + '</span></div>';
+  }
+  // a name that is in no list (typed in, or from an older setting) is still shown, first
+  if(cur && !FP_ALL.some(function(n){ return n === cur; }) && !fpIsUploaded(cur) && !FP.q && FP.cat === 'all'){
+    rows += '<div class="fp-row sel" data-v="' + esc(cur) + '"><span class="n" style="font-family:\'' + esc(cleanFont(cur)) + '\'">' + esc(cur) + '</span><span class="s">your font</span></div>';
+  }
+  entries.forEach(function(e){
+    rows += '<div class="fp-row' + (e.name === cur ? ' sel' : '') + '" data-v="' + esc(e.name) + '"><span class="n" style="font-family:\'' +
+            esc(cleanFont(e.name)) + '\'">' + esc(e.name) + '</span>' +
+            (e.up ? '<span class="x" data-del="' + esc(e.up.file) + '" title="Delete this uploaded font">delete</span>' : '<span class="s">' + esc(e.group) + '</span>') + '</div>';
+  });
+  list.innerHTML = rows || '<div class="fp-empty">No font matches. Type its Google Fonts name below and press Use.</div>';
+  FP.hl = -1;
+  var sel = list.querySelector('.fp-row.sel');
+  if(sel) list.scrollTop = Math.max(0, sel.offsetTop - 80);
+}
+function fpCats(){
+  var cats = ['all'].concat(FONT_GROUPS.map(function(g){ return g[0]; }));
+  if(FP_UP.length) cats.splice(1, 0, 'Uploaded');
+  $('fp-cats').innerHTML = cats.map(function(c){
+    return '<button type="button" data-cat="' + esc(c) + '" class="' + (FP.cat === c ? 'sel' : '') + '">' + (c === 'all' ? 'All' : esc(c)) + '</button>';
+  }).join('');
+}
+function fpMsg(t, bad){ var m = $('fp-msg'); m.textContent = t || ''; m.className = 'msg' + (bad ? ' bad' : ''); }
+function fpClose(){ $('fp-pop').classList.remove('open'); FP.btn = null; }
+function fpChoose(v){
+  var o = FP.opts; fpClose();
+  if(o) o.set(v);
+}
+function fpOpen(btn, opts){
+  FP.btn = btn; FP.opts = opts; FP.q = ''; FP.cat = 'all';
+  $('fp-q').value = ''; $('fp-g').value = ''; fpMsg('');
+  fpLoad(FP_ALL);
+  fpCats(); fpRender();
+  var pop = $('fp-pop'), r = btn.getBoundingClientRect();
+  pop.classList.add('open');
+  var h = Math.min(560, window.innerHeight - 24);
+  pop.style.maxHeight = h + 'px';
+  var left = _clamp(r.left, 8, Math.max(8, window.innerWidth - pop.offsetWidth - 8));
+  var top = r.bottom + 6;
+  if(top + Math.min(pop.offsetHeight, h) > window.innerHeight - 8) top = Math.max(8, r.top - Math.min(pop.offsetHeight, h) - 6);
+  pop.style.left = left + 'px'; pop.style.top = top + 'px';
+  $('fp-q').focus();
+}
+function fpMove(d){
+  var rows = $('fp-list').querySelectorAll('.fp-row');
+  if(!rows.length) return;
+  if(FP.hl >= 0 && rows[FP.hl]) rows[FP.hl].classList.remove('hl');
+  FP.hl = _clamp(FP.hl + d, 0, rows.length - 1);
+  rows[FP.hl].classList.add('hl');
+  rows[FP.hl].scrollIntoView({block:'nearest'});
+}
+function fpWire(){
+  $('fp-q').addEventListener('input', function(){ FP.q = this.value.trim(); fpRender(); });
+  $('fp-q').addEventListener('keydown', function(e){
+    if(e.key === 'ArrowDown'){ e.preventDefault(); fpMove(1); }
+    else if(e.key === 'ArrowUp'){ e.preventDefault(); fpMove(-1); }
+    else if(e.key === 'Enter'){
+      var rows = $('fp-list').querySelectorAll('.fp-row');
+      var row = FP.hl >= 0 ? rows[FP.hl] : (FP.q && rows.length === 1 ? rows[0] : null);
+      if(row) fpChoose(row.dataset.v);
+    }
+  });
+  $('fp-cats').addEventListener('click', function(e){
+    var b = e.target.closest('button'); if(!b) return;
+    FP.cat = b.dataset.cat; fpCats(); fpRender();
+  });
+  $('fp-list').addEventListener('click', function(e){
+    var del = e.target.closest('[data-del]');
+    if(del){ e.stopPropagation(); fpDeleteFont(del.dataset.del); return; }
+    var row = e.target.closest('.fp-row');
+    if(row) fpChoose(row.dataset.v);
+  });
+  $('fp-g-use').onclick = fpUseGoogle;
+  $('fp-g').addEventListener('keydown', function(e){ if(e.key === 'Enter'){ e.preventDefault(); fpUseGoogle(); } });
+  $('fp-up').onclick = fpUpload;
+  document.addEventListener('mousedown', function(e){
+    if(FP.btn && !$('fp-pop').contains(e.target) && !FP.btn.contains(e.target)) fpClose();
+  });
+  document.addEventListener('keydown', function(e){ if(e.key === 'Escape' && FP.btn) fpClose(); });
+  window.addEventListener('scroll', function(e){ if(FP.btn && !$('fp-pop').contains(e.target)) fpClose(); }, true);
+  window.addEventListener('resize', function(){ if(FP.btn) fpClose(); });
+}
+// Any Google font by name: ask Google for it first, so a typo is told here and not found out on stream.
+function fpUseGoogle(){
+  var name = cleanFont($('fp-g').value);
+  if(!name){ fpMsg('Type the name of a Google font.', true); return; }
+  fpMsg('Looking for ' + name + '...');
+  var l = document.createElement('link');
+  l.rel = 'stylesheet';
+  l.href = 'https://fonts.googleapis.com/css2?family=' + fpFam(name) + '&text=' + encodeURIComponent(FP_ALPHA) + '&display=swap';
+  l.onload = function(){ FP_ASKED[name] = true; fpChoose(name); };
+  l.onerror = function(){ fpMsg('Google Fonts has no font called "' + name + '". Check the spelling (capitals count).', true); };
+  document.head.appendChild(l);
+}
+function fpUpload(){
+  var inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = '.ttf,.otf,.woff,.woff2';
+  inp.onchange = async function(){
+    var f = inp.files && inp.files[0]; if(!f) return;
+    var fd = new FormData(); fd.append('file', f);
+    fpMsg('Uploading...');
+    try{
+      var r = await fetch('/twitch/api/fonts', {method:'POST', body: fd}), d = await r.json();
+      if(!r.ok){ fpMsg(d.error || 'Upload failed', true); return; }
+      uploadedFonts(true); fpRegisterUploaded(d.fonts);
+      toast('Uploaded ' + d.name);
+      fpChoose(d.name);
+    }catch(e){ fpMsg('Upload failed', true); }
+  };
+  inp.click();
+}
+async function fpDeleteFont(file){
+  try{
+    var r = await fetch('/twitch/api/fonts/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({file:file})});
+    var d = await r.json();
+    FP_UP = d.fonts || []; uploadedFonts(true);
+    var st = $('upf-' + file); if(st) st.remove();
+    fpCats(); fpRender(); toast('Font deleted');
+  }catch(e){ fpMsg('Delete failed', true); }
+}
+fpWire();
 
-/* ---------- background image library ---------- */
+/* ======================================================================
+   Pictures: the shared library as a grid of thumbnails
+   ====================================================================== */
 var BG_LIST = [];
+var BGP = [];                   // the pickers on screen, so each can repaint after an upload or delete
 async function loadBackgrounds(){
   try{ var d = await (await fetch('/twitch/api/backgrounds')).json(); BG_LIST = d.backgrounds || []; }
   catch(e){ BG_LIST = []; }
 }
-function fillBgOptions(sel, val){
-  sel.innerHTML = '';
-  var none = document.createElement('option'); none.value = ''; none.textContent = '— none —';
-  sel.appendChild(none);
-  var found = false;
-  BG_LIST.forEach(function(b){
-    var o = document.createElement('option'); o.value = b.url; o.textContent = b.name;
-    if(b.url === val){ o.selected = true; found = true; }
-    sel.appendChild(o);
-  });
-  // Keep a value that isn't in the library (e.g. an older pasted URL) usable.
-  if(!found && val){
-    var o = document.createElement('option'); o.value = val; o.textContent = val + ' (external)'; o.selected = true;
-    sel.appendChild(o);
-  }
-}
-function refreshBgSelects(opts){
-  opts = opts || {};
-  document.querySelectorAll('select[data-bgimage]').forEach(function(sel){
-    var cur = sel.value;
-    if(opts.removed && cur === opts.removed) cur = '';
-    fillBgOptions(sel, cur);
-  });
-}
-var _bgFileInput = null;
-function bgUpload(targetSel){
-  if(!_bgFileInput){
-    _bgFileInput = document.createElement('input');
-    _bgFileInput.type = 'file';
-    _bgFileInput.accept = '.png,.jpg,.jpeg,.gif,.webp,.apng,image/png,image/jpeg,image/gif,image/webp';
-    _bgFileInput.style.display = 'none';
-    document.body.appendChild(_bgFileInput);
-  }
-  _bgFileInput.onchange = async function(){
-    var f = _bgFileInput.files && _bgFileInput.files[0];
-    _bgFileInput.value = '';
-    if(!f) return;
+function bgRepaint(){ BGP = BGP.filter(function(p){ return document.body.contains(p.el); }); BGP.forEach(function(p){ p.paint(); }); }
+function bgUpload(done){
+  var inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = '.png,.jpg,.jpeg,.gif,.webp,.apng,image/png,image/jpeg,image/gif,image/webp';
+  inp.onchange = async function(){
+    var f = inp.files && inp.files[0]; if(!f) return;
     var fd = new FormData(); fd.append('file', f);
-    toast('Uploading…');
+    toast('Uploading...');
     try{
-      var r = await fetch('/twitch/api/backgrounds', {method:'POST', body: fd});
-      var d = await r.json();
+      var r = await fetch('/twitch/api/backgrounds', {method:'POST', body: fd}), d = await r.json();
       if(!r.ok){ toast(d.error || 'Upload failed'); return; }
       BG_LIST = d.backgrounds || [];
-      refreshBgSelects();
-      if(targetSel && d.url){ targetSel.value = d.url; targetSel.dispatchEvent(new Event('change')); }   // point this picker at the new file + snap width
+      if(d.url) done(d.url);
+      bgRepaint();
       toast('Uploaded ' + d.name);
     }catch(e){ toast('Upload failed'); }
   };
-  _bgFileInput.click();
+  inp.click();
 }
 async function bgDelete(url){
-  if(!url){ toast('Pick a background first'); return; }
   var name = url.split('/').pop();
   try{
-    var r = await fetch('/twitch/api/backgrounds/delete', {
-      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name: name})
-    });
+    var r = await fetch('/twitch/api/backgrounds/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name: name})});
     var d = await r.json();
     BG_LIST = d.backgrounds || [];
-    refreshBgSelects({removed: url});
+    // anything being edited that used the picture stops using it
+    ['chat', 'events'].forEach(function(s){
+      if(DRAFT[s].bg_image_url === url){ DRAFT[s].bg_image_url = ''; setDirty(s, true); pvSchedule(s); }
+    });
+    Object.keys(DRAFT.alerts).forEach(function(k){
+      ['image', 'bg_image_url'].forEach(function(f){
+        if(DRAFT.alerts[k][f] === url){ DRAFT.alerts[k][f] = ''; setDirty('events', true); pvSchedule('events'); }
+      });
+    });
+    bgRepaint(); refreshVisibility('events'); refreshVisibility('chat');
     toast('Deleted ' + name);
   }catch(e){ toast('Delete failed'); }
 }
-
-/* ---------- placement editor ---------- */
-var PLACE = {};
-var bgLockW = null;   // when an image frame is used, the box width locks to the
-                      // image's own width (% of the 1920 design); null = free.
-function _num(v, d){ v = parseFloat(v); return isNaN(v) ? d : v; }
-function _clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
-function _setGeo(el, x, y, w, h){ el.style.left=x+'%'; el.style.top=y+'%'; el.style.width=w+'%'; el.style.height=h+'%'; }
-// Snap the BACKGROUND box width to the chosen image's native width; its height +
-// position stay draggable. Only applies when the style actually uses the image.
-function snapBoxToImage(url){
-  var img = new Image();
-  img.onload = function(){
-    if(!img.naturalWidth){ return; }
-    var wpct = _clamp(img.naturalWidth / 1920 * 100, 5, 100);
-    bgLockW = wpct;
-    PLACE.bg_box_w = wpct;
-    if(PLACE.bg_box_x + PLACE.bg_box_w > 100) PLACE.bg_box_x = Math.max(0, 100 - PLACE.bg_box_w);
-    _setGeo($('pl-bg'), PLACE.bg_box_x, PLACE.bg_box_y, PLACE.bg_box_w, PLACE.bg_box_h);
-    $('pl-bg').classList.add('wlock');
-  };
-  img.onerror = function(){ bgLockW = null; $('pl-bg').classList.remove('wlock'); };
-  img.src = url;
-}
-function updateWidthLock(){
-  var styleSel = $('f-chat-bg_style'), urlSel = $('f-chat-bg_image_url');
-  var style = styleSel ? styleSel.value : '', url = urlSel ? urlSel.value : '';
-  if((style === 'image' || style === 'slice') && url){
-    snapBoxToImage(url);
-  } else {
-    bgLockW = null;
-    var box = $('pl-bg'); if(box) box.classList.remove('wlock');
+function bgPicker(ctx, key){
+  var grid = document.createElement('div'); grid.className = 'bgp';
+  function tile(o){
+    var b = document.createElement('button'); b.type = 'button';
+    b.className = 'bgp-t' + (o.cls ? ' ' + o.cls : '') + (o.sel ? ' sel' : '');
+    if(o.title) b.title = o.title;
+    if(o.url){
+      var im = document.createElement('span'); im.className = 'im'; im.style.backgroundImage = cssUrl(o.url); b.appendChild(im);
+    } else { b.textContent = o.label; }
+    if(o.del){
+      var x = document.createElement('span'); x.className = 'x'; x.textContent = '×'; x.title = 'Delete this picture';
+      x.onclick = function(e){
+        e.stopPropagation();
+        if(!x.classList.contains('arm')){      // the first click asks, the second deletes
+          x.classList.add('arm'); x.textContent = 'Delete?';
+          setTimeout(function(){ x.classList.remove('arm'); x.textContent = '×'; }, 3000);
+          return;
+        }
+        bgDelete(o.url);
+      };
+      b.appendChild(x);
+    }
+    b.onclick = o.click;
+    return b;
   }
+  function paint(){
+    var cur = ctx.get(key) || '', found = false;
+    grid.innerHTML = '';
+    grid.appendChild(tile({cls:'none', label:'None', sel:!cur, click:function(){ pick(''); }}));
+    BG_LIST.forEach(function(b){
+      if(b.url === cur) found = true;
+      grid.appendChild(tile({url:b.url, title:b.name, sel:b.url === cur, del:true, click:function(){ pick(b.url); }}));
+    });
+    if(cur && !found) grid.appendChild(tile({url:cur, title:cur, sel:true, click:function(){}}));    // a link from an older setting
+    grid.appendChild(tile({cls:'up', label:'+ Upload', click:function(){ bgUpload(pick); }}));
+  }
+  function pick(url){ ctx.set(key, url); bgRepaint(); }
+  BGP.push({el:grid, paint:paint});
+  paint();
+  return grid;
 }
-function reflectBgFull(){ $('pl-bg').classList.toggle('locked', $('pl-bgfull').checked); }
+
+/* ======================================================================
+   Drafts: what the forms hold. Nothing reaches the stream until Save.
+   ====================================================================== */
+var DRAFT = {chat:{}, events:{}, alerts:{}};
+var DIRTY = {chat:false, events:false};
+function loadDrafts(scope){
+  if(!scope || scope === 'chat') DRAFT.chat = clone(CFG.chat);
+  if(!scope || scope === 'events'){ DRAFT.events = clone(CFG.events); DRAFT.alerts = clone(CFG.alerts); }
+}
+function setDirty(scope, on){
+  DIRTY[scope] = on;
+  var el = $('dirty-' + scope);
+  if(el) el.textContent = on ? '● unsaved changes' : '';
+}
+function touch(scope, key, val){
+  DRAFT[scope][key] = val;
+  setDirty(scope, true);
+  if(key === 'bg_style' || key === 'bg_image_url' || key === 'bg_fit') updateWidthLock(scope);
+  if(key === 'box_enabled' || key === 'bg_full') reflectPlacement(scope);
+  refreshVisibility(scope);
+  pvSchedule(scope);
+}
+function touchAlert(kind, key, val){
+  DRAFT.alerts[kind][key] = val;
+  setDirty('events', true);
+  if(key === 'title' || key === 'body') paintAlertSummary(kind);
+  var row = document.querySelector('.al[data-kind="' + kind + '"]');
+  if(row && key === 'on') row.classList.toggle('off', !val);
+  PVS.events.kind = kind; syncKindSelect();
+  refreshVisibility('events');
+  pvSchedule('events');
+}
+function scopeCtx(scope){
+  return {scope:scope, data:function(){ return DRAFT[scope]; }, get:function(k){ return DRAFT[scope][k]; },
+          set:function(k, v){ touch(scope, k, v); }};
+}
+function alertCtx(kind){
+  return {scope:'events', data:function(){ return DRAFT.alerts[kind]; }, get:function(k){ return DRAFT.alerts[kind][k]; },
+          set:function(k, v){ touchAlert(kind, k, v); }};
+}
+
+/* ======================================================================
+   The settings, as data. A field is [key, label, spec]; spec.when(draft) hides it
+   while it makes no difference, so each page shows only what matters.
+   ====================================================================== */
+function styleIs(){ var a = [].slice.call(arguments); return function(d){ return a.indexOf(d.bg_style) >= 0; }; }
+var WEIGHTS = [[400,'Regular'],[500,'Medium'],[600,'Semibold'],[700,'Bold'],[800,'Extra bold'],[900,'Black']];
+var TRANSFORMS = [['none','As typed'],['uppercase','UPPERCASE'],['lowercase','lowercase'],['capitalize','Capitalised']];
+var BG_STYLES = [['solid','Solid'],['gradient','Gradient'],['animated','Animated gradient'],['glass','Glass / frosted'],
+                 ['frame','Outlined frame'],['glow','Neon glow'],['image','Picture (fills the box)'],['slice','Picture frame (9-slice)']];
+var SHARED_ANIMS = [['fade','Fade'],['pop','Pop'],['zoom','Zoom in'],['rise','Rise'],['drop','Drop'],['right','From the right'],
+                    ['bounce','Bounce'],['blur','Blur in'],['flip','Flip up'],['none','None']];
+var CHAT_ANIMS = [['slide','Slide from the left']].concat(SHARED_ANIMS);
+var EVENT_ANIMS = [['slide','Slide down']].concat(SHARED_ANIMS);
+var EXITS = [['fade','Fade'],['zoom','Shrink'],['up','Float up'],['down','Sink'],['none','Vanish']];
+
+function outlineShadow(){
+  return {title:'Outline & shadow', fields:[
+    ['outline','Outline the text',{t:'bool'}],
+    ['outline_color','Outline colour',{t:'color',when:function(d){ return d.outline; }}],
+    ['outline_width','Outline width',{t:'num',min:0,max:8,step:0.5,unit:'px',when:function(d){ return d.outline; }}],
+    ['shadow','Drop shadow',{t:'bool'}],
+    ['shadow_color','Shadow colour',{t:'color',when:function(d){ return d.shadow; }}],
+    ['shadow_opacity','Shadow strength',{t:'num',min:0,max:1,step:0.05,when:function(d){ return d.shadow; }}],
+    ['shadow_blur','Shadow blur',{t:'num',min:0,max:30,unit:'px',when:function(d){ return d.shadow; }}],
+    ['shadow_x','Shadow across',{t:'num',min:-20,max:20,unit:'px',when:function(d){ return d.shadow; }}],
+    ['shadow_y','Shadow down',{t:'num',min:-20,max:20,unit:'px',when:function(d){ return d.shadow; }}]
+  ]};
+}
+// The background styles are the same vocabulary on chat and on alerts.
+function backgroundGroups(scope){
+  var styleFields = [];
+  if(scope === 'chat') styleFields.push(['bubble',
+    function(d){ return d.box_enabled ? 'Also put a plain bubble behind each message' : 'Draw a background behind each message'; },
+    {t:'bool'}]);
+  styleFields = styleFields.concat([
+    ['bg_style','Style',{t:'sel',opts:BG_STYLES}],
+    ['bubble_color','Colour',{t:'color'}],
+    ['bubble_opacity','Opacity',{t:'num',min:0,max:1,step:0.05}],
+    ['bubble_radius','Corner radius',{t:'num',min:0,max:60,unit:'px',when:function(d){ return d.bg_style !== 'slice'; }}],
+    ['bg_shadow','Soft shadow',{t:'num',min:0,max:60,unit:'px'}],
+    ['bg_color2','Second colour',{t:'color',when:styleIs('gradient','animated')}],
+    ['bg_gradient_angle','Gradient angle',{t:'num',min:0,max:360,unit:'°',when:styleIs('gradient','animated')}],
+    ['bg_blur','Blur',{t:'num',min:0,max:40,unit:'px',when:styleIs('glass')}],
+    ['bg_border_color','Border / glow colour',{t:'color',when:styleIs('frame','glow')}],
+    ['bg_border_width','Border width',{t:'num',min:0,max:14,step:0.5,unit:'px',when:styleIs('frame')}]
+  ]);
+  var noteChat = function(d){
+    return d.box_enabled
+      ? 'Placement is on (Layout tab): this styles the <b>panel</b> behind all of chat.'
+      : 'Placement is off (Layout tab): this styles <b>each message</b>. Turn placement on to put one panel, such as a picture frame, behind all of chat.';
+  };
+  var noteEvents = function(d){
+    return d.box_enabled
+      ? 'Placement is on (Layout tab): this styles the <b>background box</b>, which fades in and out with each alert.'
+      : 'Placement is off (Layout tab): this styles the alert card itself.';
+  };
+  return [
+    {title:'Style', note:scope === 'chat' ? noteChat : noteEvents, fields:styleFields},
+    {title:'Picture', when:styleIs('image','slice'), fields:[
+      ['bg_image_url','Pick from your library',{t:'bgimage',tip:'PNG, JPG, GIF, WebP or APNG, up to 25 MB. Animated GIFs work in the fill style.'}],
+      ['bg_fit','Fit',{t:'sel',when:styleIs('image'),opts:[['cover','Fill the box (crop the edges)'],['contain','Show all of it'],['stretch','Stretch to the box'],['tile','Repeat as tiles'],['center','Actual size, centred']]}],
+      ['bg_position','Anchor',{t:'sel',when:styleIs('image'),opts:[['center','Centre'],['top','Top'],['bottom','Bottom'],['left','Left'],['right','Right']]}],
+      ['bg_image_opacity','Picture opacity',{t:'num',min:0,max:1,step:0.05,when:styleIs('image')}],
+      ['bg_image_dim','Darken the picture',{t:'num',min:0,max:1,step:0.05,when:styleIs('image')}],
+      ['bg_slice','Corner size in the file',{t:'num',min:0,max:300,unit:'px',when:styleIs('slice'),tip:'How far in from each edge of the picture the fixed corner ends.'}],
+      ['bg_slice_width','Corner size on screen',{t:'num',min:0,max:200,unit:'px',when:styleIs('slice')}],
+      ['bg_slice_repeat','Edges',{t:'sel',when:styleIs('slice'),opts:[['stretch','Stretch'],['round','Round (tile)'],['repeat','Repeat']]}],
+      ['bg_pad','Space inside the picture',{t:'num',min:0,max:120,unit:'px'}]
+    ]}
+  ];
+}
+
+var UI = {};
+UI.chat = [
+  {id:'text', label:'Text', groups:[
+    {title:'Messages', fields:[
+      ['font_family','Font',{t:'font'}],
+      ['font_size','Size',{t:'num',min:10,max:120,unit:'px'}],
+      ['font_weight','Weight',{t:'sel',opts:WEIGHTS}],
+      ['line_height','Line height',{t:'num',min:1,max:2.5,step:0.05}],
+      ['letter_spacing','Letter spacing',{t:'num',min:-2,max:12,step:0.5,unit:'px'}],
+      ['text_transform','Capitals',{t:'sel',opts:TRANSFORMS}],
+      ['text_color','Colour',{t:'color'}]
+    ]},
+    {title:'Names', fields:[
+      ['name_font_family','Font',{t:'font',same:'Same as the message'}],
+      ['name_scale','Size',{t:'num',min:50,max:200,unit:'%'}],
+      ['name_weight','Weight',{t:'sel',opts:WEIGHTS.slice(1)}],
+      ['name_transform','Capitals',{t:'sel',opts:TRANSFORMS}],
+      ['name_color_mode','Colour',{t:'sel',opts:[['twitch','The viewer\'s own colour'],['custom','Always the same']]}],
+      ['name_color','Fixed colour',{t:'color',tip:'Also used for viewers who have not picked one.'}],
+      ['layout','Name placement',{t:'sel',opts:[['inline','Same line'],['stacked','Above the message']]}]
+    ]},
+    {title:'Badges, emotes & tags', fields:[
+      ['show_badges','Show badges',{t:'bool'}],
+      ['badge_scale','Badge size',{t:'num',min:50,max:250,unit:'%',when:function(d){ return d.show_badges; }}],
+      ['emote_size','Emote size',{t:'num',min:12,max:120,unit:'px'}],
+      ['show_timestamps','Show the time',{t:'bool'}],
+      ['show_channel','Tag each line with its channel',{t:'bool'}]
+    ]},
+    outlineShadow()
+  ]},
+  {id:'bg', label:'Background', groups:backgroundGroups('chat')},
+  {id:'layout', label:'Layout', custom:'placement', groups:[
+    {title:'The chat box', fields:[
+      ['direction','Newest message',{t:'sel',opts:[['bottom','At the bottom'],['top','At the top']]}],
+      ['align','Alignment',{t:'sel',opts:[['left','Left'],['center','Centre'],['right','Right']]}],
+      ['width_percent','Width of the box',{t:'num',min:10,max:100,unit:'%'}],
+      ['max_messages','Messages on screen',{t:'num',min:1,max:100}],
+      ['padding','Padding inside a message',{t:'num',min:0,max:60,unit:'px'}],
+      ['gap','Space between messages',{t:'num',min:0,max:60,unit:'px'}],
+      ['fade_edge','Fade the oldest lines',{t:'num',min:0,max:400,unit:'px',tip:'Old lines melt away over this much of the box\'s edge. 0 = off.'}]
+    ]}
+  ]},
+  {id:'motion', label:'Motion', groups:[
+    {title:'Coming in', fields:[
+      ['animation','Entrance',{t:'sel',opts:CHAT_ANIMS}],
+      ['anim_duration','Entrance time',{t:'num',min:0.05,max:2,step:0.05,unit:'s',when:function(d){ return d.animation !== 'none'; }}]
+    ]},
+    {title:'Going away', fields:[
+      ['fade_after','Remove a message after',{t:'num',min:0,max:600,unit:'s',tip:'0 keeps messages until newer ones push them off.'}],
+      ['animation_out','Exit',{t:'sel',opts:EXITS,when:function(d){ return d.fade_after > 0; }}],
+      ['fade_duration','Exit time',{t:'num',min:0,max:5,step:0.1,unit:'s',when:function(d){ return d.fade_after > 0 && d.animation_out !== 'none'; }}]
+    ]}
+  ]},
+  {id:'rules', label:'Highlights & filters', groups:[
+    {title:'Accent', fields:[
+      ['highlight_color','Accent colour',{t:'color',tip:'Used for @mentions and the first-timer bar.'}]
+    ]},
+    {title:'Who stands out', fields:[
+      ['highlight_first','Bar beside a first-time chatter',{t:'bool'}],
+      ['mark_roles','Bar beside the broadcaster, mods, VIPs and subs',{t:'bool'}],
+      ['broadcaster_color','Broadcaster',{t:'color',when:function(d){ return d.mark_roles; }}],
+      ['mod_color','Moderator',{t:'color',when:function(d){ return d.mark_roles; }}],
+      ['vip_color','VIP',{t:'color',when:function(d){ return d.mark_roles; }}],
+      ['sub_color','Subscriber',{t:'color',when:function(d){ return d.mark_roles; }}],
+      ['role_bar_width','Bar width',{t:'num',min:1,max:16,unit:'px',when:function(d){ return d.mark_roles || d.highlight_first; }}]
+    ]},
+    {title:'What is shown', fields:[
+      ['third_party_emotes','7TV / BTTV / FFZ emotes',{t:'bool'}],
+      ['hide_commands','Hide messages starting with !',{t:'bool'}],
+      ['hide_users','Hide these accounts',{t:'text',ph:'nightbot, streamelements'}]
+    ]}
+  ]},
+  {id:'css', label:'Custom CSS', custom:'css', cssHelp:
+    '<li><code>#wrap</code> the chat box, <code>#bgbox</code> the panel behind it, <code>#list</code> the column of lines</li>' +
+    '<li><code>.msg</code> one line; also <code>.msg.first</code> (first-time chatter) and <code>.role-mod</code>, <code>.role-vip</code>, <code>.role-sub</code>, <code>.role-broadcaster</code></li>' +
+    '<li>inside a line: <code>.name</code>, <code>.badge</code>, <code>.emote</code>, <code>.mention</code>, <code>.cheer</code>, <code>.time</code>, <code>.chan</code>, <code>.reply</code></li>' +
+    '<li>example: <code>.msg{ border-bottom:1px solid #fff3 }</code></li>'}
+];
+UI.events = [
+  {id:'alerts', label:'Alerts', custom:'alerts'},
+  {id:'text', label:'Text', groups:[
+    {title:'Look', fields:[
+      ['font_family','Font',{t:'font'}],
+      ['text_color','Text colour',{t:'color'}],
+      ['accent_color','Accent colour',{t:'color',tip:'The label colour and the edge of an alert. Each alert can override it.'}],
+      ['letter_spacing','Letter spacing',{t:'num',min:-2,max:12,step:0.5,unit:'px'}]
+    ]},
+    {title:'Label (the small line above)', fields:[
+      ['title_font_family','Font',{t:'font',same:'Same as the rest'}],
+      ['sub_font_size','Size',{t:'num',min:8,max:100,unit:'px'}],
+      ['title_weight','Weight',{t:'sel',opts:WEIGHTS}],
+      ['title_transform','Capitals',{t:'sel',opts:TRANSFORMS}],
+      ['title_spacing','Letter spacing',{t:'num',min:0,max:0.5,step:0.01,unit:'em'}],
+      ['title_color','Colour',{t:'color',opt:'Use the accent'}]
+    ]},
+    {title:'Main line', fields:[
+      ['font_size','Size',{t:'num',min:10,max:160,unit:'px'}],
+      ['body_weight','Weight',{t:'sel',opts:WEIGHTS}],
+      ['text_transform','Capitals',{t:'sel',opts:TRANSFORMS}],
+      ['body_color','Colour',{t:'color',opt:'Use the text colour'}]
+    ]},
+    {title:'Viewer\'s message', fields:[
+      ['show_user_message','Show it',{t:'bool'}],
+      ['note_color','Colour',{t:'color',opt:'Use the text colour',when:function(d){ return d.show_user_message; }}],
+      ['note_italic','Italic',{t:'bool',when:function(d){ return d.show_user_message; }}]
+    ]},
+    outlineShadow()
+  ]},
+  {id:'bg', label:'Background', groups:backgroundGroups('events').concat([
+    {title:'Accent edge', fields:[
+      ['accent_bar','Coloured edge',{t:'sel',opts:[['auto','Automatic (top edge, classic mode only)'],['top','Top'],['bottom','Bottom'],['left','Left'],['none','None']]}],
+      ['accent_bar_width','Edge thickness',{t:'num',min:1,max:20,unit:'px',when:function(d){ return d.accent_bar !== 'none'; }}]
+    ]}
+  ])},
+  {id:'layout', label:'Layout', custom:'placement', groups:[
+    {title:'Classic position', when:function(d){ return !d.box_enabled; }, fields:[
+      ['align','Horizontal position',{t:'sel',opts:[['left','Left'],['center','Centre'],['right','Right']]}],
+      ['valign','Vertical position',{t:'sel',opts:[['top','Top'],['middle','Middle'],['bottom','Bottom']]}]
+    ]},
+    {title:'Space inside the alert', fields:[
+      ['pad_x','Sideways',{t:'num',min:0,max:200,unit:'px'}],
+      ['pad_y','Top and bottom',{t:'num',min:0,max:200,unit:'px'}]
+    ]}
+  ]},
+  {id:'motion', label:'Motion & timing', groups:[
+    {title:'Coming in', fields:[
+      ['animation','Entrance',{t:'sel',opts:EVENT_ANIMS}],
+      ['fade_in','Entrance time',{t:'num',min:0,max:5,step:0.05,unit:'s'}]
+    ]},
+    {title:'Going away', fields:[
+      ['animation_out','Exit',{t:'sel',opts:EXITS}],
+      ['fade_out','Exit time',{t:'num',min:0,max:5,step:0.05,unit:'s',when:function(d){ return d.animation_out !== 'none'; }}]
+    ]},
+    {title:'Timing', fields:[
+      ['default_duration','Seconds on screen',{t:'num',min:1,max:60,unit:'s',tip:'When an alert does not set its own.'}],
+      ['gap_between','Pause between alerts',{t:'num',min:0,max:10,step:0.1,unit:'s'}]
+    ]}
+  ]},
+  {id:'css', label:'Custom CSS', custom:'css', cssHelp:
+    '<li><code>#bgbox</code> the background box (placement mode), <code>.alert</code> the alert, with <code>.kind-follow</code>, <code>.kind-subscribe</code>, <code>.kind-cheer</code>, <code>.kind-raid</code> ... for one kind</li>' +
+    '<li>inside: <code>.title</code> the label, <code>.body</code> the main line, <code>.note</code> the viewer\'s message, <code>.pic</code> the picture</li>' +
+    '<li>example: <code>.kind-raid .body{ font-size:64px }</code></li>'}
+];
+
+/* ======================================================================
+   Building the forms
+   ====================================================================== */
+var REG = {chat:null, events:null};      // per scope: what shows or hides with the settings
+function newReg(){ return {fields:[], labels:[], notes:[], groups:[]}; }
+
+function numCtl(ctx, key, spec){
+  var wrap = document.createElement('div'); wrap.className = 'numc';
+  var v = ctx.get(key);
+  var num = document.createElement('input'); num.type = 'number'; num.value = v;
+  if(spec.min !== undefined) num.min = spec.min;
+  if(spec.max !== undefined) num.max = spec.max;
+  if(spec.step !== undefined) num.step = spec.step;
+  var rng = null;
+  if(spec.min !== undefined && spec.max !== undefined){
+    rng = document.createElement('input'); rng.type = 'range';
+    rng.min = spec.min; rng.max = spec.max; rng.step = spec.step !== undefined ? spec.step : 1; rng.value = v;
+    rng.oninput = function(){ num.value = rng.value; ctx.set(key, parseFloat(rng.value)); };
+    wrap.appendChild(rng);
+  }
+  num.oninput = function(){
+    var n = parseFloat(num.value);
+    if(isNaN(n)) return;                  // half-typed: wait for a number
+    if(rng) rng.value = n;
+    ctx.set(key, n);
+  };
+  wrap.appendChild(num);
+  if(spec.unit){ var u = document.createElement('span'); u.className = 'u'; u.textContent = spec.unit; wrap.appendChild(u); }
+  return wrap;
+}
+function colorCtl(ctx, key, spec){
+  var wrap = document.createElement('div'); wrap.className = 'colc';
+  var v = ctx.get(key) || '';
+  var c = document.createElement('input'); c.type = 'color';
+  c.value = /^#[0-9a-f]{6}$/i.test(v) ? v : '#ffffff';
+  wrap.appendChild(c);
+  if(spec.opt){
+    var lab = document.createElement('label'), cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.checked = !v;
+    lab.appendChild(cb); lab.appendChild(document.createTextNode(spec.opt));
+    wrap.appendChild(lab);
+    wrap.classList.toggle('isdef', !v);
+    c.oninput = function(){ cb.checked = false; wrap.classList.remove('isdef'); ctx.set(key, c.value); };
+    cb.onchange = function(){ wrap.classList.toggle('isdef', cb.checked); ctx.set(key, cb.checked ? '' : c.value); };
+  } else {
+    c.oninput = function(){ ctx.set(key, c.value); };
+  }
+  return wrap;
+}
+function selCtl(ctx, key, spec){
+  var s = document.createElement('select'), v = ctx.get(key);
+  var numeric = typeof spec.opts[0][0] === 'number';
+  spec.opts.forEach(function(o){
+    var op = document.createElement('option');
+    op.value = o[0]; op.textContent = o[1];
+    if(String(o[0]) === String(v)) op.selected = true;
+    s.appendChild(op);
+  });
+  s.onchange = function(){ ctx.set(key, numeric ? parseFloat(s.value) : s.value); };
+  return s;
+}
+function fontCtl(ctx, key, spec){
+  var btn = document.createElement('button'); btn.type = 'button'; btn.className = 'fp-btn';
+  btn.innerHTML = '<span class="fp-name"></span><span class="fp-car">▾</span>';
+  function paint(){
+    var v = ctx.get(key) || '', nm = btn.firstChild;
+    nm.textContent = v || spec.same || 'Default';
+    nm.style.fontFamily = v ? '"' + cleanFont(v) + '"' : '';
+    if(v) fpLoad([v]);
+  }
+  btn.onclick = function(){
+    fpOpen(btn, {value:ctx.get(key) || '', same:spec.same, set:function(v){ ctx.set(key, v); paint(); }});
+  };
+  paint();
+  return btn;
+}
+function cssCtl(ctx, key){
+  var t = document.createElement('textarea'); t.className = 'css'; t.value = ctx.get(key) || '';
+  t.maxLength = 20000; t.spellcheck = false;
+  t.placeholder = '/* your own rules, added after the overlay\'s */';
+  t.oninput = function(){ ctx.set(key, t.value); };
+  t.addEventListener('keydown', function(e){          // Tab indents instead of leaving the box
+    if(e.key === 'Tab'){ e.preventDefault(); var s = t.selectionStart; t.setRangeText('  ', s, t.selectionEnd, 'end'); t.oninput(); }
+  });
+  return t;
+}
+
+// One field. `ctx` says where its value lives (a scope's draft, or one alert's rule).
+function fieldEl(ctx, key, label, spec){
+  var reg = REG[ctx.scope];
+  var w = document.createElement(spec.t === 'bool' ? 'label' : 'div');
+  w.className = 'f' + (spec.t === 'bool' ? ' sw' : '');
+  var lbl = document.createElement('span');
+  lbl.className = spec.t === 'bool' ? '' : 'lbl';
+  var text = typeof label === 'function' ? label(ctx.data()) : label;
+  lbl.textContent = text;
+  if(typeof label === 'function') reg.labels.push({el:lbl, fn:label, ctx:ctx});
+  if(spec.t === 'bool'){
+    var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!ctx.get(key);
+    cb.onchange = function(){ ctx.set(key, cb.checked); };
+    w.appendChild(cb); w.appendChild(lbl);
+  } else {
+    w.appendChild(lbl);
+    var input;
+    if(spec.t === 'num') input = numCtl(ctx, key, spec);
+    else if(spec.t === 'color') input = colorCtl(ctx, key, spec);
+    else if(spec.t === 'sel') input = selCtl(ctx, key, spec);
+    else if(spec.t === 'font') input = fontCtl(ctx, key, spec);
+    else if(spec.t === 'bgimage') input = bgPicker(ctx, key);
+    else {
+      input = document.createElement('input'); input.type = 'text'; input.value = ctx.get(key) || '';
+      if(spec.ph) input.placeholder = spec.ph;
+      input.oninput = function(){ ctx.set(key, input.value); };
+    }
+    w.appendChild(input);
+    if(spec.tip){ var tip = document.createElement('span'); tip.className = 'tip'; tip.textContent = spec.tip; w.appendChild(tip); }
+  }
+  if(spec.when) reg.fields.push({el:w, ctx:ctx, when:spec.when});
+  return w;
+}
+
+function buildGroup(scope, g){
+  var reg = REG[scope], ctx = scopeCtx(scope);
+  var box = document.createElement('div'); box.className = 'grp';
+  if(g.title){ var h = document.createElement('h3'); h.textContent = g.title; box.appendChild(h); }
+  if(g.note){
+    var n = document.createElement('div'); n.className = 'note'; box.appendChild(n);
+    if(typeof g.note === 'function') reg.notes.push({el:n, fn:g.note, ctx:ctx}); else n.innerHTML = g.note;
+  }
+  var grid = document.createElement('div'); grid.className = 'grid'; box.appendChild(grid);
+  var els = [];
+  g.fields.forEach(function(f){ var el = fieldEl(ctx, f[0], f[1], f[2]); els.push(el); grid.appendChild(el); });
+  reg.groups.push({el:box, when:g.when, fieldEls:els, ctx:ctx});
+  return box;
+}
+
+function refreshVisibility(scope){
+  var R = REG[scope]; if(!R) return;
+  R.fields.forEach(function(f){ f.el.hidden = !f.when(f.ctx.data()); });
+  R.labels.forEach(function(l){ l.el.textContent = l.fn(l.ctx.data()); });
+  R.notes.forEach(function(n){ n.el.innerHTML = n.fn(n.ctx.data()); });
+  R.groups.forEach(function(g){
+    var hide = !!g.when && !g.when(g.ctx.data());
+    if(!hide && g.fieldEls.length) hide = g.fieldEls.every(function(el){ return el.hidden; });
+    g.el.hidden = hide;
+  });
+}
+
+function showSub(scope, id){
+  document.querySelectorAll('#sn-' + scope + ' button').forEach(function(b){ b.classList.toggle('sel', b.dataset.sub === id); });
+  document.querySelectorAll('#sp-' + scope + ' .subpane').forEach(function(p){ p.classList.toggle('sel', p.dataset.sub === id); });
+  lsSet('twitch.sub.' + scope, id);
+}
+function buildEditor(scope){
+  REG[scope] = newReg();
+  BGP = BGP.filter(function(p){ return document.body.contains(p.el); });
+  var ui = UI[scope], nav = $('sn-' + scope), body = $('sp-' + scope);
+  nav.innerHTML = ''; body.innerHTML = '';
+  ui.forEach(function(sec){
+    var b = document.createElement('button'); b.type = 'button'; b.dataset.sub = sec.id; b.textContent = sec.label;
+    b.onclick = function(){ showSub(scope, sec.id); };
+    nav.appendChild(b);
+    var pane = document.createElement('div'); pane.className = 'subpane'; pane.dataset.sub = sec.id;
+    if(sec.custom === 'placement') pane.appendChild(buildPlacement(scope));
+    if(sec.custom === 'alerts') pane.appendChild(buildAlerts());
+    (sec.groups || []).forEach(function(g){ pane.appendChild(buildGroup(scope, g)); });
+    if(sec.custom === 'css') pane.appendChild(buildCss(scope, sec));
+    body.appendChild(pane);
+  });
+  var cur = lsGet('twitch.sub.' + scope);
+  if(!ui.some(function(s){ return s.id === cur; })) cur = ui[0].id;
+  showSub(scope, cur);
+  buildLooks(scope);
+  refreshVisibility(scope);
+  reflectPlacement(scope);
+  updateWidthLock(scope, true);
+}
+function buildCss(scope, sec){
+  var g = document.createElement('div'); g.className = 'grp';
+  g.innerHTML = '<h3>Your own CSS</h3><div class="note">For anything the settings do not cover. It is added to the overlay after everything else, so it wins. It shows in the preview as you type.</div>';
+  g.appendChild(cssCtl(scopeCtx(scope), 'custom_css'));
+  var d = document.createElement('details'); d.className = 'help';
+  d.innerHTML = '<summary>What can I style?</summary><ul>' + sec.cssHelp + '</ul>';
+  g.appendChild(d);
+  return g;
+}
+
+/* ======================================================================
+   Placement: where the chat or alert and its background sit on the 1920x1080 screen
+   ====================================================================== */
+var PLACE_KEYS = ['box_x','box_y','box_w','box_h','bg_box_x','bg_box_y','bg_box_w','bg_box_h'];
+function _setGeo(el, x, y, w, h){ el.style.left=x+'%'; el.style.top=y+'%'; el.style.width=w+'%'; el.style.height=h+'%'; }
 function makeBox(el, cb){
   var stage = el.parentElement;   // the box's own placement stage (chat or alerts)
   function geo(){ return { x:parseFloat(el.style.left), y:parseFloat(el.style.top),
@@ -573,7 +1188,7 @@ function makeBox(el, cb){
     if(mode==='move'){
       x=_clamp(g0.x+dx, 0, 100-g0.w); y=_clamp(g0.y+dy, 0, 100-g0.h);
     } else {
-      // A width-locked box (image frame: width snaps to the image) only resizes
+      // A width-locked box (picture frame: width snaps to the picture) only resizes
       // vertically - skip the horizontal handles.
       if(!el.classList.contains('wlock')){
         if(corner.indexOf('w')>=0){ var nx=_clamp(g0.x+dx, 0, g0.x+g0.w-MIN); w=g0.w+(g0.x-nx); x=nx; }
@@ -588,203 +1203,398 @@ function makeBox(el, cb){
   el.addEventListener('pointerup', up);
   el.addEventListener('pointercancel', up);
 }
-var _placeWired = false;
-function initPlacement(){
-  var c = CFG.chat;
-  PLACE = {
-    box_x:_num(c.box_x,55), box_y:_num(c.box_y,8), box_w:_num(c.box_w,42), box_h:_num(c.box_h,84),
-    bg_box_x:_num(c.bg_box_x,55), bg_box_y:_num(c.bg_box_y,8), bg_box_w:_num(c.bg_box_w,42), bg_box_h:_num(c.bg_box_h,84)
-  };
-  _setGeo($('pl-chat'), PLACE.box_x, PLACE.box_y, PLACE.box_w, PLACE.box_h);
-  _setGeo($('pl-bg'),   PLACE.bg_box_x, PLACE.bg_box_y, PLACE.bg_box_w, PLACE.bg_box_h);
-  $('pl-enable').checked = !!c.box_enabled;
-  $('pl-bgfull').checked = !!c.bg_full;
-  reflectBgFull();
-  // Recompute the width lock whenever the style or the chosen image changes, and
-  // once now for the current config. Guard against double-wiring on re-render.
-  var styleSel = $('f-chat-bg_style'), urlSel = $('f-chat-bg_image_url');
-  if(styleSel && !styleSel._wlWired){ styleSel._wlWired = true; styleSel.addEventListener('change', updateWidthLock); }
-  if(urlSel && !urlSel._wlWired){ urlSel._wlWired = true; urlSel.addEventListener('change', updateWidthLock); }
-  updateWidthLock();
-  if(_placeWired) return;   // wire drag handlers once; loadAll may run again
-  _placeWired = true;
-  makeBox($('pl-chat'), function(x,y,w,h){ PLACE.box_x=x; PLACE.box_y=y; PLACE.box_w=w; PLACE.box_h=h; });
-  makeBox($('pl-bg'),   function(x,y,w,h){ PLACE.bg_box_x=x; PLACE.bg_box_y=y; PLACE.bg_box_w=w; PLACE.bg_box_h=h; });
-  $('pl-bgfull').addEventListener('change', reflectBgFull);
+function boxHtml(cls, id, tag){
+  return '<div class="pl-box ' + cls + '" id="' + id + '"><span class="tag">' + tag + '</span>' +
+         '<i class="h nw"></i><i class="h ne"></i><i class="h sw"></i><i class="h se"></i></div>';
 }
-function collectPlacement(){
-  var out = { box_enabled: $('pl-enable').checked, bg_full: $('pl-bgfull').checked };
-  ['box_x','box_y','box_w','box_h','bg_box_x','bg_box_y','bg_box_w','bg_box_h'].forEach(function(k){
-    out[k] = Math.round(PLACE[k]);
-  });
-  return out;
-}
-
-/* ---------- placement editor: alerts (parallel to chat) ---------- */
-var PLACE_EV = {};
-function snapBoxToImageEv(url){
-  var img = new Image();
-  img.onload = function(){
-    if(!img.naturalWidth){ return; }
-    var wpct = _clamp(img.naturalWidth / 1920 * 100, 5, 100);
-    PLACE_EV.bg_box_w = wpct;
-    if(PLACE_EV.bg_box_x + PLACE_EV.bg_box_w > 100) PLACE_EV.bg_box_x = Math.max(0, 100 - PLACE_EV.bg_box_w);
-    _setGeo($('pl-ev-bg'), PLACE_EV.bg_box_x, PLACE_EV.bg_box_y, PLACE_EV.bg_box_w, PLACE_EV.bg_box_h);
-    $('pl-ev-bg').classList.add('wlock');
-  };
-  img.onerror = function(){ var b=$('pl-ev-bg'); if(b) b.classList.remove('wlock'); };
-  img.src = url;
-}
-function updateWidthLockEv(){
-  var styleSel = $('f-events-bg_style'), urlSel = $('f-events-bg_image_url');
-  var style = styleSel ? styleSel.value : '', url = urlSel ? urlSel.value : '';
-  if((style === 'image' || style === 'slice') && url){ snapBoxToImageEv(url); }
-  else { var b=$('pl-ev-bg'); if(b) b.classList.remove('wlock'); }
-}
-function reflectBgFullEv(){ $('pl-ev-bg').classList.toggle('locked', $('pl-ev-bgfull').checked); }
-var _placeEvWired = false;
-function initPlacementEv(){
-  var e = CFG.events;
-  PLACE_EV = {
-    box_x:_num(e.box_x,33), box_y:_num(e.box_y,30), box_w:_num(e.box_w,34), box_h:_num(e.box_h,34),
-    bg_box_x:_num(e.bg_box_x,30), bg_box_y:_num(e.bg_box_y,26), bg_box_w:_num(e.bg_box_w,40), bg_box_h:_num(e.bg_box_h,42)
-  };
-  _setGeo($('pl-ev-alert'), PLACE_EV.box_x, PLACE_EV.box_y, PLACE_EV.box_w, PLACE_EV.box_h);
-  _setGeo($('pl-ev-bg'),    PLACE_EV.bg_box_x, PLACE_EV.bg_box_y, PLACE_EV.bg_box_w, PLACE_EV.bg_box_h);
-  $('pl-ev-enable').checked = !!e.box_enabled;
-  $('pl-ev-bgfull').checked = !!e.bg_full;
-  reflectBgFullEv();
-  var styleSel = $('f-events-bg_style'), urlSel = $('f-events-bg_image_url');
-  if(styleSel && !styleSel._wlWiredEv){ styleSel._wlWiredEv = true; styleSel.addEventListener('change', updateWidthLockEv); }
-  if(urlSel && !urlSel._wlWiredEv){ urlSel._wlWiredEv = true; urlSel.addEventListener('change', updateWidthLockEv); }
-  updateWidthLockEv();
-  if(_placeEvWired) return;
-  _placeEvWired = true;
-  makeBox($('pl-ev-alert'), function(x,y,w,h){ PLACE_EV.box_x=x; PLACE_EV.box_y=y; PLACE_EV.box_w=w; PLACE_EV.box_h=h; });
-  makeBox($('pl-ev-bg'),    function(x,y,w,h){ PLACE_EV.bg_box_x=x; PLACE_EV.bg_box_y=y; PLACE_EV.bg_box_w=w; PLACE_EV.bg_box_h=h; });
-  $('pl-ev-bgfull').addEventListener('change', reflectBgFullEv);
-}
-function collectPlacementEv(){
-  var out = { box_enabled: $('pl-ev-enable').checked, bg_full: $('pl-ev-bgfull').checked };
-  ['box_x','box_y','box_w','box_h','bg_box_x','bg_box_y','bg_box_w','bg_box_h'].forEach(function(k){
-    out[k] = Math.round(PLACE_EV[k]);
-  });
-  return out;
-}
-
-/* ---------- field rendering ---------- */
-function field(scope, key, label, spec){
-  var id = 'f-' + scope + '-' + key;
-  var val = CFG[scope][key];
-  var el = document.createElement('label');
-  el.className = spec.t === 'bool' ? 'f sw' : 'f';
-  var input;
-
-  if(spec.t === 'bool'){
-    input = document.createElement('input'); input.type = 'checkbox'; input.checked = !!val;
-    el.appendChild(input); el.appendChild(document.createTextNode(label));
-  } else {
-    el.appendChild(document.createTextNode(label));
-    if(spec.t === 'sel'){
-      input = document.createElement('select');
-      spec.opts.forEach(function(o){
-        var op = document.createElement('option');
-        op.value = o[0]; op.textContent = o[1];
-        if(String(o[0]) === String(val)) op.selected = true;
-        input.appendChild(op);
-      });
-    } else if(spec.t === 'font'){
-      input = document.createElement('select');
-      buildFontOptions(input, val);
-    } else if(spec.t === 'bgimage'){
-      // Library picker: a dropdown of uploaded images plus Upload / Delete.
-      input = document.createElement('select');
-      input.dataset.bgimage = '1';
-      fillBgOptions(input, val);
-      input.id = id; input.dataset.scope = scope; input.dataset.key = key; input.dataset.type = spec.t;
-      el.appendChild(input);
-      var tools = document.createElement('div');
-      tools.style.cssText = 'display:flex;gap:6px;margin-top:6px';
-      var up = document.createElement('button');
-      up.type = 'button'; up.className = 'sec'; up.textContent = 'Upload'; up.style.flex = '1';
-      up.onclick = function(){ bgUpload(input); };
-      var del = document.createElement('button');
-      del.type = 'button'; del.className = 'sec'; del.textContent = 'Delete'; del.style.flex = '1';
-      del.onclick = function(){ bgDelete(input.value); };
-      tools.appendChild(up); tools.appendChild(del);
-      el.appendChild(tools);
-      return el;
-    } else {
-      input = document.createElement('input');
-      input.type = spec.t === 'num' ? 'number' : (spec.t === 'color' ? 'color' : 'text');
-      if(spec.min !== undefined) input.min = spec.min;
-      if(spec.max !== undefined) input.max = spec.max;
-      if(spec.step !== undefined) input.step = spec.step;
-      if(spec.ph) input.placeholder = spec.ph;
-      input.value = val;
-    }
-    el.appendChild(input);
+function buildPlacement(scope){
+  var d = DRAFT[scope], chat = scope === 'chat', reg = REG[scope], ctx = scopeCtx(scope);
+  var g = document.createElement('div'); g.className = 'grp';
+  g.innerHTML = '<h3>Placement</h3><div class="note">' + (chat
+    ? 'The overlay is a fixed 1920×1080 design that scales to fill the browser source, so everything keeps its proportions at any size. Drag a box to move it, grab a corner to resize. The <b>blue</b> box is where chat text sits (clipped to it); the <b>red</b> box places the background: gradient, glass, solid or a picture frame. With a <b>picture</b> style the red box\'s <b>width snaps to the picture\'s width</b> and you set its <b>height</b> by dragging (that height stretches a 9-slice frame).'
+    : 'Same scaled 1920×1080 stage as chat. The <b>blue</b> box is where the alert text sits; the <b>red</b> box places its background, which only appears while an alert is on screen and fades in and out with it. With a <b>picture</b> style the red box\'s width snaps to the picture; drag its height. Leave this off to keep the classic centred alerts.')
+    + '</div>';
+  function check(label, key){
+    var l = document.createElement('label'); l.className = 'f sw';
+    var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!d[key];
+    cb.onchange = function(){ touch(scope, key, cb.checked); };
+    l.appendChild(cb); l.appendChild(document.createTextNode(label));
+    return l;
   }
-  input.id = id;
-  input.dataset.scope = scope; input.dataset.key = key; input.dataset.type = spec.t;
-  return el;
+  g.appendChild(check(chat ? 'Position chat & background with these boxes' : 'Position alerts & background with these boxes', 'box_enabled'));
+  var full = check('Background fills the whole screen', 'bg_full');
+  reg.fields.push({el:full, ctx:ctx, when:function(x){ return x.box_enabled; }});
+  g.appendChild(full);
+  var stage = document.createElement('div'); stage.className = 'pl-stage'; stage.id = 'pls-' + scope;
+  stage.innerHTML = boxHtml('bg', 'pl-bg-' + scope, 'Background') + boxHtml('chat', 'pl-box-' + scope, chat ? 'Chat' : 'Alert');
+  g.appendChild(stage);
+  var bg = stage.querySelector('#pl-bg-' + scope), box = stage.querySelector('#pl-box-' + scope);
+  var D = function(){ return DRAFT[scope]; };
+  _setGeo(box, d.box_x, d.box_y, d.box_w, d.box_h);
+  _setGeo(bg, d.bg_box_x, d.bg_box_y, d.bg_box_w, d.bg_box_h);
+  makeBox(box, function(x,y,w,h){ var s = D(); s.box_x=x; s.box_y=y; s.box_w=w; s.box_h=h; setDirty(scope, true); pvSchedule(scope); });
+  makeBox(bg,  function(x,y,w,h){ var s = D(); s.bg_box_x=x; s.bg_box_y=y; s.bg_box_w=w; s.bg_box_h=h; setDirty(scope, true); pvSchedule(scope); });
+  return g;
+}
+function reflectPlacement(scope){
+  var d = DRAFT[scope], st = $('pls-' + scope); if(!st) return;
+  st.classList.toggle('off', !d.box_enabled);
+  $('pl-bg-' + scope).classList.toggle('locked', !!d.bg_full);
+}
+// With a picture style the background box is exactly as wide as the picture; only its height is free.
+function updateWidthLock(scope, quiet){
+  var d = DRAFT[scope], box = $('pl-bg-' + scope); if(!box) return;
+  var url = d.bg_image_url;
+  if((d.bg_style === 'image' || d.bg_style === 'slice') && url){
+    var img = new Image();
+    img.onload = function(){
+      if(!img.naturalWidth || DRAFT[scope].bg_image_url !== url) return;
+      var s = DRAFT[scope], w = _clamp(img.naturalWidth / 1920 * 100, 5, 100);
+      s.bg_box_w = w;
+      if(s.bg_box_x + w > 100) s.bg_box_x = Math.max(0, 100 - w);
+      _setGeo(box, s.bg_box_x, s.bg_box_y, s.bg_box_w, s.bg_box_h);
+      box.classList.add('wlock');
+      pvSchedule(scope);
+    };
+    img.onerror = function(){ box.classList.remove('wlock'); };
+    img.src = url;
+  } else {
+    box.classList.remove('wlock');
+  }
 }
 
-function renderGroup(containerId, scope, defs){
-  var c = $(containerId); c.innerHTML = '';
-  defs.forEach(function(d){ c.appendChild(field(scope, d[0], d[1], d[2])); });
-}
-
-function collect(scope, defs){
-  var out = {};
-  defs.forEach(function(d){
-    var el = $('f-' + scope + '-' + d[0]);
-    if(!el) return;
-    var t = d[2].t;
-    if(t === 'bool') out[d[0]] = el.checked;
-    else if(t === 'num') out[d[0]] = parseFloat(el.value);
-    else out[d[0]] = el.value;
-  });
-  return out;
-}
-
-/* ---------- alerts table ---------- */
+/* ======================================================================
+   Alerts: what fires, what it says, and how that one looks
+   ====================================================================== */
 var ALERT_LABEL = {
   follow:'Follow', subscribe:'New sub', resub:'Resub', subgift:'Gift subs', cheer:'Bits',
   raid:'Raid', redeem:'Channel points', hypetrain:'Hype train', online:'Stream online', offline:'Stream offline'
 };
-function renderAlerts(){
-  var tb = $('alerts-body'); tb.innerHTML = '';
-  Object.keys(CFG.alerts).forEach(function(k){
-    var a = CFG.alerts[k];
-    var tr = document.createElement('tr');
-    tr.innerHTML =
-      '<td class="k">' + (ALERT_LABEL[k] || k) + '</td>' +
-      '<td><input type="checkbox" id="a-' + k + '-on"' + (a.on ? ' checked' : '') + '></td>' +
-      '<td><input type="number" min="1" max="60" id="a-' + k + '-duration" value="' + a.duration + '"></td>' +
-      '<td><input id="a-' + k + '-title" value="' + esc(a.title) + '"></td>' +
-      '<td><input id="a-' + k + '-body" value="' + esc(a.body) + '"></td>' +
-      '<td><input id="a-' + k + '-clip" value="' + esc(a.clip || '') + '" placeholder="airhorn"></td>' +
-      '<td><button class="sec" data-test="' + k + '">Test</button></td>';
-    tb.appendChild(tr);
-  });
+var MIN_LABEL = {cheer:'Smallest number of bits', subgift:'Smallest number of gifted subs', raid:'Smallest raid (viewers)'};
+function alertFields(kind){
+  var f = [
+    ['title','Title',{t:'text'}],
+    ['body','Text',{t:'text'}],
+    ['duration','Seconds on screen',{t:'num',min:1,max:60,unit:'s'}],
+    ['clip','Soundboard clip',{t:'text',ph:'airhorn',tip:'A HexCast clip name: plays its sound or gif with the alert.'}]
+  ];
+  if(MIN_LABEL[kind]) f.push(['min_amount',MIN_LABEL[kind],{t:'num',min:1,max:1000000,tip:'Smaller ones show nothing.'}]);
+  return f;
 }
-function collectAlerts(){
-  var out = {};
-  Object.keys(CFG.alerts).forEach(function(k){
-    out[k] = Object.assign({}, CFG.alerts[k], {
-      on: $('a-'+k+'-on').checked,
-      duration: parseFloat($('a-'+k+'-duration').value),
-      title: $('a-'+k+'-title').value,
-      body: $('a-'+k+'-body').value,
-      clip: $('a-'+k+'-clip').value.trim()
-    });
+var ALERT_LOOK_FIELDS = [
+  ['accent_color','Accent colour',{t:'color',opt:'Same as the others'}],
+  ['animation','Entrance',{t:'sel',opts:[['','Same as the others']].concat(EVENT_ANIMS)}],
+  ['image','A picture shown with it',{t:'bgimage',tip:'Above, beside or below the text: an emote, a logo, a GIF.'}],
+  ['image_pos','Picture position',{t:'sel',when:function(d){ return !!d.image; },opts:[['top','Above the text'],['bottom','Below the text'],['left','Left of the text'],['right','Right of the text']]}],
+  ['image_size','Picture height',{t:'num',min:20,max:600,unit:'px',when:function(d){ return !!d.image; }}],
+  ['bg_image_url','Background picture for this alert',{t:'bgimage',tip:'Replaces the shared background picture when the style is Picture or Picture frame.'}]
+];
+function paintAlertSummary(kind){
+  var s = document.querySelector('.al[data-kind="' + kind + '"] .al-sum');
+  if(s){ var r = DRAFT.alerts[kind]; s.textContent = r.title + (r.body ? '  -  ' + r.body : ''); }
+}
+function openAlert(kind){
+  document.querySelectorAll('#sp-events .al').forEach(function(row){
+    var open = row.dataset.kind === kind && !row.classList.contains('open');
+    row.classList.toggle('open', open);
+    row.querySelector('.al-car').textContent = open ? '▾' : '▸';
   });
-  return out;
+  PVS.events.kind = kind; syncKindSelect();
+  pvEvent(false);
+}
+function buildAlerts(){
+  var wrap = document.createElement('div');
+  var hint = document.createElement('p'); hint.className = 'hint';
+  hint.innerHTML = 'Switch each alert on or off, say what it shows, and open it for sounds, a picture and its own look. Placeholders: <code style="color:var(--good);font-family:var(--mono)">{user} {amount} {tier} {months} {reward} {channel}</code>.';
+  wrap.appendChild(hint);
+  Object.keys(DRAFT.alerts).forEach(function(kind){
+    var r = DRAFT.alerts[kind], ctx = alertCtx(kind);
+    var row = document.createElement('div'); row.className = 'al' + (r.on ? '' : ' off'); row.dataset.kind = kind;
+    var head = document.createElement('div'); head.className = 'al-head';
+    var sw = document.createElement('label'); sw.className = 'f sw';
+    var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!r.on; cb.title = 'Show this alert';
+    cb.onchange = function(){ touchAlert(kind, 'on', cb.checked); };
+    sw.appendChild(cb);
+    var nm = document.createElement('span'); nm.className = 'al-name'; nm.textContent = ALERT_LABEL[kind] || kind;
+    var sum = document.createElement('span'); sum.className = 'al-sum';
+    var test = document.createElement('button'); test.type = 'button'; test.className = 'sec'; test.textContent = 'Test'; test.dataset.test = kind;
+    test.title = 'Fire this alert on the stream now (saved settings)';
+    var car = document.createElement('span'); car.className = 'al-car'; car.textContent = '▸';
+    [sw, nm, sum, test, car].forEach(function(x){ head.appendChild(x); });
+    head.onclick = function(e){ if(!e.target.closest('button, label, input')) openAlert(kind); };   // the switch and Test are not the toggle
+    row.appendChild(head);
+    var body = document.createElement('div'); body.className = 'al-body';
+    var h1 = document.createElement('h4'); h1.textContent = 'What it says'; body.appendChild(h1);
+    var g1 = document.createElement('div'); g1.className = 'grid';
+    alertFields(kind).forEach(function(f){ g1.appendChild(fieldEl(ctx, f[0], f[1], f[2])); });
+    body.appendChild(g1);
+    var h2 = document.createElement('h4'); h2.textContent = 'How it looks'; body.appendChild(h2);
+    var g2 = document.createElement('div'); g2.className = 'grid';
+    ALERT_LOOK_FIELDS.forEach(function(f){ g2.appendChild(fieldEl(ctx, f[0], f[1], f[2])); });
+    body.appendChild(g2);
+    row.appendChild(body);
+    wrap.appendChild(row);
+    sum.textContent = r.title + (r.body ? '  -  ' + r.body : '');
+  });
+  return wrap;
 }
 
-/* ---------- api ---------- */
+/* ======================================================================
+   Looks: one-click starting points
+   ====================================================================== */
+var LOOKS = [
+  {name:'Clean dark', v:{font_family:'Inter', text_color:'#f2f2f7', bg_style:'solid', bubble_color:'#0b0b10', bubble_opacity:0.72, bubble_radius:14, bg_shadow:0, bg_image_dim:0, bg_image_opacity:1, outline:true, outline_color:'#000000', outline_width:2, shadow:true, accent:'#ff3b30'}, chat:{bubble:true}},
+  {name:'Frosted glass', v:{font_family:'Poppins', text_color:'#ffffff', bg_style:'glass', bubble_color:'#ffffff', bubble_opacity:0.14, bubble_radius:22, bg_blur:14, bg_shadow:18, outline:false, shadow:true, accent:'#7ad7ff'}, chat:{bubble:true}},
+  {name:'Neon arcade', v:{font_family:'Orbitron', text_color:'#e8fbff', bg_style:'glow', bubble_color:'#07010f', bubble_opacity:0.88, bubble_radius:10, bg_border_color:'#00f0ff', bg_shadow:0, outline:false, shadow:false, accent:'#ff2bd6'}, chat:{bubble:true, name_color_mode:'custom', name_color:'#ff2bd6'}},
+  {name:'Retro terminal', v:{font_family:'VT323', text_color:'#39ff14', bg_style:'frame', bubble_color:'#020a02', bubble_opacity:0.92, bubble_radius:0, bg_border_color:'#39ff14', bg_border_width:2, bg_shadow:0, outline:false, shadow:false, accent:'#39ff14'}, chat:{bubble:true, name_color_mode:'custom', name_color:'#b6ff9e', font_size:34}, events:{font_size:48, sub_font_size:30}},
+  {name:'Storybook', v:{font_family:'Playfair Display', text_color:'#3b2a1a', bg_style:'frame', bubble_color:'#f3e5c8', bubble_opacity:0.96, bubble_radius:10, bg_border_color:'#8a5a2b', bg_border_width:3, bg_shadow:12, outline:false, shadow:false, accent:'#8a3b12'}, chat:{bubble:true, name_color_mode:'custom', name_color:'#8a3b12'}},
+  {name:'Candy pop', v:{font_family:'Fredoka', text_color:'#ffffff', bg_style:'gradient', bubble_color:'#ff7ac6', bg_color2:'#7a5cff', bg_gradient_angle:135, bubble_opacity:0.95, bubble_radius:28, bg_shadow:10, outline:true, outline_color:'#3a1a6e', outline_width:2, shadow:true, accent:'#ffe14d'}, chat:{bubble:true}},
+  {name:'Midnight', v:{font_family:'Sora', text_color:'#eef0ff', bg_style:'animated', bubble_color:'#0d1b4c', bg_color2:'#5b2a86', bubble_opacity:0.9, bubble_radius:18, bg_shadow:0, outline:false, shadow:true, accent:'#9d8cff'}, chat:{bubble:true}},
+  {name:'Bare text', v:{font_family:'Inter', text_color:'#ffffff', bg_style:'solid', bubble_opacity:0, bg_shadow:0, outline:true, outline_color:'#000000', outline_width:3, shadow:true, accent:'#ff3b30'}, chat:{bubble:false}}
+];
+// The chip shows the look's colour at its own opacity over a dark card, so a see-through look still reads.
+function lookBg(l){
+  var v = l.v;
+  if(v.bubble_opacity === 0) return '#23232c';
+  var a = hexToRgba(v.bubble_color, v.bubble_opacity);
+  var b = (v.bg_style === 'gradient' || v.bg_style === 'animated') ? hexToRgba(v.bg_color2, v.bubble_opacity) : a;
+  return 'linear-gradient(135deg,' + a + ',' + b + '), #23232c';
+}
+function buildLooks(scope){
+  var box = $('looks-' + scope); box.innerHTML = '';
+  var lab = document.createElement('span'); lab.className = 'lbl'; lab.textContent = 'Start from a look'; box.appendChild(lab);
+  fpLoad(LOOKS.map(function(l){ return l.v.font_family; }));
+  LOOKS.forEach(function(l){
+    var b = document.createElement('button'); b.type = 'button'; b.className = 'look';
+    b.textContent = l.name;
+    b.style.fontFamily = '"' + cleanFont(l.v.font_family) + '"';
+    b.style.color = l.v.text_color; b.style.background = lookBg(l);
+    b.title = 'Fills in the text and background settings below. Nothing changes on stream until you save.';
+    b.onclick = function(){ applyLook(scope, l); };
+    box.appendChild(b);
+  });
+}
+function applyLook(scope, l){
+  var d = DRAFT[scope];
+  function put(k, v){ if(k in d) d[k] = v; }
+  Object.keys(l.v).forEach(function(k){
+    if(k === 'accent') put(scope === 'chat' ? 'highlight_color' : 'accent_color', l.v[k]);
+    else put(k, l.v[k]);
+  });
+  if(l[scope]) Object.keys(l[scope]).forEach(function(k){ put(k, l[scope][k]); });
+  setDirty(scope, true);
+  buildEditor(scope);
+  pvSchedule(scope);
+  toast(l.name + ' - preview only until you save');
+}
 
+/* ======================================================================
+   Live preview: the real overlay page in an iframe, fed the draft
+   ====================================================================== */
+var PVS = {chat:{ready:false, timer:null, zoom:'focus'}, events:{ready:false, timer:null, zoom:'focus', kind:'follow'}};
+var PV_BACKDROPS = [['dark','#14141b','Dark'],['light','#e9e9f0','Light'],['checker','#2a2a33','Checkerboard'],['game','#2a2f5a','Gameplay colours']];
+function svgData(s){ return 'data:image/svg+xml;utf8,' + encodeURIComponent(s); }
+var SAMPLE_ICON = {
+  broadcaster: svgData('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18"><rect width="18" height="18" rx="4" fill="#e91916"/><path d="M5 6h6v6H5zM11 8l3-2v6l-3-2z" fill="#fff"/></svg>'),
+  mod: svgData('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18"><rect width="18" height="18" rx="4" fill="#00ad03"/><path d="M4 12l6-6 2 2-6 6zM11 4l3 3-1.5 1.5-3-3z" fill="#fff"/></svg>'),
+  vip: svgData('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18"><rect width="18" height="18" rx="4" fill="#e005b9"/><path d="M9 14L4 8l2-3h6l2 3z" fill="#fff"/></svg>'),
+  sub: svgData('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18"><rect width="18" height="18" rx="4" fill="#8205ff"/><path d="M9 3l1.8 3.7 4 .6-2.9 2.8.7 4L9 12.2 5.4 14.1l.7-4L3.2 7.3l4-.6z" fill="#fff"/></svg>'),
+  emote: svgData('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><circle cx="20" cy="20" r="18" fill="#ffd23f"/><circle cx="14" cy="16" r="3" fill="#333"/><circle cx="26" cy="16" r="3" fill="#333"/><path d="M11 24q9 10 18 0" stroke="#333" stroke-width="3" fill="none" stroke-linecap="round"/></svg>')
+};
+function chatSamples(){
+  var now = Date.now() / 1000, n = 0;
+  function m(name, color, flags, frags, extra){
+    var badges = [];
+    ['broadcaster', 'mod', 'vip', 'sub'].forEach(function(k){ if(flags[k]) badges.push({url:SAMPLE_ICON[k], title:k}); });
+    return Object.assign({type:'chat', id:'pv' + (++n), ts:now, channel:'', channel_label:'hexcast', user:{name:name, color:color, badges:badges},
+                          flags:flags, fragments:frags}, extra || {});
+  }
+  var t = function(v){ return {t:'text', v:v}; };
+  return [
+    m('HexFan42', '#ff7ac6', {sub:true}, [t('This overlay looks amazing '), {t:'emote', url:SAMPLE_ICON.emote, name:'smile'}]),
+    m('ModMaria', '#2ecc71', {mod:true}, [t('Remember to follow and say hi to the new faces!')]),
+    m('newbie_nate', '#4ea1ff', {first:true}, [t('first time here, '), {t:'mention', v:'@HexFan42'}, t(' hi!')]),
+    m('VIPVera', '#e005b9', {vip:true}, [t('This one is a much longer message, so you can see how the words wrap inside the chat box when somebody writes a whole paragraph.')]),
+    m('Streamer', '#e91916', {broadcaster:true}, [t('Thanks for being here, all of you.')], {reply:{user:'HexFan42'}})
+  ];
+}
+var ALERT_SAMPLE = {
+  follow:{user:'TestViewer'}, subscribe:{user:'TestViewer', tier:'1'},
+  resub:{user:'TestViewer', tier:'1', months:'12', message:'Love the stream'}, subgift:{user:'TestViewer', amount:'5', tier:'1'},
+  cheer:{user:'TestViewer', amount:'500', message:'Take my bits'}, raid:{user:'TestStreamer', amount:'42'},
+  redeem:{user:'TestViewer', reward:'Hex sing a song', message:'please'}, hypetrain:{amount:'3'}, online:{}, offline:{}
+};
+function sampleEvent(kind){
+  var rule = DRAFT.alerts[kind] || {}, s = ALERT_SAMPLE[kind] || {};
+  var f = Object.assign({user:'', amount:'', tier:'', months:'', reward:'', message:'', channel:'hexcast'}, s);
+  function fill(t){ return String(t || '').replace(/\{(\w+)\}/g, function(m, k){ return k in f ? f[k] : m; }); }
+  return {type:'event', kind:kind, id:'pv', title:fill(rule.title), body:fill(rule.body),
+          message:DRAFT.events.show_user_message ? (s.message || '') : '', duration:6};
+}
+function placed(d){
+  var o = clone(d);
+  PLACE_KEYS.forEach(function(k){ if(typeof o[k] === 'number') o[k] = Math.round(o[k]); });
+  return o;
+}
+function pvPost(scope, msg){
+  var f = $('pv-' + scope);
+  if(!f || !f.contentWindow || !PVS[scope].ready) return;
+  msg.hexcast = 'preview';
+  f.contentWindow.postMessage(msg, location.origin);
+}
+function pvConfig(scope){ pvPost(scope, {type:'config', config:{chat:DRAFT.chat, events:DRAFT.events, alerts:DRAFT.alerts}}); }
+function pvChat(){
+  pvPost('chat', {type:'clear'});
+  chatSamples().forEach(function(msg){ pvPost('chat', {type:'chat', message:msg}); });
+}
+function pvEvent(still){
+  var ev = sampleEvent(PVS.events.kind);
+  if(!ev.title && !ev.body) ev.title = ALERT_LABEL[PVS.events.kind] || PVS.events.kind;
+  pvPost('events', {type:'event', event:ev, still:!!still});
+}
+function pvNow(scope){
+  pvConfig(scope);
+  if(scope === 'events') pvEvent(true);
+  pvFit(scope);
+}
+function pvSchedule(scope){
+  clearTimeout(PVS[scope].timer);
+  PVS[scope].timer = setTimeout(function(){ pvNow(scope); }, 60);
+}
+// The overlay is a 1920x1080 stage. Show only the part that matters (the chat box, the alert) at a readable size.
+function pvRegion(scope){
+  var d = DRAFT[scope], full = {x:0, y:0, w:1920, h:1080};
+  if(PVS[scope].zoom === 'full') return full;
+  var r;
+  if(d.box_enabled){
+    if(d.bg_full) return full;
+    var xs = [d.box_x, d.bg_box_x], ys = [d.box_y, d.bg_box_y];
+    var xe = [d.box_x + d.box_w, d.bg_box_x + d.bg_box_w], ye = [d.box_y + d.box_h, d.bg_box_y + d.bg_box_h];
+    r = {x:Math.min.apply(null, xs) * 19.2, y:Math.min.apply(null, ys) * 10.8,
+         w:(Math.max.apply(null, xe) - Math.min.apply(null, xs)) * 19.2, h:(Math.max.apply(null, ye) - Math.min.apply(null, ys)) * 10.8};
+    r.x -= 24; r.y -= 24; r.w += 48; r.h += 48;
+  } else if(scope === 'chat'){
+    r = {x:d.align === 'left' ? 0 : d.align === 'center' ? 480 : 960, y:d.direction === 'top' ? 0 : 540, w:960, h:540};
+  } else {
+    r = {x:d.align === 'left' ? 0 : d.align === 'center' ? 480 : 960, y:d.valign === 'top' ? 0 : d.valign === 'middle' ? 270 : 540, w:960, h:540};
+  }
+  // never smaller than 480x270, never outside the screen
+  if(r.w < 480){ r.x -= (480 - r.w) / 2; r.w = 480; }
+  if(r.h < 270){ r.y -= (270 - r.h) / 2; r.h = 270; }
+  r.x = _clamp(r.x, 0, 1920 - Math.min(r.w, 1920)); r.y = _clamp(r.y, 0, 1080 - Math.min(r.h, 1080));
+  r.w = Math.min(r.w, 1920); r.h = Math.min(r.h, 1080);
+  return r;
+}
+function pvFit(scope){
+  var view = $('pvv-' + scope), f = $('pv-' + scope);
+  var W = view.clientWidth; if(!W) return;           // on a tab that is not showing
+  var r = pvRegion(scope);
+  var Hmax = Math.min(W * 0.9, Math.max(320, window.innerHeight - 250));      // fits the window with the buttons below it
+  var H = _clamp(W * r.h / r.w, Math.min(W * 0.5625, Hmax), Hmax);
+  var k = Math.min(W / r.w, H / r.h);
+  view.style.height = Math.round(H) + 'px';
+  f.style.transform = 'translate(' + ((W - r.w * k) / 2 - r.x * k) + 'px,' + ((H - r.h * k) / 2 - r.y * k) + 'px) scale(' + k + ')';
+}
+function pvEnsure(scope){
+  var f = $('pv-' + scope);
+  if(!f.getAttribute('src')){ PVS[scope].ready = false; f.setAttribute('src', f.dataset.src); }
+  pvFit(scope);
+}
+function syncKindSelect(){
+  var s = $('pv-kind'); if(s) s.value = PVS.events.kind;
+}
+var PV_SIZES = [['480px','Small'],['640px','Medium'],['860px','Large'],['1100px','Huge']];
+function pvSize(){
+  var v = lsGet('twitch.pvw');
+  return PV_SIZES.some(function(z){ return z[0] === v; }) ? v : '860px';
+}
+function setPvSize(v){
+  lsSet('twitch.pvw', v);
+  document.querySelectorAll('.ed').forEach(function(e){ e.style.setProperty('--pvw', v); });
+  document.querySelectorAll('.pv-size').forEach(function(s){ s.value = v; });
+  ['chat', 'events'].forEach(pvFit);
+}
+function pvTools(scope){
+  var box = $('pvt-' + scope); box.innerHTML = '';
+  var size = document.createElement('select'); size.className = 'pv-size'; size.title = 'How big the preview is';
+  PV_SIZES.forEach(function(z){ var o = document.createElement('option'); o.value = z[0]; o.textContent = z[1]; size.appendChild(o); });
+  size.value = pvSize();
+  size.onchange = function(){ setPvSize(size.value); };
+  box.appendChild(size);
+  if(scope === 'events'){
+    var sel = document.createElement('select'); sel.id = 'pv-kind'; sel.title = 'Which alert to show';
+    Object.keys(CFG.alerts).forEach(function(k){ var o = document.createElement('option'); o.value = k; o.textContent = ALERT_LABEL[k] || k; sel.appendChild(o); });
+    sel.value = PVS.events.kind;
+    sel.onchange = function(){ PVS.events.kind = sel.value; pvEvent(false); };
+    box.appendChild(sel);
+  }
+  var zoom = document.createElement('button'); zoom.type = 'button'; zoom.className = 'sec';
+  function zl(){ zoom.textContent = PVS[scope].zoom === 'full' ? 'Zoom in' : 'Whole screen'; }
+  zoom.title = 'Switch between the area that matters and the whole 1920×1080 screen';
+  zoom.onclick = function(){ PVS[scope].zoom = PVS[scope].zoom === 'full' ? 'focus' : 'full'; lsSet('twitch.zoom.' + scope, PVS[scope].zoom); zl(); pvFit(scope); };
+  zl(); box.appendChild(zoom);
+  var play = document.createElement('button'); play.type = 'button'; play.className = 'sec'; play.textContent = 'Replay';
+  play.title = 'Play the entrance again';
+  play.onclick = function(){ if(scope === 'chat') pvChat(); else pvEvent(false); };
+  box.appendChild(play);
+  var cur = lsGet('twitch.bd') || 'dark';
+  PV_BACKDROPS.forEach(function(b){
+    var s = document.createElement('button'); s.type = 'button'; s.className = 'pv-bd' + (b[0] === cur ? ' sel' : '');
+    s.style.background = b[1]; s.title = b[2] + ' backdrop'; s.dataset.bd = b[0];
+    s.onclick = function(){ setBackdrop(b[0]); };
+    box.appendChild(s);
+  });
+}
+function setBackdrop(name){
+  lsSet('twitch.bd', name);
+  ['chat', 'events'].forEach(function(s){ $('pvv-' + s).className = 'pv-view bd-' + name; });
+  document.querySelectorAll('.pv-bd').forEach(function(b){ b.classList.toggle('sel', b.dataset.bd === name); });
+}
+window.addEventListener('message', function(e){
+  if(e.origin !== location.origin || !e.data || e.data.hexcast !== 'preview-ready') return;
+  ['chat', 'events'].forEach(function(scope){
+    var f = $('pv-' + scope);
+    if(f.contentWindow !== e.source) return;
+    PVS[scope].ready = true;
+    pvNow(scope);
+    if(scope === 'chat') pvChat(); else pvEvent(false);
+  });
+});
+window.addEventListener('resize', function(){ ['chat', 'events'].forEach(pvFit); });
+// the preview also follows its own box (a size change, the sidebar wrapping under the form)
+if(window.ResizeObserver){
+  ['chat', 'events'].forEach(function(scope){ new ResizeObserver(function(){ pvFit(scope); }).observe($('pvv-' + scope).parentElement); });
+}
+
+/* ======================================================================
+   Save and revert
+   ====================================================================== */
+async function saveConfig(patch, msg){
+  var r = await fetch('/twitch/api/config', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(patch)
+  });
+  var d = await r.json();
+  if(!r.ok){ toast(d.error || 'Not saved'); return false; }
+  CFG = d.config;
+  toast(msg || 'Saved');
+  return true;
+}
+async function saveScope(scope){
+  var patch = scope === 'chat' ? {chat: placed(DRAFT.chat)} : {events: placed(DRAFT.events), alerts: DRAFT.alerts};
+  if(await saveConfig(patch, scope === 'chat' ? 'Chat overlay updated' : 'Alerts updated')){
+    loadDrafts(scope); setDirty(scope, false); buildEditor(scope);
+    if(scope === 'events') pvTools('events');
+    pvSchedule(scope);
+  }
+}
+function revertScope(scope){
+  loadDrafts(scope); setDirty(scope, false); buildEditor(scope); pvSchedule(scope);
+  toast('Back to what is saved');
+}
+
+/* ======================================================================
+   The queue
+   ====================================================================== */
 function paintQueue(q){
   var p = $('q-playing');
   if(q.playing) {
@@ -826,19 +1636,9 @@ function fetchQueue() {
 $('q-skip').onclick = function(){ fetch('/twitch/api/queue/skip', {method:'POST'}).then(fetchQueue); };
 $('q-clear').onclick = function(){ fetch('/twitch/api/queue/clear', {method:'POST'}).then(fetchQueue); };
 
-
-async function saveConfig(patch, msg){
-  var r = await fetch('/twitch/api/config', {
-    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(patch)
-  });
-  var d = await r.json();
-  if(!r.ok){ toast(d.error || 'Not saved'); return false; }
-  CFG = d.config;
-  toast(msg || 'Saved');
-  return true;
-}
-
-/* ---------- channels and accounts ---------- */
+/* ======================================================================
+   Channels and accounts
+   ====================================================================== */
 var CH_ROWS = [];          // the channel rows as edited (saved with "Save channels")
 var LAST_STATUS = null;
 
@@ -911,7 +1711,7 @@ function paintAccounts(s){
 
 async function loadAll(){
   CFG = await (await fetch('/twitch/api/config')).json();
-  await loadBackgrounds();
+  await Promise.all([loadBackgrounds(), loadFonts()]);
   $('forward_url').value = CFG.forward_url || '';
   $('hexcast_url').value = CFG.hexcast_url || '';
   var chatUrl = location.origin + '/twitch/chat', eventsUrl = location.origin + '/twitch/events';
@@ -920,14 +1720,10 @@ async function loadAll(){
   CH_ROWS = (CFG.channels || []).map(function(c){ return {login: c.login, label: c.label, enabled: c.enabled, saved: c.login}; });
   renderChannels(); fillTestChannels(); renderUrls();
   $('overlay_channels').value = CFG.overlay_channels || 'primary';
-  renderGroup('g-chat-type','chat',CHAT_TYPE);
-  renderGroup('g-chat-look','chat',CHAT_LOOK);
-  initPlacement();
-  renderGroup('g-chat-behave','chat',CHAT_BEHAVE);
-  renderGroup('g-chat-filter','chat',CHAT_FILTER);
-  renderGroup('g-events','events',EVENT_FIELDS);
-  initPlacementEv();
-  renderAlerts();
+  loadDrafts();
+  ['chat', 'events'].forEach(function(s){ PVS[s].zoom = lsGet('twitch.zoom.' + s) === 'full' ? 'full' : 'focus'; });
+  pvTools('chat'); pvTools('events'); setBackdrop(lsGet('twitch.bd') || 'dark'); setPvSize(pvSize());
+  buildEditor('chat'); buildEditor('events');
 }
 
 function paintStatus(s){
@@ -987,6 +1783,8 @@ document.querySelectorAll('nav button').forEach(function(b){
     document.querySelectorAll('section').forEach(function(x){ x.classList.remove('sel'); });
     b.classList.add('sel');
     $('tab-' + b.dataset.tab).classList.add('sel');
+    lsSet('twitch.tab', b.dataset.tab);
+    if(b.dataset.tab === 'chat' || b.dataset.tab === 'events') pvEnsure(b.dataset.tab);
   };
 });
 
@@ -1056,30 +1854,31 @@ $('ch-save').onclick = async function(){
   });
   if(await saveConfig({channels: rows, overlay_channels: $('overlay_channels').value}, 'Channels saved')){
     CH_ROWS = (CFG.channels || []).map(function(c){ return {login: c.login, label: c.label, enabled: c.enabled, saved: c.login}; });
-    renderChannels(); fillTestChannels(); renderUrls();
+    renderChannels(); fillTestChannels(); renderUrls(); pvTools('events');
   }
 };
 $('save-conn').onclick = function(){
   saveConfig({forward_url: $('forward_url').value.trim(),
               hexcast_url: $('hexcast_url').value.trim()});
 };
-$('save-chat').onclick = function(){
-  saveConfig({chat: Object.assign({}, collect('chat',CHAT_TYPE), collect('chat',CHAT_LOOK),
-                                  collect('chat',CHAT_BEHAVE), collect('chat',CHAT_FILTER),
-                                  collectPlacement())},
-             'Chat overlay updated');
-};
-$('save-events').onclick = function(){
-  saveConfig({events: Object.assign({}, collect('events',EVENT_FIELDS), collectPlacementEv())},
-             'Alert overlay updated');
-};
-$('save-alerts').onclick = function(){ saveConfig({alerts: collectAlerts()}, 'Alerts updated'); };
+$('save-chat').onclick = function(){ saveScope('chat'); };
+$('save-events').onclick = function(){ saveScope('events'); };
+$('rev-chat').onclick = function(){ revertScope('chat'); };
+$('rev-events').onclick = function(){ revertScope('events'); };
 $('test-chat').onclick = function(){
   fetch('/twitch/api/test/chat', {method:'POST', headers:{'Content-Type':'application/json'},
                                   body: JSON.stringify({channel: testChannel()})});
 };
+window.addEventListener('beforeunload', function(e){
+  if(DIRTY.chat || DIRTY.events){ e.preventDefault(); e.returnValue = ''; }
+});
 
-loadAll().then(connectPanel);
+loadAll().then(function(){
+  connectPanel();
+  var tab = lsGet('twitch.tab');                 // come back to the tab you were on
+  var btn = tab && document.querySelector('nav button[data-tab="' + tab + '"]');
+  if(btn) btn.click();
+});
 fetchQueue();
 setInterval(fetchQueue, 2000);
 setInterval(function(){

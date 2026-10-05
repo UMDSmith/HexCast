@@ -878,3 +878,137 @@ def test_the_top_bar_dot_reports_several_channels():
     assert out["all"]["on"] is True and out["all"]["warn"] is False and "2 of 2 channels connected" in out["all"]["title"]
     assert out["some"]["on"] is False and out["some"]["warn"] is True and "1 of 2" in out["some"]["title"]
     assert out["off"]["on"] is False and out["off"]["warn"] is True and out["none"]["on"] is False
+
+
+# ---------------------------------------------------------------- how the overlays look: fonts, pictures, styles
+
+def test_a_config_from_before_the_new_look_settings_keeps_its_look_and_gains_the_new_ones(tw):
+    tw.CONFIG_PATH.write_text(json.dumps({"chat": {"font_family": "Anton", "bubble_opacity": 0.5},
+                                          "events": {"font_size": 50},
+                                          "alerts": {"follow": {"title": "Hi", "duration": 3}}}), encoding="utf-8")
+    cfg = tw.load_config()
+    assert cfg["chat"]["font_family"] == "Anton" and cfg["chat"]["bubble_opacity"] == 0.5     # what was saved wins
+    assert cfg["events"]["font_size"] == 50 and cfg["alerts"]["follow"]["title"] == "Hi"
+    # the new settings come in at values that draw what the overlays always drew
+    chat, events, follow = cfg["chat"], cfg["events"], cfg["alerts"]["follow"]
+    assert (chat["bg_fit"], chat["bg_image_opacity"], chat["bg_image_dim"], chat["bg_shadow"]) == ("cover", 1, 0, 0)
+    assert chat["name_font_family"] == "" and chat["mark_roles"] is False and chat["fade_edge"] == 0
+    assert chat["text_transform"] == "none" and chat["letter_spacing"] == 0 and chat["custom_css"] == ""
+    assert events["accent_bar"] == "auto" and events["title_transform"] == "uppercase" and events["shadow"] is True
+    assert (events["pad_x"], events["pad_y"], events["outline_width"]) == (34, 22, 2)
+    assert (follow["accent_color"], follow["animation"], follow["image"], follow["image_pos"]) == ("", "", "", "top")
+    assert follow["duration"] == 3 and follow["bg_image_url"] == ""
+
+
+def test_the_overlays_share_their_styles_and_helpers_from_the_plugin(api):
+    css = api.get("/twitch/overlay.css")
+    assert css.status_code == 200 and css.headers["content-type"].startswith("text/css")
+    for name in ("bgs-slice", "bgs-image::before", "anim-bounce", ".leaving.out-zoom"):
+        assert name in css.text, name
+    assert "no-store" in css.headers["cache-control"]
+    for page in ("chat", "events"):
+        assert "/twitch/overlay.css" in api.get(f"/twitch/{page}").text, page            # both pages link it
+    assert "function bgVars" in api.get("/twitch/boot.js").text
+
+
+def test_custom_css_is_text_and_has_a_limit(api, tw):
+    ok = api.post("/twitch/api/config", json={"chat": {"custom_css": ".msg{color:red}"}})
+    assert ok.status_code == 200 and tw.CONFIG["chat"]["custom_css"] == ".msg{color:red}"
+    for scope in ("chat", "events"):
+        too_long = api.post("/twitch/api/config", json={scope: {"custom_css": "a" * (tw.MAX_CUSTOM_CSS + 1)}})
+        assert too_long.status_code == 400 and "limited" in too_long.json()["error"]
+        assert api.post("/twitch/api/config", json={scope: {"custom_css": ["not", "text"]}}).status_code == 400
+    assert tw.CONFIG["chat"]["custom_css"] == ".msg{color:red}"                          # a refused update changes nothing
+    assert api.post("/twitch/api/config", json={"events": {"custom_css": "a" * tw.MAX_CUSTOM_CSS}}).status_code == 200
+
+
+def test_an_uploaded_font_is_listed_by_the_name_it_is_picked_by_and_can_be_deleted(api, tw, monkeypatch, tmp_path):
+    monkeypatch.setattr(tw, "OVERLAY_FONT_DIR", tmp_path / "fonts")
+    assert api.get("/twitch/api/fonts").json() == {"fonts": []}                         # no folder yet is no fonts
+    up = api.post("/twitch/api/fonts", files={"file": ("My_Cool-Font.woff2", b"wOF2" + b"\0" * 64, "font/woff2")})
+    assert up.status_code == 200
+    body = up.json()
+    assert body["name"] == "My Cool Font" and body["file"] == "My_Cool-Font.woff2"
+    assert body["fonts"] == [{"name": "My Cool Font", "file": "My_Cool-Font.woff2", "format": "woff2",
+                              "url": "/media/overlays/fonts/My_Cool-Font.woff2"}]
+    assert (tmp_path / "fonts" / "My_Cool-Font.woff2").is_file()
+    assert api.get("/twitch/api/fonts").json()["fonts"][0]["name"] == "My Cool Font"
+    pictures = api.get("/twitch/api/backgrounds").json()["backgrounds"]
+    assert all(not b["name"].endswith(".woff2") for b in pictures)                       # the picture library never lists fonts
+    gone = api.post("/twitch/api/fonts/delete", json={"file": "../../My_Cool-Font.woff2"})   # only the file name counts
+    assert gone.status_code == 200 and gone.json()["fonts"] == []
+    assert not (tmp_path / "fonts" / "My_Cool-Font.woff2").exists()
+    assert api.post("/twitch/api/fonts/delete", json={}).status_code == 400
+
+
+def test_a_font_upload_must_be_a_real_font_of_a_known_kind_and_not_too_big(api, tw, monkeypatch, tmp_path):
+    monkeypatch.setattr(tw, "OVERLAY_FONT_DIR", tmp_path / "fonts")
+    wrong_kind = api.post("/twitch/api/fonts", files={"file": ("logo.png", b"\x89PNG....", "image/png")})
+    assert wrong_kind.status_code == 400 and "ttf, otf, woff or woff2" in wrong_kind.json()["error"]
+    not_a_font = api.post("/twitch/api/fonts", files={"file": ("fake.ttf", b"this is just text", "font/ttf")})
+    assert not_a_font.status_code == 400 and "does not look like a font" in not_a_font.json()["error"]
+    monkeypatch.setattr(tw, "MAX_FONT_BYTES", 100)
+    big = api.post("/twitch/api/fonts", files={"file": ("big.otf", b"OTTO" + b"\0" * 200, "font/otf")})
+    assert big.status_code == 400 and "too big" in big.json()["error"]
+    assert not (tmp_path / "fonts").exists() or not list((tmp_path / "fonts").iterdir())    # nothing was kept
+    odd = api.post("/twitch/api/fonts", files={"file": ("..\\..\\Evil Name!.TTF", b"\x00\x01\x00\x00" + b"\0" * 20, "font/ttf")})
+    assert odd.status_code == 200 and odd.json()["file"] == "Evil_Name.ttf"                  # a flat, safe name
+    assert [p.name for p in (tmp_path / "fonts").iterdir()] == ["Evil_Name.ttf"]
+
+
+def test_small_bits_gifts_and_raids_can_be_ignored(tw, monkeypatch):
+    for kind in ("cheer", "subgift", "raid"):
+        monkeypatch.setitem(tw.CONFIG["alerts"][kind], "min_amount", 5)
+        assert tw.build_alert(kind, user="v", amount="4") is None, kind
+        assert tw.build_alert(kind, user="v", amount="5")["kind"] == kind, kind
+    assert tw.build_alert("follow", user="v")["kind"] == "follow"                         # nothing else has an amount
+    monkeypatch.setitem(tw.CONFIG["alerts"]["raid"], "min_amount", 1)
+    assert tw.build_alert("raid", user="v", amount="1")["kind"] == "raid"                 # the default ignores nothing
+
+
+def test_every_overlay_setting_can_be_edited_in_the_panel(tw):
+    """A setting the overlay reads but the panel has no field for cannot be changed except by editing the JSON, so
+    a new key must come with its field (or be listed here as deliberately not one)."""
+    panel = (STATIC / "twitch_panel.html").read_text(encoding="utf-8")
+    fields = set(re.findall(r"\['([a-z_0-9]+)',", panel))
+    placement = {"box_enabled", "box_x", "box_y", "box_w", "box_h", "bg_full", "bg_box_x", "bg_box_y", "bg_box_w", "bg_box_h"}
+    placement.add("custom_css")                      # edited in the Custom CSS tab, which is built by its own helper
+    for scope in ("chat", "events"):
+        missing = set(tw.DEFAULT_CONFIG[scope]) - fields - placement
+        assert not missing, f"{scope} settings with no field in the panel: {sorted(missing)}"
+    alert_keys = set(tw.DEFAULT_CONFIG["alerts"]["raid"]) - {"on"}                        # the switch is the row's own
+    assert not alert_keys - fields, sorted(alert_keys - fields)
+
+
+def test_the_overlay_helpers_clean_fonts_and_build_the_background_variables():
+    out = _node_json("""
+      const fs = require('fs'), vm = require('vm');
+      const sb = { location: { protocol: 'http:', host: 'h', search: '' }, URLSearchParams, document: {}, window: {}, setTimeout() {} };
+      vm.createContext(sb);
+      vm.runInContext(fs.readFileSync(%s, 'utf8'), sb);
+      const set = {};
+      sb.bgVars({ setProperty: (k, v) => { set[k] = v; } },
+        { bubble_color: '#112233', bubble_opacity: 0.5, bg_fit: 'tile', bg_position: 'top', bg_image_url: '/media/overlays/a"b.png',
+          bg_shadow: 20, bg_image_dim: 0.3, bg_image_opacity: 0.8 });
+      const plain = {};
+      sb.bgVars({ setProperty: (k, v) => { plain[k] = v; } }, { bubble_color: '#000', bubble_opacity: 1, bg_fit: 'nonsense', bg_position: 'sideways' });
+      console.log(JSON.stringify({
+        font: sb.cleanFont('  My "Font";{x}  Two '), blank: sb.fontVar(''), quoted: sb.fontVar('Pacifico'),
+        set, plain,
+        styles: [sb.bgStyleFor('slice', ''), sb.bgStyleFor('slice', '/x.png'), sb.bgStyleFor('', 'x'), sb.bgStyleFor('image', '')],
+        shadow: sb.shadowCss({ shadow_x: 1, shadow_y: 2, shadow_blur: 3, shadow_color: '#ff0000', shadow_opacity: 0.5 }),
+        cls: [sb.bgClass('none'), sb.bgClass('glass'), sb.bgClass('')],
+        face: sb.uploadedFaceCss({ name: 'My Font', url: '/media/overlays/fonts/My_Font.woff2', format: 'woff2' }) }));
+    """ % json.dumps(str(STATIC / "twitch_boot.js")))
+    assert out["font"] == "My Fontx Two" and out["blank"] == "inherit" and out["quoted"] == '"Pacifico"'
+    s = out["set"]
+    assert s["--bg-color"] == "rgba(17,34,51,0.5)" and s["--bg-size"] == "auto" and s["--bg-repeat"] == "repeat"
+    assert s["--bg-pos"] == "top" and s["--bg-dim"] == 0.3 and s["--bg-img-opacity"] == 0.8
+    assert s["--bg-image"] == 'url("/media/overlays/ab.png")'                              # a quote cannot end the url
+    assert s["--bg-filter"] == "drop-shadow(0 10px 20px rgba(0,0,0,.55))"
+    p = out["plain"]
+    assert p["--bg-size"] == "cover" and p["--bg-pos"] == "center" and p["--bg-filter"] == "none" and p["--bg-image"] == "none"
+    assert out["styles"] == ["solid", "slice", "solid", "image"]                           # an empty frame is drawn solid; no style is solid
+    assert out["shadow"] == "1px 2px 3px rgba(255,0,0,0.5)"
+    assert out["cls"] == ["", "bgs bgs-glass", ""]
+    assert out["face"] == '@font-face{font-family:"My Font";src:url("/media/overlays/fonts/My_Font.woff2") format("woff2");font-weight:100 900;font-display:swap}'

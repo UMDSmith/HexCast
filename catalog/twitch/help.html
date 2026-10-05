@@ -12,7 +12,14 @@
     <tr><td>POST /twitch/api/queue/skip · clear</td><td>skip the current alert / drop the whole queue</td></tr>
     <tr><td>POST /twitch/api/test/chat</td><td><code>{"text": "...", "channel": "name"}</code> — fake a chat line (runs commands like <code>!so</code> as the broadcaster); <code>channel</code> is optional, the primary by default</td></tr>
     <tr><td>POST /twitch/api/test/event</td><td><code>{"kind": "follow", "channel": "name"}</code> — fire a sample alert</td></tr>
+    <tr><td>GET · POST /twitch/api/fonts</td><td>the fonts uploaded for the overlays (<code>{"fonts": [{"name", "file", "format", "url"}]}</code>); POST a <code>file</code> (ttf, otf, woff, woff2) to add one; <code>POST /twitch/api/fonts/delete</code> with <code>{"file": "..."}</code> removes it</td></tr>
+    <tr><td>GET · POST /twitch/api/backgrounds</td><td>the picture library the overlays' backgrounds and alert pictures draw from (<code>POST /twitch/api/backgrounds/delete</code> to remove one)</td></tr>
   </table>
+  <h3>Overlay looks</h3>
+  <p class="hint">The Chat and Alerts tabs style the overlays: fonts (any Google font, or one you upload),
+    pictures and 9-slice frames, per-alert accents and pictures, animations and your own CSS, with a live
+    preview that is the real overlay page. All of it is stored under <code>chat</code>, <code>events</code> and
+    <code>alerts</code> in <code>config/twitch.json</code> (<code>POST /twitch/api/config</code> takes the same shape).</p>
   <h3>Several channels</h3>
   <p class="hint">Add channels under <b>Channels</b> on the Connection tab (up to 5; the first is the
     primary). Each uses the account with its own name if you have signed in as it, else your default

@@ -1,0 +1,78 @@
+/* What the chat overlay and the alert overlay share: the background styles and the animations.
+   The page sets the --bg-* variables (twitch_boot.js: bgVars) and gives an element the classes
+   "bgs bgs-<style>"; the same rules then paint a chat message, the panel behind the chat, or an alert. */
+
+.bgs{
+  position:relative; isolation:isolate; box-sizing:border-box;
+  border-radius:var(--bg-radius,14px);
+  background:var(--bg-color,transparent);
+  filter:var(--bg-filter,none);              /* the soft shadow (bg_shadow) */
+}
+.bgs-solid{ background:var(--bg-color); }
+.bgs-gradient{ background:linear-gradient(var(--bg-angle,135deg), var(--bg-color), var(--bg-color2)); }
+.bgs-animated{
+  background:linear-gradient(var(--bg-angle,135deg), var(--bg-color), var(--bg-color2), var(--bg-color));
+  background-size:250% 250%; animation:twBgShift 9s ease-in-out infinite;
+}
+.bgs-glass{
+  background:var(--bg-color);
+  backdrop-filter:blur(var(--bg-blur,8px)) saturate(1.35);
+  -webkit-backdrop-filter:blur(var(--bg-blur,8px)) saturate(1.35);
+  border:1px solid rgba(255,255,255,.14);
+}
+.bgs-frame{ background:var(--bg-color); border:var(--bg-border-w,2px) solid var(--bg-border,#ff3b30); }
+.bgs-glow{
+  background:var(--bg-color); border:1px solid var(--bg-border,#ff3b30);
+  box-shadow:0 0 16px var(--bg-border,#ff3b30), inset 0 0 12px rgba(0,0,0,.35);
+}
+/* The picture lives on its own layer so it can have its own fit, position, opacity and dimming
+   while the colour shows through behind it. */
+.bgs-image::before{
+  content:''; position:absolute; inset:0; z-index:-1; pointer-events:none; border-radius:inherit;
+  background:
+    linear-gradient(rgba(0,0,0,var(--bg-dim,0)), rgba(0,0,0,var(--bg-dim,0))),
+    var(--bg-image,none) var(--bg-pos,center) / var(--bg-size,cover) var(--bg-repeat,no-repeat);
+  opacity:var(--bg-img-opacity,1);
+}
+/* 9-slice frame: corners stay crisp, edges + middle stretch to fit. The centre of the source
+   paints over the colour (the `fill` keyword), so a hollow frame lets the colour show. */
+.bgs-slice{
+  background:var(--bg-color);
+  border-style:solid;
+  border-width:var(--bg-slice-w,24px);
+  border-image-source:var(--bg-image,none);
+  border-image-slice:var(--bg-slice,32) fill;
+  border-image-width:var(--bg-slice-w,24px);
+  border-image-repeat:var(--bg-slice-repeat,stretch);
+  border-radius:0;
+}
+@keyframes twBgShift{ 0%{background-position:0% 50%} 50%{background-position:100% 50%} 100%{background-position:0% 50%} }
+
+/* ---- entrances (the page adds anim-<name>; `slide` and `pop` differ per overlay, so they live there).
+   Fill mode is `backwards`, not `both`: a held final frame would beat the fade-out below. ---- */
+.anim-fade  { animation:twFade   var(--anim-dur,.3s) ease backwards; }
+.anim-zoom  { animation:twZoom   var(--anim-dur,.3s) cubic-bezier(.2,.8,.3,1) backwards; }
+.anim-rise  { animation:twRise   var(--anim-dur,.3s) cubic-bezier(.2,.8,.3,1) backwards; }
+.anim-drop  { animation:twDrop   var(--anim-dur,.3s) cubic-bezier(.2,.8,.3,1) backwards; }
+.anim-right { animation:twRight  var(--anim-dur,.3s) cubic-bezier(.2,.8,.3,1) backwards; }
+.anim-bounce{ animation:twBounce var(--anim-dur,.3s) cubic-bezier(.3,1.4,.5,1) backwards; }
+.anim-blur  { animation:twBlur   var(--anim-dur,.3s) ease backwards; }
+.anim-flip  { animation:twFlip   var(--anim-dur,.3s) cubic-bezier(.2,.8,.3,1) backwards; transform-origin:50% 100%; }
+@keyframes twFade  { from{opacity:0} to{opacity:1} }
+@keyframes twZoom  { from{opacity:0; transform:scale(.45)} to{opacity:1; transform:none} }
+@keyframes twRise  { from{opacity:0; transform:translateY(26px)} to{opacity:1; transform:none} }
+@keyframes twDrop  { from{opacity:0; transform:translateY(-26px)} to{opacity:1; transform:none} }
+@keyframes twRight { from{opacity:0; transform:translateX(26px)} to{opacity:1; transform:none} }
+@keyframes twBounce{ 0%{opacity:0; transform:translateY(34px) scale(.9)} 55%{opacity:1; transform:translateY(-8px)} 80%{transform:translateY(3px)} 100%{transform:none} }
+@keyframes twBlur  { from{opacity:0; filter:blur(10px)} to{opacity:1; filter:blur(0)} }
+@keyframes twFlip  { from{opacity:0; transform:perspective(500px) rotateX(-70deg)} to{opacity:1; transform:none} }
+
+/* ---- exits: the page adds "leaving out-<name>" and removes the element when --out-dur has passed ---- */
+.leaving{ opacity:0; transition:opacity var(--out-dur,.5s) ease, transform var(--out-dur,.5s) ease; }
+.leaving.out-zoom{ transform:scale(.8); }
+.leaving.out-up  { transform:translateY(-24px); }
+.leaving.out-down{ transform:translateY(24px); }
+
+@media (prefers-reduced-motion: reduce){
+  .anim-fade,.anim-zoom,.anim-rise,.anim-drop,.anim-right,.anim-bounce,.anim-blur,.anim-flip,.bgs-animated{ animation:none !important; }
+}

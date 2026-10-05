@@ -1,7 +1,7 @@
 {
   "id": "twitch",
   "name": "Twitch",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "Chat and alert overlays for follows, subs, gift subs, bits, raids, channel-point redeems and hype trains, with a FIFO alert queue, alerts that can fire soundboard clips by name, and a !so shoutout command.",
   "icon": "💬",
   "color": "#a970ff",

@@ -1,5 +1,6 @@
 <!doctype html>
 <html><head><meta charset="utf-8"><title>HexCast chat</title>
+<link rel="stylesheet" href="/twitch/overlay.css">
 <style>
   html,body{margin:0;padding:0;background:transparent;overflow:hidden;height:100%;width:100%;}
   /* Everything is laid out on a fixed 1920x1080 "design stage" and then scaled
@@ -7,12 +8,8 @@
      positions scale together no matter how big the source/window is. */
   #stage{ position:absolute; top:0; left:0; width:1920px; height:1080px; transform-origin:top left; }
   /* Background panel layer. Sits behind the messages; JS positions it (whole
-     screen or its own box) and gives it the bg-* class when placement is on. */
-  #bgbox{
-    position:absolute; inset:0; box-sizing:border-box; z-index:0; display:none;
-    pointer-events:none; background-size:cover; background-position:center;
-    border-radius:var(--radius,14px);  /* rounds non-image styles; 9-slice ignores it */
-  }
+     screen or its own box) and gives it the style's classes when placement is on. */
+  #bgbox{ position:absolute; inset:0; z-index:0; display:none; pointer-events:none; }
   #bgbox.on{ display:block; }
   #wrap{
     position:absolute; inset:0; z-index:1;
@@ -23,19 +20,24 @@
   #wrap.boxed{ overflow:hidden; }
   #wrap.bottom{ justify-content:flex-end; }
   #wrap.top{ justify-content:flex-start; }
+  /* The oldest lines fade out over the first --fade-edge px of the chat box. */
+  #wrap.fade-edge.bottom{ -webkit-mask-image:linear-gradient(to bottom, transparent 0, #000 var(--fade-edge,0px)); mask-image:linear-gradient(to bottom, transparent 0, #000 var(--fade-edge,0px)); }
+  #wrap.fade-edge.top{ -webkit-mask-image:linear-gradient(to top, transparent 0, #000 var(--fade-edge,0px)); mask-image:linear-gradient(to top, transparent 0, #000 var(--fade-edge,0px)); }
   #list{ display:flex; flex-direction:column; gap:var(--gap,8px); width:var(--width,100%); }
   #wrap.left  #list{ margin-right:auto; align-items:flex-start; text-align:left; }
   #wrap.center #list{ margin:0 auto;     align-items:center;    text-align:center; }
   #wrap.right #list{ margin-left:auto;  align-items:flex-end;  text-align:right; }
 
   .msg{
+    position:relative;
     font-family:var(--font), 'Segoe UI', system-ui, sans-serif;
     font-size:var(--size,28px);
     font-weight:var(--weight,600);
     line-height:var(--lh,1.35);
+    letter-spacing:var(--ls,0);
+    text-transform:var(--tt,none);
     color:var(--fg,#f2f2f7);
-    background:var(--bubble, transparent);
-    border-radius:var(--radius,14px);
+    border-radius:var(--bg-radius,14px);
     padding:var(--pad,12px);
     max-width:100%;
     word-wrap:break-word;
@@ -44,88 +46,27 @@
     paint-order:stroke fill;
     text-shadow:var(--shadow,none);
     transform-origin:left center;
-    background-size:cover; background-position:center;
   }
-  /* ---- fancy message backgrounds (bg_style) ---- */
-  #wrap.bg-gradient .msg{ background:linear-gradient(var(--bg-angle,135deg), var(--bubble), var(--bg2)); }
-  #wrap.bg-animated .msg{
-    background:linear-gradient(var(--bg-angle,135deg), var(--bubble), var(--bg2), var(--bubble));
-    background-size:250% 250%; animation:bgShift 9s ease-in-out infinite;
-  }
-  #wrap.bg-glass .msg{
-    background:var(--bubble);
-    backdrop-filter:blur(var(--bg-blur,8px)) saturate(1.35);
-    -webkit-backdrop-filter:blur(var(--bg-blur,8px)) saturate(1.35);
-    border:1px solid rgba(255,255,255,.14);
-  }
-  #wrap.bg-frame .msg{ background:var(--bubble); border:var(--bg-border-w,2px) solid var(--bg-border,#ff3b30); }
-  #wrap.bg-glow .msg{
-    background:var(--bubble); border:1px solid var(--bg-glow,#ff3b30);
-    box-shadow:0 0 16px var(--bg-glow,#ff3b30), inset 0 0 12px rgba(0,0,0,.35);
-  }
-  #wrap.bg-image .msg{ background:var(--bg-image,none) center/cover no-repeat, var(--bubble); }
   /* Image backgrounds get extra breathing room so the text doesn't sit on the
      artwork edge (--bg-pad, on top of the normal padding). */
-  #wrap.bg-image .msg{ padding:calc(var(--pad,12px) + var(--bg-pad,20px)); }
-  /* 9-slice frame: corners stay crisp, edges + middle stretch to fit the text.
-     The center of the source paints over --bubble (via the `fill` keyword). */
-  #wrap.bg-slice .msg{
-    background:var(--bubble);
-    border-style:solid;
-    border-width:var(--bg-slice-w,24px);
-    border-image-source:var(--bg-image,none);
-    border-image-slice:var(--bg-slice,32) fill;
-    border-image-width:var(--bg-slice-w,24px);
-    border-image-repeat:var(--bg-slice-repeat,stretch);
-    border-radius:0;
-    padding:var(--bg-pad,20px);
+  .msg.bgs-image{ padding:calc(var(--pad,12px) + var(--bg-pad,20px)); }
+  .msg.bgs-slice{ padding:var(--bg-pad,20px); }
+  /* In placement mode the soft shadow belongs to the panel, not to every bubble on it. */
+  #wrap.boxed .msg.bgs{ filter:none; }
+  /* A bar down the left of a first-time chatter's line, or a broadcaster's, mod's, VIP's, sub's. */
+  .msg[data-bar]::after{
+    content:''; position:absolute; left:0; top:0; bottom:0; width:var(--bar-w,4px);
+    background:var(--bar-color,#ff3b30); border-radius:var(--bg-radius,14px) 0 0 var(--bg-radius,14px);
   }
-
-  /* ---- whole-window bounding box (bg_scope=window) ----
-     Paint one background behind the entire chat area; messages sit inside it
-     with no per-message background. #wrap already fills the OBS source. */
-  /* The chat box rounds to the corner-radius setting for the solid/gradient/
-     glass/frame/glow styles (image frames define their own edges via 9-slice,
-     which ignores border-radius). overflow:hidden from .boxed clips to it. */
-  #wrap.scope-window{ padding:calc(8px + var(--bg-pad,20px)); border-radius:var(--radius,14px); }
-  #wrap.scope-window .msg{
-    background:transparent !important; border:0 !important;
-    box-shadow:none !important; backdrop-filter:none !important;
-    -webkit-backdrop-filter:none !important; padding:var(--pad,12px) !important;
-  }
-  #wrap.scope-window.bg-solid,    #bgbox.bg-solid   { background:var(--panel-bg); }
-  #wrap.scope-window.bg-gradient, #bgbox.bg-gradient{ background:linear-gradient(var(--bg-angle,135deg), var(--panel-bg), var(--bg2)); }
-  #wrap.scope-window.bg-animated, #bgbox.bg-animated{
-    background:linear-gradient(var(--bg-angle,135deg), var(--panel-bg), var(--bg2), var(--panel-bg));
-    background-size:250% 250%; animation:bgShift 9s ease-in-out infinite;
-  }
-  #wrap.scope-window.bg-glass, #bgbox.bg-glass{
-    background:var(--panel-bg);
-    backdrop-filter:blur(var(--bg-blur,8px)) saturate(1.35);
-    -webkit-backdrop-filter:blur(var(--bg-blur,8px)) saturate(1.35);
-    border:1px solid rgba(255,255,255,.14);
-  }
-  #wrap.scope-window.bg-frame, #bgbox.bg-frame{ background:var(--panel-bg); border:var(--bg-border-w,2px) solid var(--bg-border,#ff3b30); }
-  #wrap.scope-window.bg-glow, #bgbox.bg-glow{
-    background:var(--panel-bg); border:1px solid var(--bg-glow,#ff3b30);
-    box-shadow:0 0 24px var(--bg-glow,#ff3b30), inset 0 0 18px rgba(0,0,0,.35);
-  }
-  #wrap.scope-window.bg-image, #bgbox.bg-image{ background:var(--bg-image,none) center/cover no-repeat, var(--panel-bg); }
-  #wrap.scope-window.bg-slice, #bgbox.bg-slice{
-    background:var(--panel-bg);
-    border-style:solid;
-    border-width:var(--bg-slice-w,24px);
-    border-image-source:var(--bg-image,none);
-    border-image-slice:var(--bg-slice,32) fill;
-    border-image-width:var(--bg-slice-w,24px);
-    border-image-repeat:var(--bg-slice-repeat,stretch);
-  }
-  @keyframes bgShift{ 0%{background-position:0% 50%} 50%{background-position:100% 50%} 100%{background-position:0% 50%} }
-  .msg.first{ box-shadow: inset 4px 0 0 0 var(--highlight,#ff3b30); }
   .msg.stacked .name{ display:block; margin-bottom:2px; }
-  .name{ font-weight:var(--nameweight,800); }
+  .name{
+    font-family:var(--name-font), 'Segoe UI', system-ui, sans-serif;
+    font-size:calc(1em * var(--name-scale,1));
+    font-weight:var(--nameweight,800);
+    text-transform:var(--nt,none);
+  }
   .colon{ opacity:.55; margin-right:.28em; }
-  .badge{ height:1em; vertical-align:-0.14em; margin-right:.22em; }
+  .badge{ height:var(--badge,1em); vertical-align:-0.14em; margin-right:.22em; }
   .emote{ height:var(--emote,34px); vertical-align:middle; margin:-0.25em 2px; }
   .mention{ color:var(--highlight,#ff3b30); font-weight:800; }
   .cheer{ color:#c99cff; font-weight:800; }
@@ -133,14 +74,11 @@
   .chan{ opacity:.6; font-size:.7em; font-weight:700; letter-spacing:.04em; text-transform:uppercase; margin-right:.5em; }
   .reply{ display:block; font-size:.62em; opacity:.55; margin-bottom:2px; }
 
-  .msg.leaving{ opacity:0; transition:opacity var(--fadedur,.5s) ease; }
   @keyframes slideIn{ from{ opacity:0; transform:translateX(-14px);} to{ opacity:1; transform:none;} }
-  @keyframes fadeIn { from{ opacity:0; } to{ opacity:1; } }
   @keyframes popIn  { 0%{ opacity:0; transform:scale(.86);} 60%{ transform:scale(1.03);} 100%{ opacity:1; transform:scale(1);} }
-  .anim-slide{ animation:slideIn .28s cubic-bezier(.2,.8,.3,1) both; }
-  .anim-fade { animation:fadeIn .3s ease both; }
-  .anim-pop  { animation:popIn .32s cubic-bezier(.2,.9,.3,1.2) both; }
-  @media (prefers-reduced-motion: reduce){ .msg{ animation:none !important; } }
+  .anim-slide{ animation:slideIn var(--anim-dur,.3s) cubic-bezier(.2,.8,.3,1) backwards; }
+  .anim-pop  { animation:popIn var(--anim-dur,.3s) cubic-bezier(.2,.9,.3,1.2) backwards; }
+  @media (prefers-reduced-motion: reduce){ .anim-slide,.anim-pop{ animation:none !important; } }
 </style></head>
 <body>
 <div id="stage">
@@ -150,8 +88,8 @@
 <script src="/twitch/boot.js"></script>
 <script>
 
-
 var CFG = null;
+var PREVIEW = isPreview();      // the panel's live preview: no socket, no fading, drawn from postMessage
 var stage = document.getElementById('stage');
 var bgbox = document.getElementById('bgbox');
 var wrap = document.getElementById('wrap');
@@ -166,43 +104,53 @@ function fitStage(){
 window.addEventListener('resize', fitStage);
 fitStage();
 
+// The classes that paint one message's background: nothing, a plain bubble (in placement mode the panel
+// carries the chosen style), or - in the classic mode - the chosen style on each message.
+function msgBgClass(){
+  var c = CFG.chat;
+  if(!c.bubble) return '';
+  return bgClass(c.box_enabled ? 'solid' : bgStyleFor(c.bg_style, c.bg_image_url));
+}
+function paintMsgBg(el){
+  el.className = el.className.replace(/(^|\s)bgs(-\w+)?(?=\s|$)/g, ' ').replace(/\s+/g, ' ').trim();
+  var b = msgBgClass();
+  if(b) el.className += ' ' + b;
+}
+
 function applyConfig(cfg){
   CFG = cfg;
   var c = cfg.chat, r = document.documentElement.style;
   loadFont(c.font_family);
-  r.setProperty('--font', '"' + c.font_family + '"');
+  if(c.name_font_family) loadFont(c.name_font_family);
+  r.setProperty('--font', fontVar(c.font_family));
+  r.setProperty('--name-font', fontVar(c.name_font_family || c.font_family));
+  r.setProperty('--name-scale', _num(c.name_scale, 100) / 100);
   r.setProperty('--size', c.font_size + 'px');
   r.setProperty('--weight', c.font_weight);
   r.setProperty('--nameweight', c.name_weight);
   r.setProperty('--lh', c.line_height);
+  r.setProperty('--ls', _num(c.letter_spacing, 0) + 'px');
+  r.setProperty('--tt', c.text_transform || 'none');
+  r.setProperty('--nt', c.name_transform || 'none');
   r.setProperty('--fg', c.text_color);
   r.setProperty('--gap', c.gap + 'px');
   r.setProperty('--pad', c.padding + 'px');
-  r.setProperty('--radius', c.bubble_radius + 'px');
   r.setProperty('--emote', c.emote_size + 'px');
+  r.setProperty('--badge', (_num(c.badge_scale, 100) / 100) + 'em');
   r.setProperty('--highlight', c.highlight_color);
   r.setProperty('--width', c.width_percent + '%');
-  r.setProperty('--fadedur', c.fade_duration + 's');
-  r.setProperty('--bubble', c.bubble ? hexToRgba(c.bubble_color, c.bubble_opacity) : 'transparent');
-  // Panel background always carries the colour (independent of per-message
-  // bubbles) so the placement background box can be filled with bubbles off.
-  r.setProperty('--panel-bg', hexToRgba(c.bubble_color, c.bubble_opacity));
-  r.setProperty('--bg2', hexToRgba(c.bg_color2 || c.bubble_color, c.bubble_opacity));
-  r.setProperty('--bg-angle', (c.bg_gradient_angle == null ? 135 : c.bg_gradient_angle) + 'deg');
-  r.setProperty('--bg-image', c.bg_image_url ? 'url("' + String(c.bg_image_url).replace(/["\\]/g,'') + '")' : 'none');
-  r.setProperty('--bg-blur', (c.bg_blur || 0) + 'px');
-  r.setProperty('--bg-border', c.bg_border_color || '#ff3b30');
-  r.setProperty('--bg-glow', c.bg_border_color || '#ff3b30');
-  r.setProperty('--bg-border-w', (c.bg_border_width || 0) + 'px');
-  r.setProperty('--bg-slice', (c.bg_slice == null ? 32 : c.bg_slice));
-  r.setProperty('--bg-slice-w', (c.bg_slice_width == null ? 24 : c.bg_slice_width) + 'px');
-  r.setProperty('--bg-slice-repeat', c.bg_slice_repeat || 'stretch');
-  r.setProperty('--bg-pad', (c.bg_pad == null ? 20 : c.bg_pad) + 'px');
+  r.setProperty('--out-dur', c.fade_duration + 's');
+  r.setProperty('--anim-dur', _num(c.anim_duration, 0.3) + 's');
+  r.setProperty('--bar-w', _num(c.role_bar_width, 4) + 'px');
+  r.setProperty('--fade-edge', _num(c.fade_edge, 0) + 'px');
   r.setProperty('--stroke', c.outline ? c.outline_width + 'px' : '0px');
   r.setProperty('--stroke-color', c.outline_color);
-  r.setProperty('--shadow', c.shadow ? '0 2px 6px rgba(0,0,0,.85)' : 'none');
+  r.setProperty('--shadow', c.shadow ? shadowCss(c) : 'none');
+  // Both the message bubbles and the panel behind them read the same --bg-* variables.
+  bgVars(r, c);
+  applyCustomCss(c.custom_css);
   var valign = (c.direction === 'top' ? 'top' : 'bottom');
-  var bgClass = 'bg-' + (c.bg_style || 'solid');
+  var edge = _num(c.fade_edge, 0) > 0 ? ' fade-edge' : '';
 
   if(c.box_enabled){
     // Two independent boxes: the CHAT box (where messages sit, clipped) and the
@@ -221,18 +169,16 @@ function applyConfig(cfg){
       bgbox.style.left = c.bg_box_x + '%'; bgbox.style.top = c.bg_box_y + '%';
       bgbox.style.width = c.bg_box_w + '%'; bgbox.style.height = c.bg_box_h + '%';
     }
-    bgbox.className = 'on ' + bgClass;
-    // Messages sit over the background box - transparent, or an optional simple
-    // bubble for readability.
-    wrap.className = 'boxed ' + valign + ' ' + c.align + ' ' + (c.bubble ? 'bg-solid' : 'bg-none');
+    bgbox.className = 'on ' + bgClass(bgStyleFor(c.bg_style, c.bg_image_url));
+    wrap.className = 'boxed ' + valign + ' ' + c.align + edge;
   } else {
     // Legacy: chat flows over the whole source; background is per-message.
     wrap.style.left = ''; wrap.style.top = ''; wrap.style.width = '';
     wrap.style.height = ''; wrap.style.maxHeight = ''; wrap.style.right = ''; wrap.style.bottom = '';
     bgbox.className = '';
-    var bg = c.bubble ? bgClass : 'bg-none';
-    wrap.className = valign + ' ' + c.align + ' ' + bg;
+    wrap.className = valign + ' ' + c.align + edge;
   }
+  [].forEach.call(list.children, paintMsgBg);        // lines already on screen follow the new style
   trim();
 }
 
@@ -251,12 +197,28 @@ function nameColor(msg){
   return msg.user.color || c.name_color;
 }
 
-function addMessage(msg){
+// The colour of the bar beside a line, or '' for none: first-time chatters, then roles.
+function barColor(flags){
+  var c = CFG.chat;
+  flags = flags || {};
+  if(c.highlight_first && flags.first) return c.highlight_color;
+  if(!c.mark_roles) return '';
+  var role = flags.broadcaster ? 'broadcaster' : flags.mod ? 'mod' : flags.vip ? 'vip' : flags.sub ? 'sub' : '';
+  return role ? c[role + '_color'] || '' : '';
+}
+
+function addMessage(msg, still){          // `still`: the preview redrawing a line, so no entrance
   if(!CFG) return;
   var c = CFG.chat;
   var el = document.createElement('div');
-  el.className = 'msg anim-' + c.animation + (c.layout === 'stacked' ? ' stacked' : '');
-  if(c.highlight_first && msg.flags && msg.flags.first) el.className += ' first';
+  var anim = c.animation && c.animation !== 'none' && !still ? ' anim-' + c.animation : '';
+  el.className = 'msg' + anim + (c.layout === 'stacked' ? ' stacked' : '');
+  var flags = msg.flags || {};
+  if(flags.first) el.className += ' first';
+  ['broadcaster', 'mod', 'vip', 'sub'].forEach(function(k){ if(flags[k]) el.className += ' role-' + k; });
+  var bar = barColor(flags);
+  if(bar){ el.dataset.bar = '1'; el.style.setProperty('--bar-color', bar); }
+  paintMsgBg(el);
   el.dataset.id = msg.id;
   el.dataset.channel = msg.channel || '';
 
@@ -280,9 +242,11 @@ function addMessage(msg){
   list.appendChild(el);
   trim();
 
-  if(c.fade_after > 0){
+  if(c.fade_after > 0 && !PREVIEW){
     setTimeout(function(){
-      el.classList.add('leaving');
+      var out = c.animation_out || 'fade';
+      if(out === 'none'){ el.remove(); return; }
+      el.className += ' leaving out-' + out;
       setTimeout(function(){ el.remove(); }, c.fade_duration * 1000 + 60);
     }, c.fade_after * 1000);
   }
@@ -294,17 +258,33 @@ function trim(){
   while(list.children.length > max) list.removeChild(list.firstChild);
 }
 
-connect('/twitch/ws/chat', function(m){
-  if(m.type === 'config') applyConfig(m.config);
-  else if(m.type === 'chat') addMessage(m);
-  else if(m.type === 'clear'){
-    // a chat clear in one channel empties that channel's lines only
-    if(!m.channel) list.innerHTML = '';
-    else [].slice.call(list.children).forEach(function(n){ if(n.dataset.channel === m.channel) n.remove(); });
-  }
-  else if(m.type === 'delete'){
-    var n = list.querySelector('[data-id="' + m.id + '"]');
-    if(n) n.remove();
-  }
-});
+function clearChat(channel){
+  // a chat clear in one channel empties that channel's lines only
+  if(!channel) list.innerHTML = '';
+  else [].slice.call(list.children).forEach(function(n){ if(n.dataset.channel === channel) n.remove(); });
+}
+
+if(PREVIEW){
+  // The lines the panel sent are kept, so a change of setting can redraw them in the new style.
+  var SAMPLE = [];
+  listenPreview(function(m){
+    if(m.type === 'config'){
+      applyConfig(m.config);
+      list.innerHTML = '';
+      SAMPLE.forEach(function(s){ addMessage(s, true); });
+    }
+    else if(m.type === 'chat'){ SAMPLE.push(m.message); addMessage(m.message); }
+    else if(m.type === 'clear'){ SAMPLE = []; clearChat(''); }
+  });
+} else {
+  connect('/twitch/ws/chat', function(m){
+    if(m.type === 'config') applyConfig(m.config);
+    else if(m.type === 'chat') addMessage(m);
+    else if(m.type === 'clear') clearChat(m.channel);
+    else if(m.type === 'delete'){
+      var n = list.querySelector('[data-id="' + m.id + '"]');
+      if(n) n.remove();
+    }
+  });
+}
 </script></body></html>

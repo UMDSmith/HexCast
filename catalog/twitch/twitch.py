@@ -54,8 +54,8 @@ def _read_static(name: str) -> str:
     if not path.exists():
         raise FileNotFoundError(
             f"Static file '{name}' not found at {path}. The Twitch module needs "
-            f"twitch_panel.html, twitch_chat.html, twitch_events.html and "
-            f"twitch_boot.js in the plugin's static/ folder."
+            f"twitch_panel.html, twitch_chat.html, twitch_events.html, "
+            f"twitch_boot.js and twitch_overlay.css in the plugin's static/ folder."
         )
     return path.read_text(encoding="utf-8")
 
@@ -72,9 +72,9 @@ BG_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".apng"}
 _SAFE_BG_NAME = re.compile(r"[^A-Za-z0-9._-]+")
 
 
-def _safe_bg_name(name: str) -> str:
+def _safe_bg_name(name: str, fallback: str = "background") -> str:
     """Sanitise an uploaded filename to a safe, flat name inside OVERLAY_BG_DIR."""
-    stem = _SAFE_BG_NAME.sub("_", Path(name).stem).strip("._-") or "background"
+    stem = _SAFE_BG_NAME.sub("_", Path(name).stem).strip("._-") or fallback
     return stem[:60] + Path(name).suffix.lower()
 
 
@@ -83,6 +83,32 @@ def _list_backgrounds() -> list[dict]:
     for p in sorted(OVERLAY_BG_DIR.glob("*")):
         if p.is_file() and p.suffix.lower() in BG_IMAGE_EXTS:
             out.append({"name": p.name, "url": f"/media/overlays/{p.name}"})
+    return out
+
+
+# Fonts the streamer uploads for the overlays (a font that is not on Google Fonts, or that must work with no
+# internet). They sit in a folder of their own inside the overlay library, so the picture listing above never
+# sees them, and the overlays reach them by URL like the pictures.
+OVERLAY_FONT_DIR = OVERLAY_BG_DIR / "fonts"
+FONT_FORMATS = {".ttf": "truetype", ".otf": "opentype", ".woff": "woff", ".woff2": "woff2"}
+FONT_MAGIC = {b"\x00\x01\x00\x00", b"true", b"OTTO", b"wOFF", b"wOF2"}      # first four bytes of a real font file
+MAX_FONT_BYTES = 10 * 1024 * 1024
+MAX_CUSTOM_CSS = 20000
+
+
+def _font_family(file_name: str) -> str:
+    """The name a font is picked by: its file name without the extension, '_' and '-' read as spaces."""
+    return " ".join(re.split(r"[_\-\s]+", Path(file_name).stem)).strip() or Path(file_name).stem
+
+
+def _list_fonts() -> list[dict]:
+    out = []
+    if OVERLAY_FONT_DIR.is_dir():
+        for p in sorted(OVERLAY_FONT_DIR.glob("*")):
+            fmt = FONT_FORMATS.get(p.suffix.lower())
+            if p.is_file() and fmt:
+                out.append({"name": _font_family(p.name), "file": p.name, "format": fmt,
+                            "url": f"/media/overlays/fonts/{p.name}"})
     return out
 
 HELIX = "https://api.twitch.tv/helix"
@@ -106,6 +132,15 @@ SCOPES = [
 # --------------------------------------------------------------------------
 # config
 # --------------------------------------------------------------------------
+
+def _alert(on: bool, duration: int, title: str, body: str, **extra: Any) -> dict:
+    """One alert's default rule. Besides what fires and what it says, each alert can look its own way: a colour
+    for its label and edge (empty = the overlay's accent), its own entrance (empty = the overlay's), a picture
+    shown with it (image_pos top | bottom | left | right, image_size px tall) and a different background picture."""
+    return {"on": on, "duration": duration, "title": title, "body": body, "clip": "",
+            "accent_color": "", "animation": "", "image": "", "image_pos": "top", "image_size": 120,
+            "bg_image_url": "", **extra}
+
 
 DEFAULT_CONFIG: dict[str, Any] = {
     # The channels to watch: [{"login": "mychannel", "label": "", "enabled": true}, ...], the first one the
@@ -147,6 +182,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # Extra breathing room inside image/frame backgrounds so words don't
         # sit right on the artwork edge.
         "bg_pad": 20,
+        # How the picture of the "image" style sits in its box: bg_fit cover | contain | stretch | tile | center,
+        # bg_position center | top | bottom | left | right, bg_image_opacity 0-1 (the colour shows through),
+        # bg_image_dim 0-1 (darkens it so text stays readable), bg_shadow a soft shadow under the box (px, 0 = none).
+        "bg_fit": "cover",
+        "bg_position": "center",
+        "bg_image_opacity": 1,
+        "bg_image_dim": 0,
+        "bg_shadow": 0,
         # Placement. The overlay is always the full OBS canvas; these lock the
         # chat and its background to boxes *inside* it (percent of the source),
         # so you size things in Hexcast at full fidelity instead of scaling the
@@ -178,6 +221,30 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "width_percent": 100,
         "highlight_first": True,
         "highlight_color": "#ff3b30",
+        # More type options. An empty name_font_family means "same as the message"; name_scale is a percentage
+        # of the message size; the shadow_* values draw the drop shadow when `shadow` is on.
+        "name_font_family": "",
+        "name_scale": 100,
+        "name_transform": "none",           # none | uppercase | lowercase | capitalize
+        "text_transform": "none",
+        "letter_spacing": 0,                # px
+        "badge_scale": 100,                 # % of the line height
+        "shadow_color": "#000000",
+        "shadow_opacity": 0.85,
+        "shadow_blur": 6,
+        "shadow_x": 0,
+        "shadow_y": 2,
+        # A coloured bar down the left of each line from a broadcaster, mod, VIP or subscriber.
+        "mark_roles": False,
+        "broadcaster_color": "#e91916",
+        "mod_color": "#00ad03",
+        "vip_color": "#e005b9",
+        "sub_color": "#8205ff",
+        "role_bar_width": 4,
+        "fade_edge": 0,                     # px: the oldest lines fade out over this much of the chat box's edge
+        "anim_duration": 0.3,               # seconds for a line's entrance
+        "animation_out": "fade",            # fade | zoom | up | down | none (how a line leaves)
+        "custom_css": "",                   # the streamer's own CSS, added to the overlay page
     },
     "events": {
         "font_family": "Inter",
@@ -200,6 +267,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "bg_slice_width": 24,
         "bg_slice_repeat": "stretch",
         "bg_pad": 20,
+        "bg_fit": "cover",
+        "bg_position": "center",
+        "bg_image_opacity": 1,
+        "bg_image_dim": 0,
+        "bg_shadow": 0,
         # Placement: same scaled-1920x1080 model as chat. box_* positions/sizes
         # the alert box; bg_box_* positions/sizes the background (width snaps to
         # the image when an image style is used). The alert - and its background -
@@ -218,6 +290,33 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "default_duration": 6,
         "gap_between": 0.6,
         "show_user_message": True,
+        # More type options. The label (title) can have its own font; an empty colour means the accent (title) or
+        # the text colour (body, note).
+        "title_font_family": "",
+        "title_transform": "uppercase",     # none | uppercase | lowercase | capitalize
+        "title_spacing": 0.14,              # em
+        "title_weight": 800,
+        "title_color": "",
+        "body_weight": 800,
+        "body_color": "",
+        "text_transform": "none",           # the body line
+        "letter_spacing": 0,                # px
+        "note_color": "",
+        "note_italic": True,
+        "outline_width": 2,
+        "shadow": True,
+        "shadow_color": "#000000",
+        "shadow_opacity": 0.6,
+        "shadow_blur": 10,
+        "shadow_x": 0,
+        "shadow_y": 3,
+        "pad_x": 34,
+        "pad_y": 22,
+        "accent_bar": "auto",               # auto | top | bottom | left | none: the coloured edge on an alert
+                                            # (auto = a bar on top in the classic mode, none in placement mode)
+        "accent_bar_width": 3,
+        "animation_out": "fade",            # fade | zoom | up | down | none
+        "custom_css": "",
     },
     # !so <channel>: official Twitch shoutout + a chat line + a random clip of
     # theirs fired at the Clips overlay (via /clips/api/shoutout, ephemeral -
@@ -232,16 +331,16 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "clip_count": 2,            # how many, chained back to back (1-5)
     },
     "alerts": {
-        "follow": {"on": True, "duration": 5, "title": "New follower", "body": "{user}", "clip": ""},
-        "subscribe": {"on": True, "duration": 7, "title": "New sub", "body": "{user} - tier {tier}", "clip": ""},
-        "resub": {"on": True, "duration": 8, "title": "Resub", "body": "{user} - {months} months", "clip": ""},
-        "subgift": {"on": True, "duration": 7, "title": "Gifted subs", "body": "{user} gifted {amount}", "clip": ""},
-        "cheer": {"on": True, "duration": 7, "title": "Bits", "body": "{user} cheered {amount}", "clip": "", "min_amount": 1},
-        "raid": {"on": True, "duration": 9, "title": "Raid", "body": "{user} raided with {amount}", "clip": ""},
-        "redeem": {"on": True, "duration": 6, "title": "Redeemed", "body": "{user}: {reward}", "clip": ""},
-        "hypetrain": {"on": True, "duration": 6, "title": "Hype train", "body": "Level {amount}", "clip": ""},
-        "online": {"on": False, "duration": 5, "title": "Live", "body": "Stream started", "clip": ""},
-        "offline": {"on": False, "duration": 5, "title": "Offline", "body": "Stream ended", "clip": ""},
+        "follow": _alert(True, 5, "New follower", "{user}"),
+        "subscribe": _alert(True, 7, "New sub", "{user} - tier {tier}"),
+        "resub": _alert(True, 8, "Resub", "{user} - {months} months"),
+        "subgift": _alert(True, 7, "Gifted subs", "{user} gifted {amount}", min_amount=1),
+        "cheer": _alert(True, 7, "Bits", "{user} cheered {amount}", min_amount=1),
+        "raid": _alert(True, 9, "Raid", "{user} raided with {amount}", min_amount=1),
+        "redeem": _alert(True, 6, "Redeemed", "{user}: {reward}"),
+        "hypetrain": _alert(True, 6, "Hype train", "Level {amount}"),
+        "online": _alert(False, 5, "Live", "Stream started"),
+        "offline": _alert(False, 5, "Offline", "Stream ended"),
     },
 }
 
@@ -1075,7 +1174,7 @@ def build_alert(kind: str, *, user="", amount="", tier="", months="", reward="",
     rule = CONFIG["alerts"].get(kind)
     if not rule or not rule.get("on"):
         return None
-    if kind == "cheer":
+    if kind in ("cheer", "subgift", "raid"):      # bits, gifted subs, raiders: ignore the small ones
         try:
             if int(amount or 0) < int(rule.get("min_amount", 1)):
                 return None
@@ -1741,6 +1840,12 @@ async def boot_js():
                     headers=_NOCACHE)
 
 
+@router.get("/overlay.css")
+async def overlay_css():
+    """The look both overlays share: the background styles, the entrance and exit animations."""
+    return Response(_read_static("twitch_overlay.css"), media_type="text/css", headers=_NOCACHE)
+
+
 
 @router.get("/api/queue")
 async def api_get_queue():
@@ -1805,6 +1910,19 @@ def _channel_problem(incoming: dict) -> str:
     return ""
 
 
+def _style_problem(incoming: dict) -> str:
+    """Why an overlay style update cannot be taken (custom CSS that is not text or is far too long), or ''."""
+    for scope in ("chat", "events"):
+        css = (incoming.get(scope) or {}).get("custom_css") if isinstance(incoming.get(scope), dict) else None
+        if css is None:
+            continue
+        if not isinstance(css, str):
+            return "custom_css is text"
+        if len(css) > MAX_CUSTOM_CSS:
+            return f"custom CSS is limited to {MAX_CUSTOM_CSS} characters"
+    return ""
+
+
 @router.post("/api/config")
 async def api_set_config(request: Request):
     global CONFIG
@@ -1812,10 +1930,10 @@ async def api_set_config(request: Request):
     if "channel" in incoming and "channels" not in incoming:
         # the old single-channel way of asking: it changes the primary
         incoming = {**incoming, "channels": _with_primary(CONFIG["channels"], incoming["channel"])}
-    problem = _channel_problem(incoming)
+    problem = _channel_problem(incoming) or _style_problem(incoming)
     if problem:
         return JSONResponse({"error": problem}, status_code=400)
-    old = [(r["login"], r["label"], r["enabled"]) for r in CONFIG["channels"]]
+    old =[(r["login"], r["label"], r["enabled"]) for r in CONFIG["channels"]]
     CONFIG = save_config(_deep_merge(CONFIG, incoming))
     await HUB.broadcast_config()
     if [(r["login"], r["label"], r["enabled"]) for r in CONFIG["channels"]] != old:
@@ -1856,6 +1974,39 @@ async def api_backgrounds_delete(request: Request):
         return JSONResponse({"error": "name required"}, status_code=400)
     (OVERLAY_BG_DIR / name).unlink(missing_ok=True)
     return {"ok": True, "backgrounds": _list_backgrounds()}
+
+
+@router.get("/api/fonts")
+async def api_fonts_list():
+    """The fonts uploaded for the overlays: [{name, file, format, url}]. `name` is what a font is picked by."""
+    return {"fonts": _list_fonts()}
+
+
+@router.post("/api/fonts")
+async def api_fonts_upload(file: UploadFile = File(...)):
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in FONT_FORMATS:
+        return JSONResponse({"error": f"use ttf, otf, woff or woff2 (got {ext or 'no extension'})"},
+                            status_code=400)
+    content = await file.read()
+    if len(content) > MAX_FONT_BYTES:
+        return JSONResponse({"error": "file too big (max 10 MB)"}, status_code=400)
+    if content[:4] not in FONT_MAGIC:
+        return JSONResponse({"error": "that does not look like a font file"}, status_code=400)
+    name = _safe_bg_name(file.filename or "font", fallback="font")
+    OVERLAY_FONT_DIR.mkdir(parents=True, exist_ok=True)
+    (OVERLAY_FONT_DIR / name).write_bytes(content)
+    return {"ok": True, "name": _font_family(name), "file": name, "fonts": _list_fonts()}
+
+
+@router.post("/api/fonts/delete")
+async def api_fonts_delete(request: Request):
+    body = await request.json()
+    name = Path(str(body.get("file") or body.get("name") or "")).name       # .name strips any path
+    if not name:
+        return JSONResponse({"error": "file required"}, status_code=400)
+    (OVERLAY_FONT_DIR / name).unlink(missing_ok=True)
+    return {"ok": True, "fonts": _list_fonts()}
 
 
 @router.post("/api/credentials")
