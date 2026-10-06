@@ -125,4 +125,51 @@ const frames = (r, seconds) => { for (let i = 0; i < Math.round(seconds * 60); i
                  { b: { emotion: { name: 'happy', face: { smile: 1 }, expressions: [], intensity: 1, until: null } } });
   out.ovArrivedEmotion = late.avatars.b.emo.name;
 }
+{ // a PNGtuber's mouth follows the voice (open and shut with the words) and it bounces as the audio comes in
+  const { HA } = load(file);
+  // `voice(t)` is the level the lipsync analysis sees (0..1, before its smoothing): ~22 ms of analysis window, then the engine's frame
+  const run = (rigExtra, voice, seconds) => {
+    const av = { inputOv: (n, d) => d, cfg: { idle: { speech_motion: 50 } }, baseScale: 1, partOv: null };
+    const spec = Object.assign({ style: 'simple', states: { neutral: { idle: 'i.png', talk: 't.png' } }, default_state: 'neutral', bounce: 250, beat: 120,
+                                 gravity: 1000, threshold: 0.12, hold: 0.22, snap: 0.6, mouth: 'follow', breathe: false }, rigExtra);
+    const rig = new HA.PngRig(av, spec); rig.box = { x: 0, y: 0, w: 300, h: 300 };
+    const dt = 1 / 60;
+    let raw = 0, opens = 0, openFrames = 0, kicks = 0, prevVy = 0, was = false, stuckOpenAfter = false, n = 0, maxBy = 0;
+    for (let i = 0; i < Math.round((seconds || 6) * 60); i++) {
+      const t = i * dt;
+      raw += (voice(t) - raw) * (1 - Math.exp(-dt / 0.022));
+      rig.update(dt, { lip: { level: raw, raw: raw }, MouthOpen: 0 }, t);
+      n++;
+      if (rig.talking && !was) opens++;
+      if (rig.talking) openFrames++;
+      was = rig.talking;
+      if (rig.vy < -1 && prevVy >= -1) kicks++;
+      prevVy = rig.vy;
+      maxBy = Math.min(maxBy, rig.by);
+      if (t > 5.2 && rig.talking) stuckOpenAfter = true;               // the voice ended at 4.3 s
+    }
+    return { opens, openPct: Math.round(100 * openFrames / n), kicks, maxBy: +maxBy.toFixed(1), stuckOpenAfter };
+  };
+  // 4 s of speech at 5 syllables a second: each peaks at .85 and dips to .4, with a gap after every fourth
+  const speech = (t) => {
+    if (t < 0.3 || t > 4.3) return 0;
+    const u = ((t - 0.3) * 5) % 1;
+    return Math.floor((t - 0.3) * 5) % 4 === 3 && u > 0.55 ? 0 : 0.4 + 0.45 * Math.sin(Math.PI * Math.min(1, u * 1.15)) ** 2;
+  };
+  out.pngFollow = run({}, speech);
+  out.pngFollowNoBeat = run({ beat: 0 }, speech);
+  out.pngHold = run({ mouth: 'hold' }, speech);
+  out.pngSteady = run({}, (t) => (t > 0.3 && t < 3 ? 0.7 : 0));
+  out.pngLazy = run({ snap: 0 }, speech);
+  out.pngSnappy = run({ snap: 1 }, speech);
+  out.pngNoBounce = run({ bounce: 0, beat: 0 }, speech);
+  out.pngSilent = run({}, () => 0);
+  out.pngLoudLevel = run({}, (t) => (t > 0.3 && t < 4.3 ? 0.05 : 0)).opens;      // under the threshold: never opens
+  const gate = new HA.MouthGate();                                                 // the gate by itself: a steady voice keeps it open, silence shuts it
+  let shut = 0;
+  for (let i = 0; i < 120; i++) { gate.update(0.6, 1 / 60, { threshold: 0.12, snap: 0.6, minOpen: 0.05, minClosed: 0.045 }); }
+  const openSteady = gate.open;
+  for (let i = 0; i < 20; i++) { if (!gate.update(0, 1 / 60, { threshold: 0.12, snap: 0.6, minOpen: 0.05, minClosed: 0.045 })) shut++; }
+  out.pngGate = { openSteady, shutWithinThirdOfASecond: shut > 0 };
+}
 console.log(JSON.stringify(out));

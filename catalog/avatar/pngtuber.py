@@ -28,7 +28,12 @@ from typing import Any
 RIG = "pngtuber.json"
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 ROLES = ["idle", "talk", "blink", "talk_blink", "half", "A", "I", "U", "E", "O"]
-DEFAULTS = {"bounce": 250.0, "gravity": 1000.0, "threshold": 0.12, "hold": 0.22, "breathe": True}
+# bounce: px/s of the hop when talking starts; beat: px/s of the small hop with each word (0 = none); gravity: how fast
+# either falls; threshold: the voice level that counts as sound; mouth: "follow" (shut in the dips between words)
+# or "hold" (open at any sound and stay open `hold` seconds); snap: how deep a dip has to be to shut the mouth.
+DEFAULTS = {"bounce": 250.0, "beat": 120.0, "gravity": 1000.0, "threshold": 0.12, "hold": 0.22, "snap": 0.6,
+            "breathe": True, "mouth": "follow"}
+MOUTHS = ("follow", "hold")
 
 # words in a file name -> what the picture is
 _TALK = {"talk", "talking", "talks", "speak", "speaking", "speech", "loud", "on", "active", "yell", "yelling",
@@ -206,9 +211,13 @@ def normalize(rig: dict, files: list[str] | None = None) -> dict:
     style = "layered" if rig.get("style") == "layered" else "simple"
     out: dict = {"version": 1, "type": "png", "style": style, "name": str(rig.get("name") or "")[:60]}
     for k, d in DEFAULTS.items():
-        out[k] = bool(rig.get(k, d)) if isinstance(d, bool) else _f(rig.get(k, d), 0, 20000, d)
+        if isinstance(d, str):
+            out[k] = rig.get(k) if rig.get(k) in MOUTHS else d
+        else:
+            out[k] = bool(rig.get(k, d)) if isinstance(d, bool) else _f(rig.get(k, d), 0, 20000, d)
     out["threshold"] = _f(out["threshold"], 0.01, 0.9, DEFAULTS["threshold"])
     out["hold"] = _f(out["hold"], 0, 2, DEFAULTS["hold"])
+    out["snap"] = _f(out["snap"], 0, 1, DEFAULTS["snap"])
     if rig.get("source"):
         out["source"] = str(rig["source"])[:40]
     if style == "simple":

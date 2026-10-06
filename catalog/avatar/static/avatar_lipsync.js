@@ -38,7 +38,7 @@
     this.abuf = null;
     this.stats = { m1: START.m1, s1: START.s1, m2: START.m2, s2: START.s2, n: 0 };
     this.out = { volume: 0, silence: 1, frequency: 0.5, A: 0, I: 0, U: 0, E: 0, O: 0, open: 0, form: 0,
-                 f1: 0, f2: 0, voiced: 0, level: 0 };
+                 f1: 0, f2: 0, voiced: 0, level: 0, raw: 0 };
     this._raw = { A: 0, I: 0, U: 0, E: 0, O: 0 };
     this._win = null;
     this._sm = { level: 0, open: 0, form: 0, A: 0, I: 0, U: 0, E: 0, O: 0, freq: 0.5, voiced: 0 };
@@ -74,7 +74,7 @@
   Analyzer.prototype.reset = function () {
     this.ringFill = 0;
     var o = this.out, s = this._sm;
-    o.volume = o.open = o.form = o.level = o.voiced = 0; o.silence = 1;
+    o.volume = o.open = o.form = o.level = o.voiced = o.raw = 0; o.silence = 1;
     for (var i = 0; i < 5; i++) { o[VOWELS[i]] = 0; s[VOWELS[i]] = 0; }
     s.level = s.open = s.form = s.voiced = 0;
   };
@@ -149,6 +149,7 @@
     var tau = 0.012 + c.smoothing / 100 * 0.128;
     var up = 1 - Math.exp(-dt / (tau * 0.55)), down = 1 - Math.exp(-dt / tau);
     function ease(key, target) { var r = target > sm[key] ? up : down; sm[key] += (target - sm[key]) * r; return sm[key]; }
+    o.raw = level;                                         // what this window said, before the smoothing: a PNGtuber's mouth follows it
     o.level = ease('level', level);
     o.open = clamp(ease('open', openNow), 0, 1.5);
     o.form = ease('form', level > 0 ? form : 0);

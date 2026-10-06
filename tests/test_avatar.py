@@ -246,6 +246,35 @@ def test_pngtuber_plus_save_import(av):
     assert (av.lib.MODELS_DIR / m["id"] / mouth["image"]).read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
 
 
+def test_a_pngtuber_rig_follows_the_voice_unless_told_to_hold_and_keeps_its_numbers_in_range(av):
+    from hexcast_plugins.avatar import pngtuber
+    old = {"version": 1, "type": "png", "style": "simple", "states": {"neutral": {"idle": "i.png"}},
+           "bounce": 250, "gravity": 1000, "threshold": 0.12, "hold": 0.22, "breathe": True}   # a rig saved before the voice settings
+    rig = pngtuber.normalize(old, files=["i.png"])
+    assert rig["mouth"] == "follow" and rig["snap"] == 0.6 and rig["beat"] == 120               # it follows the words now, with a small bounce
+    assert rig["hold"] == 0.22 and rig["bounce"] == 250                                         # what it had is kept
+    odd = pngtuber.normalize({**old, "mouth": "sideways", "snap": 7, "beat": -5, "hold": 99}, files=["i.png"])
+    assert odd["mouth"] == "follow" and odd["snap"] == 1 and odd["beat"] == 0 and odd["hold"] == 2
+    held = pngtuber.normalize({**old, "mouth": "hold", "snap": 0.2, "beat": 40}, files=["i.png"])
+    assert (held["mouth"], held["snap"], held["beat"]) == ("hold", 0.2, 40)
+    layered = pngtuber.normalize({"style": "layered", "layers": [{"id": "a", "image": "i.png"}]}, files=["i.png"])
+    assert layered["mouth"] == "follow" and layered["beat"] == 120                              # layered rigs too
+
+
+def test_the_voice_settings_of_a_pngtuber_are_saved_and_served_to_the_overlay(av):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for n in ("idle.png", "talk.png"):
+            z.writestr("Tuber/" + n, _png(20, 30))
+    m = _upload(av, buf.getvalue(), "tuber.zip")
+    rig = av.get(f"/avatar/api/models/{m['id']}/engine").json()
+    assert rig["mouth"] == "follow" and rig["beat"] == 120 and rig["snap"] == 0.6               # a new PNGtuber follows the voice
+    saved = av.post(f"/avatar/api/models/{m['id']}/settings", json={"rig": {**rig, "mouth": "hold", "snap": 0.9, "beat": 0}}).json()["settings"]["rig"]
+    assert (saved["mouth"], saved["snap"], saved["beat"]) == ("hold", 0.9, 0)
+    again = av.get(f"/avatar/api/models/{m['id']}/engine").json()
+    assert (again["mouth"], again["snap"], again["beat"]) == ("hold", 0.9, 0)                   # the overlay is served what was saved
+
+
 def test_star_addresses_every_avatar(av):
     av.post("/avatar/api/avatars", json={"name": "a"})
     av.post("/avatar/api/avatars", json={"name": "b"})
@@ -728,3 +757,30 @@ def test_standard_inputs_and_raw_parameters_are_unchanged(engine):
     assert 0 < engine["stdCheekEasing"] < 0.7 and engine["stdCheek"] == pytest.approx(0.7)
     assert engine["stdKinds"] == [True, True, False]
     assert engine["stdBlinkMin"] < 0.5                                    # the standard eye rows still blink (through EyeOpen*)
+
+
+def test_a_pngtubers_mouth_opens_and_shuts_with_the_words_instead_of_staying_open(engine):
+    follow, hold = engine["pngFollow"], engine["pngHold"]
+    assert follow["opens"] >= 16                                          # 20 syllables: it opens for (nearly) each one ...
+    assert 25 <= follow["openPct"] <= 65                                  # ... and is shut a good part of the time
+    assert hold["opens"] <= 3 and hold["openPct"] >= 65                   # the old behaviour: open once, held open through the 4 s of speech
+    assert follow["openPct"] + 20 < hold["openPct"]
+    assert not follow["stuckOpenAfter"] and not hold["stuckOpenAfter"]    # it shuts when the voice ends, either way
+
+
+def test_a_steady_voice_keeps_the_mouth_open_and_silence_or_a_whisper_never_opens_it(engine):
+    assert engine["pngSteady"]["opens"] == 1                              # one long vowel: one opening, no flicker
+    assert engine["pngSilent"]["opens"] == 0 and engine["pngLoudLevel"] == 0
+    assert engine["pngGate"] == {"openSteady": True, "shutWithinThirdOfASecond": True}
+
+
+def test_word_detail_decides_how_deep_a_dip_has_to_be_to_shut_the_mouth(engine):
+    assert engine["pngLazy"]["opens"] < engine["pngFollow"]["opens"] <= engine["pngSnappy"]["opens"]
+    assert engine["pngLazy"]["opens"] <= 6                                # lazy: only the pauses between words shut it
+
+
+def test_a_pngtuber_hops_with_the_words_as_the_audio_comes_in(engine):
+    assert engine["pngFollowNoBeat"]["kicks"] == 1                        # with no voice bounce: just the hop when speech starts
+    assert engine["pngFollow"]["kicks"] >= 10                             # with it: a hop for most words
+    assert engine["pngFollow"]["maxBy"] >= -45                            # (the small hops stack on nothing: no floating off)
+    assert engine["pngNoBounce"]["kicks"] == 0                            # bounce 0 and beat 0: it stays put

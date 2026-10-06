@@ -51,6 +51,8 @@
   /* layout */
   .top{display:grid;grid-template-columns:minmax(0,1fr) 470px;gap:14px;align-items:start}
   @media (max-width:1180px){.top{grid-template-columns:1fr}}
+  /* the preview stays in view while a long settings tab scrolls beside it (when the window is tall enough to hold it) */
+  @media (min-width:1181px) and (min-height:820px){.top>section:first-child{position:sticky;top:10px}}
 
   /* stage */
   .bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
@@ -132,10 +134,42 @@
   .prog{height:6px;border-radius:99px;background:#1c1c25;overflow:hidden;margin-top:8px;display:none}
   .prog i{display:block;height:100%;width:0;background:var(--accent);transition:width .2s}
   .pst{border:1px solid var(--line);border-radius:10px;padding:9px 10px;margin:8px 0;background:#0e0e14}
-  .prole-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:8px}
-  .prole{display:grid;grid-template-columns:40px minmax(0,1fr);gap:7px;align-items:center}
-  .prole span{font-size:11.5px;color:var(--muted);display:block;margin-bottom:2px}
-  .prole select{width:100%;min-width:0;font-size:12px;padding:4px 6px}
+  /* a PNGtuber's faces: eyes across, mouth down; every slot is a big tile to click or drop a picture on */
+  .facegrid{display:grid;grid-template-columns:18px repeat(2,minmax(0,132px));gap:8px;align-items:center;margin-top:10px}
+  .facegrid .fh{font:600 10.5px var(--mono);letter-spacing:.06em;color:var(--dim);text-align:center;text-transform:uppercase}
+  .facegrid .fl{font:600 10.5px var(--mono);letter-spacing:.06em;color:var(--dim);text-transform:uppercase;writing-mode:vertical-rl;
+                transform:rotate(180deg);text-align:center;justify-self:center}
+  .extras{display:grid;grid-template-columns:repeat(3,minmax(0,92px));gap:10px;margin-top:8px}
+  .ftw{display:flex;flex-direction:column;gap:3px;align-items:stretch}
+  .ftw>span{font-size:11px;color:var(--muted);text-align:center}
+  .ftile{position:relative;aspect-ratio:1;border:2px dashed var(--line-hi);border-radius:10px;cursor:pointer;overflow:hidden;
+         background:repeating-conic-gradient(#1b1b24 0 25%,#12121a 0 50%) 0 0/14px 14px;display:flex;align-items:center;justify-content:center;
+         color:var(--dim);font-size:11.5px;text-align:center;padding:6px}
+  .ftile.has{border-style:solid;border-color:var(--line)}
+  .ftile:hover,.ftile:focus-visible,.ftile.over{border-color:var(--accent);outline:none}
+  .ftile.over{background-color:#25121c}
+  .ftile .im{position:absolute;inset:4px 4px 18px;background:center/contain no-repeat}
+  .ftile.small .im{inset:3px}
+  .ftile .nm{position:absolute;left:0;right:0;bottom:0;background:rgba(10,10,14,.82);font:10.5px var(--mono);padding:2px 5px;overflow:hidden;
+             text-overflow:ellipsis;white-space:nowrap;text-align:left;color:var(--muted)}
+  .ftile.small .nm{display:none}
+  .ftile .x{position:absolute;top:3px;right:3px;background:rgba(10,10,14,.85);border-radius:6px;padding:0 6px;font:700 13px var(--mono);color:var(--ink);display:none}
+  .ftile.has:hover .x{display:block}
+  .ftile .x:hover{color:var(--bad)}
+  .vbox{display:flex;gap:10px;align-items:center;margin:4px 0 10px}
+  .vmeter{position:relative;flex:1;height:14px;border:1px solid var(--line);border-radius:7px;background:#0c0c11;overflow:hidden}
+  .vmeter i{position:absolute;left:0;top:0;bottom:0;width:0;background:linear-gradient(90deg,var(--accent-soft),var(--accent))}
+  .vmeter b{position:absolute;top:0;bottom:0;width:2px;background:#fff;opacity:.85;left:12%}
+  #pic-pop{position:fixed;z-index:60;display:none;width:300px;max-height:62vh;overflow:auto;background:#0e0e14;border:1px solid var(--line);
+           border-radius:12px;padding:10px;box-shadow:0 14px 40px rgba(0,0,0,.6)}
+  #pic-pop.open{display:block}
+  #pic-pop .pgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+  .pgrid .pt{position:relative;aspect-ratio:1;border:2px solid var(--line);border-radius:9px;padding:0;overflow:hidden;cursor:pointer;
+             background:repeating-conic-gradient(#1b1b24 0 25%,#12121a 0 50%) 0 0/12px 12px;display:flex;align-items:center;justify-content:center;
+             font:600 11px var(--mono);color:var(--dim)}
+  .pgrid .pt .im{position:absolute;inset:3px;background:center/contain no-repeat}
+  .pgrid .pt.sel{border-color:var(--accent)}
+  .pgrid .pt:hover{border-color:var(--accent-soft)}
   .ly{display:grid;grid-template-columns:40px minmax(0,1fr) auto;gap:8px;align-items:center;border:1px solid var(--line);border-radius:9px;padding:6px 8px;margin:5px 0;background:#0e0e14}
   .ly .ly-ctl{grid-column:1/-1;display:none}
   .ly.open .ly-ctl{display:block}
@@ -323,17 +357,29 @@
         </div>
 
         <div class="pane" data-p="png">
-          <div class="row"><b id="png-style"></b><span class="grow"></span><span id="png-dirty" class="pill warn" style="display:none">not saved</span><button class="sm act" id="png-save" disabled>Save</button></div>
-          <p class="hint" style="margin:6px 0 4px">Changes show in the preview at once; <b>Save</b> puts them on stream (and on every avatar using this PNGtuber).</p>
-          <div class="f"><span>Bounce</span><div class="ctl"><input type="range" min="0" max="800" step="10" data-pg="bounce"><span class="val" data-pv="bounce"></span></div></div>
-          <div class="f"><span>Gravity</span><div class="ctl"><input type="range" min="200" max="4000" step="50" data-pg="gravity"><span class="val" data-pv="gravity"></span></div></div>
-          <div class="f"><span>Talks above</span><div class="ctl"><input type="range" min="0.02" max="0.6" step="0.01" data-pg="threshold"><span class="val" data-pv="threshold"></span></div></div>
-          <div class="f"><span>Hold (s)</span><div class="ctl"><input type="range" min="0" max="1" step="0.02" data-pg="hold"><span class="val" data-pv="hold"></span></div></div>
-          <div class="f"><span>Breathe</span><div class="ctl"><label class="sw"><input type="checkbox" data-pg="breathe"> A slow, gentle breathing</label></div></div>
-          <p class="hint">Bounce: how high it hops when it starts talking (0 = never). Talks above: how loud the voice must be (watch the meter on the Mouth tab). Hold keeps the mouth open between words.</p>
-          <div class="row" style="margin:8px 0 2px"><button class="sm" id="png-add-pics">Add pictures...</button><span class="grow"></span><button class="sm ghost" id="png-convert" title="Turn the pictures into layers you can wobble, offset and parent">Make it layered</button></div>
+          <div class="row" style="margin-top:0"><b id="png-style"></b><span class="grow"></span><span id="png-dirty" class="pill warn" style="display:none">not saved</span><button class="sm ghost" id="png-undo" style="display:none" title="Go back to what is saved">Undo</button><button class="sm act" id="png-save" disabled>Save</button></div>
+          <p class="hint" style="margin:6px 0 0">Changes show in the preview at once; <b>Save</b> puts them on stream (and on every avatar using this PNGtuber).</p>
+
+          <h3 id="png-h">Faces</h3>
           <div id="png-simple"></div>
           <div id="png-layered"></div>
+          <div class="row" style="margin:8px 0 2px"><button class="sm" id="png-add-pics">Add pictures...</button><span class="grow"></span><button class="sm ghost" id="png-convert" title="Turn the pictures into layers you can wobble, offset and parent">Make it layered</button></div>
+
+          <h3>Voice</h3>
+          <div class="vbox"><div class="vmeter" title="The voice level; the white line is where the mouth opens"><i id="pv-level"></i><b id="pv-thr"></b></div><span class="pill" id="pv-mouth">mouth shut</span></div>
+          <div class="f"><span>Mouth</span><div class="ctl"><select data-pg="mouth" class="grow"><option value="follow">Follows each word</option><option value="hold">Opens and stays open while talking</option></select></div></div>
+          <div class="f"><span>Opens above</span><div class="ctl"><input type="range" min="0.02" max="0.6" step="0.01" data-pg="threshold"><span class="val" data-pv="threshold"></span></div></div>
+          <div class="f" data-mouth="follow"><span>Word detail</span><div class="ctl"><input type="range" min="0" max="1" step="0.05" data-pg="snap"><span class="val" data-pv="snap"></span></div></div>
+          <div class="f" data-mouth="hold"><span>Stays open (s)</span><div class="ctl"><input type="range" min="0" max="1" step="0.02" data-pg="hold"><span class="val" data-pv="hold"></span></div></div>
+          <p class="hint" style="margin:2px 0 8px"><b>Follows each word</b> shuts the mouth in the dips between words and sounds, so it opens and closes with the speech; more <b>word detail</b> shuts it in smaller dips. <b>Opens above</b> is how loud the voice must be (the white line above).</p>
+          <div class="row" style="margin:6px 0"><button class="sm" id="png-babble">&#9654; Test voice</button><button class="sm ghost" id="png-babble-stop">Stop</button><span class="dim" style="font-size:12px">a made-up voice, in the preview only (tick <b>Hear speech</b> under it to hear it)</span></div>
+
+          <h3>Movement</h3>
+          <div class="f"><span>Hop at the start</span><div class="ctl"><input type="range" min="0" max="800" step="10" data-pg="bounce"><span class="val" data-pv="bounce"></span></div></div>
+          <div class="f"><span>Bounce with the voice</span><div class="ctl"><input type="range" min="0" max="500" step="5" data-pg="beat"><span class="val" data-pv="beat"></span></div></div>
+          <div class="f"><span>Fall speed</span><div class="ctl"><input type="range" min="200" max="4000" step="50" data-pg="gravity"><span class="val" data-pv="gravity"></span></div></div>
+          <div class="f"><span>Breathe</span><div class="ctl"><label class="sw"><input type="checkbox" data-pg="breathe"> A slow, gentle breathing</label></div></div>
+          <p class="hint" style="margin:2px 0 0"><b>Hop at the start</b> is how high it jumps when it starts talking, and <b>bounce with the voice</b> the small hop on each word as the audio comes in (0 = none). The Idle tab's <b>Talking motion</b> scales both.</p>
         </div>
 
         <div class="pane" data-p="items">
@@ -397,6 +443,8 @@
 <div id="toast"></div>
 <input type="file" id="f-zip" accept=".zip,.save" style="display:none">
 <input type="file" id="f-pngpics" accept=".png,.jpg,.jpeg,.webp,.gif" multiple style="display:none">
+<input type="file" id="f-pngslot" accept=".png,.jpg,.jpeg,.webp,.gif" style="display:none">
+<div id="pic-pop" role="dialog" aria-label="Pick a picture"></div>
 <input type="file" id="f-dir" webkitdirectory multiple style="display:none">
 <input type="file" id="f-pics" accept=".png,.jpg,.jpeg,.webp,.gif" multiple style="display:none">
 <input type="file" id="f-audio" accept="audio/*,.wav,.mp3,.ogg,.opus,.m4a,.flac,.webm" style="display:none">
@@ -624,7 +672,7 @@
           S.inputs = m.inputs || []; S.gestures = m.gestures || []; S.lightPresets = m.light_presets || [];
           renderGate(); renderAll(); break;
         case 'config': S.config = m.config; renderAll(true); break;
-        case 'library': S.models = m.models; S.items = m.items; renderLibrary(); renderInspector(true); if (paneSel === 'png' && !PNG.dirty) loadPng(true); break;
+        case 'library': S.models = m.models; S.items = m.items; renderLibrary(); renderInspector(true); if (paneSel === 'png' && !PNG.dirty && !PNG.busy) loadPng(true); break;
         case 'runtime': location.reload(); break;
         case 'stats': if (m.role === 'obs') { S.obsStats[m.overlay || 'main'] = m; renderStats(); paintSources(); } break;
         case 'activity': log('a', m.avatar, m.cmd + (m.summary ? '  ' + m.summary : '')); trackLive(m); break;
@@ -1137,39 +1185,54 @@
     return '<select ' + attrs + '><option value="">- none -</option>' + pngPics().map(function (f) { return '<option' + (f === val ? ' selected' : '') + '>' + esc(f) + '</option>'; }).join('') + '</select>';
   }
   function pthumb(f) { return '<div class="thumb" style="width:40px;height:40px;background-image:url(\'' + (f ? esc(picUrl(f)) : '') + '\')"></div>'; }
-  function setDirty(d) { PNG.dirty = d; $('png-dirty').style.display = d ? '' : 'none'; $('png-save').disabled = !d; }
+  function setDirty(d) { PNG.dirty = d; $('png-dirty').style.display = d ? '' : 'none'; $('png-undo').style.display = d ? '' : 'none'; $('png-save').disabled = !d; }
   var pngPreview = debounce(function () {
     if (!stage || !PNG.rig) return;
     for (var n in stage.avatars) { var av = stage.avatars[n]; if (av.cfg.model === PNG.mid && av.previewRig) av.previewRig(PNG.rig); }
   }, 150);
   function pngChanged(rerender) { setDirty(true); pngPreview(); if (rerender) renderPng(); }
 
+  var ROLE_HINT = { idle: 'Mouth closed, eyes open: what it looks like when it is quiet', talk: 'Mouth open, eyes open', blink: 'Mouth closed, eyes shut',
+                    talk_blink: 'Mouth open, eyes shut', half: 'A half-open mouth, for quiet talking', A: 'The mouth for the sound A', I: 'The mouth for the sound I',
+                    U: 'The mouth for the sound U', E: 'The mouth for the sound E', O: 'The mouth for the sound O' };
+  function showMouthRows() {
+    var m = PNG.rig && PNG.rig.mouth === 'hold' ? 'hold' : 'follow';
+    document.querySelectorAll('#insp [data-mouth]').forEach(function (el) { el.style.display = el.dataset.mouth === m ? '' : 'none'; });
+  }
   function renderPng() {
     var r = PNG.rig; if (!r) return;
-    $('png-style').textContent = r.style === 'simple' ? 'Simple PNGtuber - pictures per state' : 'Layered PNGtuber' + (r.source ? ' (from ' + r.source + ')' : '');
+    $('png-style').textContent = r.style === 'simple' ? 'Simple PNGtuber' : 'Layered PNGtuber' + (r.source ? ' (from ' + r.source + ')' : '');
+    $('png-h').textContent = r.style === 'simple' ? 'Faces' : 'Layers';
     document.querySelectorAll('#insp [data-pg]').forEach(function (el) {
       var v = r[el.dataset.pg];
       if (el.type === 'checkbox') el.checked = !!v; else el.value = v;
     });
     document.querySelectorAll('#insp [data-pv]').forEach(function (el) { el.textContent = fmt(r[el.dataset.pv]); });
+    showMouthRows();
     $('png-convert').style.display = r.style === 'simple' ? '' : 'none';
     $('png-simple').style.display = r.style === 'simple' ? '' : 'none';
     $('png-layered').style.display = r.style === 'simple' ? 'none' : '';
     if (r.style === 'simple') renderPngSimple(r); else renderPngLayered(r);
   }
 
+  /* a slot for one picture: click for the library of this PNGtuber, or drop a file on it */
+  function faceTile(r, st, k, small) {
+    var f = (r.states[st] || {})[k] || '';
+    return '<div class="ftile' + (f ? ' has' : '') + (small ? ' small' : '') + '" tabindex="0" role="button" data-st="' + esc(st) + '" data-role="' + k + '" title="' + esc(ROLE_HINT[k] || '') + '">' +
+      (f ? '<div class="im" style="background-image:url(\'' + esc(picUrl(f)) + '\')"></div><div class="nm">' + esc(f) + '</div><span class="x" data-clear="1" title="Take this picture away">&times;</span>'
+         : '<span>' + (small ? '+' : '+ pick or drop a picture') + '</span>') + '</div>';
+  }
   function renderPngSimple(r) {
-    var role = function (st, k) {
-      var f = (r.states[st] || {})[k] || '';
-      return '<div class="prole">' + pthumb(f) + '<div style="min-width:0"><span>' + ROLE_LABEL[k] + '</span>' + picSelect(f, 'data-st="' + esc(st) + '" data-role="' + k + '"') + '</div></div>';
-    };
     $('png-simple').innerHTML = Object.keys(r.states).map(function (st) {
-      return '<div class="pst"><div class="row"><b class="mono">' + esc(st) + '</b>' +
+      return '<div class="pst"><div class="row" style="margin:0"><b class="mono">' + esc(st) + '</b>' +
         '<label class="sw dim" style="font-size:12px"><input type="radio" name="png-def" data-def="' + esc(st) + '"' + (r.default_state === st ? ' checked' : '') + '> default</label>' +
         '<span class="grow"></span><button class="sm ghost" data-ren="' + esc(st) + '">Rename</button><button class="sm danger" data-del="' + esc(st) + '"' + (Object.keys(r.states).length < 2 ? ' disabled' : '') + '>&times;</button></div>' +
-        '<div class="prole-grid">' + ['idle', 'talk', 'blink', 'talk_blink'].map(function (k) { return role(st, k); }).join('') + '</div>' +
-        '<details style="margin-top:8px"><summary>More mouths (half-open, a mouth per vowel)</summary><div class="prole-grid">' +
-        ['half', 'A', 'I', 'U', 'E', 'O'].map(function (k) { return role(st, k); }).join('') + '</div></details></div>';
+        '<div class="facegrid"><span></span><span class="fh">Eyes open</span><span class="fh">Eyes shut (blink)</span>' +
+        '<span class="fl">Mouth closed</span>' + faceTile(r, st, 'idle') + faceTile(r, st, 'blink') +
+        '<span class="fl">Mouth open</span>' + faceTile(r, st, 'talk') + faceTile(r, st, 'talk_blink') + '</div>' +
+        '<p class="hint" style="margin:8px 0 0">The top left one is all it needs. Add the mouth-open ones to make it talk, and the eyes-shut ones to make it blink.</p>' +
+        '<details style="margin-top:8px"><summary>More mouths (half-open, a mouth per vowel)</summary><div class="extras">' +
+        ['half', 'A', 'I', 'U', 'E', 'O'].map(function (k) { return '<div class="ftw">' + faceTile(r, st, k, true) + '<span>' + ROLE_LABEL[k] + '</span></div>'; }).join('') + '</div></details></div>';
     }).join('') + '<div class="row"><button class="sm" id="png-add-state">+ State</button><span class="dim" style="font-size:12px">States are switched like expressions (<span class="mono">expression</span> / <span class="mono">emotion</span>), e.g. a "happy" set of pictures.</span></div>';
   }
 
@@ -1207,25 +1270,114 @@
   }
 
   // edits
+  // the voice and movement settings go straight into the preview's rig, so they can be felt while the voice plays
+  function pngLive(k, v) {
+    if (!stage) return;
+    var patch = {}; patch[k] = v;
+    for (var n in stage.avatars) { var av = stage.avatars[n]; if (av.cfg.model === PNG.mid && av.previewRigSettings) av.previewRigSettings(patch); }
+  }
   document.querySelectorAll('#insp [data-pg]').forEach(function (el) {
-    el.addEventListener(el.type === 'checkbox' ? 'change' : 'input', function () {
+    el.addEventListener(el.type === 'checkbox' || el.tagName === 'SELECT' ? 'change' : 'input', function () {
       if (!PNG.rig) return;
-      PNG.rig[el.dataset.pg] = el.type === 'checkbox' ? el.checked : parseFloat(el.value);
-      var v = document.querySelector('#insp [data-pv="' + el.dataset.pg + '"]'); if (v) v.textContent = fmt(PNG.rig[el.dataset.pg]);
-      pngChanged(false);
+      var k = el.dataset.pg, v = el.type === 'checkbox' ? el.checked : el.tagName === 'SELECT' ? el.value : parseFloat(el.value);
+      if (typeof v === 'number' && isNaN(v)) return;
+      PNG.rig[k] = v;
+      var out = document.querySelector('#insp [data-pv="' + k + '"]'); if (out) out.textContent = fmt(v);
+      if (k === 'mouth') showMouthRows();
+      setDirty(true);
+      pngLive(k, v);
     });
   });
+
+  /* pictures: the library of this PNGtuber in a small pop-up, or a file dropped on a slot */
+  var PIC = { st: '', role: '' };
+  function assignPic(st, role, name) {
+    var r = PNG.rig; if (!r || !r.states[st]) return;
+    if (name) r.states[st][role] = name; else delete r.states[st][role];
+    pngChanged(true);
+  }
+  async function uploadPngPics(files) {
+    var fd = new FormData(); files.forEach(function (f) { fd.append('files', f, f.name); });
+    var r = await fetch('/avatar/api/models/' + encodeURIComponent(PNG.mid) + '/pictures', { method: 'POST', body: fd, headers: { 'X-Hexcast-From': 'panel' } })
+      .then(function (x) { return x.json(); }).catch(function () { return null; });
+    if (!r || !r.ok) { toast((r && r.error) || 'upload failed', true); return null; }
+    S.models[PNG.mid] = r.model;
+    return r.added;
+  }
+  // upload a picture and put it in a slot. The library broadcast that follows an upload reloads the editor from disk,
+  // so the editor is "busy" until the picture is in the (unsaved) rig and that reload would lose it.
+  async function uploadToSlot(file, st, role) {
+    PNG.busy = true;
+    try {
+      var added = await uploadPngPics([file]);
+      if (added && added[0]) assignPic(st, role, added[0]);
+    } finally { PNG.busy = false; }
+  }
+  function closePicPop() { $('pic-pop').classList.remove('open'); }
+  function openPicPop(tile) {
+    var st = tile.dataset.st, role = tile.dataset.role, cur = ((PNG.rig.states[st] || {})[role]) || '', pics = pngPics(), pop = $('pic-pop');
+    PIC.st = st; PIC.role = role;
+    var h = '<div style="font:600 12px var(--mono);color:var(--dim);margin-bottom:8px">' + esc(ROLE_HINT[role] || role) + '</div><div class="pgrid">' +
+      '<button type="button" class="pt' + (cur ? '' : ' sel') + '" data-pp="">None</button>';
+    pics.forEach(function (f) {
+      h += '<button type="button" class="pt' + (f === cur ? ' sel' : '') + '" data-pp="' + esc(f) + '" title="' + esc(f) + '"><span class="im" style="background-image:url(\'' + esc(picUrl(f)) + '\')"></span></button>';
+    });
+    h += '<button type="button" class="pt" id="pp-up">+ Upload</button></div>' +
+      (pics.length ? '' : '<p class="hint" style="margin:8px 0 0">No pictures yet: upload one here, or drop a file on the slot.</p>');
+    pop.innerHTML = h;
+    pop.classList.add('open');
+    var r = tile.getBoundingClientRect(), pw = pop.offsetWidth, ph = pop.offsetHeight;
+    pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - pw - 8)) + 'px';
+    var top = r.bottom + 6; if (top + ph > window.innerHeight - 8) top = Math.max(8, r.top - ph - 6);
+    pop.style.top = top + 'px';
+  }
+  $('pic-pop').addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b) return;
+    if (b.id === 'pp-up') { $('f-pngslot').click(); return; }
+    if (b.dataset.pp != null) { closePicPop(); assignPic(PIC.st, PIC.role, b.dataset.pp); }
+  });
+  document.addEventListener('mousedown', function (e) {
+    if ($('pic-pop').classList.contains('open') && !$('pic-pop').contains(e.target) && !e.target.closest('.ftile')) closePicPop();
+  });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closePicPop(); });
+  $('f-pngslot').onchange = async function () {
+    var f = this.files[0]; this.value = ''; if (!f) return;
+    var st = PIC.st, role = PIC.role; closePicPop();
+    await uploadToSlot(f, st, role);
+  };
+
   $('png-simple').addEventListener('change', function (e) {
     var el = e.target, r = PNG.rig;
-    if (el.dataset.role) { var st = r.states[el.dataset.st]; if (el.value) st[el.dataset.role] = el.value; else delete st[el.dataset.role]; pngChanged(true); }
     if (el.dataset.def) { r.default_state = el.dataset.def; pngChanged(false); }
   });
   $('png-simple').addEventListener('click', function (e) {
-    var b = e.target.closest('button'), r = PNG.rig; if (!b) return;
+    var r = PNG.rig, tile = e.target.closest('.ftile');
+    if (tile) {
+      if (e.target.closest('[data-clear]')) { delete r.states[tile.dataset.st][tile.dataset.role]; pngChanged(true); }
+      else openPicPop(tile);
+      return;
+    }
+    var b = e.target.closest('button'); if (!b) return;
     if (b.id === 'png-add-state') return addPngState();
     if (b.dataset.ren) return renamePngState(b.dataset.ren);
     if (b.dataset.del) { delete r.states[b.dataset.del]; if (r.default_state === b.dataset.del) r.default_state = Object.keys(r.states)[0]; pngChanged(true); }
   });
+  $('png-simple').addEventListener('keydown', function (e) {
+    var t = e.target.closest && e.target.closest('.ftile');
+    if (t && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openPicPop(t); }
+  });
+  ['dragenter', 'dragover'].forEach(function (ev) {
+    $('png-simple').addEventListener(ev, function (e) { var t = e.target.closest('.ftile'); if (t) { e.preventDefault(); t.classList.add('over'); } });
+  });
+  $('png-simple').addEventListener('dragleave', function (e) { var t = e.target.closest('.ftile'); if (t) t.classList.remove('over'); });
+  $('png-simple').addEventListener('drop', async function (e) {
+    var t = e.target.closest('.ftile'); if (!t) return;
+    e.preventDefault(); t.classList.remove('over');
+    var files = Array.prototype.filter.call(e.dataTransfer.files, function (f) { return /\.(png|jpe?g|webp|gif)$/i.test(f.name); });
+    if (!files.length) { toast('Drop a picture (png, jpg, webp or gif)', true); return; }
+    await uploadToSlot(files[0], t.dataset.st, t.dataset.role);
+  });
+
   $('png-layered').addEventListener('click', function (e) {
     var r = PNG.rig, a = e.target.closest('a');
     if (a) {
@@ -1312,6 +1464,59 @@
     var res = await api('POST', '/avatar/api/models/' + encodeURIComponent(PNG.mid) + '/settings', { rig: PNG.rig });
     if (res) { PNG.rig = JSON.parse(JSON.stringify(res.settings.rig)); setDirty(false); renderPng(); toast('PNGtuber saved'); }
   };
+  $('png-undo').onclick = async function () { await loadPng(true); pngPreview(); };
+
+  /* a made-up voice to try the mouth and the bounce on: syllables of a buzzing tone shaped like the vowels A I U E O,
+     in words with pauses between them, as a WAV. It plays in the preview only. */
+  function babbleBlob() {
+    var sr = 22050, n = Math.floor(sr * 5.4), x = new Float32Array(n), seed = 12345;
+    function rnd() { seed = (seed * 16807) % 2147483647; return seed / 2147483647; }
+    var V = [[800, 1250], [310, 2250], [330, 850], [520, 1900], [520, 1000]];          // A I U E O: the first two formants (Hz)
+    var segs = [], p = 0.2, i, k;
+    while (p < 4.9) {
+      var syl = 2 + Math.floor(rnd() * 3);
+      for (i = 0; i < syl; i++) { var len = 0.15 + rnd() * 0.07; segs.push([p, p + len, V[Math.floor(rnd() * 5)]]); p += len + 0.03; }
+      p += 0.2 + rnd() * 0.12;                                                         // a pause between words
+    }
+    var si = 0, ph = 0, f1 = 500, f2 = 1500, y = [0, 0, 0, 0];
+    var r1 = Math.exp(-Math.PI * 90 / sr), r2 = Math.exp(-Math.PI * 140 / sr);
+    for (k = 0; k < n; k++) {
+      var t = k / sr; while (si < segs.length && t > segs[si][1]) si++;
+      var seg = si < segs.length && t >= segs[si][0] ? segs[si] : null, env = 0, tf1 = f1, tf2 = f2;
+      if (seg) { var u = (t - seg[0]) / (seg[1] - seg[0]); env = Math.pow(Math.sin(Math.PI * u), 1.4); tf1 = seg[2][0]; tf2 = seg[2][1]; }
+      f1 += (tf1 - f1) * 0.004; f2 += (tf2 - f2) * 0.004;
+      ph += 118 * (1 + 0.05 * Math.sin(6.2832 * 3 * t)) / sr; ph -= Math.floor(ph);
+      var src = (2 * ph - 1) * env;
+      var o1 = (1 - r1) * src + 2 * r1 * Math.cos(6.2832 * f1 / sr) * y[0] - r1 * r1 * y[1];
+      var o2 = (1 - r2) * src + 2 * r2 * Math.cos(6.2832 * f2 / sr) * y[2] - r2 * r2 * y[3];
+      y[1] = y[0]; y[0] = o1; y[3] = y[2]; y[2] = o2;
+      x[k] = o1 + 0.7 * o2;
+    }
+    var peak = 0; for (k = 0; k < n; k++) peak = Math.max(peak, Math.abs(x[k]));
+    var g = peak ? 0.6 / peak : 1, buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+    function str(o, t2) { for (var j = 0; j < t2.length; j++) v.setUint8(o + j, t2.charCodeAt(j)); }
+    str(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); str(8, 'WAVEfmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); str(36, 'data'); v.setUint32(40, n * 2, true);
+    for (k = 0; k < n; k++) v.setInt16(44 + k * 2, Math.max(-1, Math.min(1, x[k] * g)) * 32767, true);
+    return new Blob([buf], { type: 'audio/wav' });
+  }
+  $('png-babble').onclick = function () {
+    var av = stage && S.sel && stage.avatars[S.sel];
+    if (!av) { toast('The preview has to show this avatar', true); return; }
+    var url = URL.createObjectURL(babbleBlob());
+    av.speak({ url: url, id: 'babble-' + Date.now(), interrupt: true, volume: 1 });
+    setTimeout(function () { URL.revokeObjectURL(url); }, 20000);
+  };
+  $('png-babble-stop').onclick = function () { var av = stage && S.sel && stage.avatars[S.sel]; if (av) av.stopSpeaking(); };
+  // the voice level, where the mouth opens, and whether it is open right now
+  setInterval(function () {
+    if (paneSel !== 'png' || !stage || !S.sel || !PNG.rig) return;
+    var av = stage.avatars[S.sel], pr = av && av.png; if (!pr) return;
+    $('pv-level').style.width = Math.min(100, Math.round(pr.level * 100)) + '%';
+    $('pv-thr').style.left = Math.min(100, Math.round((PNG.rig.threshold || 0) * 100)) + '%';
+    var open = !!pr.talking, pill = $('pv-mouth');
+    pill.textContent = open ? 'mouth open' : 'mouth shut'; pill.className = 'pill' + (open ? ' good' : '');
+  }, 50);
   $('png-add-pics').onclick = function () { $('f-pngpics').dataset.mode = 'add'; $('f-pngpics').click(); };
   $('m-png').onclick = function () { $('f-pngpics').dataset.mode = 'new'; $('f-pngpics').click(); };
   $('f-pngpics').onchange = async function () {

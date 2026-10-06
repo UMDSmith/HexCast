@@ -668,6 +668,11 @@
       .then(function () { if (self.png && state) self.png.setState(state); });
   };
 
+  /* the PNGtuber editor's voice and movement settings, live in the preview (no reload of the pictures) */
+  Avatar.prototype.previewRigSettings = function (patch) {
+    if (this.png) Object.assign(this.png.rig, patch);
+  };
+
   /* a tracker input as the API holds it (VTube Studio units), over what the tracker made of it */
   Avatar.prototype.inputOv = function (name, base) {
     var o = this.ov[name];
@@ -1600,6 +1605,28 @@
     return out;
   }
 
+  /* A PNGtuber's mouth, open or shut, from the voice level. It follows the syllables: it opens when the voice
+     rises and shuts in the dips between words and sounds, instead of staying open for as long as anything is
+     said. A dip is measured against the recent peak of the voice (which falls slowly), so quiet and loud voices
+     behave alike; two thresholds (a gap between "opens" and "shuts") and a shortest time in each state keep it
+     from flickering. `snap` 0..1 is how deep a dip has to be to shut it: low = lazy, high = every dip. */
+  var GATE_PEAK = 0.45;          // seconds for the remembered peak to fall by a factor e
+  function MouthGate() { this.open = false; this.t = 1; this.ref = 0; }
+  MouthGate.prototype.update = function (level, dt, o) {
+    var snap = clamp(o.snap == null ? 0.6 : o.snap, 0, 1);
+    var closeAt = 0.5 + 0.4 * snap, openAt = Math.min(0.97, closeAt + 0.1);       // fractions of the recent peak
+    this.t += dt;
+    this.ref = Math.max(level, this.ref * Math.exp(-dt / GATE_PEAK));
+    var hi = Math.max(o.threshold, this.ref * openAt), lo = Math.max(o.threshold * 0.8, this.ref * closeAt);
+    if (this.open) { if (level < lo && this.t >= o.minOpen) { this.open = false; this.t = 0; } }
+    else if (level > hi && this.t >= o.minClosed) { this.open = true; this.t = 0; }
+    return this.open;
+  };
+  MouthGate.prototype.shut = function () { if (this.open) { this.open = false; this.t = 0; } };
+  HA.MouthGate = MouthGate;
+
+  var SPEAK_HOLD = 0.35;         // seconds of quiet that end "speaking" (the pauses between words don't)
+
   function PngRig(av, rig) {
     this.av = av;
     this.rig = rig;
@@ -1617,6 +1644,7 @@
     this.layers.forEach(function (l, i) { self.parts.index[l.id] = i; });
     this.state = rig.default_state;
     this.talking = false; this.soft = false; this.blinking = false; this.vowel = ''; this.level = 0;
+    this.speaking = false; this.speakHold = 0; this.gate = new MouthGate();     // `talking` = the mouth is open
     this.hold = 0; this.by = 0; this.vy = 0; this.t = 0;
     // per state: does it have a half-open mouth / vowel mouths (they take over from the plain one)
     this.stateInfo = {};
@@ -1754,13 +1782,28 @@
 
   PngRig.prototype.update = function (dt, F, now) {
     var r = this.rig, av = this.av, lip = (F && F.lip) || {};
-    // talking: the voice (or the bot's MouthOpen / mouth_open), with a short hold so words don't flicker
-    var level = Math.max(lip.level || 0, av.inputOv('MouthOpen', F ? F.MouthOpen : 0));
+    // the voice (or the bot's MouthOpen / mouth_open)
+    // (the unsmoothed level when there is one: the dips between words are what the mouth follows)
+    var level = Math.max(lip.raw != null ? lip.raw : (lip.level || 0), av.inputOv('MouthOpen', F ? F.MouthOpen : 0));
     this.level = level;
-    if (level > r.threshold) this.hold = r.hold; else this.hold = Math.max(0, this.hold - dt);
-    var was = this.talking;
-    this.talking = this.hold > 0;
-    this.soft = this.talking && level < r.threshold * 2.4;
+    var thr = r.threshold == null ? 0.12 : r.threshold;
+    var wasOpen = this.talking, wasSpeaking = this.speaking, started;
+    if (r.mouth === 'hold') {
+      // the old way: open at any sound and stay open for `hold` seconds after it
+      if (level > thr) this.hold = r.hold; else this.hold = Math.max(0, this.hold - dt);
+      this.talking = this.hold > 0;
+      this.speaking = this.talking;
+      started = this.talking && !wasOpen;
+    } else {
+      // speaking = there is a voice (kept through the pauses between words); the mouth follows its syllables
+      if (level > thr) this.speakHold = SPEAK_HOLD; else this.speakHold = Math.max(0, this.speakHold - dt);
+      this.speaking = this.speakHold > 0;
+      this.talking = this.gate.update(level, dt, { threshold: thr, snap: r.snap, minOpen: 0.05, minClosed: 0.045 });
+      if (!this.speaking && this.talking) { this.gate.shut(); this.talking = false; }
+      started = this.speaking && !wasSpeaking;
+    }
+    var opened = this.talking && !wasOpen;
+    this.soft = this.talking && level < thr * 2.4;
     var best = '', bv = 0.3;
     if (this.talking && lip.level > 0.02) ['A', 'I', 'U', 'E', 'O'].forEach(function (v) { if ((lip[v] || 0) > bv) { bv = lip[v]; best = v; } });
     this.vowel = best;
@@ -1768,7 +1811,12 @@
     this.blinking = eyes < 0.4;
     // the bounce when speech starts (PNGTuber Plus: up at `bounce` px/s, falling at `gravity` px/s2)
     var sm = ((av.cfg.idle && av.cfg.idle.speech_motion) == null ? 50 : av.cfg.idle.speech_motion) / 50;
-    if (this.talking && !was && this.by > -16 && r.bounce > 0) this.vy = -r.bounce * sm;
+    if (started && this.by > -16 && r.bounce > 0) this.vy = -r.bounce * sm;
+    else if (opened && r.mouth !== 'hold' && r.beat > 0 && this.by > -5.5) {
+      // a small hop with each word as the voice comes in (louder voice, bigger hop). It only starts from the ground or
+      // the last of a fall, so hops land between words instead of stacking up into a float
+      this.vy = Math.min(this.vy, -r.beat * sm * (0.55 + 0.45 * clamp(this.gate.ref, 0, 1)));
+    }
     var prev = this.by;
     this.by += this.vy * dt;
     this.vy += r.gravity * dt;
@@ -1930,7 +1978,7 @@
     if (!this.model) return {};
     if (this.png) {
       var pr = this.png;
-      return { state: pr.state, talking: pr.talking, blinking: pr.blinking, vowel: pr.vowel, level: +pr.level.toFixed(3) };
+      return { state: pr.state, talking: pr.talking, speaking: pr.speaking, blinking: pr.blinking, vowel: pr.vowel, level: +pr.level.toFixed(3) };
     }
     var cm = this.model.internalModel.coreModel, out = {};
     for (var i = 0; i < this.P.ids.length; i++) out[this.P.ids[i]] = +cm.getParameterValueByIndex(i).toFixed(4);

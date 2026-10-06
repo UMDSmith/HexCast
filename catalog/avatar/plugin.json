@@ -1,7 +1,7 @@
 {
   "id": "avatar",
   "name": "Avatars",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "api": 1,
   "description": "Live2D avatars and PNGtubers your AI drives through the API - a lighter VTube Studio without face tracking. Any number on screen, vowel lipsync, expressions, motions, emotions, gaze, items and light, with a live preview to place them.",
   "icon": "🎭",
