@@ -438,6 +438,113 @@ def test_a_pngtuber_preset_can_be_saved_as_a_new_pngtuber(av):
     assert _avatar(av, "w", model=new["id"])["colors"] == look
 
 
+def _capture_world(av, monkeypatch, soundcard_opens, portaudio_opens=True, mme_name_cut=False):
+    """The recording libraries replaced by fakes: a mono USB mic that soundcard can(not) open and PortAudio can(not)."""
+    import types
+    import numpy as np
+    from hexcast_plugins.avatar import capture
+    name = "Microphone (Mono USB Microphone)"
+
+    class Rec:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def record(self, numframes):
+            time.sleep(0.004)
+            return np.full((numframes, 1), 0.1, dtype="float32")
+
+    class Mic:
+        def __init__(self):
+            self.name = name
+
+        def recorder(self, **kw):
+            if not soundcard_opens:
+                raise AssertionError()                    # what soundcard does for a device whose Windows format it does not know
+            return Rec()
+
+    opened = []
+
+    class Stream:
+        def __init__(self, **kw):
+            if not portaudio_opens:
+                raise RuntimeError("Invalid device [PaErrorCode -9996]")
+            opened.append(kw)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self, n):
+            time.sleep(0.004)
+            return np.full((n, 1), 0.25, dtype="float32"), False
+
+    cut = name[:31] if mme_name_cut else name
+    sd = types.SimpleNamespace(
+        query_hostapis=lambda: [{"name": "MME"}, {"name": "Windows WASAPI"}, {"name": "Windows DirectSound"}, {"name": "Windows WDM-KS"}],
+        query_devices=lambda: [{"name": cut, "max_input_channels": 1, "hostapi": 0}, {"name": name, "max_input_channels": 2, "hostapi": 1},
+                               {"name": name, "max_input_channels": 1, "hostapi": 2}, {"name": name, "max_input_channels": 1, "hostapi": 3},
+                               {"name": "Speakers", "max_input_channels": 0, "hostapi": 1}],
+        InputStream=Stream, WasapiSettings=lambda **kw: ("wasapi", kw), _terminate=lambda: None, _initialize=lambda: None)
+    sc = types.SimpleNamespace(all_microphones=lambda include_loopback=False: [Mic()], all_speakers=lambda: [])
+    for attr, val in (("_sc", sc), ("_sd", sd), ("_np", np), ("AVAILABLE", True)):
+        monkeypatch.setattr(capture, attr, val)
+    return capture, "input:" + name, opened
+
+
+def _record_for(capture, dev, seconds=0.7):
+    loop = asyncio.new_event_loop()
+    got = []
+    cap = capture.Capture(dev, loop, lambda d, pcm: got.append(len(pcm)))
+    loop.run_until_complete(asyncio.sleep(seconds))
+    cap.stop()
+    loop.run_until_complete(asyncio.sleep(0.05))
+    loop.close()
+    return cap, got
+
+
+def test_a_mic_the_default_recorder_cannot_open_is_recorded_through_portaudio(av, monkeypatch):
+    capture, dev, opened = _capture_world(av, monkeypatch, soundcard_opens=False)
+    cap, got = _record_for(capture, dev)
+    assert got and all(n == 512 for n in got)                              # 256 samples of 16-bit audio per block, streaming
+    assert cap.backend == "sounddevice" and cap.error == "" and "AssertionError" in cap.note
+    assert opened[0]["samplerate"] == 16000 and opened[0]["channels"] == 1 and opened[0]["device"] == 1       # the WASAPI entry, not MME / DirectSound / WDM-KS
+    assert opened[0]["extra_settings"] == ("wasapi", {"auto_convert": True})                                  # Windows converts whatever the device gives
+    assert cap.level > 0.2 and capture.Captures().status() == {}
+    st = capture.Captures()
+    st.running[dev] = cap
+    assert st.status()[dev]["backend"] == "sounddevice" and "PortAudio" in st.status()[dev]["note"]
+
+
+def test_a_device_the_default_recorder_opens_is_left_to_it(av, monkeypatch):
+    capture, dev, opened = _capture_world(av, monkeypatch, soundcard_opens=True)
+    cap, got = _record_for(capture, dev)
+    assert got and cap.backend == "soundcard" and cap.error == "" and cap.note == "" and not opened
+
+
+def test_a_device_neither_recorder_opens_says_why_for_both(av, monkeypatch):
+    capture, dev, _ = _capture_world(av, monkeypatch, soundcard_opens=False, portaudio_opens=False)
+    cap, got = _record_for(capture, dev, 0.4)
+    assert not got and cap.level == 0
+    assert "soundcard: AssertionError" in cap.error and "sounddevice: RuntimeError: Invalid device" in cap.error
+    # what a speaker plays can only be tapped by soundcard: PortAudio is not asked
+    capture2, _, opened = _capture_world(av, monkeypatch, soundcard_opens=False)
+    cap2, got2 = _record_for(capture2, "loopback:Speakers", 0.4)
+    assert not got2 and not opened and cap2.backend == "soundcard" and "is not there" in cap2.error
+
+
+def test_portaudio_finds_a_mic_by_its_full_name_even_where_mme_cuts_it_short(av, monkeypatch):
+    capture, dev, opened = _capture_world(av, monkeypatch, soundcard_opens=False, mme_name_cut=True)
+    assert [d["name"] for d in capture._pa_inputs()] == ["Microphone (Mono USB Microphone)"]                  # one entry; the cut MME name is not a device of its own
+    assert capture._pa_inputs()[0]["api"] == "Windows WASAPI"
+    cap, got = _record_for(capture, dev, 0.4)
+    assert got and opened[0]["device"] == 1
+
+
 def test_a_pngtuber_has_layers_not_art_meshes(av):
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:

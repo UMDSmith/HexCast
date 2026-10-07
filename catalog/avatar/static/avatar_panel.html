@@ -89,6 +89,7 @@
   .f{display:grid;grid-template-columns:118px minmax(0,1fr);gap:8px;align-items:center;margin:7px 0}
   .f>span{color:var(--muted);font-size:12.5px}
   .f .ctl{display:flex;gap:8px;align-items:center;min-width:0}
+  .f .ctl select{min-width:0;text-overflow:ellipsis}
   .f .val{font:12px var(--mono);color:var(--dim);min-width:40px;text-align:right}
   .btns{display:flex;gap:6px;flex-wrap:wrap}
   .btns button{min-width:0}
@@ -337,6 +338,7 @@
             <option value="device">An audio device (mic, virtual cable ...)</option>
             <option value="none">Nothing - the bot moves the mouth itself</option></select></div></div>
           <div class="f" id="dev-row"><span>Device</span><div class="ctl"><select data-k="mouth.device" id="dev-sel" class="grow"></select><button class="sm" id="dev-ref" title="List devices again">&#8635;</button></div></div>
+          <div class="f" id="dev-status-row" style="display:none"><span></span><div class="ctl"><span id="dev-status" class="pill" style="white-space:normal;font:12px 'Segoe UI',sans-serif;letter-spacing:0"></span></div></div>
           <div class="meters" id="meters">
             <div><span>VOL</span><i></i></div><div><span>A</span><i></i></div><div><span>I</span><i></i></div><div><span>U</span><i></i></div><div><span>E</span><i></i></div><div><span>O</span><i></i></div><div><span>OPEN</span><i></i></div>
           </div>
@@ -1012,12 +1014,37 @@
     if (m.source === 'device') {
       if (!d) { loadDevices(); return; }
       if (!d.available) sel.innerHTML = '<option value="">Needs numpy + soundcard (press Repair on the card in +)</option>';
+      else if (!d.devices.length) sel.innerHTML = '<option value="">- no recording devices found -</option>';
       else sel.innerHTML = '<option value="">- pick a device -</option>' + d.devices.map(function (x) { return '<option value="' + esc(x.id) + '"' + (x.id === m.device ? ' selected' : '') + '>' + esc(x.label) + '</option>'; }).join('') +
         (m.device && !d.devices.some(function (x) { return x.id === m.device; }) ? '<option value="' + esc(m.device) + '" selected>' + esc(m.device) + ' (not there now)</option>' : '');
     }
     var cal = m.calibration;
     $('t-voice').textContent = cal ? 'tuned to a voice (' + cal.frames + ' frames)' : 'self-tuning';
+    pollCapture();
   }
+  /* what the recording of the chosen device is doing: it is on, how loud it is, or why it can't be */
+  var capBusy = false;
+  async function pollCapture() {
+    var a = cur(), row = $('dev-status-row'), m = (a && a.mouth) || {};
+    if (!a || paneSel !== 'mouth' || m.source !== 'device' || !m.device) { row.style.display = 'none'; return; }
+    row.style.display = '';
+    if (capBusy) return;
+    capBusy = true;
+    var j = await fetch('/avatar/api/status').then(function (r) { return r.json(); }).catch(function () { return null; });
+    capBusy = false;
+    var st = $('dev-status'), c = j && j.capture, r = c && c.available && c.running && c.running[m.device], cls = 'pill', txt;
+    if (!c) txt = 'Hexcast is not answering';
+    else if (!c.available) { cls += ' bad'; txt = 'Hexcast can not record devices: numpy and a recorder are missing (press Repair on the card in +)'; }
+    else if (!r) txt = 'Not recording yet - it starts when the preview or an overlay shows this avatar (and Lipsync is on)';
+    else if (r.error) { cls += ' bad'; txt = "Can't record this device: " + r.error; }
+    else {
+      var db = r.level > 0 ? Math.round(20 * Math.log10(r.level)) : -100;
+      txt = 'Recording' + (r.backend === 'sounddevice' ? ' (through PortAudio)' : '') + ' · input ' + (db <= -90 ? 'silent' : db + ' dB');
+      if (db < -60) { cls += ' warn'; txt += ' - almost nothing is coming in: is it muted, turned down, or the wrong device?'; } else cls += ' good';
+    }
+    st.className = cls; st.textContent = txt; st.title = (r && r.note) || '';
+  }
+  setInterval(pollCapture, 1500);
   setInterval(function () {
     if (paneSel !== 'mouth' || !stage || !S.sel) return;
     var av = stage.avatars[S.sel]; if (!av) return;
