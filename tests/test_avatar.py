@@ -194,6 +194,276 @@ def test_parts(av):
     assert av.post("/avatar/api/avatars/main/parts", json={"values": {}}).status_code == 400
 
 
+def _colors(av, name="main"):
+    return av.get(f"/avatar/api/avatars/{name}").json()["avatar"]["colors"]
+
+
+def _live(av, kind, name="main"):
+    return av.get("/avatar/api/avatars").json()["live"][name][kind]
+
+
+def _held(av, name="main"):
+    return _live(av, "colors", name)
+
+
+def _with_parts(av):
+    """An avatar `main` whose model is known to have a few parts and art meshes (Hexcast learns them once the model is drawn)."""
+    m = _upload(av)
+    av.post("/avatar/api/avatars", json={"name": "main", "model": m["id"]})
+    av.mod.MODEL_INFO[m["id"]] = {"parts": [{"id": "PartHair", "name": "Hair"}, {"id": "PartEyes"}], "drawables": ["ArtHair1", "ArtEye1"],
+                                  "drawable_parts": ["PartHair", "PartEyes"]}
+    return m["id"]
+
+
+def test_colors_recolour_parts_art_meshes_and_the_whole_model(av):
+    _with_parts(av)
+    r = av.post("/avatar/api/avatars/main/colors", json={
+        "parts": {"PartHair": "FF8800"}, "meshes": {"ArtEye1": {"alpha": 0, "overlay": "#abc"}}, "all": {"multiply": "#808080"}, "for": 5, "fade": 1})
+    assert r.status_code == 200 and r.json()["colors"] == {                     # any way of spelling a colour; a bare colour is a multiply
+        "all": {"multiply": "#808080"}, "parts": {"PartHair": {"multiply": "#ff8800"}}, "meshes": {"ArtEye1": {"overlay": "#aabbcc", "alpha": 0.0}}}
+    assert set(_held(av)) == {"all", "parts:PartHair", "meshes:ArtEye1"} and _held(av)["parts:PartHair"]["spec"] == {"multiply": "#ff8800"}
+    assert _colors(av) == {}                                                    # for now: not saved
+    # a field set to null goes; the rest of the target stays
+    av.post("/avatar/api/avatars/main/colors", json={"meshes": {"ArtEye1": {"alpha": None}}})
+    assert _held(av)["meshes:ArtEye1"]["spec"] == {"overlay": "#aabbcc"}
+    av.post("/avatar/api/avatars/main/colors", json={"all": None, "meshes": {"ArtEye1": None}})              # a whole target goes
+    assert set(_held(av)) == {"parts:PartHair"}
+    assert av.post("/avatar/api/avatars/main/colors", json={"meshes": {"ArtHair1": {"hidden": True}}}).json()["colors"]["meshes"]["ArtHair1"] == {"alpha": 0.0}
+    av.post("/avatar/api/avatars/main/release_colors", json={"meshes": ["ArtHair1"]})
+    assert set(_held(av)) == {"parts:PartHair"}
+    av.post("/avatar/api/avatars/main/release_colors", json={})
+    assert _held(av) == {}
+
+
+def test_colors_mistakes_change_nothing_and_say_what_is_wrong(av):
+    _with_parts(av)
+    post = lambda body: av.post("/avatar/api/avatars/main/colors", json=body)
+    assert post({}).status_code == 400 and post({"parts": {}}).status_code == 400
+    bad = post({"parts": {"PartHair": "#00ff00", "PartEyes": {"multiply": "green"}}})
+    assert bad.status_code == 400 and "PartEyes" in bad.json()["error"] and "multiply" in bad.json()["error"] and _held(av) == {}
+    assert "alpha" in post({"meshes": {"ArtEye1": {"alpha": "clear"}}}).json()["error"]
+    assert "'PartTail'" in post({"parts": {"PartTail": "#00ff00"}}).json()["error"]
+    assert "'ArtTail'" in post({"meshes": {"ArtTail": {"alpha": 0}}}).json()["error"]
+    assert _held(av) == {}
+
+
+def test_saved_colors_are_merged_field_by_field_and_kept_clean(av):
+    _with_parts(av)
+    save = lambda body: av.post("/avatar/api/avatars/main/colors", json={**body, "save": True})
+    av.post("/avatar/api/avatars/main/colors", json={"parts": {"PartHair": "#ff0000"}})                      # held ...
+    assert save({"parts": {"PartHair": {"overlay": "#202020"}, "PartEyes": "#112233"}}).json()["save"] is True
+    assert _colors(av) == {"parts": {"PartHair": {"overlay": "#202020"}, "PartEyes": {"multiply": "#112233"}}} and _held(av) == {}      # ... and saved: no longer held
+    save({"parts": {"PartHair": {"multiply": "#334455"}}, "all": {"alpha": 0.5}})
+    assert _colors(av)["parts"]["PartHair"] == {"overlay": "#202020", "multiply": "#334455"} and _colors(av)["all"] == {"alpha": 0.5}
+    save({"parts": {"PartHair": {"overlay": None}, "PartEyes": None}, "all": None})                           # null takes a field, a target, away
+    assert _colors(av) == {"parts": {"PartHair": {"multiply": "#334455"}}}
+    # the tab saves its set as a whole: junk and empty targets are not kept, other settings leave it alone
+    av.post("/avatar/api/avatars/main", json={"colors": {"parts": {"PartHair": {"multiply": "nope", "alpha": 2}, "": "#123456", "PartEyes": {}}, "meshes": {"ArtEye1": "#FFFFFF"}}})
+    assert _colors(av) == {"parts": {"PartHair": {"alpha": 1.0}}, "meshes": {"ArtEye1": {"multiply": "#ffffff"}}}     # (white is a real choice: it can undo a preset)
+    av.post("/avatar/api/avatars/main", json={"x": 40})
+    assert _colors(av)["parts"] == {"PartHair": {"alpha": 1.0}}
+    av.post("/avatar/api/avatars/main", json={"colors": {}})
+    assert _colors(av) == {}
+
+
+def test_a_colour_changed_in_the_tab_wins_over_one_a_bot_holds_for_the_same_target(av, renderers):
+    _with_parts(av)
+    obs = renderers("main")
+    av.post("/avatar/api/avatars/main/colors", json={"parts": {"PartHair": "#ff0000", "PartEyes": "#00ff00"}, "all": {"alpha": 0.5}})
+    obs.ws.sent.clear()
+    av.post("/avatar/api/avatars/main", json={"colors": {"parts": {"PartHair": {"multiply": "#0000ff"}}}})      # the tab recolours the hair only
+    assert set(_held(av)) == {"all", "parts:PartEyes"}                                                          # the bot keeps the rest
+    told = [m for m in obs.ws.sent if isinstance(m, dict) and m.get("cmd") == "release_colors"]
+    assert len(told) == 1 and told[0]["parts"] == ["PartHair"] and told[0]["meshes"] == [] and not told[0]["all"] and not told[0]["everything"]
+    obs.ws.sent.clear()
+    av.post("/avatar/api/avatars/main", json={"colors": {"parts": {"PartHair": {"multiply": "#0000ff"}}}})      # nothing changed: nothing released
+    assert not [m for m in obs.ws.sent if isinstance(m, dict) and m.get("cmd") == "release_colors"]
+
+
+def test_colour_presets_are_saved_on_the_model_and_switched_like_hotkeys(av, renderers):
+    mid = _with_parts(av)
+    obs = renderers("main")
+    path = f"/avatar/api/models/{mid}/color_presets"
+    assert av.post(path, json={"name": "Night", "avatar": "main"}).status_code == 400                          # nothing to record yet
+    av.post("/avatar/api/avatars/main/colors", json={"parts": {"PartHair": "#334466"}, "meshes": {"ArtEye1": {"overlay": "#6688ff"}}, "save": True})
+    r = av.post(path, json={"name": "Night", "avatar": "main"})
+    night = _colors(av)
+    assert r.status_code == 200 and r.json()["look"] == night and r.json()["presets"] == ["Night"]
+    assert (av.lib.model_dir(mid) / "hexcast.colors.json").is_file()                                           # in the model's own folder: it goes where the model goes
+    assert av.get(path).json()["presets"] == {"Night": night}
+    assert [m for m in av.get("/avatar/api/models").json()["models"] if m["id"] == mid][0]["color_presets"] == ["Night"]
+    assert av.get("/avatar/api/avatars/main/info").json()["color_presets"] == ["Night"]
+    av.post("/avatar/api/avatars/main", json={"colors": {"parts": {"PartEyes": {"alpha": 0}}}})
+    assert av.post(path, json={"name": "night", "avatar": "main"}).json()["presets"] == ["night"]              # a name is one preset, whatever its case
+    av.post(path, json={"name": "Blink", "look": {"parts": {"PartEyes": {"alpha": 1}}}})
+    assert av.post(path, json={"name": "Bad", "look": {"parts": {"PartEyes": "pink"}}}).status_code == 400
+    assert sorted(av.get(path).json()["presets"], key=str.lower) == ["Blink", "night"]
+
+    # switched on and off like hotkeys: any case, several at once, toggle, only, for
+    obs.ws.sent.clear()
+    r = av.post("/avatar/api/avatars/main/color_preset", json={"name": "NIGHT"}).json()
+    assert r["states"] == {"night": "on"} and r["active"] == ["night"] and r["rules"]["night"]["parts"] == {"PartEyes": {"alpha": 0.0}}
+    told = [m for m in obs.ws.sent if isinstance(m, dict) and m.get("cmd") == "color_preset"]
+    assert len(told) == 1 and told[0]["states"] == {"night": "on"} and told[0]["rules"] == r["rules"] and told[0]["orders"]["night"] == r["orders"]["night"]
+    assert set(_live(av, "color_presets")) == {"night"}
+    r = av.post("/avatar/api/avatars/main/color_preset", json={"names": ["night", "blink"], "state": "toggle"}).json()
+    assert r["states"] == {"night": "off", "Blink": "on"} and r["active"] == ["Blink"]
+    r = av.post("/avatar/api/avatars/main/color_preset", json={"names": ["night", "Blink"]}).json()
+    assert r["active"] == ["Blink", "night"] and r["orders"]["Blink"] < r["orders"]["night"]                   # a later one is drawn over an earlier; Blink keeps its place
+    r = av.post("/avatar/api/avatars/main/color_preset", json={"name": "night", "only": True}).json()
+    assert r["active"] == ["night"] and r["states"] == {"night": "on", "Blink": "off"}
+    assert av.post("/avatar/api/avatars/main/color_preset", json={"name": "night", "state": "off"}).json()["active"] == []
+    av.post("/avatar/api/avatars/main/color_preset", json={"name": "Blink", "for": 30})
+    assert _live(av, "color_presets")["Blink"]["until"] and av.post("/avatar/api/avatars/main/clear_color_presets", json={}).json()["fade"] == 0.4
+    assert _live(av, "color_presets") == {}
+    bad = av.post("/avatar/api/avatars/main/color_preset", json={"name": "Day"})
+    assert bad.status_code == 400 and "'Day'" in bad.json()["error"] and "Blink, night" in bad.json()["error"]
+    assert av.post("/avatar/api/avatars/main/color_preset", json={}).status_code == 400
+    assert av.post("/avatar/api/avatars/main/color_preset", json={"name": "night", "state": "maybe"}).status_code == 400
+
+    # recording over a preset that is on brings it up to date; deleting it switches it off
+    av.post("/avatar/api/avatars/main/color_preset", json={"name": "Blink"})
+    obs.ws.sent.clear()
+    av.post(path, json={"name": "blink", "look": {"all": {"multiply": "#101010"}}})
+    told = [m for m in obs.ws.sent if isinstance(m, dict) and m.get("cmd") == "color_preset"]
+    assert told and told[0]["states"] == {"Blink": "off", "blink": "on"} and told[0]["rules"] == {"blink": {"all": {"multiply": "#101010"}}}
+    assert set(_live(av, "color_presets")) == {"blink"} and _live(av, "color_presets")["blink"]["rules"] == {"all": {"multiply": "#101010"}}
+    obs.ws.sent.clear()
+    assert av.post(f"{path}/blink/delete").json()["presets"] == ["night"]
+    assert _live(av, "color_presets") == {}
+    assert [m for m in obs.ws.sent if isinstance(m, dict) and m.get("cmd") == "color_preset"][0]["states"] == {"blink": "off"}
+    assert av.post(f"{path}/blink/delete").status_code == 404
+
+
+def test_a_model_remembers_a_default_look_for_every_avatar_that_loads_it(av, renderers):
+    mid = _with_parts(av)
+    other = _upload(av)["id"]
+    path = f"/avatar/api/models/{mid}/color_presets"
+    night, neon = {"parts": {"PartHair": {"multiply": "#334466"}}}, {"all": {"overlay": "#220044"}}
+    assert av.post(path, json={"name": "Night", "look": night}).json()["default"] == ""                       # not the default unless asked
+    assert av.post(f"{path}/night/default").json()["default"] == "Night"                                      # (any case)
+    assert [m for m in av.get("/avatar/api/models").json()["models"] if m["id"] == mid][0]["color_default"] == "Night"
+    assert av.get("/avatar/api/avatars/main/info").json()["color_default"] == "Night"
+    assert (av.lib.model_dir(mid) / "hexcast.colors.json").read_text(encoding="utf-8").count('"default": "Night"') == 1
+
+    # an avatar that loads the model starts in it; colours given with it win; one already there is left alone
+    assert _avatar(av, "b", model=mid)["colors"] == night
+    assert _avatar(av, "c", model=mid, colors={"all": {"alpha": 0.5}})["colors"] == {"all": {"alpha": 0.5}}
+    assert _colors(av, "main") == {}
+    # the same preset under another spelling is still the default; recording over it keeps it
+    av.post(path, json={"name": "NIGHT", "look": {"parts": {"PartHair": {"multiply": "#112233"}}}})
+    assert av.get(path).json()["presets"].keys() == {"NIGHT"} and av.post(f"{path}/night/default", json={}).json()["default"] == "NIGHT"
+    assert _avatar(av, "d", model=mid)["colors"] == {"parts": {"PartHair": {"multiply": "#112233"}}}
+
+    # switching an avatar to another model: colours are of one model's parts, so the new model's default (or none) takes their place
+    obs = renderers("main")
+    av.post("/avatar/api/avatars/main/colors", json={"parts": {"PartHair": "#ff0000"}})
+    av.post("/avatar/api/avatars/main/color_preset", json={"name": "night"})
+    av.post("/avatar/api/avatars/b", json={"model": other})
+    assert _colors(av, "b") == {}                                                                              # `other` has no default
+    av.post(f"/avatar/api/models/{other}/color_presets", json={"name": "Neon", "look": neon, "default": True})
+    obs.ws.sent.clear()
+    av.post("/avatar/api/avatars/main", json={"model": other})
+    assert _colors(av, "main") == neon and _held(av) == {} and _live(av, "color_presets") == {}               # and what a bot held / switched on is gone
+    cmds = [m["cmd"] for m in obs.ws.sent if isinstance(m, dict) and m.get("type") == "cmd"]
+    assert "release_colors" in cmds and "clear_color_presets" in cmds
+    av.post("/avatar/api/avatars/main", json={"model": mid})
+    assert _colors(av, "main") == {"parts": {"PartHair": {"multiply": "#112233"}}}                             # back: the first model's default again
+    av.post("/avatar/api/avatars/main", json={"model": mid, "x": 30})                                          # not a change of model: nothing replaced
+    av.post("/avatar/api/avatars/main/colors", json={"all": {"alpha": 0.4}, "save": True})
+    av.post("/avatar/api/avatars/main", json={"model": mid, "x": 31})
+    assert _colors(av, "main")["all"] == {"alpha": 0.4}
+
+    # no longer the default: a new avatar starts bare; deleting the default preset clears the flag too
+    assert av.post(f"{path}/night/default", json={"default": False}).json()["default"] == ""
+    assert _avatar(av, "e", model=mid)["colors"] == {}
+    av.post(f"{path}/night/default")
+    assert av.post(f"{path}/night/delete").json()["default"] == "" and av.lib.color_default(mid) == ""
+    assert av.post(f"{path}/night/default").status_code == 404
+
+
+def test_a_preset_saved_with_its_model_is_a_new_model_that_starts_in_it(av):
+    mid = _with_parts(av)
+    path = f"/avatar/api/models/{mid}/color_presets"
+    night = {"parts": {"PartHair": {"multiply": "#334466"}}, "meshes": {"ArtEye1": {"overlay": "#6688ff"}}}
+    av.post(path, json={"name": "Night", "look": night, "default": True})
+    av.post(path, json={"name": "Neon", "look": {"all": {"overlay": "#220044"}}})
+    assert _avatar(av, "plain", model=mid)["colors"] == night                                       # (the original starts in Night for now)
+
+    r = av.post(f"{path}/night/as_model", json={"name": "Test Model - Night"})
+    assert r.status_code == 200, r.text
+    new = r.json()["model"]
+    assert new["id"] == "test-model-night" and new["name"] == "Test Model - Night" and new["ok"] and new["type"] == "live2d"
+    # a full copy of its own: the files, the expressions and motions, the settings - and it starts in Night, with Neon still there
+    folder = av.lib.model_dir(new["id"])
+    assert (folder / "m.moc3").is_file() and (folder / "hexcast.json").is_file() and (folder / "hexcast.colors.json").is_file()
+    assert [e["name"] for e in new["expressions"]] == ["Smile", "angry"] and new["color_presets"] == ["Neon", "Night"] and new["color_default"] == "Night"
+    assert (av.lib.model_dir(mid) / "m.moc3").is_file()                                             # the original is still there ...
+    assert av.lib.color_presets(mid)["Night"] == night and av.lib.color_default(mid) == ""         # ... with its presets, but it no longer starts in Night
+    assert _avatar(av, "old", model=mid)["colors"] == {} and _avatar(av, "copy", model=new["id"])["colors"] == night
+    assert [m["name"] for m in av.get("/avatar/api/models").json()["models"] if m["id"] in (mid, new["id"])] == ["Test Model", "Test Model - Night"]
+    # the copy is independent: changing it leaves the original alone, and deleting the original leaves the copy
+    av.post(f"/avatar/api/models/{new['id']}/color_presets/neon/delete")
+    assert "Neon" in av.lib.color_presets(mid) and "Neon" not in av.lib.color_presets(new["id"])
+    av.post(f"/avatar/api/models/{mid}/delete")
+    assert (av.lib.model_dir(new["id"]) / "m.moc3").is_file()
+
+    # a preset that was not the original's default leaves the original's default alone; the same name again gets its own id
+    other = _upload(av)["id"]
+    av.post(f"/avatar/api/models/{other}/color_presets", json={"name": "A", "look": night, "default": True})
+    av.post(f"/avatar/api/models/{other}/color_presets", json={"name": "B", "look": {"all": {"alpha": 0.5}}})
+    first = av.post(f"/avatar/api/models/{other}/color_presets/b/as_model", json={"name": "Variant"}).json()["model"]
+    second = av.post(f"/avatar/api/models/{other}/color_presets/b/as_model", json={"name": "Variant"}).json()["model"]
+    assert (first["id"], second["id"]) == ("variant", "variant-2") and first["name"] == second["name"] == "Variant"
+    assert av.lib.color_default(other) == "A" and av.lib.color_default(first["id"]) == "B"
+    # mistakes change nothing
+    before = sorted(m["id"] for m in av.get("/avatar/api/models").json()["models"])
+    assert av.post(f"/avatar/api/models/{other}/color_presets/b/as_model", json={"name": "  "}).status_code == 400
+    assert av.post(f"/avatar/api/models/{other}/color_presets/nope/as_model", json={"name": "X"}).status_code == 404
+    assert sorted(m["id"] for m in av.get("/avatar/api/models").json()["models"]) == before
+
+
+def test_a_pngtuber_preset_can_be_saved_as_a_new_pngtuber(av):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for n in ("idle.png", "talk.png"):
+            z.writestr("Tuber/" + n, _png(20, 30))
+    m = _upload(av, buf.getvalue(), "tuber.zip")
+    look = {"all": {"multiply": "#ff8844", "alpha": 0.9}}
+    av.post(f"/avatar/api/models/{m['id']}/color_presets", json={"name": "Warm", "look": look})
+    new = av.post(f"/avatar/api/models/{m['id']}/color_presets/warm/as_model", json={"name": "Warm Tuber"}).json()["model"]
+    assert new["type"] == "png" and new["ok"] and new["name"] == "Warm Tuber" and new["color_default"] == "Warm"
+    assert av.get(f"/avatar/api/models/{new['id']}/engine").json()["states"]["neutral"]["idle"] == "idle.png"
+    assert av.lib.color_presets(new["id"])["Warm"] == look and av.lib.color_default(m["id"]) == ""
+    assert _avatar(av, "w", model=new["id"])["colors"] == look
+
+
+def test_a_pngtuber_has_layers_not_art_meshes(av):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for n in ("idle.png", "talk.png"):
+            z.writestr("Tuber/" + n, _png(20, 30))
+    m = _upload(av, buf.getvalue(), "tuber.zip")
+    av.post("/avatar/api/avatars", json={"name": "t", "model": m["id"]})
+    err = av.post("/avatar/api/avatars/t/colors", json={"meshes": {"ArtMesh1": {"alpha": 0}}})
+    assert err.status_code == 400 and "PNGtuber" in err.json()["error"] and "parts" in err.json()["error"]
+    assert av.post("/avatar/api/avatars/t/colors", json={"parts": {"neutral:idle": "#ff8800"}, "all": {"alpha": 0.8}}).status_code == 200
+    assert av.post(f"/avatar/api/models/{m['id']}/color_presets", json={"name": "Warm", "look": {"parts": {"neutral:idle": "#ff8800"}}}).status_code == 200
+    assert av.post("/avatar/api/avatars/t/color_preset", json={"name": "warm"}).json()["states"] == {"Warm": "on"}
+
+
+def test_held_colours_and_presets_are_given_to_a_renderer_that_joins_late(av):
+    mid = _with_parts(av)
+    av.post(f"/avatar/api/models/{mid}/color_presets", json={"name": "Night", "look": {"all": {"multiply": "#334466"}}})
+    av.post("/avatar/api/avatars/main/colors", json={"parts": {"PartHair": "#ff0000"}, "for": 60})
+    av.post("/avatar/api/avatars/main/colors", json={"parts": {"PartEyes": "#00ff00"}, "for": 0.0001})
+    av.post("/avatar/api/avatars/main/color_preset", json={"name": "night"})
+    with av.websocket_connect("/avatar/ws/render?role=obs") as ws:
+        live = ws.receive_json()["live"]["main"]
+    assert set(live["colors"]) == {"parts:PartHair"} and live["colors"]["parts:PartHair"]["spec"] == {"multiply": "#ff0000"}   # the one that ran out is not sent
+    assert live["color_presets"]["Night"]["rules"] == {"all": {"multiply": "#334466"}} and live["color_presets"]["Night"]["order"]
+
+
 def test_pngtuber_from_pictures(av):
     from hexcast_plugins.avatar import pngtuber
     assert pngtuber.classify("Open Mouth Blink.png") == ("neutral", "talk_blink")
@@ -784,3 +1054,52 @@ def test_a_pngtuber_hops_with_the_words_as_the_audio_comes_in(engine):
     assert engine["pngFollow"]["kicks"] >= 10                             # with it: a hop for most words
     assert engine["pngFollow"]["maxBy"] >= -45                            # (the small hops stack on nothing: no floating off)
     assert engine["pngNoBounce"]["kicks"] == 0                            # bounce 0 and beat 0: it stays put
+
+
+def test_multiply_goes_over_the_models_own_colours_and_a_folders_reaches_what_is_inside(engine):
+    assert engine["mulHair"] == [[1, 1, 1], [1, 0.502, 0], [1, 0.502, 0], [0.5, 0.5, 0.5], [1, 1, 1]]     # Hair and the Fringe inside it - nothing else
+    assert engine["mulHairFlags"] == [False, True, True, False, False]                                    # only the meshes it colours are taken over
+    assert engine["mulWhole"] == [[0.502] * 3, [0.502] * 3, [0.502] * 3, [0.251] * 3, [0.502] * 3]       # `all`: every mesh; the eye's own grey (.5) stays in
+    assert engine["mulBoth"] == [0.502, 0, 0]                                                             # a part's multiply x the whole model's
+    assert engine["mulFolders"] == [[0, 0, 1], [0, 0, 0], [0, 0, 0]]                                      # Body blue: the hair inside it is blue x red
+    assert engine["mulMesh"] == [[1, 1, 1], [1, 0.502, 0], [0, 0.502, 0]]                                 # one mesh: its own, on top of its part's
+
+
+def test_overlay_lightens_with_a_screen_colour_that_stacks(engine):
+    assert engine["overlay"] == [[0, 0, 0], [0.251] * 3, [0.251] * 3, [0.602] * 3, [0, 0, 0]]            # the eye's own screen colour (.2) screens with the new .5
+    assert engine["overlayLeavesMultiply"] == [[1, 1, 1], [1, 1, 1], [1, 1, 1], [0.5, 0.5, 0.5], [1, 1, 1]]
+    assert engine["overlayStacks"] == [0.752] * 3                                                         # two screens of .5: 1 - .5 x .5
+
+
+def test_alpha_hides_or_fades_meshes_and_does_not_compound(engine):
+    assert engine["alphaMesh"] == [1, 1, 0, 1, 1]                                                         # invisible: one mesh, nothing else
+    assert engine["alphaStacks"] == [1, 0.5, 0.25, 1, 1]                                                  # a part's alpha x the mesh's own
+    assert engine["alphaDoesNotCompound"] == engine["alphaStacks"]                                        # the model refreshes its opacities every frame
+    assert engine["alphaWhole"] == [0.2] * 5
+    assert engine["alphaStillModel"] == [1, 0.5, 0.5, 1, 1]                                               # a still model rewrites nothing: the alpha holds, it does not shrink
+    assert engine["alphaOverTheModelsValue"] == 0.4                                                       # the model sets a mesh to .8 itself: .8 x .5
+    assert engine["alphaHandedBack"] == [1, 0.8, 1, 1, 1]                                                 # and the model's own value is what comes back
+
+
+def test_a_colour_eases_in_and_out_and_hands_the_model_back(engine):
+    assert engine["nothingTouchesNothing"]
+    assert 0.8 < engine["easeFirst"] < 1 and 0.1 < engine["easeMid"] < 0.5 and engine["easeEnd"] == 0   # fade 0.6 s: white -> black
+    assert 0.5 < engine["releaseMid"] < 1 and engine["releaseEnd"] == 1
+    assert engine["releaseHandsBack"]                                                                    # no mesh is left taken over
+    assert engine["heldAlpha"] == 0 and engine["heldAlphaReleased"] == 1
+    assert engine["savedCleared"]                                                                        # the same when a saved colour is cleared in the tab
+
+
+def test_colours_come_in_layers_a_later_one_winning_field_by_field(engine):
+    assert engine["layerBlue"] == [0, 0, 1] and engine["layerRed"] == [1, 0, 0] and engine["layerRedOverlay"] == [0.125] * 3
+    assert engine["layerRedOff"] == [[0, 0, 1], [0, 0, 0]] and engine["layerSaved"] == [0, 1, 0]        # a preset off: the layer under it is back
+    assert engine["heldWinsOverPreset"] == [[1, 1, 0], [0.125] * 3]                                      # the held multiply, the preset's overlay
+    assert engine["nullGoesBack"] == [1, 0, 0] and engine["clearedPresets"] == [[0, 1, 0], [0, 0, 0]]
+    assert engine["untilHolds"] == [1, 0, 0] and engine["untilEnds"] == [0, 1, 0]
+    assert engine["presetUntilHolds"] == [1, 0, 0] and engine["presetUntilEnds"] == [0, 1, 0]
+    assert engine["restoredAtOnce"] == [[1, 0, 0], 0.5]                                                  # a renderer that joins late does not fade it in
+
+
+def test_colours_survive_a_new_model_and_an_old_runtime_and_reach_pngtuber_layers(engine):
+    assert engine["reloadColoursTheNewModel"] == [1, 0, 0] and engine["oldRuntimeIsHarmless"]
+    assert engine["pngLayer"] == [0x804000, 0x808080, 0xFFFFFF, 0.25, 0.5, 1]                            # a layer: its own x `all` (tint and alpha; no overlay)

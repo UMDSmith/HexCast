@@ -33,6 +33,7 @@ MODELS_DIR = ROOT / "models"
 ITEMS_DIR = ROOT / "items"
 URL = "/avatar/lib"
 SETTINGS_FILE = "hexcast.json"
+COLORS_FILE = "hexcast.colors.json"          # the model's colour presets (Live2D and PNGtuber alike)
 
 # The newest .moc3 format the Cubism Core Hexcast downloads can read (Core 5.1 -> moc3 v5, which is
 # every model saved by Cubism Editor 3.0 - 5.2). Cubism 5.3 saves v6 - the web engine cannot draw
@@ -315,7 +316,8 @@ def _png_meta(mid: str, folder: Path) -> dict:
         "states": pngtuber.state_names(rig), "default_state": rig.get("default_state"),
         "pictures": _folder_pictures(folder), "layers": len(rig.get("layers") or []), "size": size,
         "mappings_from": "", "hotkeys": [], "idle_motion": "", "use_physics": False, "editor": "PNG",
-        "source": rig.get("source", ""),
+        "source": rig.get("source", ""), "color_presets": sorted(color_presets(mid), key=str.lower),
+        "color_default": color_default(mid),
     }
 
 
@@ -356,6 +358,7 @@ def model_meta(mid: str) -> dict:
         "expressions": exprs, "motions": motions, "icon": icon, "size": size,
         "mappings_from": settings.get("mappings_from", "default"), "hotkeys": settings.get("hotkeys", []),
         "idle_motion": settings.get("idle_motion", ""), "use_physics": bool(settings.get("physics", True)),
+        "color_presets": sorted(color_presets(mid), key=str.lower), "color_default": color_default(mid),
     }
 
 
@@ -369,6 +372,63 @@ def list_models() -> list[dict]:
             except LibraryError:
                 pass
     return out
+
+
+def _colors_file(mid: str) -> dict:
+    d = _read_json(model_dir(mid) / COLORS_FILE)
+    return d if isinstance(d, dict) else {}
+
+
+def color_presets(mid: str) -> dict:
+    """The model's saved colour presets (name -> look, see avatar.norm_look). They are kept in the model's own folder,
+    so they go wherever the model goes - and every avatar that shows the model can use them."""
+    p = _colors_file(mid).get("presets")
+    return p if isinstance(p, dict) else {}
+
+
+def color_default(mid: str) -> str:
+    """The name of the preset that is the model's default - what an avatar starts in when it loads the model - or ''."""
+    d = _colors_file(mid).get("default")
+    return d if isinstance(d, str) and d in color_presets(mid) else ""
+
+
+def save_color_presets(mid: str, presets: dict, default: str = "") -> None:
+    path = model_dir(mid) / COLORS_FILE
+    if presets:
+        _write_json(path, {"version": 1, "presets": presets, **({"default": default} if default in presets else {})})
+    else:
+        try:
+            path.unlink()
+        except OSError:
+            pass
+
+
+def copy_model(mid: str, name: str, preset: str = "") -> dict:
+    """A full, independent copy of a model under a new name - a model of its own in the library. With `preset` (one of
+    its colour presets) the copy's default colours are that preset, so it loads in them, and the original stops
+    starting in it (its other presets, and the preset itself, stay) - the original still loads plain."""
+    src = model_dir(mid)
+    name = str(name or "").strip()[:60]
+    if not name:
+        raise LibraryError("give the new model a name")
+    presets = color_presets(mid)
+    real = next((k for k in presets if k.lower() == str(preset or "").strip().lower()), None) if preset else None
+    if preset and real is None:
+        raise LibraryError(f"no colour preset {preset!r} on this model", 404)
+    ensure_dirs()
+    new = _unique(MODELS_DIR, re.sub(r"-{2,}", "-", slug(name)))          # ("Hiyori - Night" is hiyori-night, not hiyori---night)
+    dest = MODELS_DIR / new
+    try:
+        shutil.copytree(src, dest, symlinks=False)
+        save_model_settings(new, {"name": name})                       # (its own name; a PNGtuber's is in its rig)
+        if real:
+            save_color_presets(new, presets, real)
+    except (OSError, LibraryError) as exc:
+        _rmtree(dest)
+        raise LibraryError(f"could not copy the model: {getattr(exc, 'message', exc)}", 500)
+    if real and color_default(mid) == real:
+        save_color_presets(mid, presets, "")
+    return model_meta(new)
 
 
 def model_settings(mid: str) -> dict:

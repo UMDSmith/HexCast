@@ -11,6 +11,7 @@ Live2D avatars — and PNGtubers — that your AI drives through Hexcast's API �
 - [Face, emotions, expressions, motions](#face-emotions-expressions-motions)
 - [PNGtubers](#pngtubers)
 - [Items](#items)
+- [Colors](#colors)
 - [Light](#light)
 - [API](#api)
 - [Performance](#performance)
@@ -109,7 +110,7 @@ A bot's own mouth values win over the lipsync for as long as it holds them (with
 
 ## PNGtubers
 
-An avatar can show a **PNGtuber** instead of a Live2D model — everything else (the name the bot uses, placement, speech and lipsync, emotions, gestures, items, light, the OBS source) works the same.
+An avatar can show a **PNGtuber** instead of a Live2D model — everything else (the name the bot uses, placement, speech and lipsync, emotions, gestures, items, colors, light, the OBS source) works the same.
 
 **Simple** — a few pictures per state: **quiet**, **talking**, **blinking** and **talking + blinking** (any can be left out), and if you like a **half-open** mouth for quiet talking and a **mouth per vowel** (A / I / U / E / O — the same vowel detection Live2D models use). States are sets of those pictures (`neutral`, `happy` …).
 
@@ -141,6 +142,39 @@ Items pin to a PNGtuber's layers (they follow its bounce and wobble).
 On the **Items** tab add items from the library to the avatar. Their position is in % of the model's box (0,0 its top left), their size 1 = a quarter of the model's height, and they sit **in front of** or **behind** the model. They move, scale and turn with the avatar.
 
 **Pin** an item and it is glued to the part of the model under it — a hat to the head, a drink to a hand — following that art mesh as it moves, tilts and turns (the item keeps its angle relative to it). Drag a pinned item in the preview and it re-pins wherever you drop it; drop it off the model and it is unpinned. Items take the avatar's light.
+
+## Colors
+
+The **Colors** tab does what VTube Studio's *customize multiply / screen colour for art meshes* does — and presets and hotkeys, which here are API calls your bot makes.
+
+Pick what to colour in the list: the **whole model**, a **part** (a folder of art meshes and sub-parts — hair, eyes, clothes; shown as a tree, open a part to see its art meshes) or a single **art mesh**. **Filter** by id or name, or press **Pick on the model** and click the thing you want in the preview: its row opens and lights up. Then set, for that one:
+
+- **Multiply** — a colour the art is multiplied by. It tints and darkens (white = no change) and keeps the shading, outlines and highlights.
+- **Overlay** — a colour added on top, VTube Studio's *screen* colour. It lightens (black = no change), so a dark part can be made light, which multiply alone can't.
+- **Alpha** — 100 % to 0 %: fades the thing out. **Hide** is alpha 0 — a prop, a hat, a second set of arms.
+
+They stack: a mesh's multiply is its own × its part's (and the parts around that) × the whole model's; overlays combine as screens; alphas multiply. They go over a mesh's own multiply / screen colour and opacity, so a model that animates its own colours still does. Every change fades. **×** takes a field off, **Clear this** takes everything off the selected one, **Reset all** takes everything off the avatar. A PNGtuber's layers are its parts (a layer's parent only moves it, it doesn't group it) and have multiply and alpha — there is no overlay colour for them.
+
+What is set here belongs to the **avatar**.
+
+### Presets
+
+**Save the colours below as a preset…** records what is set on the avatar as a named preset of its **model**: kept in the model's folder (`hexcast.colors.json`), so it goes wherever the model goes and every avatar showing that model can use it. Click a preset's name to switch it on or off; **✎** makes its colours the avatar's own (to change them, then save again under the same name), **×** deletes it.
+
+Presets are VTube Studio's *ArtMesh Color Preset* hotkeys, and the bot switches them through the API (`color_preset`): **on**, **off** or **toggle**, any number at once (each over the ones before it, field by field), `"only": true` to switch every other off, `for` to switch one off by itself, `fade` to blend. A preset that is on is drawn over the avatar's own colours; what a bot holds with `colors` goes over both. A preset that sets a colour back (white, alpha 1) can undo what the avatar's own colours do.
+
+### The model's default, and loading a preset
+
+A preset is also a **saved config of the model**, to bring back whenever you load it again:
+
+- **Load** on a preset makes its colours the avatar's own for good (it asks first only if that would replace different colours — save those as a preset first to keep them). That is the quick way to put a config on an avatar.
+- **☆ / ★** makes a preset the model's **default**: an avatar that loads the model starts in it — a new avatar with that model, or an avatar you switch to it (an avatar always starts bare in a model with no default; colours are of one model's parts, so they don't carry over to another). Colours given when an avatar is created (API `colors`) win over the default. **Save the colours below as a preset…** has a *Default* box for it; the first preset of a model is the default unless you untick it.
+- Avatars that are already set up are not touched when you change the default; press **Load** on them.
+- **As model** saves a preset **together with its model as a new model**: a full copy of the model's files in the library (so it takes the model's size again), named as you like, that starts in the preset's colours — and the original is left alone, so it still loads without them (if that preset was the original's default, it stops being it). It is an ordinary model: the colours are kept as settings, not painted into the pictures, so you can change them, add presets, or delete either one without touching the other. The dialog can switch the avatar over to the new model at once.
+
+### Layers
+
+From bottom to top: the **avatar's own** colours (the tab), the **presets switched on** (the order they went on), then what a bot **holds** with `colors`. A later one wins, field by field — a preset that sets only an overlay leaves the multiply below it alone. The tab says when a bot is holding colours, with a **Let go** button; a colour you change in the tab wins over one a bot holds for the same thing.
 
 ## Light
 
@@ -180,6 +214,10 @@ For values every frame (your own lipsync, head motion from a tracker of your own
 | `POST …/expression` | `{"name": "Smile", "state": "on"\|"off"\|"toggle", "for": 5, "fade": 0.4}`; several at once: `{"names": ["Smile", "Blush"]}`, plus `"only": true` to switch every other one off. The answer lists `states` (what each became) and `active` (all that are on). An unknown name is a 400 listing the model's expressions |
 | `POST …/parts` | `{"values": {"PartArmA": 0, "PartArmB": 1}, "fade": 0.3, "for": 5}` — part opacity 0 – 1, held until released |
 | `POST …/release_parts` | `{"ids": ["PartArmA"]}` (`{}` = all) |
+| `POST …/colors` | `{"parts": {"PartHair": {"multiply": "#ff8800", "overlay": "#202040", "alpha": 0.9}}, "meshes": {"ArtMesh12": {"alpha": 0}}, "all": {"multiply": "#aabbcc"}, "fade": 0.3, "for": 10, "save": false}` — recolour parts (`…/info` lists `parts`, `art_meshes` and which part each art mesh is in), art meshes and the whole model (`all`). A spec has any of `multiply` (darkens / tints), `overlay` (lightens) — `#rrggbb`, `#rgb` or `rrggbb` — and `alpha` (0 invisible … 1); a bare colour (`"PartHair": "#ff8800"`) is a multiply, `"hidden": true` is `alpha: 0`. Held until released or `for` runs out; `null` for a field (or a whole target) lets it go back; `"save": true` keeps it in the avatar's settings instead (merged field by field). A PNGtuber's layers are its `parts` (no `overlay`, no `meshes`) |
+| `POST …/release_colors` | `{"parts": ["PartHair"], "meshes": ["ArtMesh12"], "all": true, "fade": 0.3}` — what a bot holds goes; `{}` = everything it holds |
+| `POST …/color_preset` | `{"name": "Night", "state": "on"\|"off"\|"toggle", "for": 20, "fade": 0.4}`; several at once: `{"names": ["Night", "Neon"]}`, plus `"only": true` to switch every other off. Any case. A preset saved on the avatar's model (`color_presets` in `…/info`); an unknown name is a 400 listing them. The answer lists `states` and `active` |
+| `POST …/clear_color_presets` | `{"fade": 0.4}` — every preset off |
 | `POST …/clear_expressions` | `{"fade": 0.4}` |
 | `POST …/motion` | `{"name": "wave"}` or `{"group": "TapBody", "index": 0}`, `"loop": true`, `"priority": "force"` |
 | `POST …/stop_motion` | |
@@ -218,11 +256,13 @@ Parameters and art meshes appear once the model has been drawn (by an overlay or
 | Call | Body |
 | --- | --- |
 | `POST /avatar/api/avatars` | `{"name": "guest", "model": "akari", "overlay": "guest"}` — create (`overlay` is optional: main; an overlay that doesn't exist is a 404) |
-| `POST /avatar/api/avatars/<name>` | any settings: `model`, `overlay`, `visible`, `locked`, `x`, `y`, `scale`, `rotation`, `flip`, `idle {…}`, `mouth {…}`, `emotions {…}`, `light {…}` |
+| `POST /avatar/api/avatars/<name>` | any settings: `model`, `overlay`, `visible`, `locked`, `x`, `y`, `scale`, `rotation`, `flip`, `idle {…}`, `mouth {…}`, `emotions {…}`, `colors {…}` (`{"all", "parts", "meshes"}` as above; replaces the saved set), `light {…}` |
 | `POST /avatar/api/avatars/<name>/rename` | `{"to": "host"}` |
 | `POST /avatar/api/avatars/<name>/delete` | |
 | `POST /avatar/api/overlays` | `{"name": "guest"}` — a new overlay, an OBS source at `/avatar/overlay/guest` |
 | `POST /avatar/api/overlays/<name>/delete` | its avatars move to main; main itself can't be deleted |
+| `GET /avatar/api/models/<id>/color_presets` | the model's colour presets: `{"presets": {"Night": {"parts": {…}, "meshes": {…}, "all": {…}}}}` |
+| `POST /avatar/api/models/<id>/color_presets` | `{"name": "Night", "avatar": "main", "default": false}` records what that avatar's colours are now as a preset (or `{"name": "Night", "look": {…}}`); the same name in any case replaces it; `"default": true` makes it the model's default. `POST …/color_presets/<name>/default` (`{"default": false}` for none) sets or clears the default - what an avatar starts in when it loads the model (`color_default` in the model's entry and in `…/info`); `POST …/color_presets/<name>/as_model` (`{"name": "Hiyori Night"}`) saves that preset together with the model as a new model of the library - a full copy that starts in it; the answer is its model entry; `POST …/color_presets/<name>/delete` removes one |
 | `POST /avatar/api/order` | `{"names": ["back", "middle", "front"]}` — draw order (among the avatars of one overlay, the later is in front) |
 | `POST /avatar/api/models/upload` | multipart `file` (zip) or `files` + `paths` (a folder) |
 | `POST /avatar/api/models/import` | `{"path": "C:/…/my model"}` — a folder on the Hexcast PC |
@@ -257,10 +297,10 @@ Any REST command works as `{"cmd": …, "avatar": …, …}` (plus `list` and `i
 
 | | |
 | --- | --- |
-| `config/avatar.json` | every avatar's settings (its overlay, placement, idle, mouth, emotions, items, light), the list of overlays and the stage settings |
+| `config/avatar.json` | every avatar's settings (its overlay, placement, idle, mouth, emotions, items, colors, light), the list of overlays and the stage settings |
 | `config/avatar_runtime/` | the downloaded Live2D runtime and when its license was accepted |
 | `media/avatars/models/<id>/` (PNGtuber) | its pictures and `pngtuber.json` (the rig: states, roles or layers, bounce ...) |
-| `media/avatars/models/<id>/` | a model as shipped, plus `hexcast.json` (Hexcast's settings for it: mappings, idle animation, physics) and `hexcast.info.json` (its parameters, cached) |
+| `media/avatars/models/<id>/` | a model as shipped, plus `hexcast.json` (Hexcast's settings for it: mappings, idle animation, physics), `hexcast.info.json` (its parameters, cached) and `hexcast.colors.json` (its colour presets and which is the default - a PNGtuber has one too) |
 | `media/avatars/items/<id>/` | an item |
 
 ## Live2D licensing

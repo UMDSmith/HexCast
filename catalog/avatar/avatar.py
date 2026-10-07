@@ -15,16 +15,19 @@ of them can be on screen. Each sits on one overlay - a 1920x1080 stage that is o
 avatars that must be sized and moved in OBS on their own go on their own overlays. The renderer (avatar_engine.js, the same in OBS and in the tab's preview)
 keeps a model alive by itself - blinking, breathing, idle sway, eyes that wander, head motion while
 talking - and the API steers it: any parameter, expressions, motions, emotions, gaze, gestures,
-placement, speech with lipsync (vowels, like VTube Studio's advanced lipsync), items and light.
+placement, speech with lipsync (vowels, like VTube Studio's advanced lipsync), items, part colours
+(tints) and light.
 
 The server holds what has to survive an OBS reload (settings, plus the "sticky" live state: held
-parameters, expressions, emotion, gaze, light, items) and relays everything else to the renderers.
+parameters, part opacities and colours, expressions, emotion, gaze, light, items) and relays
+everything else to the renderers.
 """
 
 from __future__ import annotations
 
 import asyncio
 import base64
+import itertools
 import json
 import os
 import re
@@ -105,6 +108,8 @@ AVATAR_DEFAULTS: dict[str, Any] = {
               "vowels": True, "smoothing": 45, "delay_ms": 60, "open": 1.0, "calibration": None},
     "emotions": {},
     "items": [],
+    # the avatar's own colours (see norm_look): {"all": spec, "parts": {id: spec}, "meshes": {id: spec}}
+    "colors": {},
     "light": {"enabled": False, "preset": "none", "color": "#ffd9a8", "intensity": 0.5, "angle": -35,
               "ambient": "#ffffff", "ambient_amount": 0.0, "rim": "#7fb6ff", "rim_amount": 0.0, "speed": 1.0},
 }
@@ -131,6 +136,14 @@ def _num(v, lo: float, hi: float, d: float) -> float:
 def _color(v, d: str) -> str:
     s = str(v or "").strip()
     return s if re.fullmatch(r"#[0-9a-fA-F]{6}", s) else d
+
+
+def _tint(v) -> str | None:
+    """A colour a bot sends - #rrggbb, #rgb or rrggbb, any case - as #rrggbb, or None if it is not one."""
+    s = str(v or "").strip().lower().lstrip("#")
+    if re.fullmatch(r"[0-9a-f]{3}", s):
+        s = "".join(ch * 2 for ch in s)
+    return "#" + s if re.fullmatch(r"[0-9a-f]{6}", s) else None
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
@@ -179,6 +192,100 @@ def _norm_emotions(d: Any) -> dict:
     return out
 
 
+LOOK_KINDS = {"parts": 512, "meshes": 4096}          # what a look can name besides `all`, and how many of each
+
+
+def _norm_spec(d: Any, nulls: bool = False, strict: bool = False, what: str = "") -> dict:
+    """What one target (the whole model, a part, an art mesh) looks like: `multiply` (#rrggbb, darkens / tints),
+    `overlay` (#rrggbb - VTube Studio's screen colour, lightens) and `alpha` (0 invisible .. 1) - each optional.
+    A bare colour is a `multiply`; `hidden: true` is `alpha: 0`. With `nulls`, None takes a field away (a live
+    change); `strict` makes a value that is no colour / number an error instead of leaving it out."""
+    if isinstance(d, str):
+        d = {"multiply": d}
+    if d is None and nulls:
+        return {"multiply": None, "overlay": None, "alpha": None}
+    out: dict = {}
+    if not isinstance(d, dict):
+        return out
+    for key, names in (("multiply", ("multiply", "color", "colour")), ("overlay", ("overlay", "screen"))):
+        name = next((n for n in names if n in d), None)
+        if name is None:
+            continue
+        v = d[name]
+        if v is None or v == "":
+            if nulls:
+                out[key] = None
+        elif _tint(v):
+            out[key] = _tint(v)
+        elif strict:
+            raise CommandError(f"{what}: {key} {v!r} is not a colour (use #rrggbb)")
+    if "alpha" in d:
+        v = d["alpha"]
+        if v is None or v == "":
+            if nulls:
+                out["alpha"] = None
+        else:
+            try:
+                f = float(v)
+            except (TypeError, ValueError):
+                f = float("nan")
+            if f == f:
+                out["alpha"] = round(max(0.0, min(1.0, f)), 3)
+            elif strict:
+                raise CommandError(f"{what}: alpha {v!r} is not a number (0 invisible .. 1)")
+    elif "hidden" in d and d["hidden"] is not None:
+        out["alpha"] = 0.0 if d["hidden"] else 1.0
+    return out
+
+
+def norm_look(d: Any, nulls: bool = False, strict: bool = False) -> dict:
+    """A look: {"all": spec, "parts": {part id: spec}, "meshes": {art mesh id: spec}} - what the saved colours of an
+    avatar, a model's colour presets and the live `colors` command are made of. Empty specs are left out."""
+    out: dict = {}
+    if not isinstance(d, dict):
+        return out
+    spec = _norm_spec(d.get("all"), nulls, strict, "all") if "all" in d else {}
+    if spec:
+        out["all"] = spec
+    for kind, limit in LOOK_KINDS.items():
+        raw = d.get(kind)
+        if isinstance(raw, list) and nulls:                  # a release: ["PartHair", ...]
+            raw = {str(k): None for k in raw}
+        if not isinstance(raw, dict):
+            continue
+        table = {}
+        for k, v in list(raw.items())[:limit]:
+            key = str(k or "").strip()[:120]
+            spec = _norm_spec(v, nulls, strict, f"{kind[:-1]} {key}") if key else {}
+            if spec:
+                table[key] = spec
+        if table:
+            out[kind] = table
+    return out
+
+
+def look_targets(look: dict):
+    """(kind, id, spec) for every target a look names; kind is `all`, `parts` or `meshes` (`all` has no id)."""
+    if look.get("all"):
+        yield "all", "", look["all"]
+    for kind in LOOK_KINDS:
+        for k, spec in (look.get(kind) or {}).items():
+            yield kind, k, spec
+
+
+def merge_look(base: dict, patch: dict) -> dict:
+    """`patch` over `base`, field by field (None takes a field away); targets left empty go."""
+    out = json.loads(json.dumps(base or {}))
+    for kind, k, spec in look_targets(patch):
+        tbl, key = (out, "all") if kind == "all" else (out.setdefault(kind, {}), k)
+        cur = {f: v for f, v in {**(tbl.get(key) or {}), **spec}.items() if v is not None}
+        if cur:
+            tbl[key] = cur
+        else:
+            tbl.pop(key, None)
+    return {k: v for k, v in out.items() if v}
+
+
 def _norm_item(it: Any) -> dict | None:
     if not isinstance(it, dict) or not it.get("item"):
         return None
@@ -206,7 +313,7 @@ def _norm_item(it: Any) -> dict | None:
 
 def norm_avatar(d: dict, existing: dict | None = None) -> dict:
     a = _deep_merge(AVATAR_DEFAULTS, existing or {})
-    a = _deep_merge(a, {k: v for k, v in (d or {}).items() if k not in ("emotions", "items")})
+    a = _deep_merge(a, {k: v for k, v in (d or {}).items() if k not in ("emotions", "items", "colors")})
     home = str(a.get("overlay") or "").strip().lower()
     out = {
         "name": str(a.get("name") or ""), "model": library.slug(str(a.get("model") or ""), "") if a.get("model") else "",
@@ -236,6 +343,8 @@ def norm_avatar(d: dict, existing: dict | None = None) -> dict:
     out["emotions"] = _norm_emotions(emo if emo is not None else {})
     items = d.get("items") if d and "items" in d else (existing or {}).get("items")
     out["items"] = [x for x in (_norm_item(it) for it in (items or [])[:60]) if x]
+    cols = d.get("colors") if d and "colors" in d else (existing or {}).get("colors")      # replaced as a whole, like emotions
+    out["colors"] = norm_look(cols)
     lt = a.get("light") or {}
     out["light"] = {"enabled": bool(lt.get("enabled")),
                     "preset": lt.get("preset") if lt.get("preset") in LIGHT_PRESETS else "none",
@@ -366,6 +475,64 @@ def _expression_names(a: dict, names: list[str]) -> list[str]:
     return out
 
 
+def _look_key(kind: str, ident: str) -> str:
+    return "all" if kind == "all" else f"{kind}:{ident}"
+
+
+def _check_look_ids(a: dict, look: dict) -> None:
+    """A part or art mesh the model does not have is an error that names it. (Checked once the model has been
+    drawn - that is when Hexcast learns its parts and meshes - and a PNGtuber's layers are `parts`.)"""
+    if not a.get("model"):
+        return
+    if _model_type(a) == "png" and look.get("meshes"):
+        raise CommandError(f"{a['name']} is a PNGtuber - it has no art meshes; its layers are `parts` (ids: GET /avatar/api/avatars/{a['name']}/info)")
+    info = model_info(a["model"])
+    have = {"parts": {p.get("id") for p in info.get("parts", [])}, "meshes": set(info.get("drawables", []))}
+    for kind in LOOK_KINDS:
+        missing = [k for k in (look.get(kind) or {}) if have[kind] and k not in have[kind]]
+        if missing:
+            raise CommandError(f"{a['name']}'s model has no {kind[:-1]} {', '.join(map(repr, missing))} "
+                               f"(ids: GET /avatar/api/avatars/{a['name']}/info)")
+
+
+_PRESET_SEQ = itertools.count(1)                  # the order colour presets were switched on in (a later one is drawn over an earlier)
+
+
+def _color_presets_of(a: dict) -> dict:
+    if not a.get("model"):
+        return {}
+    try:
+        return library.color_presets(a["model"])
+    except library.LibraryError:
+        return {}
+
+
+def _default_look(mid: str) -> dict:
+    """What an avatar starts in when it loads the model: the colours of its default preset, if it has one."""
+    if not mid:
+        return {}
+    try:
+        return norm_look(library.color_presets(mid).get(library.color_default(mid)))
+    except library.LibraryError:
+        return {}
+
+
+def _preset_names(a: dict, table: dict, names: list[str]) -> list[str]:
+    """The model's own spelling of each colour preset name (any case); an unknown one is an error that lists them."""
+    by_lower = {k.lower(): k for k in table}
+    out, missing = [], []
+    for n in names:
+        real = n if n in table else by_lower.get(n.lower())
+        if real is None:
+            missing.append(n)
+        elif real not in out:
+            out.append(real)
+    if missing:
+        have = ", ".join(sorted(table, key=str.lower)) or "none yet - save one on the Colors tab"
+        raise CommandError(f"{a['name']}'s model has no colour preset {', '.join(map(repr, missing))} (it has: {have})")
+    return out
+
+
 def suggest_emotions(model_id: str) -> dict:
     """An emotion -> expression table guessed from the model's expression names."""
     try:
@@ -389,8 +556,9 @@ LIVE: dict[str, dict] = {}
 
 
 def _live(name: str) -> dict:
-    return LIVE.setdefault(name, {"params": {}, "parts": {}, "expressions": {}, "emotion": None, "face": None,
-                                  "look": None, "light": None, "transform": None, "visible": None})
+    return LIVE.setdefault(name, {"params": {}, "parts": {}, "colors": {}, "color_presets": {}, "expressions": {},
+                                  "emotion": None, "face": None, "look": None, "light": None, "transform": None,
+                                  "visible": None})
 
 
 def _expired(until: float | None, now: float) -> bool:
@@ -403,6 +571,8 @@ def live_snapshot() -> dict:
     for name, st in LIVE.items():
         st["params"] = {k: c for k, c in st["params"].items() if not _expired(c.get("until"), now)}
         st["parts"] = {k: c for k, c in st.setdefault("parts", {}).items() if not _expired(c.get("until"), now)}
+        for key in ("colors", "color_presets"):
+            st[key] = {k: c for k, c in st.setdefault(key, {}).items() if not _expired(c.get("until"), now)}
         st["expressions"] = {k: u for k, u in st["expressions"].items() if not _expired(u, now)}
         for key in ("emotion", "face", "look"):
             if st[key] and _expired(st[key].get("until"), now):
@@ -716,6 +886,78 @@ async def _command_one(name: str, kind: str, cmd: dict, source: str) -> dict:
         else:
             for i in ids:
                 st["parts"].pop(i, None)
+    elif kind == "colors":
+        # recolour: {"all": spec, "parts": {id: spec}, "meshes": {id: spec}} - spec = {multiply, overlay, alpha}; None takes a field away
+        patch = norm_look(cmd, nulls=True, strict=True)
+        if not patch:
+            raise CommandError("send what to recolour: {\"parts\": {\"PartHair\": \"#ff8800\"}, \"meshes\": {\"ArtMesh12\": {\"alpha\": 0}}, "
+                               "\"all\": {\"overlay\": \"#224466\"}} - a spec has multiply, overlay (both #rrggbb) and alpha (0 invisible .. 1); "
+                               "ids: GET /avatar/api/avatars/<name>/info")
+        _check_look_ids(a, patch)
+        until, fade, save = _until(cmd), _num(cmd.get("fade", 0.3), 0, 30, 0.3), bool(cmd.get("save"))
+        out.update({"colors": patch, "until": until, "fade": fade, "save": save})
+        if save:                                  # kept for good: the config is what the renderers draw
+            a["colors"] = norm_look(merge_look(a["colors"], patch))
+            for k, i, _ in look_targets(patch):
+                st["colors"].pop(_look_key(k, i), None)
+            save_config()
+            await broadcast_config()
+        else:                                     # for now (a field set to null goes back to the saved one)
+            for k, i, spec in look_targets(patch):
+                held = st["colors"].get(_look_key(k, i))
+                spec = {f: v for f, v in {**((held or {}).get("spec") or {}), **spec}.items() if v is not None}
+                if spec:
+                    st["colors"][_look_key(k, i)] = {"kind": k, "id": i, "spec": spec, "until": until, "fade": fade}
+                else:
+                    st["colors"].pop(_look_key(k, i), None)
+    elif kind == "release_colors":
+        everything = not any(k in cmd for k in ("all", "parts", "meshes"))
+        parts = [str(i) for i in cmd.get("parts") or []] if isinstance(cmd.get("parts"), list) else []
+        meshes = [str(i) for i in cmd.get("meshes") or []] if isinstance(cmd.get("meshes"), list) else []
+        out.update({"everything": everything, "all": bool(cmd.get("all")), "parts": parts, "meshes": meshes,
+                    "fade": _num(cmd.get("fade", 0.3), 0, 30, 0.3)})
+        if everything:
+            st["colors"].clear()
+        else:
+            if cmd.get("all"):
+                st["colors"].pop("all", None)
+            for i in parts:
+                st["colors"].pop(_look_key("parts", i), None)
+            for i in meshes:
+                st["colors"].pop(_look_key("meshes", i), None)
+    elif kind == "color_preset":
+        # a colour preset saved on the model (VTube Studio's "ArtMesh Color Preset" hotkey): on / off / toggle, several can be on
+        raw = cmd.get("names", cmd.get("name"))
+        names = [raw] if isinstance(raw, str) else raw if isinstance(raw, list) else []
+        names = [str(n).strip() for n in names if str(n).strip()][:32]
+        only = bool(cmd.get("only"))
+        if not names and not only:
+            raise CommandError("send the preset `name` or `names` (the model's are in GET /avatar/api/avatars/<name>/info as color_presets)")
+        table = _color_presets_of(a)
+        names = _preset_names(a, table, names)
+        state = cmd.get("state", "on")
+        if state not in ("on", "off", "toggle"):
+            raise CommandError("state is 'on', 'off' or 'toggle'")
+        until, fade = _until(cmd), _num(cmd.get("fade", 0.4), 0, 30, 0.4)
+        states, rules, orders = {}, {}, {}
+        for n in names:
+            s = ("off" if n in st["color_presets"] else "on") if state == "toggle" else state
+            states[n] = s
+            if s == "on":
+                order = (st["color_presets"].get(n) or {}).get("order") or next(_PRESET_SEQ)
+                st["color_presets"][n] = {"rules": table[n], "until": until, "fade": fade, "order": order}
+                rules[n], orders[n] = table[n], order
+            else:
+                st["color_presets"].pop(n, None)
+        if only:
+            for n in [n for n in st["color_presets"] if states.get(n) != "on"]:
+                st["color_presets"].pop(n)
+                states[n] = "off"
+        out.update({"names": list(states), "states": states, "rules": rules, "orders": orders, "until": until, "only": only,
+                    "fade": fade, "active": sorted(st["color_presets"])})
+    elif kind == "clear_color_presets":
+        st["color_presets"].clear()
+        out["fade"] = _num(cmd.get("fade", 0.4), 0, 30, 0.4)
     elif kind == "expression":
         # one expression ("name": "Smile") or several at once ("names": ["Smile", "Blush"]);
         # "only": true switches every other expression off in the same step
@@ -910,6 +1152,12 @@ def _summary(kind: str, out: dict) -> str:
         vals = out.get("values") or {}
         s = ", ".join(f"{k}={v:g}" for k, v in list(vals.items())[:4])
         return s + (f" (+{len(vals) - 4})" if len(vals) > 4 else "")
+    if kind == "colors":
+        rows = [f"{i or 'all'} " + " ".join(f"{f}={'released' if v is None else v}" for f, v in spec.items())
+                for _k, i, spec in look_targets(out.get("colors") or {})]
+        return ", ".join(rows[:3]) + (f" (+{len(rows) - 3})" if len(rows) > 3 else "") + (" (saved)" if out.get("save") else "")
+    if kind == "color_preset":
+        return ", ".join(f"{n} {s}" for n, s in (out.get("states") or {}).items())
     if kind == "expression" and len(out.get("states") or {}) > 1:
         return ", ".join(f"{n} {s}" for n, s in out["states"].items())
     for k in ("name", "visible"):
@@ -1080,7 +1328,9 @@ def avatar_info(name: str) -> dict:
     return {
         "avatar": name, "model": a["model"], "model_name": meta.get("name", ""),
         "loaded": bool(info), "parameters": info.get("parameters", []), "parts": info.get("parts", []),
-        "art_meshes": info.get("drawables", []), "hit_areas": info.get("hit_areas", []),
+        "art_meshes": info.get("drawables", []), "art_mesh_parts": info.get("drawable_parts", []),
+        "hit_areas": info.get("hit_areas", []), "color_presets": sorted(_color_presets_of(a), key=str.lower),
+        "color_default": library.color_default(a["model"]) if a.get("model") else "",
         "expressions": [e["name"] for e in meta.get("expressions", [])],
         "motions": [{"name": m["name"], "group": m["group"], "index": m["index"]} for m in meta.get("motions", [])],
         "emotions": emotions, "gestures": GESTURES, "inputs": INPUTS + custom, "custom_inputs": custom,
@@ -1259,6 +1509,110 @@ async def api_model_save(mid: str, request: Request):
     await broadcast_library()
     await HUB.renderers({"type": "reload_model", "model": mid})
     return {"ok": True, "settings": s}
+
+
+async def _presets_changed(mid: str, name: str, look: dict | None) -> None:
+    """The model's presets changed: tell the tab and the overlays, and bring an avatar that has this one switched on
+    up to date (look None = the preset is gone: it goes off)."""
+    await broadcast_library()
+    for a in CONFIG["avatars"]:
+        on = _live(a["name"])["color_presets"]
+        old = next((k for k in on if k.lower() == name.lower()), None)       # (a preset is one name whatever its case)
+        if a["model"] != mid or old is None:
+            continue
+        held = on.pop(old)
+        states, rules, orders = {old: "off"}, {}, {}
+        if look is not None:
+            held["rules"] = look
+            on[name] = held
+            states[name], rules[name], orders[name] = "on", look, held.get("order") or 0
+        await HUB.renderers({"type": "cmd", "avatar": a["name"], "source": "panel", "cmd": "color_preset", "fade": 0.1,
+                             "states": states, "rules": rules, "orders": orders, "until": held.get("until")}, a["name"])
+
+
+@router.get("/api/models/{mid}/color_presets")
+@guarded
+async def api_color_presets(mid: str):
+    return {"presets": library.color_presets(mid)}
+
+
+@router.post("/api/models/{mid}/color_presets")
+@guarded
+async def api_color_preset_save(mid: str, request: Request):
+    """Record a preset on the model: what `avatar` looks like now (its colours), or an explicit `look`."""
+    body = await _json(request)
+    name = str(body.get("name") or "").strip()[:40]
+    if not name:
+        raise CommandError("send the preset's `name`")
+    if body.get("avatar") not in (None, ""):
+        a = avatar(str(body["avatar"]))
+        if a["model"] != mid:
+            raise CommandError(f"{a['name']} does not show {mid!r}")
+        look = norm_look(a["colors"])
+    else:
+        look = norm_look(body.get("look"), strict=True)
+    if not look:
+        raise CommandError("nothing to save: this look has no colours set (recolour something first)")
+    table = library.color_presets(mid)
+    default = library.color_default(mid)
+    for old in [k for k in table if k.lower() == name.lower()]:       # a name is one preset, whatever its case
+        if old == default:
+            default = name                                            # (the default stays the default under its new spelling)
+        del table[old]
+    table[name] = look
+    if len(table) > 100:
+        raise CommandError("a model keeps up to 100 colour presets")
+    if body.get("default") is True:
+        default = name
+    library.save_color_presets(mid, table, default)
+    await _presets_changed(mid, name, look)
+    return {"ok": True, "name": name, "look": look, "presets": sorted(table, key=str.lower), "default": default}
+
+
+@router.post("/api/models/{mid}/color_presets/{name}/default")
+@guarded
+async def api_color_preset_default(mid: str, name: str, request: Request):
+    """Make a preset the model's default (what an avatar starts in when it loads the model), or - `{"default": false}` - none."""
+    body = {}
+    if (request.headers.get("content-length") or "0") != "0" or request.headers.get("transfer-encoding"):
+        body = await _json(request)
+    table = library.color_presets(mid)
+    real = next((k for k in table if k.lower() == name.strip().lower()), None)
+    if real is None:
+        raise CommandError(f"no colour preset {name!r} on this model", 404)
+    default = real if body.get("default", True) is not False else ""
+    library.save_color_presets(mid, table, default)
+    await broadcast_library()
+    return {"ok": True, "default": default}
+
+
+@router.post("/api/models/{mid}/color_presets/{name}/as_model")
+@guarded
+async def api_color_preset_as_model(mid: str, name: str, request: Request):
+    """Save a preset together with its model as a new model of the library ({name}): a full copy whose default colours are
+    that preset. The original is left as it was - except that it no longer starts in that preset."""
+    body = await _json(request)
+    table = library.color_presets(mid)
+    real = next((k for k in table if k.lower() == name.strip().lower()), None)
+    if real is None:
+        raise CommandError(f"no colour preset {name!r} on this model", 404)
+    meta = await asyncio.to_thread(library.copy_model, mid, str(body.get("name") or ""), real)
+    await broadcast_library()
+    return {"ok": True, "model": meta}
+
+
+@router.post("/api/models/{mid}/color_presets/{name}/delete")
+@guarded
+async def api_color_preset_delete(mid: str, name: str):
+    table = library.color_presets(mid)
+    real = next((k for k in table if k.lower() == name.strip().lower()), None)
+    if real is None:
+        raise CommandError(f"no colour preset {name!r} on this model", 404)
+    default = library.color_default(mid)
+    del table[real]
+    library.save_color_presets(mid, table, "" if default == real else default)
+    await _presets_changed(mid, real, None)
+    return {"ok": True, "presets": sorted(table, key=str.lower), "default": "" if default == real else default}
 
 
 @router.post("/api/models/{mid}/delete")
@@ -1446,6 +1800,8 @@ async def api_avatar_create(request: Request):
     a = norm_avatar({**body, "name": name, "model": mid, "overlay": overlay_id(body.get("overlay"))})
     if mid and not body.get("emotions"):
         a["emotions"] = suggest_emotions(mid)
+    if mid and "colors" not in body:                  # the model's own default colours, if it has any
+        a["colors"] = _default_look(mid)
     neighbours = sum(1 for x in CONFIG["avatars"] if x["overlay"] == a["overlay"])
     if "x" not in body and neighbours:             # spread new avatars out (on their own overlay)
         a["x"] = [50, 25, 75, 15, 85][neighbours % 5]
@@ -1474,8 +1830,30 @@ async def api_avatar_update(name: str, request: Request):
     new["name"] = name
     if body.get("model") and body["model"] != a["model"] and "emotions" not in body:
         new["emotions"] = suggest_emotions(new["model"])
+    model_changed = "model" in body and (body["model"] or "") != a["model"]
+    if model_changed and "colors" not in body:        # colours are of one model's parts: the new model's own default (or none) takes their place
+        new["colors"] = _default_look(new["model"])
+    old_colors = a.get("colors") or {}
     a.clear()
     a.update(new)
+    if model_changed:                             # what a bot held or switched on was of the old model's parts
+        st = _live(name)
+        if st["colors"] or st["color_presets"]:
+            st["colors"].clear()
+            st["color_presets"].clear()
+            for c in ({"cmd": "release_colors", "everything": True}, {"cmd": "clear_color_presets"}):
+                await HUB.renderers({"type": "cmd", "avatar": name, "source": "panel", "fade": 0, **c}, name)
+    if "colors" in body:                          # a colour changed here wins over one a bot holds for the same target
+        was = {(k, i): spec for k, i, spec in look_targets(old_colors)}
+        now = {(k, i): spec for k, i, spec in look_targets(new["colors"])}
+        held = [t for t in was.keys() | now.keys() if was.get(t) != now.get(t) and _look_key(*t) in _live(name)["colors"]]
+        if held:
+            for t in held:
+                del _live(name)["colors"][_look_key(*t)]
+            await HUB.renderers({"type": "cmd", "avatar": name, "source": "panel", "cmd": "release_colors", "everything": False,
+                                 "all": any(k == "all" for k, _ in held), "fade": 0.1,
+                                 "parts": sorted(i for k, i in held if k == "parts"),
+                                 "meshes": sorted(i for k, i in held if k == "meshes")}, name)
     if any(k in body for k in ("x", "y", "scale", "rotation", "flip")):
         _live(name)["transform"] = None
     if "visible" in body:
@@ -1607,7 +1985,7 @@ async def api_avatar_live_params(name: str):
 
 
 # every command, also as its own route: POST /avatar/api/avatars/<name>/<command>
-COMMANDS = ["params", "release", "parts", "release_parts", "expression", "clear_expressions", "motion", "stop_motion", "emotion", "face",
+COMMANDS = ["params", "release", "parts", "release_parts", "colors", "release_colors", "color_preset", "clear_color_presets", "expression", "clear_expressions", "motion", "stop_motion", "emotion", "face",
             "look", "gesture", "transform", "visible", "stop_speaking", "light", "item_add", "item_remove",
             "item_update", "items_clear", "reload"]
 
@@ -1671,6 +2049,13 @@ API_ROUTES = [
     "POST /avatar/api/avatars/<name>/release       {ids:[...]} or {} for all",
     "POST /avatar/api/avatars/<name>/parts         {values:{PartArmA:0, PartArmB:1}, fade, for} - show / hide parts",
     "POST /avatar/api/avatars/<name>/release_parts {ids:[...]} or {} for all",
+    "POST /avatar/api/avatars/<name>/colors        {parts:{PartHair:\"#ff8800\"}, meshes:{ArtMesh12:{alpha:0}}, all:{overlay:\"#224466\"}, fade, for, save} - multiply / overlay colour and alpha of parts, art meshes, the whole model (null lets a field go)",
+    "POST /avatar/api/avatars/<name>/release_colors {parts:[...], meshes:[...], all:true} or {} for everything",
+    "POST /avatar/api/avatars/<name>/color_preset  {name} or {names:[...]}, state:on|off|toggle, only, for, fade - a colour preset saved on the model (a VTube Studio colour hotkey)",
+    "POST /avatar/api/avatars/<name>/clear_color_presets  {fade}",
+    "GET  /avatar/api/models/<id>/color_presets    the model's colour presets  |  POST {name, avatar, default} saves what that avatar looks like now (or {name, look}), POST .../<name>/delete",
+    "POST /avatar/api/models/<id>/color_presets/<name>/default  {default: false for none} - the model's default colours: what an avatar starts in when it loads the model",
+    "POST /avatar/api/models/<id>/color_presets/<name>/as_model {name} - a preset + its model saved as a new model of the library (a full copy that starts in it)",
     "POST /avatar/api/avatars/<name>/expression    {name} or {names:[...]}, state:on|off|toggle, only, for",
     "POST /avatar/api/avatars/<name>/motion        {name} or {group, index}, loop",
     "POST /avatar/api/avatars/<name>/emotion       {name:happy, intensity, for}",

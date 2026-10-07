@@ -115,6 +115,32 @@
   .prow .pv{font:11.5px var(--mono);color:var(--dim);text-align:right}
   .prow button{padding:0;width:22px;height:22px;border-radius:6px;font-size:12px;visibility:hidden}
   .prow.held button{visibility:visible}
+  /* colours tab */
+  .coedit{border:1px solid var(--line);border-radius:10px;padding:8px 12px;background:#0e0e14}
+  .coedit .cot{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;margin-bottom:2px}
+  .coedit .cot b{font:700 13px var(--mono)} .coedit .cot span{font-size:12px}
+  .coedit .f.unset input[type=color]{opacity:.45} .coedit .f.unset .val{opacity:.5}
+  .coedit .f>span:first-child{font-weight:600}
+  .corow{display:grid;grid-template-columns:20px minmax(0,1fr) auto;gap:6px;align-items:center;padding:3px 6px;border-radius:7px;cursor:pointer;border:1px solid transparent}
+  .corow:hover{background:#14141c} .corow.sel{background:#25121c;border-color:var(--accent)}
+  .corow .tw{width:20px;height:20px;padding:0;border:0;background:transparent;color:var(--dim);font-size:11px;border-radius:5px}
+  .corow .tw:hover{color:var(--ink);background:#1c1c25}
+  .corow .pn{font:12px var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-left:calc(var(--d,0) * 16px)}
+  .corow .pn small{display:block;font:11px 'Segoe UI',sans-serif;color:var(--dim)}
+  .corow.set .pn{color:var(--accent-soft)}
+  .corow.mesh .pn{color:var(--muted)} .corow.mesh.set .pn{color:var(--accent-soft)}
+  .corow .ind{display:flex;gap:4px;align-items:center;font:600 10.5px var(--mono);color:var(--dim)}
+  .corow .ind i{font-style:normal;width:16px;height:16px;border-radius:4px;border:1px solid #ffffff55;display:inline-flex;align-items:center;justify-content:center;font-size:9.5px}
+  .corow.flash{animation:crflash 1.4s ease-out}
+  @keyframes crflash{0%,40%{background:#3a1a2b;box-shadow:0 0 0 2px var(--accent)}100%{box-shadow:0 0 0 2px transparent}}
+  button.pick.on{outline:2px dashed var(--accent);outline-offset:1px;background:#3a1a2b}
+  .pchip{display:inline-flex;align-items:stretch;border:1px solid var(--line);border-radius:99px;background:var(--card);overflow:hidden}
+  .pchip button{border:0;border-radius:0;background:transparent;padding:4px 9px;font-size:12.5px;color:var(--muted)}
+  .pchip button.pt{font-weight:700;padding:4px 6px 4px 12px} .pchip button:hover{color:var(--ink);background:#1c1c25}
+  .pchip.on{border-color:var(--accent);background:#25121c} .pchip.on button.pt{color:var(--ink)}
+  .pchip button.pl,.pchip button.pm{font-size:11.5px;border-left:1px solid var(--line);color:var(--accent-soft)}
+  .pchip button.pm{color:var(--muted)}
+  .pchip button.pd{padding:4px 5px;font-size:13px} .pchip button.pd.is{color:#ffd23f}
   .ilist .it{display:grid;grid-template-columns:44px 1fr auto;gap:10px;align-items:center;border:1px solid var(--line);border-radius:9px;padding:8px;margin:6px 0;background:#0e0e14}
   .thumb{width:44px;height:44px;border-radius:7px;background:#0a0a0e center/contain no-repeat;border:1px solid var(--line)}
   .it .ctls{grid-column:1/-1;display:none}
@@ -263,6 +289,7 @@
           <button data-p="png" id="tab-png" style="display:none">PNGtuber</button>
           <button data-p="params">Parameters</button>
           <button data-p="items">Items</button>
+          <button data-p="colors">Colors</button>
           <button data-p="light">Light</button>
           <button data-p="api">API</button>
         </div>
@@ -386,6 +413,24 @@
           <p class="hint">Props on this avatar: pictures, GIFs, frame animations or Live2D items from the library. Position is in % of the model's box; <b>Pin</b> glues an item to the part of the model under it so it moves with the head, hands ...</p>
           <div class="row"><select id="it-add-sel" class="grow"></select><button class="sm" id="it-add">Add</button></div>
           <div class="ilist" id="it-list"></div>
+        </div>
+
+        <div class="pane" data-p="colors">
+          <p class="hint" style="margin-top:0">Recolour parts of the model like VTube Studio does: <b>Multiply</b> tints and darkens (the art is multiplied by the colour - white is no change), <b>Overlay</b> lightens (the colour is added on top), <b>Alpha</b> fades a part out, 0 hides it. Pick the whole model, a part (a folder of art meshes) or a single art mesh in the list and set its colours. Saved for this avatar; <b>presets</b> keep a set of colours on the model, and a bot switches them on and off like hotkeys.</p>
+          <h3 style="margin-top:6px">Presets <span class="dim" style="text-transform:none;letter-spacing:0">(saved on this model)</span></h3>
+          <div class="btns" id="co-presets"></div>
+          <div class="row" style="margin:6px 0 0"><button class="sm" id="co-save" title="Record the colours set on this avatar as a preset of the model">Save the colours below as a preset...</button><span class="dim" style="font-size:12px" id="co-presets-hint"></span></div>
+          <div id="co-held" class="pill warn" style="display:none;white-space:normal;margin-top:8px"><span id="co-held-t"></span><button class="sm" id="co-held-x" style="margin-left:8px">Let go</button></div>
+          <h3>Colours of</h3>
+          <div class="coedit" id="co-edit">
+            <div class="cot"><b id="co-tn"></b><span class="dim" id="co-tk"></span></div>
+            <div class="f"><span>Multiply</span><div class="ctl"><input type="color" id="co-m" value="#ffffff"><button class="sm ghost" id="co-m-x" title="Take the multiply colour off">&times;</button><span class="dim" style="font-size:12px" id="co-m-s">tints, darkens</span></div></div>
+            <div class="f" id="co-o-row"><span>Overlay</span><div class="ctl"><input type="color" id="co-o" value="#000000"><button class="sm ghost" id="co-o-x" title="Take the overlay colour off">&times;</button><span class="dim" style="font-size:12px" id="co-o-s">lightens</span></div></div>
+            <div class="f"><span>Alpha</span><div class="ctl"><input type="range" min="0" max="1" step="0.01" id="co-a" value="1"><span class="val" id="co-av" style="min-width:44px"></span><button class="sm ghost" id="co-a-x" title="Take the alpha off">&times;</button></div></div>
+            <div class="row" style="margin-top:6px"><label class="sw"><input type="checkbox" id="co-hide"> Hide</label><span class="grow"></span><button class="sm ghost" id="co-clear" title="Take every colour off this one">Clear this</button></div>
+          </div>
+          <div class="row" style="margin:10px 0 6px"><input id="co-f" class="grow" placeholder="Filter parts and art meshes (id or name)..."><button class="sm pick" id="co-pick" title="Then click the part on the preview">Pick on the model</button><button class="sm ghost danger" id="co-reset" title="Take every colour off this avatar">Reset all</button></div>
+          <div class="plist" id="co-list" style="max-height:380px"></div>
         </div>
 
         <div class="pane" data-p="light">
@@ -681,8 +726,8 @@
     };
     ws.onclose = function () { setTimeout(connectPanel, 1500); };
   }
-  function trackLive(m) { if (m.cmd === 'expression' || m.cmd === 'emotion' || m.cmd === 'clear_expressions') refreshLive(); }
-  var refreshLive = debounce(async function () { var j = await fetch('/avatar/api/avatars').then(function (r) { return r.json(); }).catch(function () { return null; }); if (j) { S.live = j.live || {}; renderMood(); } }, 150);
+  function trackLive(m) { if (m.cmd === 'expression' || m.cmd === 'emotion' || m.cmd === 'clear_expressions' || m.cmd === 'color_preset' || m.cmd === 'clear_color_presets') refreshLive(); }
+  var refreshLive = debounce(async function () { var j = await fetch('/avatar/api/avatars').then(function (r) { return r.json(); }).catch(function () { return null; }); if (j) { S.live = j.live || {}; renderMood(); renderPresets(); } }, 150);
 
   var logRows = [];
   function log(kind, avatar, text) {
@@ -810,8 +855,8 @@
     $('m-exprs-h').querySelector('span').textContent = isPng ? '(one at a time)' : "(the model's own - several can be on)";
     if (!isPng && paneSel === 'png') document.querySelector('#tabs [data-p=place]').click();
     if (isPng && paneSel === 'png') loadPng();
-    renderMood(); renderMouth(); renderItems(); renderLight(); renderApi();
-    if (paneSel === 'params') loadInfo();
+    renderMood(); renderMouth(); renderItems(); renderLight(); renderApi(); renderColors();
+    if (paneSel === 'params' || (paneSel === 'colors' && !S.info[a.name])) loadInfo();
   }
   $('i-visible').onchange = function () { var a = cur(); if (a) api('POST', '/avatar/api/avatars/' + encodeURIComponent(a.name), { visible: this.checked }); };
   $('i-locked').onchange = function () { var a = cur(); if (a) api('POST', '/avatar/api/avatars/' + encodeURIComponent(a.name), { locked: this.checked }); };
@@ -839,7 +884,8 @@
     paneSel = b.dataset.p;
     Array.prototype.forEach.call($('tabs').children, function (x) { x.classList.toggle('sel', x === b); });
     document.querySelectorAll('.pane').forEach(function (p) { p.classList.toggle('sel', p.dataset.p === paneSel); });
-    if (paneSel === 'params') loadInfo();
+    stopPick();
+    if (paneSel === 'params' || paneSel === 'colors') loadInfo();
     if (paneSel === 'mouth') loadDevices();
     if (paneSel === 'png') loadPng();
   });
@@ -1010,9 +1056,9 @@
     var j = await fetch('/avatar/api/avatars/' + encodeURIComponent(a.name) + '/info').then(function (r) { return r.json(); }).catch(function () { return null; });
     if (!j) return;
     S.info[a.name] = j;
-    renderParams(); renderParts(); renderMappings();
+    renderParams(); renderParts(); renderMappings(); renderColors();
   }
-  function infoChanged(mid) { var a = cur(); if (a && a.model === mid && paneSel === 'params') setTimeout(loadInfo, 300); }
+  function infoChanged(mid) { var a = cur(); if (a && a.model === mid && (paneSel === 'params' || paneSel === 'colors')) setTimeout(loadInfo, 300); }
   var dragging = null;
   function renderParts() {
     var a = cur(), info = a && S.info[a.name];
@@ -1540,6 +1586,276 @@
     });
   };
 
+  /* ---------------------------------------------------------------- colours */
+  // What is edited: the avatar's saved colours { all: spec, parts: {id: spec}, meshes: {id: spec} }, spec = { multiply, overlay, alpha } - one target at a time (CO.sel)
+  var CO = { sel: { kind: 'all', id: '' }, open: {}, sig: '', avatar: '' };
+  function coInfo() { var a = cur(); return a && S.info[a.name]; }
+  function coIsPng() { var a = cur(); return !!(a && (S.models[a.model] || {}).type === 'png'); }
+  function tkey(t) { return t.kind === 'all' ? 'all' : t.kind + ':' + t.id; }
+  function parseKey(k) { var i = k.indexOf(':'); return i < 0 ? { kind: 'all', id: '' } : { kind: k.slice(0, i), id: k.slice(i + 1) }; }
+  function specOf(cols, t) { return t.kind === 'all' ? (cols.all || null) : ((cols[t.kind] || {})[t.id] || null); }
+  function putSpec(cols, t, spec) {                         // an empty spec takes the target out
+    var empty = !spec || !Object.keys(spec).length;
+    if (t.kind === 'all') { if (empty) delete cols.all; else cols.all = spec; return; }
+    cols[t.kind] = cols[t.kind] || {};
+    if (empty) delete cols[t.kind][t.id]; else cols[t.kind][t.id] = spec;
+    if (!Object.keys(cols[t.kind]).length) delete cols[t.kind];
+  }
+  function ink(hex) { var n = parseInt(hex.slice(1), 16); return ((n >> 16 & 255) * 0.3 + (n >> 8 & 255) * 0.59 + (n & 255) * 0.11) > 140 ? '#000' : '#fff'; }
+  function indHtml(spec, inside) {                          // what a row shows of its colours: M(ultiply) and O(verlay) swatches, the alpha, a dot for "something inside"
+    var h = '';
+    if (spec && spec.multiply) h += '<i title="Multiply ' + spec.multiply + '" style="background:' + spec.multiply + ';color:' + ink(spec.multiply) + '">M</i>';
+    if (spec && spec.overlay) h += '<i title="Overlay ' + spec.overlay + '" style="background:' + spec.overlay + ';color:' + ink(spec.overlay) + '">O</i>';
+    if (spec && spec.alpha != null) h += '<span title="Alpha">' + (spec.alpha <= 0 ? 'hidden' : 'α' + Math.round(spec.alpha * 100)) + '</span>';
+    if (inside) h += '<span title="Something inside it has colours">•</span>';
+    return h;
+  }
+  /* the model's parts as folders (parts inside parts), each with the art meshes directly in it */
+  function coTree(info) {
+    var parts = info.parts || [], meshes = info.art_meshes || [], mp = info.art_mesh_parts || [];
+    var T = { ids: {}, kids: {}, roots: [], meshOf: {}, loose: [], partOfMesh: {} };
+    parts.forEach(function (p) { T.ids[p.id] = p; });
+    parts.forEach(function (p) { if (p.parent && T.ids[p.parent]) (T.kids[p.parent] = T.kids[p.parent] || []).push(p); else T.roots.push(p); });
+    meshes.forEach(function (m, i) {
+      var pid = mp[i] || '';
+      T.partOfMesh[m] = pid;
+      if (pid && T.ids[pid]) (T.meshOf[pid] = T.meshOf[pid] || []).push(m); else T.loose.push(m);
+    });
+    return T;
+  }
+  function coRowHtml(t, label, small, depth, tw) {
+    return '<div class="corow' + (t.kind === 'meshes' ? ' mesh' : '') + '" data-k="' + esc(tkey(t)) + '" style="--d:' + depth + '">' +
+      (tw ? '<button class="tw" data-tw="' + esc(t.id) + '" title="' + (tw === 'open' ? 'Close' : 'Open') + '">' + (tw === 'open' ? '▾' : '▸') + '</button>' : '<span></span>') +
+      '<div class="pn" title="' + esc(t.id || 'the whole model') + '">' + esc(label) + (small ? '<small>' + esc(small) + '</small>' : '') + '</div><div class="ind"></div></div>';
+  }
+  function coListHtml(info, q) {
+    if (!info) return '<div class="empty">Loading...</div>';
+    var rows = [coRowHtml({ kind: 'all', id: '' }, 'Whole model', 'goes over everything', 0, '')];
+    if (!(info.parts || []).length && !(info.art_meshes || []).length) return rows.join('') + '<div class="empty">' + esc(info.note || 'No parts yet.') + '</div>';
+    var T = coTree(info);
+    if (q) {                                                // a filter: a flat list of what matches
+      var n = 0, hit = function (id, name) { return id.toLowerCase().indexOf(q) >= 0 || (name || '').toLowerCase().indexOf(q) >= 0; };
+      (info.parts || []).forEach(function (p) { if (n < 200 && hit(p.id, p.name)) { rows.push(coRowHtml({ kind: 'parts', id: p.id }, p.id, p.name, 0, '')); n++; } });
+      (info.art_meshes || []).forEach(function (m) { if (n < 200 && hit(m, '')) { rows.push(coRowHtml({ kind: 'meshes', id: m }, m, T.partOfMesh[m] ? 'in ' + T.partOfMesh[m] : '', 0, '')); n++; } });
+      return rows.join('') + (n ? '' : '<div class="empty">Nothing matches.</div>');
+    }
+    function walk(p, depth) {
+      var inner = (T.kids[p.id] || []).length + (T.meshOf[p.id] || []).length;
+      rows.push(coRowHtml({ kind: 'parts', id: p.id }, p.id, p.name, depth, inner ? (CO.open[p.id] ? 'open' : 'closed') : ''));
+      if (!CO.open[p.id]) return;
+      (T.kids[p.id] || []).forEach(function (c) { walk(c, depth + 1); });
+      (T.meshOf[p.id] || []).forEach(function (m) { rows.push(coRowHtml({ kind: 'meshes', id: m }, m, '', depth + 1, '')); });
+    }
+    T.roots.forEach(function (p) { walk(p, 0); });
+    T.loose.forEach(function (m) { rows.push(coRowHtml({ kind: 'meshes', id: m }, m, '(in no part)', 0, '')); });
+    return rows.join('');
+  }
+  function renderColors() {
+    var a = cur(); if (!a) return;
+    if (CO.avatar !== a.name) { CO.avatar = a.name; CO.sel = { kind: 'all', id: '' }; CO.open = {}; CO.sig = ''; }
+    renderPresets();
+    var info = coInfo(), q = $('co-f').value.trim().toLowerCase();
+    var sig = a.name + '|' + a.model + '|' + q + '|' + (info ? (info.parts || []).length + ':' + (info.art_meshes || []).length : '-') + '|' + Object.keys(CO.open).join(',');
+    if (sig !== CO.sig) { CO.sig = sig; $('co-list').innerHTML = coListHtml(info, q); }          // the rows are only rebuilt when the list itself changes
+    paintColors();
+  }
+  function paintColors() {                                  // the saved colours into the rows and the editor (never into the control being used)
+    var a = cur(); if (!a) return;
+    var cols = a.colors || {}, info = coInfo(), inside = {};
+    if (info) {                                             // folders with something coloured inside, up the whole way
+      var T = coTree(info), up = function (pid) { for (var d = 0; pid && d < 64; d++) { inside[pid] = 1; pid = (T.ids[pid] || {}).parent; } };
+      Object.keys(cols.meshes || {}).forEach(function (m) { up(T.partOfMesh[m]); });
+      Object.keys(cols.parts || {}).forEach(function (p) { up((T.ids[p] || {}).parent); });
+    }
+    var sel = tkey(CO.sel);
+    $('co-list').querySelectorAll('.corow').forEach(function (row) {
+      var t = parseKey(row.dataset.k), spec = specOf(cols, t);
+      row.classList.toggle('sel', row.dataset.k === sel);
+      row.classList.toggle('set', !!spec);
+      row.querySelector('.ind').innerHTML = indHtml(spec, t.kind === 'parts' && inside[t.id] && !CO.open[t.id]);
+    });
+    paintEditor();
+  }
+  function paintEditor() {
+    var a = cur(); if (!a) return;
+    var t = CO.sel, spec = specOf(a.colors || {}, t) || {}, png = coIsPng(), info = coInfo() || {}, title = 'Whole model', sub = 'goes over every part and art mesh';
+    if (t.kind === 'parts') {
+      var p = (info.parts || []).filter(function (x) { return x.id === t.id; })[0] || {};
+      title = t.id; sub = (p.name ? p.name + ' · ' : '') + (png ? 'a layer' : 'a part - everything inside it');
+    } else if (t.kind === 'meshes') {
+      var pid = (info.art_mesh_parts || [])[(info.art_meshes || []).indexOf(t.id)];
+      title = t.id; sub = 'an art mesh' + (pid ? ' in ' + pid : '');
+    }
+    $('co-tn').textContent = title; $('co-tk').textContent = sub;
+    var m = $('co-m'), o = $('co-o'), al = $('co-a');
+    if (document.activeElement !== m) m.value = spec.multiply || '#ffffff';
+    if (document.activeElement !== o) o.value = spec.overlay || '#000000';
+    if (document.activeElement !== al) al.value = spec.alpha != null ? spec.alpha : 1;
+    m.closest('.f').classList.toggle('unset', !spec.multiply);
+    o.closest('.f').classList.toggle('unset', !spec.overlay);
+    al.closest('.f').classList.toggle('unset', spec.alpha == null);
+    $('co-m-s').textContent = spec.multiply ? 'tints, darkens' : 'not set (white changes nothing)';
+    $('co-o-s').textContent = spec.overlay ? 'lightens' : 'not set (black changes nothing)';
+    $('co-av').textContent = spec.alpha == null ? '—' : Math.round(spec.alpha * 100) + '%';
+    $('co-hide').checked = spec.alpha === 0;
+    $('co-o-row').style.display = png ? 'none' : '';        // (a PNGtuber's layers have no overlay colour)
+  }
+  function coPreview(a) { if (stage && stage.avatars[a.name]) stage.avatars[a.name].setConfig(JSON.parse(JSON.stringify(a))); }
+  function coCommit(a, cols) {                              // shown at once, saved a moment later
+    a.colors = cols; pending.colors = JSON.parse(JSON.stringify(cols));
+    coPreview(a); saveSoon(); paintColors();
+  }
+  function setField(field, v) {                             // one field of the selected target (null = take it off)
+    var a = cur(); if (!a) return;
+    var cols = JSON.parse(JSON.stringify(a.colors || {})), spec = specOf(cols, CO.sel) || {};
+    if (v == null) delete spec[field]; else spec[field] = v;
+    putSpec(cols, CO.sel, spec);
+    coCommit(a, cols);
+  }
+  $('co-m').addEventListener('input', function () { setField('multiply', this.value.toLowerCase()); });
+  $('co-o').addEventListener('input', function () { setField('overlay', this.value.toLowerCase()); });
+  $('co-a').addEventListener('input', function () { setField('alpha', Math.round(parseFloat(this.value) * 100) / 100); });
+  $('co-m-x').onclick = function () { setField('multiply', null); };
+  $('co-o-x').onclick = function () { setField('overlay', null); };
+  $('co-a-x').onclick = function () { setField('alpha', null); };
+  $('co-hide').onchange = function () { setField('alpha', this.checked ? 0 : null); };
+  $('co-clear').onclick = function () {
+    var a = cur(); if (!a) return;
+    var cols = JSON.parse(JSON.stringify(a.colors || {}));
+    putSpec(cols, CO.sel, null);
+    coCommit(a, cols);
+  };
+  $('co-reset').onclick = function () {
+    var a = cur(); if (!a || !Object.keys(a.colors || {}).length) return;
+    coCommit(a, {}); toast('Colours reset');
+  };
+  $('co-list').addEventListener('click', function (e) {
+    var row = e.target.closest('.corow'); if (!row) return;
+    var tw = e.target.closest('[data-tw]');
+    if (tw) { if (CO.open[tw.dataset.tw]) delete CO.open[tw.dataset.tw]; else CO.open[tw.dataset.tw] = 1; renderColors(); return; }
+    CO.sel = parseKey(row.dataset.k); paintColors();
+  });
+  $('co-f').oninput = debounce(renderColors, 120);
+
+  /* click a part or art mesh on the preview to find it in the list */
+  function showTarget(t, partId) {
+    if ($('co-f').value) $('co-f').value = '';
+    var info = coInfo();
+    if (info && partId) {                                   // open the folders it is in
+      var T = coTree(info);
+      for (var pid = partId, d = 0; pid && d < 64; d++) { CO.open[pid] = 1; pid = (T.ids[pid] || {}).parent; }
+    }
+    CO.sel = t; renderColors();
+    var row = Array.prototype.filter.call($('co-list').querySelectorAll('.corow'), function (r) { return r.dataset.k === tkey(t); })[0];
+    if (!row) { toast(t.id + ' is not in the list - reload the model', true); return; }
+    row.scrollIntoView({ block: 'nearest' });
+    row.classList.remove('flash'); void row.offsetWidth; row.classList.add('flash');
+    setTimeout(function () { row.classList.remove('flash'); }, 1500);
+  }
+  function stopPick() { $('co-pick').classList.remove('on'); if (stage) stage.cancelPick(); }
+  $('co-pick').onclick = function () {
+    var btn = this, av = stage && S.sel && stage.avatars[S.sel];
+    if (btn.classList.contains('on')) { stopPick(); return; }
+    if (!av || !av.model) { toast('The preview has to be showing the model', true); return; }
+    btn.classList.add('on');
+    stage.pickPart(S.sel, function (hit) {
+      btn.classList.remove('on');
+      if (!hit) toast('Nothing there', true);
+      else if (hit.mesh) showTarget({ kind: 'meshes', id: hit.mesh }, hit.part);
+      else showTarget({ kind: 'parts', id: hit.part }, '');
+    });
+  };
+
+  /* presets: the model's, switched on and off like hotkeys */
+  function renderPresets() {
+    var a = cur(); if (!a) return;
+    var m = S.models[a.model] || {}, names = m.color_presets || [], dflt = m.color_default || '', on = (S.live[a.name] || {}).color_presets || {};
+    $('co-presets').innerHTML = names.map(function (n) {
+      return '<span class="pchip' + (n in on ? ' on' : '') + '" data-n="' + esc(n) + '"><button class="pt" title="Switch on / off (like a hotkey - until you switch it off)">' + esc(n) + '</button>' +
+        '<button class="pl" title="Load: make these the colours of ' + esc(a.name) + ' for good">Load</button>' +
+        '<button class="pd' + (n === dflt ? ' is' : '') + '" title="' + (n === dflt ? 'The default of this model - click to un-set' : 'Make this the default of this model') + '">' + (n === dflt ? '★' : '☆') + '</button>' +
+        '<button class="pm" title="Save this preset together with the model as a new model of the library (the original stays as it is)">As model</button>' +
+        '<button class="px" title="Delete this preset">&times;</button></span>';
+    }).join('') || '<span class="dim" style="font-size:12.5px">None yet.</span>';
+    $('co-presets-hint').textContent = !names.length ? 'set some colours below, then save them as a preset'
+      : 'click a name to switch it on or off; Load makes it ' + a.name + "'s own" + (dflt ? '; ★ ' + dflt + ' is what a new avatar of this model starts in' : '; ☆ makes one the default for this model');
+  }
+  $('co-presets').addEventListener('click', function (e) {
+    var chip = e.target.closest('.pchip'), a = cur(); if (!chip || !a) return;
+    var n = chip.dataset.n, b = e.target.closest('button');
+    if (!b) return;
+    if (b.classList.contains('pt')) {
+      cmd('color_preset', { name: n, state: 'toggle' }).then(function (r) {
+        if (!r) return;
+        var L = S.live[a.name] = S.live[a.name] || {}, o = {};
+        (r.active || []).forEach(function (x) { o[x] = 1; });
+        L.color_presets = o; renderPresets();
+      });
+    } else if (b.classList.contains('pl')) {                // Load: the preset becomes this avatar's own colours
+      loadPreset(a, n);
+    } else if (b.classList.contains('pd')) {                // the model's default: what an avatar starts in when it loads the model
+      var isDef = b.classList.contains('is');
+      api('POST', '/avatar/api/models/' + encodeURIComponent(a.model) + '/color_presets/' + encodeURIComponent(n) + '/default', { default: !isDef })
+        .then(function (r) { if (r) toast(isDef ? '"' + n + '" is no longer the default' : '"' + n + '" is now the default of this model'); });
+    } else if (b.classList.contains('pm')) {                // the preset + the model as a new model of the library
+      var mm = S.models[a.model] || {}, was = mm.name || a.model;
+      dialog('Save "' + n + '" as a new model', '<p class="hint">Makes a full copy of <b>' + esc(was) + '</b> (' + size(mm.size || 0) + ') in the library that starts in the colours of <b>' + esc(n) + '</b>. ' +
+        '<b>' + esc(was) + '</b> stays as it is' + (mm.color_default === n ? ' (but no longer starts in ' + esc(n) + ')' : '') + ', so it still loads without them. The colours are kept as settings, not painted into the pictures, so the new model can be changed like any other.</p>' +
+        '<div class="f"><span>Name</span><div class="ctl"><input id="nm-name" class="grow" maxlength="60" value="' + esc(was + ' - ' + n) + '"></div></div>' +
+        '<div class="f"><span>Avatar</span><div class="ctl"><label class="sw"><input type="checkbox" id="nm-switch" checked> Switch ' + esc(a.name) + ' to the new model</label></div></div>',
+        async function () {
+          var nm = $('nm-name').value.trim(), sw = $('nm-switch').checked, ok = $('dlg-ok');
+          if (!nm) { toast('Give it a name', true); return false; }
+          if (ok.disabled) return false;
+          ok.disabled = true; toast('Copying the model...');
+          try {
+            var r = await api('POST', '/avatar/api/models/' + encodeURIComponent(a.model) + '/color_presets/' + encodeURIComponent(n) + '/as_model', { name: nm });
+            if (!r) return false;
+            if (sw) await api('POST', '/avatar/api/avatars/' + encodeURIComponent(a.name), { model: r.model.id });
+            toast('Saved as "' + r.model.name + '"');
+          } finally { ok.disabled = false; }
+        });
+    } else if (b.classList.contains('px')) {
+      dialog('Delete "' + n + '"?', '<p class="hint">The preset goes from the model - for every avatar that shows it. The colours set on an avatar are not touched.</p>',
+        async function () { var r = await api('POST', '/avatar/api/models/' + encodeURIComponent(a.model) + '/color_presets/' + encodeURIComponent(n) + '/delete'); if (!r) return false; });
+    }
+  });
+  /* make a preset the avatar's own colours; asks first only when that would throw away colours that are not the same */
+  async function loadPreset(a, n) {
+    var j = await fetch('/avatar/api/models/' + encodeURIComponent(a.model) + '/color_presets').then(function (r) { return r.json(); }).catch(function () { return null; });
+    var look = j && j.presets && j.presets[n];
+    if (!look) { toast('That preset is gone', true); return; }
+    var go = async function () { var r = await api('POST', '/avatar/api/avatars/' + encodeURIComponent(a.name), { colors: look }); if (r) toast('"' + n + '" loaded'); else return false; };
+    var mine = a.colors || {};
+    if (!Object.keys(mine).length || JSON.stringify(mine) === JSON.stringify(look)) { go(); return; }
+    dialog('Load "' + n + '"?', '<p class="hint">Makes the colours of <b>' + esc(n) + '</b> the colours of <b>' + esc(a.name) + '</b>, in place of the ones set now. (Save those as a preset first to keep them.)</p>', go);
+  }
+  $('co-save').onclick = function () {
+    var a = cur(); if (!a) return;
+    if (!Object.keys(a.colors || {}).length) { toast('Set some colours first - a preset records them', true); return; }
+    dialog('Save a preset', '<p class="hint">Records the colours set on <b>' + esc(a.name) + '</b> as a preset of its model, so any avatar showing it can use it - and a bot can switch it on and off. A preset with the same name is replaced.</p>' +
+      '<div class="f"><span>Name</span><div class="ctl"><input id="cp-name" class="grow" maxlength="40" placeholder="Night, Neon, Summer outfit..."></div></div>' +
+      '<div class="f"><span>Default</span><div class="ctl"><label class="sw"><input type="checkbox" id="cp-default"' + (((S.models[a.model] || {}).color_presets || []).length ? '' : ' checked') + '> The model\'s default: an avatar that loads this model starts in it</label></div></div>',
+      async function () {
+        var name = $('cp-name').value.trim();
+        if (!name) { toast('Give it a name', true); return false; }
+        var r = await api('POST', '/avatar/api/models/' + encodeURIComponent(a.model) + '/color_presets', { name: name, look: a.colors, default: $('cp-default').checked });
+        if (!r) return false;
+        toast('Saved "' + r.name + '"');
+      });
+    setTimeout(function () { var i = $('cp-name'); if (i) i.focus(); }, 50);
+  };
+
+  // colours a bot holds for now win over the ones here: say so, and let them go
+  setInterval(function () {
+    if (paneSel !== 'colors') return;
+    var av = stage && S.sel && stage.avatars[S.sel], held = av ? Object.keys(av.colOv) : [];
+    $('co-held').style.display = held.length ? '' : 'none';
+    $('co-held-t').textContent = held.length ? 'A bot is holding ' + held.length + ' colour setting' + (held.length > 1 ? 's' : '') + ' for now (' +
+      held.slice(0, 3).map(function (k) { return k.replace(/^(parts|meshes):/, ''); }).join(', ') + (held.length > 3 ? ' ...' : '') + ') - they win over the ones here.' : '';
+  }, 300);
+  $('co-held-x').onclick = function () { cmd('release_colors', {}); };
+
   /* ---------------------------------------------------------------- light */
   function renderLight() {
     var sel = $('lt-preset'), a = cur(); if (!a) return;
@@ -1561,6 +1877,9 @@
       ['Release it', 'curl -X POST ' + b + '/release -H "Content-Type: application/json" -d "{}"'],
       ['Look at a point', 'curl -X POST ' + b + '/look -H "Content-Type: application/json" -d "{\\"x\\": 0.6, \\"y\\": 0.2, \\"for\\": 3}"'],
       ['Gesture', 'curl -X POST ' + b + '/gesture -H "Content-Type: application/json" -d "{\\"name\\": \\"nod\\"}"'],
+      ['Recolour a part for 10 seconds (multiply / overlay / alpha; "meshes" and "all" too; null lets go; "save": true keeps it)', 'curl -X POST ' + b + '/colors -H "Content-Type: application/json" -d "{\\"parts\\": {\\"' + ((((S.info[a.name] || {}).parts || [])[0] || {}).id || 'PartHair') + '\\": {\\"multiply\\": \\"#ff8800\\", \\"overlay\\": \\"#202040\\", \\"alpha\\": 0.9}}, \\"for\\": 10}"'],
+      ['Hide an art mesh (a prop, a hat ...)', 'curl -X POST ' + b + '/colors -H "Content-Type: application/json" -d "{\\"meshes\\": {\\"' + (((S.info[a.name] || {}).art_meshes || [])[0] || 'ArtMesh12') + '\\": {\\"alpha\\": 0}}}"'],
+      ['Colour preset of the model, like a hotkey (on / off / toggle; several can be on)', 'curl -X POST ' + b + '/color_preset -H "Content-Type: application/json" -d "{\\"name\\": \\"' + ((S.models[a.model] || {}).color_presets || ['Night'])[0] + '\\", \\"state\\": \\"toggle\\"}"'],
       ['Slide in from the side', 'curl -X POST ' + b + '/transform -H "Content-Type: application/json" -d "{\\"x\\": ' + Math.round(a.x) + ', \\"duration\\": 1.2, \\"ease\\": \\"out\\"}"']
     ];
     if (ex) rows.splice(3, 0, ['Expression "' + ex.name + '"', 'curl -X POST ' + b + '/expression -H "Content-Type: application/json" -d "{\\"name\\": \\"' + ex.name + '\\", \\"state\\": \\"toggle\\"}"']);

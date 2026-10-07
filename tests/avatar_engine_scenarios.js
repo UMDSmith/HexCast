@@ -172,4 +172,127 @@ const frames = (r, seconds) => { for (let i = 0; i < Math.round(seconds * 60); i
   for (let i = 0; i < 20; i++) { if (!gate.update(0, 1 / 60, { threshold: 0.12, snap: 0.6, minOpen: 0.05, minClosed: 0.045 })) shut++; }
   out.pngGate = { openSteady, shutWithinThirdOfASecond: shut > 0 };
 }
+{ // colours: multiply / overlay / alpha on the whole model, parts (folders) and single art meshes, in layers
+  const { HA, env } = load(file);
+  // parts: Body (a folder) > Hair > Fringe, and Eyes; art meshes: 0 ArtBody in Body, 1 ArtHair in Hair, 2 ArtFringe in Fringe, 3 ArtEye in Eyes, 4 ArtLoose in no part
+  const parts = [{ id: 'Body', up: -1 }, { id: 'Hair', up: 0 }, { id: 'Fringe', up: 1 }, { id: 'Eyes', up: -1 }];
+  const owner = [0, 1, 2, 3, -1], dids = ['ArtBody', 'ArtHair', 'ArtFringe', 'ArtEye', 'ArtLoose'];
+  const rgba = (r, g, b, a) => ({ r, g, b, a: a === undefined ? 1 : a });
+  const fakeCm = () => {
+    const nm = owner.map((_, i) => (i === 3 ? rgba(0.5, 0.5, 0.5) : rgba(1, 1, 1)));       // the eye mesh has a grey multiply colour of its own ...
+    const ns = owner.map((_, i) => (i === 3 ? rgba(0.2, 0.2, 0.2) : rgba(0, 0, 0)));       // ... and a screen colour
+    const um = owner.map(() => rgba(1, 1, 1)), us = owner.map(() => rgba(0, 0, 0)), fm = owner.map(() => false), fs = owner.map(() => false);
+    const ops = new Float32Array(owner.length).fill(1);
+    const r3 = (c) => [c.r, c.g, c.b].map((v) => +v.toFixed(3));
+    return { fm, fs, ops, _model: { drawables: { opacities: ops } },
+      getDrawableCount: () => owner.length, getPartCount: () => parts.length, getDrawableParentPartIndex: (d) => owner[d],
+      getDrawableId: (d) => ({ getString: () => ({ s: dids[d] }) }),
+      getPartParentPartIndices: () => Int32Array.from(parts.map((p) => p.up)),
+      getDrawableMultiplyColor: (d) => Object.assign({}, nm[d]), getDrawableScreenColor: (d) => Object.assign({}, ns[d]),
+      setMultiplyColorByRGBA: (d, r, g, b, a) => { um[d] = rgba(r, g, b, a); }, setScreenColorByRGBA: (d, r, g, b, a) => { us[d] = rgba(r, g, b, a); },
+      setOverrideFlagForDrawableMultiplyColors: (d, f) => { fm[d] = f; }, setOverrideFlagForDrawableScreenColors: (d, f) => { fs[d] = f; },
+      refresh: () => ops.fill(1),                                      // what the model's own update does to the opacities each frame
+      multiply: (d) => r3(fm[d] ? um[d] : nm[d]), overlay: (d) => r3(fs[d] ? us[d] : ns[d]), alpha: (d) => +ops[d].toFixed(3) };
+  };
+  const make = (colors) => {
+    const av = bare(HA);
+    av.cfg = Object.assign({}, av.cfg, { colors: colors || {} });
+    av._readColors(av.cfg, true);
+    const cm = fakeCm();
+    av.model = { internalModel: { coreModel: cm } };
+    av.Parts = { ids: parts.map((p) => p.id), index: Object.create(null) };
+    return { av, cm };
+  };
+  const run = (t, seconds) => { for (let i = 0; i < Math.round(seconds * 60); i++) { env.clock += 1 / 60; t.av._colorTick(1 / 60, env.clock); t.cm.refresh(); t.av._applyColors(); } };
+  const all = (t, f) => [0, 1, 2, 3, 4].map((d) => t.cm[f](d));
+  const send = (t, c) => t.av.command(Object.assign({ fade: 0 }, c));
+
+  let t = make({ parts: { Hair: { multiply: '#ff8000' } } }); run(t, 0.1);
+  out.mulHair = all(t, 'multiply');                                      // Hair and the Fringe inside it - not the Body around it
+  out.mulHairFlags = t.cm.fm.slice();
+  t = make({ all: { multiply: '#808080' } }); run(t, 0.1);
+  out.mulWhole = all(t, 'multiply');                                     // every mesh, the part-less one too; the eye's own grey (.5) stays in
+  t = make({ parts: { Hair: { multiply: '#ff0000' } }, all: { multiply: '#808080' } }); run(t, 0.1);
+  out.mulBoth = all(t, 'multiply')[1];                                   // a part's multiply x the whole model's
+  t = make({ parts: { Body: { multiply: '#0000ff' }, Hair: { multiply: '#ff0000' } } }); run(t, 0.1);
+  out.mulFolders = all(t, 'multiply').slice(0, 3);                       // Body blue: the hair inside it is blue x red
+  t = make({ meshes: { ArtFringe: { multiply: '#00ff00' } }, parts: { Hair: { multiply: '#ff8000' } } }); run(t, 0.1);
+  out.mulMesh = all(t, 'multiply').slice(0, 3);                          // one mesh: its own, on top of its part's (orange x green)
+
+  t = make({ parts: { Hair: { overlay: '#404040' } }, meshes: { ArtEye: { overlay: '#808080' } } }); run(t, 0.1);
+  out.overlay = all(t, 'overlay');                                       // lightens; the eye mesh's own screen colour (.2) screens with the new one
+  out.overlayLeavesMultiply = all(t, 'multiply');
+  t = make({ parts: { Hair: { overlay: '#808080' }, Fringe: { overlay: '#808080' } } }); run(t, 0.1);
+  out.overlayStacks = all(t, 'overlay')[2];                              // two screens: 1 - (1 - .5)(1 - .5) = .75
+
+  t = make({ meshes: { ArtFringe: { alpha: 0 } } }); run(t, 0.1);
+  out.alphaMesh = all(t, 'alpha');                                       // invisible: one mesh, nothing else
+  t = make({ parts: { Hair: { alpha: 0.5 } }, meshes: { ArtFringe: { alpha: 0.5 } } }); run(t, 0.1);
+  out.alphaStacks = all(t, 'alpha'); run(t, 0.5);
+  out.alphaDoesNotCompound = all(t, 'alpha');                            // the model refreshes its opacities every frame: the same numbers, not .5 x .5 x ...
+  t = make({ all: { alpha: 0.2 } }); run(t, 0.1);
+  out.alphaWhole = all(t, 'alpha');
+  // the model does not rewrite an opacity on an update where nothing changed (a still model): the alpha must not shrink frame after frame
+  const runStatic = (tt, seconds) => { for (let i = 0; i < Math.round(seconds * 60); i++) { env.clock += 1 / 60; tt.av._colorTick(1 / 60, env.clock); tt.av._applyColors(); } };
+  t = make({ parts: { Hair: { alpha: 0.5 } } }); runStatic(t, 0.5);
+  out.alphaStillModel = all(t, 'alpha');
+  t.cm.ops[1] = 0.8;                                                        // the model's own animation sets this mesh to .8 (it rewrote the value)
+  runStatic(t, 0.1); out.alphaOverTheModelsValue = t.cm.alpha(1);
+  t.av.cfg = Object.assign({}, t.av.cfg, { colors: {} }); t.av._readColors(t.av.cfg, false); runStatic(t, 1);
+  out.alphaHandedBack = all(t, 'alpha');                                    // the model's value is back (.8), not ours
+
+  t = make(); run(t, 0.2);
+  out.nothingTouchesNothing = t.cm.fm.every((f) => !f) && t.cm.fs.every((f) => !f) && t.av._tintedN === 0;
+  send(t, { cmd: 'colors', colors: { parts: { Hair: { multiply: '#000000' } } }, fade: 0.6 });   // a bot's colour eases in over `fade` ...
+  run(t, 1 / 60); out.easeFirst = t.cm.multiply(1)[0];
+  run(t, 0.25); out.easeMid = t.cm.multiply(1)[0];
+  run(t, 1.5); out.easeEnd = t.cm.multiply(1)[0];
+  send(t, { cmd: 'release_colors', parts: ['Hair'], fade: 0.3 });            // ... and lets go the same way, handing the mesh back
+  run(t, 0.2); out.releaseMid = t.cm.multiply(1)[0];
+  run(t, 1.5); out.releaseEnd = t.cm.multiply(1)[0];
+  out.releaseHandsBack = t.cm.fm.every((f) => !f) && t.cm.fs.every((f) => !f) && t.av._tintedN === 0 && !t.av.colOn;
+  send(t, { cmd: 'colors', colors: { meshes: { ArtHair: { alpha: 0 } } } }); run(t, 0.2); out.heldAlpha = t.cm.alpha(1);
+  send(t, { cmd: 'release_colors', everything: true }); run(t, 0.2); out.heldAlphaReleased = t.cm.alpha(1);      // {} = everything
+
+  // layers: the saved colours, then the presets in the order they went on, then what a bot holds - a later one wins, field by field
+  t = make({ parts: { Hair: { multiply: '#00ff00' } } }); run(t, 0.1);
+  const blue = { parts: { Hair: { multiply: '#0000ff' } } }, red = { parts: { Hair: { multiply: '#ff0000', overlay: '#202020' } } };
+  send(t, { cmd: 'color_preset', states: { Blue: 'on' }, rules: { Blue: blue }, orders: { Blue: 1 } }); run(t, 0.2); out.layerBlue = t.cm.multiply(1);
+  send(t, { cmd: 'color_preset', states: { Red: 'on' }, rules: { Red: red }, orders: { Red: 2 } }); run(t, 0.2);
+  out.layerRed = t.cm.multiply(1); out.layerRedOverlay = t.cm.overlay(1);        // the later preset wins ...
+  send(t, { cmd: 'color_preset', states: { Red: 'off' } }); run(t, 0.2);
+  out.layerRedOff = [t.cm.multiply(1), t.cm.overlay(1)];                      // ... and the one under it is back (its fields only: no overlay)
+  send(t, { cmd: 'color_preset', states: { Blue: 'off' } }); run(t, 0.2); out.layerSaved = t.cm.multiply(1);
+  send(t, { cmd: 'color_preset', states: { Red: 'on' }, rules: { Red: red }, orders: { Red: 2 } });
+  send(t, { cmd: 'colors', colors: { parts: { Hair: { multiply: '#ffff00' } } } }); run(t, 0.2); out.heldWinsOverPreset = [t.cm.multiply(1), t.cm.overlay(1)];   // the held multiply, the preset's overlay
+  send(t, { cmd: 'colors', colors: { parts: { Hair: { multiply: null } } } }); run(t, 0.2); out.nullGoesBack = t.cm.multiply(1);      // a field set to null goes back to the layer below
+  send(t, { cmd: 'clear_color_presets' }); run(t, 0.2); out.clearedPresets = [t.cm.multiply(1), t.cm.overlay(1)];
+  send(t, { cmd: 'colors', colors: { parts: { Hair: { multiply: '#ff0000' } } }, until: env.clock + 1 }); run(t, 0.5); out.untilHolds = t.cm.multiply(1);
+  run(t, 1); out.untilEnds = t.cm.multiply(1);
+  send(t, { cmd: 'color_preset', states: { Red: 'on' }, rules: { Red: red }, orders: { Red: 2 }, until: env.clock + 1 }); run(t, 0.5); out.presetUntilHolds = t.cm.multiply(1);
+  run(t, 1); out.presetUntilEnds = t.cm.multiply(1);
+
+  const late = make();                                                    // a renderer that joins late starts in the live state, no fade
+  late.av.restore({ colors: { 'parts:Hair': { kind: 'parts', id: 'Hair', spec: { multiply: '#ff0000' }, until: null } },
+                    color_presets: { Blue: { rules: { meshes: { ArtEye: { alpha: 0.5 } } }, order: 3, until: null } } });
+  late.av._colorTick(1 / 60, env.clock); late.cm.refresh(); late.av._applyColors();
+  out.restoredAtOnce = [late.cm.multiply(1), late.cm.alpha(3)];
+
+  const saved = make({ parts: { Hair: { multiply: '#ff0000' } } }); run(saved, 0.1);   // the saved colours change (the colour pickers): the avatar follows
+  saved.av.cfg = Object.assign({}, saved.av.cfg, { colors: {} }); saved.av._readColors(saved.av.cfg, false); run(saved, 1);
+  out.savedCleared = saved.cm.fm.every((f) => !f) && saved.av._tintedN === 0;
+
+  const old = make({ parts: { Hair: { multiply: '#ff0000' } } }); delete old.cm.setScreenColorByRGBA;   // a runtime without Cubism 5's colour overrides: nothing happens, no error
+  run(old, 0.1); out.oldRuntimeIsHarmless = old.cm.fm.every((f) => !f);
+
+  const reload = make({ parts: { Hair: { multiply: '#ff0000' } } }); run(reload, 0.1);          // a new model: the old one's meshes are forgotten
+  reload.av._colTbl = null; reload.av._tinted = {}; reload.av._tintedN = 0;
+  const cm2 = fakeCm(); reload.av.model = { internalModel: { coreModel: cm2 } }; run(reload, 0.1);
+  out.reloadColoursTheNewModel = cm2.multiply(1);
+
+  const lone = bare(HA);                                                  // a PNGtuber layer: multiply and alpha (no overlay), its own x `all`
+  lone.cfg = Object.assign({}, lone.cfg, { colors: { all: { multiply: '#808080', alpha: 0.5 }, parts: { a: { multiply: '#ff8000', alpha: 0.5, overlay: '#ffffff' } } } });
+  lone._readColors(lone.cfg, true);
+  out.pngLayer = [lone.pngTint('a'), lone.pngTint('b'), bare(HA).pngTint('a'), lone.pngAlpha('a'), lone.pngAlpha('b'), bare(HA).pngAlpha('a')];
+}
 console.log(JSON.stringify(out));

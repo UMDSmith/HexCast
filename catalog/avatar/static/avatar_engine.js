@@ -308,6 +308,17 @@
     return scan('front') || (this.pick(gx, gy) ? null : scan('back'));
   };
 
+  /* the next click on the preview names the part of avatar `name` under it (`cb(partId)`, null if none): the Colors tab's "pick on the model" */
+  Stage.prototype.pickPart = function (name, cb) {
+    this._picking = { name: name, cb: cb };
+    if (this.app) this.app.canvas.style.cursor = 'crosshair';
+  };
+  Stage.prototype.cancelPick = function () {
+    if (!this._picking) return;
+    this._picking = null;
+    if (this.app) this.app.canvas.style.cursor = 'default';
+  };
+
   Stage.prototype.pick = function (gx, gy) {
     for (var i = this.order.length - 1; i >= 0; i--) {
       var av = this.avatars[this.order[i]];
@@ -340,6 +351,13 @@
     cv.addEventListener('pointerdown', function (e) {
       self.audio();
       var p = self.toStage(e.clientX, e.clientY);
+      if (self._picking) {                                          // "pick on the model" (the Colors tab): the click names the part under it
+        var pk = self._picking, pav = self.avatars[pk.name];
+        self.cancelPick();
+        pk.cb(pav ? pav.partAt(p.gx, p.gy) : null);
+        e.preventDefault();
+        return;
+      }
       var h = self._handle;
       if (h && Math.hypot(p.gx - h.x, p.gy - h.y) < 14 && self.selected) {
         var av0 = self.avatars[self.selected];
@@ -368,6 +386,7 @@
       e.preventDefault();
     });
     cv.addEventListener('pointermove', function (e) {
+      if (!drag && self._picking) { cv.style.cursor = 'crosshair'; return; }
       if (!drag) { var p0 = self.toStage(e.clientX, e.clientY), hh = self._handle;
         cv.style.cursor = hh && Math.hypot(p0.gx - hh.x, p0.gy - hh.y) < 14 ? 'grab' : (self.pick(p0.gx, p0.gy) ? 'move' : 'default'); return; }
       var p = self.toStage(e.clientX, e.clientY), t = {};
@@ -472,6 +491,18 @@
     this.ov = {};                // param / input overrides
     this.inputs = Object.create(null);   // the input names the model's mappings take (set by _setInputs)
     this.partOv = {};            // part opacity overrides (the `parts` command)
+    this.colOv = {};            // colours a bot holds for now (the `colors` command): 'all' / 'parts:id' / 'meshes:id' -> {kind, id, spec, until}
+    this.presets = {};           // colour presets switched on (the `color_preset` command): name -> {look, until, order}
+    this.colNow = {};              // what is drawn: 'a' / 'p:id' / 'm:id' -> {m: [r,g,b] multiply, s: [r,g,b] overlay, a: alpha}, easing toward colTo
+    this.colTo = {};            // what each is heading for: the saved colours, the presets and the held ones merged (a later layer wins, field by field)
+    this.colDirty = true;       // a layer changed: merge again
+    this.colTau = 0.05;         // seconds the easing takes to cover most of the way (the fade of the last change / 3)
+    this.colOn = false;
+    this._colTbl = null;        // Live2D: the model's drawable -> part tables
+    this._tinted = {};           // Live2D: drawable index -> true while its multiply / screen colour is ours
+    this._tintedN = 0;
+    this._baseSrc = '';          // the saved colours (the config's `colors`) as last seen
+    this._presetSeq = 0;
     this.exprs = {};             // active expressions
     this.emo = { name: 'neutral', face: {}, intensity: 1, until: 0, tau: 0.4 };
     this.apiFace = { face: {}, until: 0, tau: 0.25 };
@@ -490,6 +521,7 @@
     this.light = null;
     this.lightW = 0;
     this.env = { fast: 0, slow: 0 };
+    this._readColors(cfg, true);
   }
 
   Avatar.prototype.destroy = function () {
@@ -525,6 +557,7 @@
       this._applyIdleSettings();
     }
     if (!this.lightOverride) this.setLight(cfg.light, 0.5);
+    this._readColors(cfg, false);
     this._syncItems();
     if (this.speech.cur && cfg.mouth && cfg.mouth.lipsync === false) this.lip.attachAnalyser(null);
   };
@@ -535,6 +568,7 @@
     if (this.model) { try { this.model.destroy(); } catch (e) {} }
     this.model = null;
     this.modelId = '';
+    this._colTbl = null; this._tinted = {}; this._tintedN = 0;
     this._showProblem(this.cfg.model ? 'model missing' : 'no model chosen');
   };
 
@@ -588,6 +622,7 @@
     this.kind = 'live2d';
     this.png = null;
     this.model = m;
+    this._colTbl = null; this._tinted = {}; this._tintedN = 0;          // a new model starts with its own colours
     this.modelId = mid;
     this.meta = meta;
     this.spec = spec;
@@ -612,6 +647,10 @@
     // the model inside its render call, so that is what is timed
     var render = m.renderLive2D;
     if (typeof render === 'function') m.renderLive2D = function (r) { var t = performance.now(); render.call(this, r); self.msAcc += performance.now() - t; };
+    // The engine updates a model (motions, physics, Cubism's own update: colours and opacities) right before it draws it,
+    // so colours go on in between: after that update, before the draw
+    var draw = im.draw;
+    if (typeof draw === 'function') im.draw = function (gl) { self._applyColors(); return draw.call(this, gl); };
     im.on('afterMotionUpdate', function () { self._inputLayer(cm); });
     im.on('beforeModelUpdate', function () { self._finalLayer(cm); });
     // live state that arrived before the model
@@ -635,6 +674,7 @@
     this._showProblem(null);
     this.kind = 'png';
     this.png = rig;
+    this._colTbl = null; this._tinted = {}; this._tintedN = 0;
     this.model = rig.root;
     this.modelId = mid;
     this.meta = meta;
@@ -772,10 +812,20 @@
                min: +P.min[i].toFixed(4), max: +P.max[i].toFixed(4), default: +P.def[i].toFixed(4) };
     });
     var parts = [], drawables = [];
-    for (var i = 0; i < cm.getPartCount(); i++) { var pid = cm.getPartId(i).getString().s; parts.push({ id: pid, name: partNames[pid] || '' }); }
-    for (i = 0; i < cm.getDrawableCount(); i++) drawables.push(cm.getDrawableId(i).getString().s);
+    var partUp = null;
+    try { partUp = cm.getPartParentPartIndices(); } catch (e) {}
+    for (var i = 0; i < cm.getPartCount(); i++) {
+      var pid = cm.getPartId(i).getString().s;
+      parts.push({ id: pid, name: partNames[pid] || '', parent: partUp && partUp[i] >= 0 ? cm.getPartId(partUp[i]).getString().s : undefined });   // parts are folders: a sub-part names its parent
+    }
+    var drawableParts = [];
+    for (i = 0; i < cm.getDrawableCount(); i++) {
+      drawables.push(cm.getDrawableId(i).getString().s);
+      var dp = cm.getDrawableParentPartIndex(i);
+      drawableParts.push(dp >= 0 ? cm.getPartId(dp).getString().s : '');          // which part each art mesh is in
+    }
     var hit = Object.keys(im.hitAreas || {});
-    this.info = { parameters: params, parts: parts, drawables: drawables, hit_areas: hit,
+    this.info = { parameters: params, parts: parts, drawables: drawables, drawable_parts: drawableParts, hit_areas: hit,
                   size: [im.originalWidth, im.originalHeight] };
     this.stage.emit('model_info', { model: this.modelId, info: this.info });
   };
@@ -796,8 +846,9 @@
     var step = this.acc;
     this.acc = 0;
     this._drive(step, now);
+    this._colorTick(step, now);
     if (this.png) { var tp = performance.now(); this.png.update(step, this.frame, now); this.msAcc += performance.now() - tp; }
-    else this.model.update(step * 1000);
+    else this.model.update(step * 1000);                                   // (the model's own update runs when it is drawn: see _applyColors)
     for (var i = 0; i < this.items.length; i++) this.items[i].tick(step);
     this._lightTick(step, now);
     this.msAcc += performance.now() - t0;
@@ -1174,8 +1225,29 @@
     return this.meshAt(lp.x, lp.y) !== null;
   };
 
-  /* the topmost visible art mesh under a model-space point: {index, id, tri, bary} or null */
-  Avatar.prototype.meshAt = function (x, y) {
+  /* what is under a page point (renderer pixels): {mesh, part} - the topmost art mesh and its part - or, for a PNGtuber,
+     {part: the topmost layer}; null if nothing */
+  Avatar.prototype.partAt = function (gx, gy) {
+    if (!this.model) return null;
+    if (this.png) {
+      var rp = this.png.draw.toLocal(new PIXI.Point(gx, gy)), layer = this.png.layerAt(rp.x, rp.y);
+      return layer ? { mesh: null, part: layer.id } : null;
+    }
+    var im = this.model.internalModel, cm = im.coreModel, skip = {}, areas = im.hitAreas || {}, n;
+    // a model's hit areas are invisible meshes laid over the art (declared in its settings, or just named like one): not what is meant
+    for (n in areas) {
+      var di = areas[n].index >= 0 ? areas[n].index : (areas[n].id ? im.getDrawableIndex(areas[n].id) : -1);
+      if (di >= 0) skip[di] = true;
+    }
+    for (var d = 0, nd = cm.getDrawableCount(); d < nd; d++) if (/^hit|hit_?area/i.test(cm.getDrawableId(d).getString().s)) skip[d] = true;
+    var lp = this.model.toLocal(new PIXI.Point(gx, gy)), hit = this.meshAt(lp.x, lp.y, skip);
+    if (!hit) return null;
+    var p = cm.getDrawableParentPartIndex(hit.index);
+    return { mesh: hit.id, part: p >= 0 ? this.Parts.ids[p] || null : null };
+  };
+
+  /* the topmost visible art mesh under a model-space point: {index, id, tri, bary} or null (`skip`: drawable indexes to look through) */
+  Avatar.prototype.meshAt = function (x, y, skip) {
     if (this.png) return null;
     var im = this.model.internalModel, cm = im.coreModel, n = cm.getDrawableCount();
     var orders = cm.getDrawableRenderOrders(), list = [];
@@ -1183,7 +1255,7 @@
     list.sort(function (a, b) { return orders[b] - orders[a]; });
     for (var li = 0; li < list.length; li++) {
       var d = list[li];
-      if (!cm.getDrawableDynamicFlagIsVisible(d) || cm.getDrawableOpacity(d) < 0.15) continue;
+      if ((skip && skip[d]) || !cm.getDrawableDynamicFlagIsVisible(d) || cm.getDrawableOpacity(d) < 0.15) continue;
       var v = im.getDrawableVertices(d), ind = cm.getDrawableVertexIndices(d);
       for (var t = 0; t + 2 < ind.length; t += 3) {
         var a = ind[t], bb = ind[t + 1], c = ind[t + 2];
@@ -1227,6 +1299,16 @@
     var k, self = this;
     for (k in live.params || {}) this.command(Object.assign({}, live.params[k], { cmd: 'params', restore: true }));
     for (k in live.parts || {}) this.command(Object.assign({}, live.parts[k], { cmd: 'parts', restore: true }));
+    for (k in live.colors || {}) {
+      var held = live.colors[k], hl = {};
+      if (held.kind === 'all') hl.all = held.spec; else { hl[held.kind] = {}; hl[held.kind][held.id] = held.spec; }
+      this.command({ cmd: 'colors', colors: hl, until: held.until, restore: true });
+    }
+    for (k in live.color_presets || {}) {
+      var pr = live.color_presets[k], ps = {}, pl = {}, po = {};
+      ps[k] = 'on'; pl[k] = pr.rules; po[k] = pr.order;
+      this.command({ cmd: 'color_preset', states: ps, rules: pl, orders: po, until: pr.until, restore: true });
+    }
     for (k in live.expressions || {}) this.command({ cmd: 'expression', name: k, state: 'on', until: live.expressions[k] || null, fade: 0 });
     if (live.emotion) this.command(Object.assign({ cmd: 'emotion', fade: 0, previous: [] }, live.emotion));
     if (live.face) this.command(Object.assign({ cmd: 'face', fade: 0 }, live.face));
@@ -1270,6 +1352,39 @@
         for (var pi2 = 0; pi2 < pids.length; pi2++) { var po = this.partOv[pids[pi2]]; if (po) { po.to = 0; po.until = 0; po.fade = c.fade == null ? 0.3 : c.fade; } }
         break;
       }
+      case 'colors': {                                      // recolour for now: {colors: {all, parts, meshes}}; a field set to null goes back (saved ones arrive as config)
+        var self2 = this;
+        eachTarget(c.colors || {}, function (kind, id, spec) {
+          var key = colorKey(kind, id);
+          if (c.save) { delete self2.colOv[key]; return; }
+          var held = self2.colOv[key] || { kind: kind, id: id, spec: {}, until: 0 };
+          for (var f in spec) { if (spec[f] == null) delete held.spec[f]; else held.spec[f] = spec[f]; }
+          held.until = c.until || 0;
+          if (Object.keys(held.spec).length) self2.colOv[key] = held; else delete self2.colOv[key];
+        });
+        this._colored(c);
+        break;
+      }
+      case 'release_colors': {
+        if (c.everything) this.colOv = {};
+        else {
+          if (c.all) delete this.colOv.all;
+          (c.parts || []).forEach(function (id) { delete this.colOv[colorKey('parts', id)]; }, this);
+          (c.meshes || []).forEach(function (id) { delete this.colOv[colorKey('meshes', id)]; }, this);
+        }
+        this._colored(c);
+        break;
+      }
+      case 'color_preset': {                                // a colour preset switched on / off (the rules come with the command)
+        var pst = c.states || {};
+        for (k in pst) {
+          if (pst[k] === 'on' && c.rules && c.rules[k]) this.presets[k] = { look: c.rules[k], until: c.until || 0, order: (c.orders && c.orders[k]) || ++this._presetSeq };
+          else if (pst[k] !== 'on') delete this.presets[k];
+        }
+        this._colored(c);
+        break;
+      }
+      case 'clear_color_presets': this.presets = {}; this._colored(c); break;
       case 'release': {
         var ids = c.ids || Object.keys(this.ov);
         for (var i = 0; i < ids.length; i++) { var o = this.ov[ids[i]]; if (o) { o.to = 0; o.rate = c.fade == null ? 0.3 : c.fade; o.until = 0; } }
@@ -1770,7 +1885,8 @@
       if (!l.sprite) continue;
       var shown = this._shown(l), o = ov[l.id];
       l.sprite.visible = shown && !(o && o.w > 0.5 && o.value <= 0);
-      l.sprite.alpha = o && o.w > 0 ? lerp(1, o.value, o.w) : 1;
+      l.sprite.alpha = (o && o.w > 0 ? lerp(1, o.value, o.w) : 1) * this.av.pngAlpha(l.id);
+      l.sprite.tint = this.av.pngTint(l.id);
       l.sprite.setFromMatrix(new PIXI.Matrix(l.imgM.a, l.imgM.b, l.imgM.c, l.imgM.d, l.imgM.tx, l.imgM.ty));
       if (l.mask) l.mask.setFromMatrix(new PIXI.Matrix(l.imgM.a, l.imgM.b, l.imgM.c, l.imgM.d, l.imgM.tx, l.imgM.ty));
       if (l.frameTex && l.fps > 0 && !rest) {
@@ -1866,6 +1982,180 @@
   PngRig.prototype.destroy = function () { try { this.root.destroy({ children: true }); } catch (e) {} };
 
   HA.PngRig = PngRig;
+
+  /* -------------------------------------------- colours
+   *
+   * VTube Studio's "customize multiply / screen colour for art meshes", and then some. A look names targets - the
+   * whole model (`all`), parts (`parts`: Live2D parts are folders of art meshes and sub-parts; a PNGtuber's layers)
+   * and single art meshes (`meshes`) - and gives each any of `multiply` (a colour that darkens / tints: the art
+   * is multiplied by it), `overlay` (a colour that lightens: Cubism's screen colour, the art plus the colour) and
+   * `alpha` (0 invisible .. 1). Targets stack: a mesh's multiply is its own x its parts' x the whole model's,
+   * overlays combine as screens, alphas multiply. Over a mesh's own multiply / screen colour (Cubism 4.2+/5 models
+   * may have them) and over its opacity as the model has just made it.
+   *
+   * Looks come in layers, a later one winning field by field: the avatar's saved colours (config `colors`), the
+   * colour presets switched on (the model's, in the order they went on) and what a bot holds for now (`colors`).
+   * The merged result eases to its values, so every change fades.
+   *
+   * Live2D: the multiply / screen colour of each art mesh is the engine's per-drawable override, and the alpha is
+   * written into the model's drawable opacities - both after the model's update, before it is drawn. PNGtuber:
+   * a layer's sprite tint and alpha (no overlay colour there); a layer's parent is its motion rig, not a group,
+   * so a layer's colour stays on that layer. */
+
+  var NEUTRAL7 = [1, 1, 1, 0, 0, 0, 1];                       // multiply rgb, overlay rgb, alpha: nothing changed
+  function neutral7(t) { return t[0] > 0.998 && t[1] > 0.998 && t[2] > 0.998 && t[3] < 0.002 && t[4] < 0.002 && t[5] < 0.002 && t[6] > 0.998; }
+  function mix7(x, y) {
+    return [x[0] * y[0], x[1] * y[1], x[2] * y[2], 1 - (1 - x[3]) * (1 - y[3]), 1 - (1 - x[4]) * (1 - y[4]), 1 - (1 - x[5]) * (1 - y[5]), x[6] * y[6]];
+  }
+  function colorKey(kind, id) { return kind === 'all' ? 'all' : kind + ':' + id; }
+  function eachTarget(look, fn) {                             // every target a look names: (kind, id, spec)
+    if (look.all) fn('all', '', look.all);
+    var id;
+    for (id in look.parts || {}) fn('parts', id, look.parts[id]);
+    for (id in look.meshes || {}) fn('meshes', id, look.meshes[id]);
+  }
+
+  /* the saved colours (config `colors`): `snap` - a new avatar starts in them, it does not fade in */
+  Avatar.prototype._readColors = function (cfg, snap) {
+    var src = JSON.stringify((cfg && cfg.colors) || {});
+    if (src === this._baseSrc && !snap) return;
+    this._baseSrc = src;
+    this.colDirty = true;
+    if (snap) {
+      this._resolveColors();
+      for (var k in this.colTo) this.colNow[k] = this._toCurrent(this.colTo[k]);
+    } else this.colTau = 0.05;                              // a colour picker being dragged: follow it closely
+  };
+
+  /* a command changed a layer: merge again, and fade over its `fade` (a restored one is there at once) */
+  Avatar.prototype._colored = function (c) {
+    this.colDirty = true;
+    this.colTau = c.restore ? 0.0001 : Math.max(0.0001, (c.fade == null ? 0.3 : c.fade) / 3);
+  };
+
+  Avatar.prototype._toCurrent = function (to) {
+    return { m: to.m ? to.m.slice() : [1, 1, 1], s: to.s ? to.s.slice() : [0, 0, 0], a: to.a == null ? 1 : to.a };
+  };
+
+  /* merge the layers: saved colours, then the presets (in the order they went on), then what a bot holds */
+  Avatar.prototype._resolveColors = function () {
+    var to = {};
+    function put(key, spec) {
+      var o = to[key] || (to[key] = {});
+      if (spec.multiply != null) o.m = hexRgb(spec.multiply);
+      if (spec.overlay != null) o.s = hexRgb(spec.overlay);
+      if (spec.alpha != null) o.a = clamp(+spec.alpha, 0, 1);
+    }
+    function layer(look) { if (look) eachTarget(look, function (kind, id, spec) { put(kind === 'all' ? 'a' : (kind === 'parts' ? 'p:' : 'm:') + id, spec); }); }
+    layer((this.cfg && this.cfg.colors) || {});
+    var self = this;
+    Object.keys(this.presets).map(function (n) { return self.presets[n]; }).sort(function (x, y) { return x.order - y.order; })
+      .forEach(function (p) { layer(p.look); });
+    for (var k in this.colOv) {
+      var h = this.colOv[k];
+      put(h.kind === 'all' ? 'a' : (h.kind === 'parts' ? 'p:' : 'm:') + h.id, h.spec);
+    }
+    this.colTo = to;
+    this.colDirty = false;
+  };
+
+  Avatar.prototype._colorTick = function (dt, now) {
+    var k;
+    for (k in this.colOv) if (this.colOv[k].until && now >= this.colOv[k].until) { delete this.colOv[k]; this.colDirty = true; }
+    for (k in this.presets) if (this.presets[k].until && now >= this.presets[k].until) { delete this.presets[k]; this.colDirty = true; }
+    if (this.colDirty) this._resolveColors();
+    var busy = false;
+    for (k in this.colTo) { busy = true; break; }
+    if (!busy) for (k in this.colNow) { busy = true; break; }
+    if (!busy) { this.colOn = false; return; }
+    var keys = {}, any = false, i;
+    for (k in this.colTo) keys[k] = 1;
+    for (k in this.colNow) keys[k] = 1;
+    for (k in keys) {
+      var cur = this.colNow[k] || (this.colNow[k] = { m: [1, 1, 1], s: [0, 0, 0], a: 1 }), to = this._toCurrent(this.colTo[k] || {});
+      for (i = 0; i < 3; i++) {
+        cur.m[i] = approach(cur.m[i], to.m[i], dt, this.colTau); if (Math.abs(cur.m[i] - to.m[i]) < 0.002) cur.m[i] = to.m[i];
+        cur.s[i] = approach(cur.s[i], to.s[i], dt, this.colTau); if (Math.abs(cur.s[i] - to.s[i]) < 0.002) cur.s[i] = to.s[i];
+      }
+      cur.a = approach(cur.a, to.a, dt, this.colTau); if (Math.abs(cur.a - to.a) < 0.002) cur.a = to.a;
+      if (neutral7(flat7(cur)) && neutral7(flat7(to))) delete this.colNow[k]; else any = true;
+    }
+    this.colOn = any;
+  };
+  function flat7(c) { return [c.m[0], c.m[1], c.m[2], c.s[0], c.s[1], c.s[2], c.a]; }
+
+  /* Live2D: each art mesh's colours and opacity = what the model made of them, then the look of its part (and the parts around it), `all` and itself.
+     Called by the model's draw (see load), which is after its update - and may come more than once for one update. */
+  Avatar.prototype._applyColors = function () {
+    if (this.png || !this.model || (!this.colOn && !this._tintedN)) return;
+    var cm = this.model.internalModel && this.model.internalModel.coreModel;
+    if (!cm || !cm.setMultiplyColorByRGBA || !cm.setScreenColorByRGBA) return;       // a runtime without Cubism 5's colour overrides: no colours
+    var T = this._colTbl;
+    if (!T) {
+      var nd = cm.getDrawableCount(), dpart = new Int32Array(nd), dids = [], parent = null;
+      for (var di = 0; di < nd; di++) { dpart[di] = cm.getDrawableParentPartIndex(di); dids.push(cm.getDrawableId(di).getString().s); }
+      try { parent = cm.getPartParentPartIndices(); } catch (e) {}
+      var dr = cm._model && cm._model.drawables;
+      // `nat` / `wrote`: the opacity the model had made of each mesh, and what we put there (see below)
+      T = this._colTbl = { nd: nd, dpart: dpart, dids: dids, parent: parent, eff: [], gen: [], stamp: 0, ops: dr && dr.opacities, nat: {}, wrote: {} };
+    }
+    var self = this, ids = this.Parts.ids, look = this.colNow, stamp = ++T.stamp;
+    var whole = look.a ? flat7(look.a) : NEUTRAL7;
+    function effective(p, depth) {                                // a part's look: its own x its parents' (memoised for this frame)
+      if (p < 0 || p >= ids.length || depth > 64) return whole;
+      if (T.gen[p] === stamp) return T.eff[p];
+      var own = look['p:' + ids[p]], up = effective(T.parent ? T.parent[p] : -1, depth + 1);
+      var r = own ? mix7(up, flat7(own)) : up;
+      T.gen[p] = stamp; T.eff[p] = r;
+      return r;
+    }
+    // The model does not rewrite an opacity on an update where nothing changed, so `opacity *= alpha` every frame would
+    // keep shrinking it. What is in the array is ours if it is still what we wrote - then the model's own value is the one
+    // we kept - and the model's if not.
+    function modelOpacity(d) {
+      var v = T.ops[d];
+      return T.wrote[d] !== undefined && T.wrote[d] === v ? T.nat[d] : v;
+    }
+    for (var d = 0; d < T.nd; d++) {
+      var t = effective(T.dpart[d], 0), me = look['m:' + T.dids[d]];
+      if (me) t = mix7(t, flat7(me));
+      if (T.ops && t[6] >= 0.998 && T.wrote[d] !== undefined) {         // no alpha now: hand the opacity back
+        if (T.ops[d] === T.wrote[d]) T.ops[d] = T.nat[d];
+        delete T.wrote[d]; delete T.nat[d];
+      }
+      if (neutral7(t)) {
+        if (this._tinted[d]) {
+          cm.setOverrideFlagForDrawableMultiplyColors(d, false); cm.setOverrideFlagForDrawableScreenColors(d, false);
+          delete this._tinted[d]; this._tintedN--;
+        }
+        continue;
+      }
+      var nm = cm.getDrawableMultiplyColor(d), ns = cm.getDrawableScreenColor(d);
+      cm.setMultiplyColorByRGBA(d, nm.r * t[0], nm.g * t[1], nm.b * t[2], nm.a);
+      cm.setScreenColorByRGBA(d, 1 - (1 - ns.r) * (1 - t[3]), 1 - (1 - ns.g) * (1 - t[4]), 1 - (1 - ns.b) * (1 - t[5]), ns.a);
+      if (!this._tinted[d]) {
+        cm.setOverrideFlagForDrawableMultiplyColors(d, true); cm.setOverrideFlagForDrawableScreenColors(d, true);
+        this._tinted[d] = true; this._tintedN++;
+      }
+      if (t[6] < 0.998 && T.ops) {
+        var nat = modelOpacity(d);
+        T.ops[d] = nat * t[6];
+        T.nat[d] = nat; T.wrote[d] = T.ops[d];
+      }
+    }
+  };
+
+  /* PNGtuber: a layer's sprite tint (0xrrggbb) and alpha = its own x `all` */
+  Avatar.prototype.pngTint = function (id) {
+    var w = this.colNow.a, o = this.colNow['p:' + id];
+    if (!w && !o) return 0xffffff;
+    function ch(i) { return Math.round(clamp((w ? w.m[i] : 1) * (o ? o.m[i] : 1), 0, 1) * 255); }
+    return (ch(0) << 16) | (ch(1) << 8) | ch(2);
+  };
+  Avatar.prototype.pngAlpha = function (id) {
+    var w = this.colNow.a, o = this.colNow['p:' + id];
+    return (w ? w.a : 1) * (o ? o.a : 1);
+  };
 
   /* -------------------------------------------- light */
 
