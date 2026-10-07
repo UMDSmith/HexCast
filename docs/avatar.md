@@ -147,7 +147,9 @@ On the **Items** tab add items from the library to the avatar. Their position is
 
 The **Colors** tab does what VTube Studio's *customize multiply / screen colour for art meshes* does — and presets and hotkeys, which here are API calls your bot makes.
 
-Pick what to colour in the list: the **whole model**, a **part** (a folder of art meshes and sub-parts — hair, eyes, clothes; shown as a tree, open a part to see its art meshes) or a single **art mesh**. **Filter** by id or name, or press **Pick on the model** and click the thing you want in the preview: its row opens and lights up. Then set, for that one:
+Pick what to colour in the list: the **whole model**, a **part** (a folder of art meshes and sub-parts — hair, eyes, clothes) or a single **art mesh**. A part says how many art meshes are inside it ("Horns · 8 art meshes"); **click it and they open under it**, each one colourable on its own — just like picking its meshes one by one in VTube Studio. **Show → All art meshes** is the flat list of every art mesh of the model, each with the part it is in; **Open all / Close all** do the same for the tree. The **filter** matches ids and names, and an art mesh also answers to its part's name, so *horn* finds every mesh of the horns.
+
+Art mesh names are only what the model's artist gave them (`ArtMesh11`), so what you select **flashes on the preview** — a part, a single mesh, even one that is hidden (it shows through for the flash); **Where?** flashes it again. Or press **Pick on the model** and click the thing you want in the preview: its row opens and lights up. The flash is the preview only; it never reaches OBS. Then set, for the selected one:
 
 - **Multiply** — a colour the art is multiplied by. It tints and darkens (white = no change) and keeps the shading, outlines and highlights.
 - **Overlay** — a colour added on top, VTube Studio's *screen* colour. It lightens (black = no change), so a dark part can be made light, which multiply alone can't.

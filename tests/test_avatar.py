@@ -1081,6 +1081,13 @@ def test_alpha_hides_or_fades_meshes_and_does_not_compound(engine):
     assert engine["alphaHandedBack"] == [1, 0.8, 1, 1, 1]                                                 # and the model's own value is what comes back
 
 
+def test_the_preview_flashes_what_is_selected_and_a_hidden_mesh_shows_through(engine):
+    assert engine["flashIgnoredOnStream"]                                                                 # only the tab's preview flashes - never OBS
+    assert engine["flash"] == {"hairLit": True, "ghostShowsThrough": True, "bodyUntouched": True, "ended": True}
+    assert engine["flashLeavesNothingBehind"] == [[0, 0, 0], 0, 1]                                        # hidden again, the hair as it was
+    assert engine["flashOneMesh"] == [True, True] and engine["flashOneMeshEnded"] == [0.2] * 3            # one mesh: only that one
+
+
 def test_a_colour_eases_in_and_out_and_hands_the_model_back(engine):
     assert engine["nothingTouchesNothing"]
     assert 0.8 < engine["easeFirst"] < 1 and 0.1 < engine["easeMid"] < 0.5 and engine["easeEnd"] == 0   # fade 0.6 s: white -> black

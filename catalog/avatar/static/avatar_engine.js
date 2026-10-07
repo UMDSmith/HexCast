@@ -501,6 +501,7 @@
     this._colTbl = null;        // Live2D: the model's drawable -> part tables
     this._tinted = {};           // Live2D: drawable index -> true while its multiply / screen colour is ours
     this._tintedN = 0;
+    this.hl = null;              // the preview's flash of a part / mesh (see `flash`)
     this._baseSrc = '';          // the saved colours (the config's `colors`) as last seen
     this._presetSeq = 0;
     this.exprs = {};             // active expressions
@@ -2087,7 +2088,7 @@
   /* Live2D: each art mesh's colours and opacity = what the model made of them, then the look of its part (and the parts around it), `all` and itself.
      Called by the model's draw (see load), which is after its update - and may come more than once for one update. */
   Avatar.prototype._applyColors = function () {
-    if (this.png || !this.model || (!this.colOn && !this._tintedN)) return;
+    if (this.png || !this.model || (!this.colOn && !this._tintedN && !this.hl)) return;
     var cm = this.model.internalModel && this.model.internalModel.coreModel;
     if (!cm || !cm.setMultiplyColorByRGBA || !cm.setScreenColorByRGBA) return;       // a runtime without Cubism 5's colour overrides: no colours
     var T = this._colTbl;
@@ -2109,6 +2110,26 @@
       T.gen[p] = stamp; T.eff[p] = r;
       return r;
     }
+    // a flash (the preview's, see `flash`): which meshes, and how bright it is right now
+    var hl = this.hl, hlAmp = 0, hlSet = null;
+    if (hl) {
+      var hu = (nowSec() - hl.t0) / hl.dur;
+      if (hu >= 1) this.hl = hl = null;
+      else {
+        hlAmp = (1 - hu) * (0.5 + 0.5 * Math.sin((nowSec() - hl.t0) * 15));
+        if (!hl.set) {                                            // the drawables of a mesh, of a part and what is inside it, or of everything
+          hl.set = {};
+          for (var hd = 0; hd < T.nd; hd++) {
+            if (hl.kind === 'all' || (hl.kind === 'meshes' && T.dids[hd] === hl.id)) { hl.set[hd] = 1; continue; }
+            for (var hp = T.dpart[hd], hn = 0; hl.kind === 'parts' && hp >= 0 && hp < ids.length && hn < 64; hn++) {
+              if (ids[hp] === hl.id) { hl.set[hd] = 1; break; }
+              hp = T.parent ? T.parent[hp] : -1;
+            }
+          }
+        }
+        hlSet = hl.set;
+      }
+    }
     // The model does not rewrite an opacity on an update where nothing changed, so `opacity *= alpha` every frame would
     // keep shrinking it. What is in the array is ours if it is still what we wrote - then the model's own value is the one
     // we kept - and the model's if not.
@@ -2119,6 +2140,10 @@
     for (var d = 0; d < T.nd; d++) {
       var t = effective(T.dpart[d], 0), me = look['m:' + T.dids[d]];
       if (me) t = mix7(t, flat7(me));
+      if (hlSet && hlSet[d]) {                                    // flashing: lit up pink, and shown even when it is hidden
+        t = mix7(t, [1, 1, 1, hlAmp, hlAmp * 0.25, hlAmp * 0.6, 1]);
+        if (t[6] < hlAmp) t[6] = hlAmp;
+      }
       if (T.ops && t[6] >= 0.998 && T.wrote[d] !== undefined) {         // no alpha now: hand the opacity back
         if (T.ops[d] === T.wrote[d]) T.ops[d] = T.nat[d];
         delete T.wrote[d]; delete T.nat[d];
@@ -2143,6 +2168,13 @@
         T.nat[d] = nat; T.wrote[d] = T.ops[d];
       }
     }
+  };
+
+  /* The preview only: make a part, an art mesh or everything flash for a moment, so a row of the Colors tab can be found
+     on the model (a hidden mesh shows through while it flashes). Never on stream: only the tab's preview takes this. */
+  Avatar.prototype.flash = function (kind, id, secs) {
+    if (this.stage.role !== 'preview' || this.png) return;
+    this.hl = { kind: kind, id: id, t0: nowSec(), dur: secs || 1.6, set: null };
   };
 
   /* PNGtuber: a layer's sprite tint (0xrrggbb) and alpha = its own x `all` */

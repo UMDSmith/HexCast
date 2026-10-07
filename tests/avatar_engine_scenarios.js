@@ -254,6 +254,21 @@ const frames = (r, seconds) => { for (let i = 0; i < Math.round(seconds * 60); i
   send(t, { cmd: 'colors', colors: { meshes: { ArtHair: { alpha: 0 } } } }); run(t, 0.2); out.heldAlpha = t.cm.alpha(1);
   send(t, { cmd: 'release_colors', everything: true }); run(t, 0.2); out.heldAlphaReleased = t.cm.alpha(1);      // {} = everything
 
+  // the preview's flash: what is selected in the Colors tab lights up for a moment, a hidden mesh shows through, and never on stream
+  t = make({ meshes: { ArtFringe: { alpha: 0 } } }); run(t, 0.1);
+  t.av.stage.role = 'obs'; t.av.flash('parts', 'Hair'); out.flashIgnoredOnStream = t.av.hl === null;
+  t.av.stage.role = 'preview'; t.av.flash('parts', 'Hair', 1.6);
+  let hairLit = 0, ghost = 0, bodyLit = 0, flashFrames = 0;
+  for (let i = 0; i < 110; i++) {
+    run(t, 1 / 60);
+    if (t.av.hl) flashFrames++;
+    hairLit = Math.max(hairLit, t.cm.overlay(1)[0]); ghost = Math.max(ghost, t.cm.alpha(2)); bodyLit = Math.max(bodyLit, t.cm.overlay(0)[0], t.cm.alpha(0) < 1 ? 1 : 0);
+  }
+  out.flash = { hairLit: hairLit > 0.4, ghostShowsThrough: ghost > 0.4, bodyUntouched: bodyLit === 0, ended: t.av.hl === null && flashFrames > 90 && flashFrames < 105 };
+  out.flashLeavesNothingBehind = [t.cm.overlay(1), t.cm.alpha(2), t.cm.alpha(1)];                // the hidden mesh is hidden again, the hair is as it was
+  t.av.flash('meshes', 'ArtEye', 0.5); run(t, 0.1); out.flashOneMesh = [t.cm.overlay(3)[0] > 0.2, t.cm.overlay(1)[0] === 0];
+  run(t, 0.6); out.flashOneMeshEnded = t.cm.overlay(3);                                          // (the eye's own screen colour is all that is left)
+
   // layers: the saved colours, then the presets in the order they went on, then what a bot holds - a later one wins, field by field
   t = make({ parts: { Hair: { multiply: '#00ff00' } } }); run(t, 0.1);
   const blue = { parts: { Hair: { multiply: '#0000ff' } } }, red = { parts: { Hair: { multiply: '#ff0000', overlay: '#202020' } } };

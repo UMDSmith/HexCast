@@ -423,13 +423,14 @@
           <div id="co-held" class="pill warn" style="display:none;white-space:normal;margin-top:8px"><span id="co-held-t"></span><button class="sm" id="co-held-x" style="margin-left:8px">Let go</button></div>
           <h3>Colours of</h3>
           <div class="coedit" id="co-edit">
-            <div class="cot"><b id="co-tn"></b><span class="dim" id="co-tk"></span></div>
+            <div class="cot"><b id="co-tn"></b><span class="dim" id="co-tk"></span><span class="grow"></span><button class="sm ghost" id="co-where" title="Flash it on the model">Where?</button></div>
             <div class="f"><span>Multiply</span><div class="ctl"><input type="color" id="co-m" value="#ffffff"><button class="sm ghost" id="co-m-x" title="Take the multiply colour off">&times;</button><span class="dim" style="font-size:12px" id="co-m-s">tints, darkens</span></div></div>
             <div class="f" id="co-o-row"><span>Overlay</span><div class="ctl"><input type="color" id="co-o" value="#000000"><button class="sm ghost" id="co-o-x" title="Take the overlay colour off">&times;</button><span class="dim" style="font-size:12px" id="co-o-s">lightens</span></div></div>
             <div class="f"><span>Alpha</span><div class="ctl"><input type="range" min="0" max="1" step="0.01" id="co-a" value="1"><span class="val" id="co-av" style="min-width:44px"></span><button class="sm ghost" id="co-a-x" title="Take the alpha off">&times;</button></div></div>
             <div class="row" style="margin-top:6px"><label class="sw"><input type="checkbox" id="co-hide"> Hide</label><span class="grow"></span><button class="sm ghost" id="co-clear" title="Take every colour off this one">Clear this</button></div>
           </div>
           <div class="row" style="margin:10px 0 6px"><input id="co-f" class="grow" placeholder="Filter parts and art meshes (id or name)..."><button class="sm pick" id="co-pick" title="Then click the part on the preview">Pick on the model</button><button class="sm ghost danger" id="co-reset" title="Take every colour off this avatar">Reset all</button></div>
+          <div class="row" id="co-views" style="margin:0 0 6px;gap:6px"><span class="dim" style="font-size:12px">Show</span><button class="sm on" id="co-v-tree" title="The model's parts: open one for the art meshes inside it">Parts</button><button class="sm" id="co-v-mesh" title="Every art mesh of the model in one list, like VTube Studio">All art meshes</button><span class="grow"></span><button class="sm ghost" id="co-open-all">Open all</button><button class="sm ghost" id="co-close-all">Close all</button></div>
           <div class="plist" id="co-list" style="max-height:380px"></div>
         </div>
 
@@ -1588,7 +1589,8 @@
 
   /* ---------------------------------------------------------------- colours */
   // What is edited: the avatar's saved colours { all: spec, parts: {id: spec}, meshes: {id: spec} }, spec = { multiply, overlay, alpha } - one target at a time (CO.sel)
-  var CO = { sel: { kind: 'all', id: '' }, open: {}, sig: '', avatar: '' };
+  var CO = { sel: { kind: 'all', id: '' }, open: {}, sig: '', avatar: '', view: 'tree' };      // view: 'tree' (parts, open one for its art meshes) or 'meshes' (every art mesh, flat)
+  try { CO.view = localStorage.getItem('hexcast.avatar.coview') === 'meshes' ? 'meshes' : 'tree'; } catch (e) {}
   function coInfo() { var a = cur(); return a && S.info[a.name]; }
   function coIsPng() { var a = cur(); return !!(a && (S.models[a.model] || {}).type === 'png'); }
   function tkey(t) { return t.kind === 'all' ? 'all' : t.kind + ':' + t.id; }
@@ -1610,10 +1612,10 @@
     if (inside) h += '<span title="Something inside it has colours">•</span>';
     return h;
   }
-  /* the model's parts as folders (parts inside parts), each with the art meshes directly in it */
+  /* the model's parts as folders (parts inside parts), each with the art meshes directly in it, and how many are inside it altogether */
   function coTree(info) {
     var parts = info.parts || [], meshes = info.art_meshes || [], mp = info.art_mesh_parts || [];
-    var T = { ids: {}, kids: {}, roots: [], meshOf: {}, loose: [], partOfMesh: {} };
+    var T = { ids: {}, kids: {}, roots: [], meshOf: {}, loose: [], partOfMesh: {}, count: {} };
     parts.forEach(function (p) { T.ids[p.id] = p; });
     parts.forEach(function (p) { if (p.parent && T.ids[p.parent]) (T.kids[p.parent] = T.kids[p.parent] || []).push(p); else T.roots.push(p); });
     meshes.forEach(function (m, i) {
@@ -1621,33 +1623,46 @@
       T.partOfMesh[m] = pid;
       if (pid && T.ids[pid]) (T.meshOf[pid] = T.meshOf[pid] || []).push(m); else T.loose.push(m);
     });
+    function cnt(p, depth) { var n = (T.meshOf[p.id] || []).length; if (depth < 64) (T.kids[p.id] || []).forEach(function (c) { n += cnt(c, depth + 1); }); return (T.count[p.id] = n); }
+    T.roots.forEach(function (p) { cnt(p, 0); });
     return T;
   }
   function coRowHtml(t, label, small, depth, tw) {
     return '<div class="corow' + (t.kind === 'meshes' ? ' mesh' : '') + '" data-k="' + esc(tkey(t)) + '" style="--d:' + depth + '">' +
-      (tw ? '<button class="tw" data-tw="' + esc(t.id) + '" title="' + (tw === 'open' ? 'Close' : 'Open') + '">' + (tw === 'open' ? '▾' : '▸') + '</button>' : '<span></span>') +
+      (tw ? '<button class="tw" data-tw="' + esc(t.id) + '" title="' + (tw === 'open' ? 'Close' : 'Open - to colour what is inside it one by one') + '">' + (tw === 'open' ? '▾' : '▸') + '</button>' : '<span></span>') +
       '<div class="pn" title="' + esc(t.id || 'the whole model') + '">' + esc(label) + (small ? '<small>' + esc(small) + '</small>' : '') + '</div><div class="ind"></div></div>';
+  }
+  function coPartRow(T, p, depth, tw) {                      // "Horns" / "Horns · 8 art meshes"
+    var n = T.count[p.id] || 0;
+    return coRowHtml({ kind: 'parts', id: p.id }, p.id, (p.name && p.name !== p.id ? p.name : '') + (n ? (p.name && p.name !== p.id ? ' · ' : '') + n + ' art mesh' + (n > 1 ? 'es' : '') : ''), depth, tw);
+  }
+  function coMeshRow(T, info, m, depth) {                    // an art mesh, and the part it is in
+    var pid = T.partOfMesh[m], p = pid && T.ids[pid];
+    return coRowHtml({ kind: 'meshes', id: m }, m, pid ? 'in ' + pid + (p && p.name && p.name !== pid ? ' (' + p.name + ')' : '') : '(in no part)', depth, '');
   }
   function coListHtml(info, q) {
     if (!info) return '<div class="empty">Loading...</div>';
     var rows = [coRowHtml({ kind: 'all', id: '' }, 'Whole model', 'goes over everything', 0, '')];
     if (!(info.parts || []).length && !(info.art_meshes || []).length) return rows.join('') + '<div class="empty">' + esc(info.note || 'No parts yet.') + '</div>';
-    var T = coTree(info);
-    if (q) {                                                // a filter: a flat list of what matches
-      var n = 0, hit = function (id, name) { return id.toLowerCase().indexOf(q) >= 0 || (name || '').toLowerCase().indexOf(q) >= 0; };
-      (info.parts || []).forEach(function (p) { if (n < 200 && hit(p.id, p.name)) { rows.push(coRowHtml({ kind: 'parts', id: p.id }, p.id, p.name, 0, '')); n++; } });
-      (info.art_meshes || []).forEach(function (m) { if (n < 200 && hit(m, '')) { rows.push(coRowHtml({ kind: 'meshes', id: m }, m, T.partOfMesh[m] ? 'in ' + T.partOfMesh[m] : '', 0, '')); n++; } });
+    var T = coTree(info), LIMIT = 400;
+    var hit = function (id, name) { return id.toLowerCase().indexOf(q) >= 0 || (name || '').toLowerCase().indexOf(q) >= 0; };
+    var meshHit = function (m) { var p = T.ids[T.partOfMesh[m]] || {}; return hit(m, '') || hit(T.partOfMesh[m] || '', p.name); };      // a mesh also answers to its part's name: "horn"
+    if ((CO.view === 'meshes' && (info.art_meshes || []).length) || q) {      // a flat list: every art mesh (the view), or whatever matches the filter
+      var n = 0;
+      if (q && CO.view !== 'meshes') (info.parts || []).forEach(function (p) { if (n < LIMIT && hit(p.id, p.name)) { rows.push(coPartRow(T, p, 0, '')); n++; } });
+      (info.art_meshes || []).forEach(function (m) { if (n < LIMIT && (!q || meshHit(m))) { rows.push(coMeshRow(T, info, m, 0)); n++; } });
+      if (n >= LIMIT) rows.push('<div class="empty">The first ' + LIMIT + ' - narrow it with the filter.</div>');
       return rows.join('') + (n ? '' : '<div class="empty">Nothing matches.</div>');
     }
     function walk(p, depth) {
       var inner = (T.kids[p.id] || []).length + (T.meshOf[p.id] || []).length;
-      rows.push(coRowHtml({ kind: 'parts', id: p.id }, p.id, p.name, depth, inner ? (CO.open[p.id] ? 'open' : 'closed') : ''));
+      rows.push(coPartRow(T, p, depth, inner ? (CO.open[p.id] ? 'open' : 'closed') : ''));
       if (!CO.open[p.id]) return;
       (T.kids[p.id] || []).forEach(function (c) { walk(c, depth + 1); });
-      (T.meshOf[p.id] || []).forEach(function (m) { rows.push(coRowHtml({ kind: 'meshes', id: m }, m, '', depth + 1, '')); });
+      (T.meshOf[p.id] || []).forEach(function (m) { rows.push(coMeshRow(T, info, m, depth + 1)); });
     }
     T.roots.forEach(function (p) { walk(p, 0); });
-    T.loose.forEach(function (m) { rows.push(coRowHtml({ kind: 'meshes', id: m }, m, '(in no part)', 0, '')); });
+    T.loose.forEach(function (m) { rows.push(coMeshRow(T, info, m, 0)); });
     return rows.join('');
   }
   function renderColors() {
@@ -1655,7 +1670,11 @@
     if (CO.avatar !== a.name) { CO.avatar = a.name; CO.sel = { kind: 'all', id: '' }; CO.open = {}; CO.sig = ''; }
     renderPresets();
     var info = coInfo(), q = $('co-f').value.trim().toLowerCase();
-    var sig = a.name + '|' + a.model + '|' + q + '|' + (info ? (info.parts || []).length + ':' + (info.art_meshes || []).length : '-') + '|' + Object.keys(CO.open).join(',');
+    var sig = a.name + '|' + a.model + '|' + q + '|' + CO.view + '|' + (info ? (info.parts || []).length + ':' + (info.art_meshes || []).length : '-') + '|' + Object.keys(CO.open).join(',');
+    var flat = CO.view === 'meshes' && info && (info.art_meshes || []).length;
+    $('co-v-tree').classList.toggle('on', !flat); $('co-v-mesh').classList.toggle('on', !!flat);
+    $('co-views').style.display = info && (info.art_meshes || []).length ? '' : 'none';             // (a PNGtuber has no art meshes)
+    $('co-open-all').style.display = $('co-close-all').style.display = !flat && !q ? '' : 'none';
     if (sig !== CO.sig) { CO.sig = sig; $('co-list').innerHTML = coListHtml(info, q); }          // the rows are only rebuilt when the list itself changes
     paintColors();
   }
@@ -1681,12 +1700,14 @@
     var t = CO.sel, spec = specOf(a.colors || {}, t) || {}, png = coIsPng(), info = coInfo() || {}, title = 'Whole model', sub = 'goes over every part and art mesh';
     if (t.kind === 'parts') {
       var p = (info.parts || []).filter(function (x) { return x.id === t.id; })[0] || {};
-      title = t.id; sub = (p.name ? p.name + ' · ' : '') + (png ? 'a layer' : 'a part - everything inside it');
+      var nIn = info.art_meshes ? (coTree(info).count[t.id] || 0) : 0;
+      title = t.id; sub = (p.name && p.name !== t.id ? p.name + ' · ' : '') + (png ? 'a layer' : 'a part - everything inside it' + (nIn ? ' (' + nIn + ' art mesh' + (nIn > 1 ? 'es' : '') + ': open it in the list to colour them one by one)' : ''));
     } else if (t.kind === 'meshes') {
       var pid = (info.art_mesh_parts || [])[(info.art_meshes || []).indexOf(t.id)];
       title = t.id; sub = 'an art mesh' + (pid ? ' in ' + pid : '');
     }
     $('co-tn').textContent = title; $('co-tk').textContent = sub;
+    $('co-where').style.display = t.kind === 'all' || png ? 'none' : '';
     var m = $('co-m'), o = $('co-o'), al = $('co-a');
     if (document.activeElement !== m) m.value = spec.multiply || '#ffffff';
     if (document.activeElement !== o) o.value = spec.overlay || '#000000';
@@ -1729,13 +1750,32 @@
     var a = cur(); if (!a || !Object.keys(a.colors || {}).length) return;
     coCommit(a, {}); toast('Colours reset');
   };
+  function coFlash(t) {                                      // make it flash on the preview, so it can be found on the model
+    var av = stage && S.sel && stage.avatars[S.sel];
+    if (av && t.kind !== 'all') av.flash(t.kind, t.id);
+  }
   $('co-list').addEventListener('click', function (e) {
     var row = e.target.closest('.corow'); if (!row) return;
-    var tw = e.target.closest('[data-tw]');
-    if (tw) { if (CO.open[tw.dataset.tw]) delete CO.open[tw.dataset.tw]; else CO.open[tw.dataset.tw] = 1; renderColors(); return; }
-    CO.sel = parseKey(row.dataset.k); paintColors();
+    var t = parseKey(row.dataset.k), tw = e.target.closest('[data-tw]');
+    if (tw) { if (CO.open[tw.dataset.tw]) delete CO.open[tw.dataset.tw]; else CO.open[tw.dataset.tw] = 1; renderColors(); return; }   // the arrow only opens / closes
+    var info = coInfo(), T = info && coTree(info), same = tkey(CO.sel) === row.dataset.k;
+    CO.sel = t;
+    if (t.kind === 'parts' && T && ((T.kids[t.id] || []).length + (T.meshOf[t.id] || []).length)) {   // a part: its art meshes open under it (a second click closes it)
+      if (!CO.open[t.id]) CO.open[t.id] = 1; else if (same) delete CO.open[t.id];
+    }
+    renderColors(); coFlash(t);
   });
+  $('co-where').onclick = function () { coFlash(CO.sel); };
   $('co-f').oninput = debounce(renderColors, 120);
+  function coView(v) { CO.view = v; try { localStorage.setItem('hexcast.avatar.coview', v); } catch (e) {} renderColors(); }
+  $('co-v-tree').onclick = function () { coView('tree'); };
+  $('co-v-mesh').onclick = function () { coView('meshes'); };
+  $('co-open-all').onclick = function () {
+    var info = coInfo(); if (!info) return;
+    var T = coTree(info); (info.parts || []).forEach(function (p) { if ((T.kids[p.id] || []).length + (T.meshOf[p.id] || []).length) CO.open[p.id] = 1; });
+    renderColors();
+  };
+  $('co-close-all').onclick = function () { CO.open = {}; renderColors(); };
 
   /* click a part or art mesh on the preview to find it in the list */
   function showTarget(t, partId) {
@@ -1745,7 +1785,7 @@
       var T = coTree(info);
       for (var pid = partId, d = 0; pid && d < 64; d++) { CO.open[pid] = 1; pid = (T.ids[pid] || {}).parent; }
     }
-    CO.sel = t; renderColors();
+    CO.sel = t; renderColors(); coFlash(t);
     var row = Array.prototype.filter.call($('co-list').querySelectorAll('.corow'), function (r) { return r.dataset.k === tkey(t); })[0];
     if (!row) { toast(t.id + ' is not in the list - reload the model', true); return; }
     row.scrollIntoView({ block: 'nearest' });
