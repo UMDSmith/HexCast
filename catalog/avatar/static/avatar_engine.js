@@ -223,7 +223,35 @@
     this.order = (this.config.avatars || []).map(function (a) { return a.name; }).filter(function (n) { return keep[n]; });
     this.order.forEach(function (n, i) { self.avatars[n].node.zIndex = i; });
     this.root.sortableChildren = true;
+    this._mounts();
     if (this.selected && !this.avatars[this.selected]) this.select(null);
+    this._sendHave();
+  };
+
+  /* who hangs from whom (`attach` in the config): link each avatar to its parent when that is drawn here and the chain is no
+     loop; update parents before the avatars that hang from them (a child is placed from where its parent is now); and draw a
+     child just over (or under) its parent. `drawOrder` is the stacking, bottom to top, for picking. */
+  Stage.prototype._mounts = function () {
+    var self = this, want = {}, n, cur, hops;
+    for (n in this.avatars) {
+      var at = this.avatars[n].cfg.attach;
+      if (at && at.to !== n && this.avatars[at.to]) want[n] = at.to;
+    }
+    for (n in this.avatars) {
+      cur = want[n]; hops = 0;
+      while (cur && cur !== n && hops++ < 9) cur = want[cur];
+      this.avatars[n].mountParent = want[n] && cur !== n && hops < 9 ? this.avatars[want[n]] : null;
+    }
+    var seen = {}, upd = [];
+    function visit(a) { if (!a || seen[a.name]) return; seen[a.name] = 1; visit(a.mountParent); upd.push(a.name); }
+    this.order.forEach(function (nm) { visit(self.avatars[nm]); });
+    upd.forEach(function (nm) {                           // (a step of 0.1, half of that one level further down: never as much as a whole place in the list)
+      var a = self.avatars[nm], p = a.mountParent;
+      a.mountDepth = p ? p.mountDepth + 1 : 0;
+      if (p) a.node.zIndex = p.node.zIndex + (a.cfg.attach.layer === 'back' ? -1 : 1) * 0.1 / Math.pow(2, a.mountDepth - 1);
+    });
+    this.updateOrder = upd;
+    this.drawOrder = this.order.slice().sort(function (x, y) { return self.avatars[x].node.zIndex - self.avatars[y].node.zIndex; });
   };
 
   Stage.prototype.command = function (msg) {
@@ -258,14 +286,19 @@
 
   Stage.prototype.tick = function (ticker) {
     var dt = Math.min(0.1, ticker.deltaMS / 1000), now = nowSec();
-    for (var i = 0; i < this.order.length; i++) {
-      var av = this.avatars[this.order[i]];
+    var order = this.updateOrder || this.order;
+    for (var i = 0; i < order.length; i++) {
+      var av = this.avatars[order[i]];
       if (av) av.update(dt, now);
     }
+    this._clipsTick();
     if (this.editable) this._drawSelection();
   };
 
   Stage.prototype.destroy = function () {
+    this._clipOff = true;
+    this.stopClips();
+    if (this._clipWs) { try { this._clipWs.close(); } catch (e) {} this._clipWs = null; }
     for (var n in this.avatars) this.avatars[n].destroy();
     this.avatars = {};
     window.removeEventListener('resize', this._resize);
@@ -278,6 +311,146 @@
     var r = this.app.canvas.getBoundingClientRect();
     var gx = (clientX - r.left) * (this.app.screen.width / r.width), gy = (clientY - r.top) * (this.app.screen.height / r.height);
     return { x: (gx - this.root.position.x) / this.scale, y: (gy - this.root.position.y) / this.scale, gx: gx, gy: gy };
+  };
+
+  /* ------------------------------------------------------------------ soundboard clips glued to an avatar */
+
+  /* The soundboard (Hexcast's own /overlay) plays a clip where its settings say. A clip locked to an avatar plays here instead,
+     on the overlay that draws that avatar: Hexcast sends it down the soundboard socket (role=avatar) and it rides the avatar's
+     pin point the way an item does - as a page layer over the art (or under it), so keying, trim and fade work as in the
+     soundboard. Its sound comes out of this source (silent in the tab's preview). */
+  var CLIP_STILL_MS = 4000, CLIP_ERR = { 1: 'aborted', 2: 'network error', 3: 'decode failed', 4: 'source not supported' };
+
+  Stage.prototype._clipLayer = function (front) {
+    var key = front ? '_clipFront' : '_clipBack';
+    if (!this[key]) {
+      var m = this.mount, cv = this.app.canvas, d = document.createElement('div');
+      if (getComputedStyle(m).position === 'static') m.style.position = 'relative';
+      cv.style.position = 'relative'; cv.style.zIndex = '1';
+      d.style.cssText = 'position:absolute;left:0;top:0;right:0;bottom:0;overflow:hidden;pointer-events:none;z-index:' + (front ? 2 : 0);
+      if (front) m.appendChild(d); else m.insertBefore(d, cv);
+      this[key] = d;
+    }
+    return this[key];
+  };
+
+  Stage.prototype._clipError = function (message, url) {
+    console.error('clip: ' + message, url || '');
+    if (this._clipWs && this._clipWs.readyState === 1) this._clipWs.send(JSON.stringify({ type: 'error', message: message, url: url }));
+  };
+
+  /* play a clip (a soundboard `video` message with `attach`) on the avatar it is locked to; false if that avatar is not drawn here */
+  Stage.prototype.playClip = function (m) {
+    var at = m.attach, av = at && this.avatars[String(at.avatar || '').toLowerCase()];
+    if (!av || !this.app) return false;
+    var self = this, url = m.url, isVideo = /\.(mp4|webm|mov|mkv)$/i.test(url);
+    var el = document.createElement(isVideo ? 'video' : 'img'), visual = el, keyer = null;
+    el.src = url;
+    if (m.chroma && window.HexChroma) {
+      keyer = HexChroma.attach(el, m.chroma);
+      if (keyer) {
+        visual = keyer.canvas;
+        if (isVideo) Object.assign(el.style, { position: 'fixed', left: '-99999px', top: '0' });      // (kept decoding, off screen)
+      }
+    }
+    Object.assign(visual.style, { position: 'absolute', left: '0', top: '0', transformOrigin: '0 0', maxWidth: 'none', maxHeight: 'none',
+                                  visibility: 'hidden', filter: 'drop-shadow(0 8px 24px rgba(0,0,0,0.5))' });
+    var clip = { visual: visual, el: el, keyer: keyer, avatar: av.name, done: false,
+                 at: Object.assign({ x: 50, y: 20, dx: 0, dy: 0, scale: 1, rotation: 0, follow_angle: true, mirror: false }, at) };
+    (this.clips = this.clips || []).push(clip);
+    function finish() {
+      if (clip.done) return;
+      clip.done = true;
+      try { visual.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 300, easing: 'ease-in', fill: 'forwards' }); } catch (e) {}
+      setTimeout(function () { self._clipEnd(clip); }, 320);
+    }
+    if (isVideo) {
+      var sound = !!m.has_audio && this.audioOn && this.role === 'obs';
+      el.autoplay = true; el.playsInline = true; el.loop = false;
+      el.muted = !sound;
+      if (sound && m.volume != null) el.volume = clamp(+m.volume, 0, 1);
+      el.onended = finish;
+      el.addEventListener('error', function () {
+        self._clipError('video ' + (el.error ? (CLIP_ERR[el.error.code] || 'code ' + el.error.code) : 'unknown media error'), url);
+        finish();
+      });
+      var start = m.start || 0, end = m.end;
+      var seekIn = function () { try { if (start) el.currentTime = start; } catch (_) {} };
+      if (el.readyState >= 1) seekIn(); else el.addEventListener('loadedmetadata', seekIn, { once: true });
+      if (end != null) {
+        var watch = function () { if (el.currentTime >= end) { el.removeEventListener('timeupdate', watch); try { el.pause(); } catch (_) {} finish(); } };
+        el.addEventListener('timeupdate', watch);
+      }
+      var pp = el.play();
+      if (pp && pp.catch) pp.catch(function () { el.muted = true; el.play().catch(function (e) { self._clipError('video play failed even muted: ' + e.message, url); finish(); }); });
+    } else {
+      el.onerror = function () { self._clipError('image failed to load', url); finish(); };
+      setTimeout(finish, m.end != null ? Math.max(100, (m.end - (m.start || 0)) * 1000) : CLIP_STILL_MS);
+    }
+    var layer = this._clipLayer(at.layer !== 'back');
+    layer.appendChild(visual);
+    if (visual !== el && isVideo) layer.appendChild(el);
+    try { visual.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200, easing: 'ease-out' }); } catch (e) {}
+    return true;
+  };
+
+  Stage.prototype._clipEnd = function (clip) {
+    var i = this.clips ? this.clips.indexOf(clip) : -1;
+    if (i >= 0) this.clips.splice(i, 1);
+    clip.done = true;
+    if (clip.keyer) { try { clip.keyer.destroy(); } catch (e) {} }
+    try { if (clip.el.pause) clip.el.pause(); } catch (e) {}
+    [clip.visual, clip.el].forEach(function (n) { if (n.parentNode) n.parentNode.removeChild(n); });
+  };
+
+  Stage.prototype.stopClips = function () {
+    var list = (this.clips || []).slice(), self = this;
+    list.forEach(function (c) { self._clipEnd(c); });
+  };
+
+  /* every frame, after the avatars: put each clip where the pin point it is locked to is now (page pixels) */
+  Stage.prototype._clipsTick = function () {
+    var list = this.clips;
+    if (!list || !list.length) return;
+    var s = this.scale || 1, page = { a: s, b: 0, c: 0, d: s, tx: this.root.position.x, ty: this.root.position.y };
+    for (var i = 0; i < list.length; i++) {
+      var c = list[i], av = this.avatars[c.avatar], at = c.at;
+      if (!av || !av.model) { c.visual.style.visibility = 'hidden'; continue; }
+      var f = av.attachFrame(at, at.follow_angle), pm = nodeMatrix(av.node);
+      var m = mmul(page, mmul(pm, mmul(mT(f.x, f.y), mRot(f.rot))));
+      var mirrored = pm.a * pm.d - pm.b * pm.c < 0;
+      c.visual.style.transform = 'matrix(' + [m.a, m.b, m.c, m.d, m.tx, m.ty].map(function (v) { return v.toFixed(4); }).join(',') + ') rotate(' +
+        (at.rotation || 0) + 'deg) scale(' + (at.scale || 1) + ') translate(' + (at.dx || 0) + '%,' + (at.dy || 0) + '%) scaleX(' +
+        (mirrored && !at.mirror ? -1 : 1) + ') translate(-50%,-50%)';
+      c.visual.style.visibility = 'visible';
+    }
+  };
+
+  /* listen for the soundboard's clips locked to an avatar on this stage (the OBS source, and the tab's preview, silent) */
+  Stage.prototype.listenClips = function () {
+    if (this._clipWs || this._clipOff) return;
+    var self = this, backoff = 800;
+    function open() {
+      var ws = self._clipWs = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/overlay?role=' + (self.role === 'obs' ? 'avatar' : 'preview'));
+      ws.onopen = function () { backoff = 800; self._sendHave(); };
+      ws.onmessage = function (ev) {
+        var m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+        if (m.type === 'video' && m.attach) self.playClip(m);
+        else if (m.type === 'stop') self.stopClips();
+      };
+      ws.onclose = function () {
+        self._clipWs = null;
+        if (!self._clipOff) setTimeout(open, backoff);
+        backoff = Math.min(8000, backoff * 2);
+      };
+    }
+    open();
+  };
+
+  /* tell the soundboard which avatars this stage draws, so it sends the clips locked to them here (and plays the rest itself) */
+  Stage.prototype._sendHave = function () {
+    var ws = this._clipWs;
+    if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'avatars', names: Object.keys(this.avatars) }));
   };
 
   /* ------------------------------------------------------------------ preview editing */
@@ -293,12 +466,13 @@
   Stage.prototype.pickItem = function (gx, gy) {
     var self = this;
     function scan(layer) {
-      for (var i = self.order.length - 1; i >= 0; i--) {
-        var av = self.avatars[self.order[i]];
+      var order = self.drawOrder || self.order;
+      for (var i = order.length - 1; i >= 0; i--) {
+        var av = self.avatars[order[i]];
         if (!av || !av.node.visible) continue;
         for (var j = av.items.length - 1; j >= 0; j--) {
           var it = av.items[j];
-          if (!it.sprite || !it.node.visible || it.cfg.layer !== layer) continue;
+          if (!it.sprite || !it.node.visible || it.cfg.layer !== layer || it.cfg.locked) continue;       // (a locked item is not in the way: the click goes through to the model)
           var b = it.sprite.getBounds();
           if (gx >= b.x && gy >= b.y && gx <= b.x + b.width && gy <= b.y + b.height) return { av: av, it: it };
         }
@@ -313,6 +487,11 @@
     this._picking = { name: name, cb: cb };
     if (this.app) this.app.canvas.style.cursor = 'crosshair';
   };
+  /* the same for a pin point: `cb(pin)` gets the spot clicked on the avatar's art (null if the click missed it) */
+  Stage.prototype.pickPin = function (name, cb) {
+    this._picking = { name: name, cb: cb, pin: true };
+    if (this.app) this.app.canvas.style.cursor = 'crosshair';
+  };
   Stage.prototype.cancelPick = function () {
     if (!this._picking) return;
     this._picking = null;
@@ -320,8 +499,9 @@
   };
 
   Stage.prototype.pick = function (gx, gy) {
-    for (var i = this.order.length - 1; i >= 0; i--) {
-      var av = this.avatars[this.order[i]];
+    var order = this.drawOrder || this.order;
+    for (var i = order.length - 1; i >= 0; i--) {
+      var av = this.avatars[order[i]];
       if (av && av.node.visible && av.model && av.hit(gx, gy)) return av.name;
     }
     return null;
@@ -354,7 +534,7 @@
       if (self._picking) {                                          // "pick on the model" (the Colors tab): the click names the part under it
         var pk = self._picking, pav = self.avatars[pk.name];
         self.cancelPick();
-        pk.cb(pav ? pav.partAt(p.gx, p.gy) : null);
+        pk.cb(pav ? (pk.pin ? pav.pinAtGlobal(new PIXI.Point(p.gx, p.gy)) : pav.partAt(p.gx, p.gy)) : null);
         e.preventDefault();
         return;
       }
@@ -368,8 +548,8 @@
         if (hitItem && !hitItem.av.cfg.locked) {
           self.select(hitItem.av.name);
           var it0 = hitItem.it, lp0 = hitItem.av.node.toLocal(new PIXI.Point(p.gx, p.gy));
-          drag = { kind: 'item', av: hitItem.av, it: it0, pinned: !!it0.cfg.pin, dx: it0.node.position.x - lp0.x, dy: it0.node.position.y - lp0.y };
-          it0.cfg = Object.assign({}, it0.cfg, { pin: null });            // follow the pointer while dragged
+          drag = { kind: 'item', av: hitItem.av, it: it0, pinned: !!(it0.cfg.pin || it0.cfg.anchor), dx: it0.node.position.x - lp0.x, dy: it0.node.position.y - lp0.y };
+          it0.cfg = Object.assign({}, it0.cfg, { pin: null, anchor: '' });            // follow the pointer while dragged
           self.emit('item', { avatar: hitItem.av.name, id: it0.cfg.id, select: true });
           cv.setPointerCapture(e.pointerId);
           e.preventDefault();
@@ -380,7 +560,12 @@
         if (!name) return;
         var av = self.avatars[name];
         if (av.cfg.locked) return;
-        drag = { kind: 'move', av: av, sx: p.x, sy: p.y, start: transformOf(av) };
+        if (av.mountParent) {                                          // hung from another avatar: the drag moves where it is glued
+          var P = av.mountParent, at = av.cfg.attach, lg = P.node.toLocal(new PIXI.Point(p.gx, p.gy)), fr = P.attachFrame(at, at.follow_angle);
+          var x0 = Math.round((fr.x / P.boxWidth() * 100 + 50) * 10) / 10, y0 = Math.round((fr.y / H * 100 + 50) * 10) / 10;       // (where it is glued now, as a box spot)
+          drag = { kind: 'mount', av: av, P: P, pinned: fr.pinned, gx: lg.x - fr.x, gy: lg.y - fr.y, x: x0, y: y0 };      // (gx, gy: where the pointer holds it)
+          av.cfg = Object.assign({}, av.cfg, { attach: Object.assign({}, at, { pin: null, anchor: '', x: x0, y: y0 }) });      // follow the pointer while dragged
+        } else drag = { kind: 'move', av: av, sx: p.x, sy: p.y, start: transformOf(av) };
       }
       cv.setPointerCapture(e.pointerId);
       e.preventDefault();
@@ -395,6 +580,14 @@
         drag.it.cfg.x = pos.x; drag.it.cfg.y = pos.y;
         drag.it._place();
         self.emit('item', { avatar: drag.av.name, id: drag.it.cfg.id, patch: { x: pos.x, y: pos.y }, final: false });
+        return;
+      }
+      if (drag.kind === 'mount') {
+        var lq = drag.P.node.toLocal(new PIXI.Point(p.gx, p.gy));
+        drag.x = Math.round(((lq.x - drag.gx) / drag.P.boxWidth() * 100 + 50) * 10) / 10;
+        drag.y = Math.round(((lq.y - drag.gy) / H * 100 + 50) * 10) / 10;
+        drag.av.cfg.attach.x = drag.x; drag.av.cfg.attach.y = drag.y;
+        drag.av._placeNode();
         return;
       }
       if (drag.kind === 'move') {
@@ -418,8 +611,18 @@
       try { cv.releasePointerCapture(e.pointerId); } catch (x) {}
       if (d.kind === 'item') {
         var patch = { x: d.it.cfg.x, y: d.it.cfg.y };
-        if (d.pinned) patch.pin = av.pinAt(d.it) || null;             // a pinned item sticks where it is dropped
+        if (d.pinned) { patch.pin = av.pinAt(d.it) || null; patch.anchor = ''; }       // a pinned item sticks where it is dropped
         self.emit('item', { avatar: av.name, id: d.it.cfg.id, patch: patch, final: true });
+        return;
+      }
+      if (d.kind === 'mount') {
+        var mp = { x: d.x, y: d.y };
+        if (d.pinned) {                                                // glued to a part: it sticks to the part it is dropped on
+          var fa = d.P.attachFrame(av.cfg.attach, false);
+          mp.pin = d.P.pinAtGlobal(d.P.node.toGlobal(new PIXI.Point(fa.x, fa.y))) || null;
+          mp.anchor = '';
+        }
+        self.emit('attach', { avatar: av.name, patch: mp, final: true });
         return;
       }
       self.emit('transform', { name: av.name, t: transformOf(av), final: true });
@@ -450,6 +653,7 @@
       // zoom around the cursor: the point under it stays put
       var px = p.x / W * 100, py = p.y / H * 100;
       var t = { scale: Math.round(s * 1000) / 1000, x: px + (cur.x - px) * f, y: py + (cur.y - py) * f };
+      if (av.mountParent) t = { scale: t.scale };                    // (hung from another avatar: its own spot does not matter)
       av.setTransformNow(t);
       self.emit('transform', { name: name, t: t, final: false });
       clearTimeout(wheelTimer);
@@ -518,6 +722,8 @@
     this.msAcc = 0; this.msN = 0;
     this.items = [];
     this.itemSig = '';
+    this.mountParent = null;     // the avatar this one is glued to (cfg.attach), when it is on this stage (see Stage._mounts)
+    this.mountDepth = 0;         // how many avatars it hangs from, one under the other
     this.lightCfg = null;
     this.light = null;
     this.lightW = 0;
@@ -851,6 +1057,7 @@
     if (this.png) { var tp = performance.now(); this.png.update(step, this.frame, now); this.msAcc += performance.now() - tp; }
     else this.model.update(step * 1000);                                   // (the model's own update runs when it is drawn: see _applyColors)
     for (var i = 0; i < this.items.length; i++) this.items[i].tick(step);
+    if (this._pinMark) this._drawPinMark(now);
     this._lightTick(step, now);
     this.msAcc += performance.now() - t0;
     this.msN++;
@@ -1207,10 +1414,29 @@
   };
 
   Avatar.prototype._placeNode = function () {
-    var c = this.tr.cur;
+    var c = this.tr.cur, at = this.cfg.attach, P = at && this.mountParent;
+    if (P && P.model && P.node) {                         // glued to another avatar: ride its pin point (see Stage._mounts)
+      var f = P.attachFrame(at, at.follow_angle), pm = nodeMatrix(P.node);
+      var mirrored = pm.a * pm.d - pm.b * pm.c < 0;       // a flipped parent mirrors what hangs from it - its art is turned back unless `mirror`
+      var cf = (this.tr.flip ? -1 : 1) * (mirrored && !at.mirror ? -1 : 1);
+      var m = mmul(pm, mmul(mT(f.x, f.y), mRot(f.rot)));
+      m = mmul(m, mmul(mRot(c.rotation * Math.PI / 180), mmul(mS(c.scale, c.scale), mmul(mT((at.dx || 0) / 100 * this.boxWidth(), (at.dy || 0) / 100 * H), mS(cf, 1)))));
+      setNodeMatrix(this.node, m);
+      return;
+    }
     this.node.position.set(c.x / 100 * W, c.y / 100 * H);
     this.node.scale.set(c.scale * (this.tr.flip ? -1 : 1), c.scale);
     this.node.rotation = c.rotation * Math.PI / 180;
+  };
+
+  /* where the avatar stands on the stage now, as the settings that would put it there on its own (letting go of its parent
+     keeps it where it is): {x, y, scale, rotation, flip} */
+  Avatar.prototype.worldPlacement = function () {
+    var m = nodeMatrix(this.node), s = Math.hypot(m.a, m.b) || 1, flip = m.a * m.d - m.b * m.c < 0, rot = Math.atan2(m.b, m.a) * 180 / Math.PI;
+    if (flip) rot += 180;                                  // (the mirror is kept in `flip`, which mirrors before it rotates)
+    if (rot > 180) rot -= 360;
+    return { x: Math.round(m.tx / W * 1000) / 10, y: Math.round(m.ty / H * 1000) / 10, scale: Math.round(s * 1000) / 1000,
+             rotation: Math.round(rot * 10) / 10, flip: flip };
   };
 
   Avatar.prototype._fadeTo = function (to, secs) { this.alpha.to = to; this.alpha.rate = Math.max(0.01, secs || 0.01); };
@@ -1234,14 +1460,9 @@
       var rp = this.png.draw.toLocal(new PIXI.Point(gx, gy)), layer = this.png.layerAt(rp.x, rp.y);
       return layer ? { mesh: null, part: layer.id } : null;
     }
-    var im = this.model.internalModel, cm = im.coreModel, skip = {}, areas = im.hitAreas || {}, n;
-    // a model's hit areas are invisible meshes laid over the art (declared in its settings, or just named like one): not what is meant
-    for (n in areas) {
-      var di = areas[n].index >= 0 ? areas[n].index : (areas[n].id ? im.getDrawableIndex(areas[n].id) : -1);
-      if (di >= 0) skip[di] = true;
-    }
-    for (var d = 0, nd = cm.getDrawableCount(); d < nd; d++) if (/^hit|hit_?area/i.test(cm.getDrawableId(d).getString().s)) skip[d] = true;
-    var lp = this.model.toLocal(new PIXI.Point(gx, gy)), hit = this.meshAt(lp.x, lp.y, skip);
+    var im = this.model.internalModel, cm = im.coreModel;
+    // a model's hit areas are invisible meshes laid over the art: not what is meant
+    var lp = this.model.toLocal(new PIXI.Point(gx, gy)), hit = this.meshAt(lp.x, lp.y, this._hitSkip());
     if (!hit) return null;
     var p = cm.getDrawableParentPartIndex(hit.index);
     return { mesh: hit.id, part: p >= 0 ? this.Parts.ids[p] || null : null };
@@ -1275,15 +1496,96 @@
     return { x: Math.round(((lp.x + (dx || 0)) / bw * 100 + 50) * 10) / 10, y: Math.round(((lp.y + (dy || 0)) / H * 100 + 50) * 10) / 10 };
   };
 
-  /* a pin for an item at its current spot: the art mesh triangle under its centre, or null */
-  Avatar.prototype.pinAt = function (it) {
-    if (!this.model || !it.node) return null;
-    if (this.png) {                                        // a PNGtuber: pinned to the layer under the item
-      var g0 = it.node.getGlobalPosition(), rp = this.png.draw.toLocal(g0), hitL = this.png.layerAt(rp.x, rp.y);
+  /* a pin for the spot under a page point (renderer pixels): the art mesh triangle there (a PNGtuber: the layer), or null.
+     A model's invisible hit areas are looked through - the art under them is what moves. */
+  Avatar.prototype.pinAtGlobal = function (g) {
+    if (!this.model) return null;
+    if (this.png) {                                        // a PNGtuber: pinned to the layer under the point
+      var rp = this.png.draw.toLocal(g), hitL = this.png.layerAt(rp.x, rp.y);
       return hitL ? { mesh: 'layer:' + hitL.id, tri: [0, 0, 0], bary: [hitL.lx, hitL.ly, 0], angle0: 0, follow_angle: true } : null;
     }
-    var g = it.node.getGlobalPosition(), lp = this.model.toLocal(g), hit = this.meshAt(lp.x, lp.y);
+    var lp = this.model.toLocal(g), hit = this.meshAt(lp.x, lp.y, this._hitSkip());
     return hit ? { mesh: hit.id, tri: hit.tri, bary: hit.bary, angle0: hit.angle, follow_angle: true } : null;
+  };
+
+  /* a pin for an item at its current spot: the art mesh triangle under its centre, or null */
+  Avatar.prototype.pinAt = function (it) {
+    return it.node ? this.pinAtGlobal(it.node.getGlobalPosition()) : null;
+  };
+
+  /* one of the model's named pin points (any case): its pin, or null */
+  Avatar.prototype.anchorPin = function (name) {
+    var meta = this.stage.models[this.modelId], t = meta && meta.anchors;
+    if (!name || !t) return null;
+    if (t[name]) return t[name];
+    var low = String(name).toLowerCase();
+    for (var k in t) if (k.toLowerCase() === low) return t[k];
+    return null;
+  };
+
+  /* where a pin sits right now, in this avatar's node space: {x, y, rot} (rot: how far the part under it has turned since the pin
+     was made, in radians), or null when the part is not there (another model, not loaded) */
+  Avatar.prototype.pinFrame = function (pin) {
+    if (!pin) return null;
+    if (this.png) {                                        // pinned to a PNGtuber layer: x, y in its own space
+      if (!/^layer:/.test(pin.mesh)) return null;
+      var gp = this.png.layerPoint(pin.mesh.slice(6), pin.bary[0], pin.bary[1]), ly = this.png.byId[pin.mesh.slice(6)];
+      if (!gp || !ly) return null;
+      var lp = this.node.toLocal(gp);
+      return { x: lp.x, y: lp.y, rot: Math.atan2(ly.spriteM.b, ly.spriteM.a) };
+    }
+    if (!this.model) return null;
+    try {
+      var im = this.model.internalModel, d = im.getDrawableIndex(pin.mesh);
+      if (d < 0) return null;
+      var v = im.getDrawableVertices(d), t = pin.tri, b = pin.bary;
+      var x = v[t[0] * 2] * b[0] + v[t[1] * 2] * b[1] + v[t[2] * 2] * b[2];
+      var y = v[t[0] * 2 + 1] * b[0] + v[t[1] * 2 + 1] * b[1] + v[t[2] * 2 + 1] * b[2];
+      var g = this.model.toGlobal(new PIXI.Point(x, y)), lq = this.node.toLocal(g);
+      return { x: lq.x, y: lq.y, rot: Math.atan2(v[t[1] * 2 + 1] - v[t[0] * 2 + 1], v[t[1] * 2] - v[t[0] * 2]) - (pin.angle0 || 0) };
+    } catch (e) { return null; }
+  };
+
+  /* the spot a thing glued to this avatar (an item, another avatar, a soundboard clip: `spec` has anchor, pin, x, y) is at, in
+     this avatar's node space: {x, y, rot, pinned}. The model's pin point `spec.anchor`, else `spec.pin`, else the box spot x / y
+     (% of the model's box: 0,0 its top left, 50,50 its centre). rot follows the part under the pin unless `follow` is false. */
+  Avatar.prototype.attachFrame = function (spec, follow) {
+    var pin = this.anchorPin(spec.anchor) || spec.pin, f = pin && this.pinFrame(pin);
+    if (f) return { x: f.x, y: f.y, rot: follow !== false && pin.follow_angle !== false ? f.rot : 0, pinned: true };
+    return { x: (spec.x - 50) / 100 * this.boxWidth(), y: (spec.y - 50) / 100 * H, rot: 0, pinned: false };
+  };
+
+  /* mark a pin (or the model's pin point called `pin` when it is a name) in the preview for a moment: a ring and a cross that
+     ride the part, so the spot can be seen */
+  Avatar.prototype.flashPin = function (pin, secs) {
+    if (typeof pin === 'string') pin = this.anchorPin(pin);
+    if (!pin || !this.model) return;
+    if (!this._pinMark) { this._pinMark = new PIXI.Graphics(); this._pinMark.zIndex = 1e4; this.front.addChild(this._pinMark); }
+    this._pinMarkPin = pin;
+    this._pinMarkUntil = nowSec() + (secs || 2);
+  };
+
+  Avatar.prototype._drawPinMark = function (now) {
+    var g = this._pinMark;
+    g.clear();
+    var left = this._pinMarkUntil - now;
+    if (left <= 0) { this.front.removeChild(g); try { g.destroy(); } catch (e) {} this._pinMark = null; return; }
+    var f = this.pinFrame(this._pinMarkPin);
+    if (!f) return;
+    var a = Math.min(1, left * 2) * (0.65 + 0.35 * Math.sin(now * 12));
+    g.circle(f.x, f.y, 16).stroke({ width: 4, color: 0xff5fa2, alpha: a });
+    g.moveTo(f.x - 24, f.y).lineTo(f.x + 24, f.y).moveTo(f.x, f.y - 24).lineTo(f.x, f.y + 24).stroke({ width: 3, color: 0xffffff, alpha: a });
+  };
+
+  /* the drawables a click should look through: a model's invisible hit areas (declared in its settings, or just named like one) */
+  Avatar.prototype._hitSkip = function () {
+    var im = this.model.internalModel, cm = im.coreModel, skip = {}, areas = im.hitAreas || {}, n;
+    for (n in areas) {
+      var di = areas[n].index >= 0 ? areas[n].index : (areas[n].id ? im.getDrawableIndex(areas[n].id) : -1);
+      if (di >= 0) skip[di] = true;
+    }
+    for (var d = 0, nd = cm.getDrawableCount(); d < nd; d++) if (/^hit|hit_?area/i.test(cm.getDrawableId(d).getString().s)) skip[d] = true;
+    return skip;
   };
 
   function bary(px, py, ax, ay, bx, by, cx, cy) {
@@ -1442,7 +1744,7 @@
       case 'speak': this.speak(c); break;
       case 'stop_speaking': this.stopSpeaking(); break;
       case 'light': this.lightOverride = !c.save && !c.reset; this.setLight(c.light, c.fade == null ? 0.6 : c.fade); break;
-      case 'item_add': case 'item_remove': case 'item_update': case 'items_clear': break;   // arrives as config
+      case 'item_add': case 'item_remove': case 'item_update': case 'items_clear': case 'attach': case 'detach': break;   // arrives as config
       case 'reload': if (this.cfg.model) this.load(this.cfg.model); break;
     }
   };
@@ -1638,43 +1940,18 @@
     this._place();
   };
 
+  /* at the model's pin point (`anchor`), else the raw pin, else - not pinned - x / y in % of the model's own box
+     (0,0 its top left, 50,50 its centre); an anchor the model lacks (another model) falls back the same way */
   Item.prototype._place = function () {
-    var cfg = this.cfg, av = this.av, pin = cfg.pin;
-    if (pin && av.png && /^layer:/.test(pin.mesh)) {      // pinned to a PNGtuber layer: x, y in its own space
-      var gp = av.png.layerPoint(pin.mesh.slice(6), pin.bary[0], pin.bary[1]);
-      var ly = av.png.byId[pin.mesh.slice(6)];
-      if (gp && ly) {
-        var lp2 = av.node.toLocal(gp);
-        this.node.position.set(lp2.x, lp2.y);
-        this.node.rotation = (cfg.rotation || 0) * Math.PI / 180 + (pin.follow_angle !== false ? Math.atan2(ly.spriteM.b, ly.spriteM.a) : 0);
-        return;
-      }
-    }
-    if (pin && av.model && !av.png) {
-      try {
-        var im = av.model.internalModel, d = im.getDrawableIndex(pin.mesh);
-        if (d >= 0) {
-          var v = im.getDrawableVertices(d), t = pin.tri, b = pin.bary;
-          var x = v[t[0] * 2] * b[0] + v[t[1] * 2] * b[1] + v[t[2] * 2] * b[2];
-          var y = v[t[0] * 2 + 1] * b[0] + v[t[1] * 2 + 1] * b[1] + v[t[2] * 2 + 1] * b[2];
-          var g = av.model.toGlobal(new PIXI.Point(x, y)), lp = av.node.toLocal(g);
-          this.node.position.set(lp.x, lp.y);
-          var ang = Math.atan2(v[t[1] * 2 + 1] - v[t[0] * 2 + 1], v[t[1] * 2] - v[t[0] * 2]);
-          this.node.rotation = (cfg.rotation || 0) * Math.PI / 180 + (pin.follow_angle !== false ? ang - (pin.angle0 || 0) : 0);
-          return;
-        }
-      } catch (e) {}
-    }
-    // not pinned: x / y are % of the model's own box (0,0 its top left, 50,50 its centre)
-    var bw = av.boxWidth();
-    this.node.position.set((cfg.x - 50) / 100 * bw, (cfg.y - 50) / 100 * H);
-    this.node.rotation = (cfg.rotation || 0) * Math.PI / 180;
+    var cfg = this.cfg, f = this.av.attachFrame(cfg);
+    this.node.position.set(f.x, f.y);
+    this.node.rotation = (cfg.rotation || 0) * Math.PI / 180 + f.rot;
   };
 
   Item.prototype.tick = function (dt) {
     if (!this.ready) return;
     if (this.l2d) this.l2d.update(dt * 1000);
-    if (this.cfg.pin) this._place();
+    if (this.cfg.pin || this.cfg.anchor) this._place();
   };
 
   Item.prototype.destroy = function () {
@@ -1692,7 +1969,18 @@
              tx: p.a * q.tx + p.c * q.ty + p.tx, ty: p.b * q.tx + p.d * q.ty + p.ty };
   }
   function mT(x, y) { return { a: 1, b: 0, c: 0, d: 1, tx: x, ty: y }; }
+  function mRot(r) { var c = Math.cos(r), s = Math.sin(r); return { a: c, b: s, c: -s, d: c, tx: 0, ty: 0 }; }
+  function mS(x, y) { return { a: x, b: 0, c: 0, d: y, tx: 0, ty: 0 }; }
   var M_ID = mT(0, 0);
+  /* a display object's own transform (position, rotation, scale; no pivot or skew) as a matrix, and the other way round
+     (a matrix of a rotation, an even scale and maybe a mirror: the scale is signed so the mirror is kept) */
+  function nodeMatrix(n) { return mmul(mT(n.position.x, n.position.y), mmul(mRot(n.rotation), mS(n.scale.x, n.scale.y))); }
+  function setNodeMatrix(n, m) {
+    var sx = Math.hypot(m.a, m.b) || 1e-6;
+    n.position.set(m.tx, m.ty);
+    n.rotation = Math.atan2(m.b, m.a);
+    n.scale.set(sx, (m.a * m.d - m.b * m.c) / sx);
+  }
   function mApply(m, x, y) { return { x: m.a * x + m.c * y + m.tx, y: m.b * x + m.d * y + m.ty }; }
   function mInv(m) {
     var det = m.a * m.d - m.b * m.c || 1e-9;

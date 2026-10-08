@@ -1,9 +1,9 @@
 {
   "id": "avatar",
   "name": "Avatars",
-  "version": "1.5.1",
+  "version": "1.6.0",
   "api": 1,
-  "description": "Live2D avatars and PNGtubers your AI drives through the API - a lighter VTube Studio without face tracking. Any number on screen, vowel lipsync, expressions, motions, emotions, gaze, items, part recoloring and light, with a live preview to place them.",
+  "description": "Live2D avatars and PNGtubers your AI drives through the API - a lighter VTube Studio without face tracking. Any number on screen, vowel lipsync, expressions, motions, emotions, gaze, items, part recoloring and light, and props, other models and Soundboard clips that ride a pin point on a model - with a live preview to place them.",
   "icon": "🎭",
   "color": "#ff5fa2",
   "category": "Overlays",

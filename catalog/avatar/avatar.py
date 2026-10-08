@@ -16,7 +16,8 @@ avatars that must be sized and moved in OBS on their own go on their own overlay
 keeps a model alive by itself - blinking, breathing, idle sway, eyes that wander, head motion while
 talking - and the API steers it: any parameter, expressions, motions, emotions, gaze, gestures,
 placement, speech with lipsync (vowels, like VTube Studio's advanced lipsync), items, part colours
-(tints) and light.
+(tints) and light. Items, other avatars (a mini model on a head) and soundboard clips can be glued
+to a spot on a model - a named pin point - and then move with that part of the art.
 
 The server holds what has to survive an OBS reload (settings, plus the "sticky" live state: held
 parameters, part opacities and colours, expressions, emotion, gaze, light, items) and relays
@@ -110,6 +111,8 @@ AVATAR_DEFAULTS: dict[str, Any] = {
     "items": [],
     # the avatar's own colours (see norm_look): {"all": spec, "parts": {id: spec}, "meshes": {id: spec}}
     "colors": {},
+    # glued to another avatar on the same overlay (see norm_attach), or None
+    "attach": None,
     "light": {"enabled": False, "preset": "none", "color": "#ffd9a8", "intensity": 0.5, "angle": -35,
               "ambient": "#ffffff", "ambient_amount": 0.0, "rim": "#7fb6ff", "rim_amount": 0.0, "speed": 1.0},
 }
@@ -286,20 +289,28 @@ def merge_look(base: dict, patch: dict) -> dict:
     return {k: v for k, v in out.items() if v}
 
 
+def _norm_pin(pin: Any) -> dict | None:
+    """A spot on a model's art, glued to the art mesh triangle under it (a PNGtuber: to the layer under it, as a point in
+    the layer's own pixels), so it moves with that part: {mesh, tri, bary, angle0, follow_angle}. Or None."""
+    if not isinstance(pin, dict) or not pin.get("mesh"):
+        return None
+    tri = [int(_num(v, 0, 1e6, 0)) for v in (pin.get("tri") or [])][:3]
+    span = 1e5 if str(pin["mesh"]).startswith("layer:") else 2           # layer pins: a point in pixels
+    bary = [float(_num(v, -span, span, 0)) for v in (pin.get("bary") or [])][:3]
+    if len(tri) != 3 or len(bary) != 3:
+        return None
+    return {"mesh": str(pin["mesh"])[:120], "tri": tri, "bary": bary,
+            "angle0": float(_num(pin.get("angle0"), -10, 10, 0)), "follow_angle": bool(pin.get("follow_angle", True))}
+
+
+def _anchor_name(v: Any) -> str:
+    """The name of a pin point: up to 40 characters, no surrounding space (matched without regard to case)."""
+    return re.sub(r"\s+", " ", str(v or "")).strip()[:40]
+
+
 def _norm_item(it: Any) -> dict | None:
     if not isinstance(it, dict) or not it.get("item"):
         return None
-    pin = it.get("pin")
-    if isinstance(pin, dict) and pin.get("mesh"):
-        tri = [int(_num(v, 0, 1e6, 0)) for v in (pin.get("tri") or [])][:3]
-        span = 1e5 if str(pin["mesh"]).startswith("layer:") else 2           # layer pins: a point in pixels
-        bary = [float(_num(v, -span, span, 0)) for v in (pin.get("bary") or [])][:3]
-        pin = {"mesh": str(pin["mesh"])[:120], "tri": tri, "bary": bary,
-               "angle0": float(_num(pin.get("angle0"), -10, 10, 0)), "follow_angle": bool(pin.get("follow_angle", True))}
-        if len(tri) != 3 or len(bary) != 3:
-            pin = None
-    else:
-        pin = None
     return {
         "id": str(it.get("id") or uuid.uuid4().hex[:8])[:16],
         "item": library.slug(str(it["item"]), "item"),
@@ -307,13 +318,31 @@ def _norm_item(it: Any) -> dict | None:
         "scale": _num(it.get("scale"), 0.02, 20, 1), "rotation": _num(it.get("rotation"), -360, 360, 0),
         "flip": bool(it.get("flip")), "opacity": _num(it.get("opacity"), 0, 1, 1),
         "layer": "back" if it.get("layer") == "back" else "front", "order": int(_num(it.get("order"), -30, 30, 0)),
-        "fps": _num(it.get("fps"), 1, 60, 12), "visible": bool(it.get("visible", True)), "pin": pin,
+        "fps": _num(it.get("fps"), 1, 60, 12), "visible": bool(it.get("visible", True)), "pin": _norm_pin(it.get("pin")),
+        "anchor": _anchor_name(it.get("anchor")), "locked": bool(it.get("locked")),
     }
+
+
+def norm_attach(d: Any, own: str = "") -> dict | None:
+    """Where an avatar is glued to another avatar on the same overlay (a mini model on a head), or None for free-standing:
+    {to, anchor, pin, x, y, dx, dy, layer, follow_angle, mirror}. It rides the parent's pin point (a named `anchor` of the
+    parent's model, else the raw `pin`, else the spot x/y - % of the parent's box); its own centre sits dx/dy (% of its own
+    box) from there, and its own scale / rotation / flip apply on top of the parent's."""
+    if not isinstance(d, dict):
+        return None
+    to = str(d.get("to") or "").strip().lower()
+    if not NAME_RE.match(to) or to == own:
+        return None
+    return {"to": to, "anchor": _anchor_name(d.get("anchor")), "pin": _norm_pin(d.get("pin")),
+            "x": _num(d.get("x"), -100, 200, 50), "y": _num(d.get("y"), -100, 200, 20),
+            "dx": _num(d.get("dx"), -300, 300, 0), "dy": _num(d.get("dy"), -300, 300, 0),
+            "layer": "back" if d.get("layer") == "back" else "front",
+            "follow_angle": bool(d.get("follow_angle", True)), "mirror": bool(d.get("mirror"))}
 
 
 def norm_avatar(d: dict, existing: dict | None = None) -> dict:
     a = _deep_merge(AVATAR_DEFAULTS, existing or {})
-    a = _deep_merge(a, {k: v for k, v in (d or {}).items() if k not in ("emotions", "items", "colors")})
+    a = _deep_merge(a, {k: v for k, v in (d or {}).items() if k not in ("emotions", "items", "colors", "attach")})
     home = str(a.get("overlay") or "").strip().lower()
     out = {
         "name": str(a.get("name") or ""), "model": library.slug(str(a.get("model") or ""), "") if a.get("model") else "",
@@ -345,6 +374,8 @@ def norm_avatar(d: dict, existing: dict | None = None) -> dict:
     out["items"] = [x for x in (_norm_item(it) for it in (items or [])[:60]) if x]
     cols = d.get("colors") if d and "colors" in d else (existing or {}).get("colors")      # replaced as a whole, like emotions
     out["colors"] = norm_look(cols)
+    att = d.get("attach") if d and "attach" in d else (existing or {}).get("attach")      # replaced as a whole, too
+    out["attach"] = norm_attach(att, out["name"])
     lt = a.get("light") or {}
     out["light"] = {"enabled": bool(lt.get("enabled")),
                     "preset": lt.get("preset") if lt.get("preset") in LIGHT_PRESETS else "none",
@@ -531,6 +562,64 @@ def _preset_names(a: dict, table: dict, names: list[str]) -> list[str]:
         have = ", ".join(sorted(table, key=str.lower)) or "none yet - save one on the Colors tab"
         raise CommandError(f"{a['name']}'s model has no colour preset {', '.join(map(repr, missing))} (it has: {have})")
     return out
+
+
+def _anchors_of(mid: str) -> dict:
+    if not mid:
+        return {}
+    try:
+        return library.anchors(mid)
+    except library.LibraryError:
+        return {}
+
+
+def _anchor_real(table: dict, name: str) -> str | None:
+    """The model's own spelling of a pin point's name (any case), or None."""
+    name = _anchor_name(name)
+    return name if name in table else next((k for k in table if k.lower() == name.lower()), None)
+
+
+def _check_anchor(a: dict, name: str) -> str:
+    """A pin point of avatar `a`'s model, by name (any case); an error that lists them otherwise."""
+    if not name:
+        return ""
+    table = _anchors_of(a.get("model") or "")
+    real = _anchor_real(table, name)
+    if real is None:
+        have = ", ".join(sorted(table, key=str.lower)) or "none yet - make one on the Avatars tab (Items > Pin points)"
+        raise CommandError(f"{a['name']}'s model has no pin point {name!r} (it has: {have})", 404)
+    return real
+
+
+def _mount_chain(name: str, to: str) -> list[str]:
+    """The avatars `name` would hang from if it were glued to `to`: to, what `to` hangs from ... (stops at a loop or after 8)."""
+    chain: list[str] = []
+    cur = to
+    while cur and cur not in chain and len(chain) < 8:
+        chain.append(cur)
+        nxt = next((x for x in CONFIG["avatars"] if x["name"] == cur), None)
+        cur = ((nxt or {}).get("attach") or {}).get("to") or ""
+        if cur == name:
+            chain.append(name)
+            break
+    return chain
+
+
+def check_attach(name: str, att: dict | None) -> dict | None:
+    """The attach an avatar is about to get, checked: the parent exists, it is another avatar, the pin point exists on the
+    parent's model and the glue would not make a loop (A on B on A). Returns it normalised, with the pin point's own spelling."""
+    if att is None:
+        return None
+    if att["to"] == name:
+        raise CommandError("an avatar cannot be glued to itself")
+    parent = avatar(att["to"])
+    if name in _mount_chain(name, parent["name"]):
+        raise CommandError(f"{name} cannot hang from {parent['name']}: {parent['name']} already hangs from {name} (that is a loop)")
+    if len(_mount_chain(name, parent["name"])) > 4:
+        raise CommandError("avatars can hang from each other up to 4 deep")
+    if att["anchor"] and parent.get("model"):
+        att = {**att, "anchor": _check_anchor(parent, att["anchor"])}
+    return att
 
 
 def suggest_emotions(model_id: str) -> dict:
@@ -1109,6 +1198,8 @@ async def _command_one(name: str, kind: str, cmd: dict, source: str) -> dict:
         out.update({"light": lt, "fade": _num(cmd.get("fade", 0.6), 0, 30, 0.6)})
     elif kind in ("item_add", "item_remove", "item_update", "items_clear"):
         out.update(await _items_command(a, kind, cmd))
+    elif kind in ("attach", "detach"):
+        out.update(await _attach_command(a, kind, cmd))
     elif kind == "reload":
         await broadcast_library()                 # files added to the model's folder show up
     else:
@@ -1123,6 +1214,8 @@ async def _command_one(name: str, kind: str, cmd: dict, source: str) -> dict:
 
 async def _items_command(a: dict, kind: str, cmd: dict) -> dict:
     items = a["items"]
+    if kind != "items_clear" and cmd.get("anchor"):
+        cmd = {**cmd, "anchor": _check_anchor(a, _anchor_name(cmd["anchor"]))}          # (an error that lists the model's pin points)
     if kind == "items_clear":
         a["items"] = []
     elif kind == "item_add":
@@ -1147,6 +1240,48 @@ async def _items_command(a: dict, kind: str, cmd: dict) -> dict:
     return {"items": a["items"], "fade": _num(cmd.get("fade", 0.3), 0, 30, 0.3)}
 
 
+ATTACH_FIELDS = ("to", "anchor", "pin", "x", "y", "dx", "dy", "layer", "follow_angle", "mirror")
+
+
+async def _attach_command(a: dict, kind: str, cmd: dict) -> dict:
+    """Glue an avatar to another one (a mini model on a head), or let it go. Kept in the config, like items: it stays there
+    until it is detached. `detach` returns it to its own spot (x, y, scale, rotation, flip - send some to put it elsewhere)."""
+    name = a["name"]
+    if kind == "detach":
+        a["attach"] = None
+        place = {k: cmd[k] for k in ("x", "y", "scale", "rotation", "flip") if k in cmd}
+        if place:
+            n = norm_avatar(place, a)
+            a.update({k: n[k] for k in place})
+            _live(name)["transform"] = None
+        note = ""
+    else:
+        cur = a.get("attach") or {}
+        patch = {k: cmd[k] for k in ATTACH_FIELDS if k in cmd}
+        to = str(patch.get("to") or cur.get("to") or "").strip().lower()
+        if not to:
+            raise CommandError("send `to`: the avatar to hang from (and `anchor`: one of its model's pin points)")
+        base = cur if to == cur.get("to") else {}                  # another parent: a fresh start (the old pin points were of another model)
+        att = norm_attach({**base, **patch, "to": to}, name)
+        if att is None:
+            raise CommandError(f"`to` is the name of another avatar ({', '.join(x['name'] for x in CONFIG['avatars'] if x['name'] != name) or 'there is none yet'})")
+        a["attach"] = check_attach(name, att)
+        parent = avatar(att["to"])
+        note = "" if parent["overlay"] == a["overlay"] else (
+            f"{name} is on overlay {a['overlay']!r} and {parent['name']} on {parent['overlay']!r}: it only hangs from it while they share an overlay")
+    save_config()
+    await HUB.everyone({"type": "config", "config": CONFIG})
+    return {"attach": a["attach"], "note": note, "fade": 0}
+
+
+def _attach_gone(old: str, new: str | None) -> None:
+    """An avatar was renamed (`new`) or deleted (None): what hung from it follows the new name, or lets go."""
+    for x in CONFIG["avatars"]:
+        att = x.get("attach")
+        if att and att["to"] == old:
+            x["attach"] = {**att, "to": new} if new else None
+
+
 def _summary(kind: str, out: dict) -> str:
     if kind == "params":
         vals = out.get("values") or {}
@@ -1158,6 +1293,11 @@ def _summary(kind: str, out: dict) -> str:
         return ", ".join(rows[:3]) + (f" (+{len(rows) - 3})" if len(rows) > 3 else "") + (" (saved)" if out.get("save") else "")
     if kind == "color_preset":
         return ", ".join(f"{n} {s}" for n, s in (out.get("states") or {}).items())
+    if kind == "attach":
+        at = out.get("attach") or {}
+        return f"to {at.get('to')}" + (f" at {at['anchor']}" if at.get("anchor") else "")
+    if kind == "detach":
+        return "let go"
     if kind == "expression" and len(out.get("states") or {}) > 1:
         return ", ".join(f"{n} {s}" for n, s in out["states"].items())
     for k in ("name", "visible"):
@@ -1330,6 +1470,7 @@ def avatar_info(name: str) -> dict:
         "loaded": bool(info), "parameters": info.get("parameters", []), "parts": info.get("parts", []),
         "art_meshes": info.get("drawables", []), "art_mesh_parts": info.get("drawable_parts", []),
         "hit_areas": info.get("hit_areas", []), "color_presets": sorted(_color_presets_of(a), key=str.lower),
+        "anchors": sorted(_anchors_of(a["model"]), key=str.lower), "attach": a.get("attach"),
         "color_default": library.color_default(a["model"]) if a.get("model") else "",
         "expressions": [e["name"] for e in meta.get("expressions", [])],
         "motions": [{"name": m["name"], "group": m["group"], "index": m["index"]} for m in meta.get("motions", [])],
@@ -1615,6 +1756,48 @@ async def api_color_preset_delete(mid: str, name: str):
     return {"ok": True, "presets": sorted(table, key=str.lower), "default": "" if default == real else default}
 
 
+@router.get("/api/models/{mid}/anchors")
+@guarded
+async def api_anchors(mid: str):
+    return {"anchors": library.anchors(mid)}
+
+
+@router.post("/api/models/{mid}/anchors")
+@guarded
+async def api_anchor_save(mid: str, request: Request):
+    """Save a pin point on the model: a `name` and the `pin` (a spot on the art: the Avatars tab makes one with Pick on the model)."""
+    library.model_dir(mid)
+    body = await _json(request)
+    name = _anchor_name(body.get("name"))
+    if not name:
+        raise CommandError("send the pin point's `name`")
+    pin = _norm_pin(body.get("pin"))
+    if pin is None:
+        raise CommandError("send its `pin`: {mesh, tri, bary, angle0} - a spot on the art (the Avatars tab makes one with 'Pick on the model')")
+    table = library.anchors(mid)
+    for old in [k for k in table if k.lower() == name.lower()]:       # a name is one pin point, whatever its case
+        del table[old]
+    table[name] = pin
+    if len(table) > 60:
+        raise CommandError("a model keeps up to 60 pin points")
+    library.save_anchors(mid, table)
+    await broadcast_library()
+    return {"ok": True, "name": name, "anchors": sorted(table, key=str.lower)}
+
+
+@router.post("/api/models/{mid}/anchors/{name}/delete")
+@guarded
+async def api_anchor_delete(mid: str, name: str):
+    table = library.anchors(mid)
+    real = _anchor_real(table, name)
+    if real is None:
+        raise CommandError(f"no pin point {name!r} on this model", 404)
+    del table[real]
+    library.save_anchors(mid, table)
+    await broadcast_library()
+    return {"ok": True, "anchors": sorted(table, key=str.lower)}
+
+
 @router.post("/api/models/{mid}/delete")
 @guarded
 async def api_model_delete(mid: str, request: Request):
@@ -1802,6 +1985,7 @@ async def api_avatar_create(request: Request):
         a["emotions"] = suggest_emotions(mid)
     if mid and "colors" not in body:                  # the model's own default colours, if it has any
         a["colors"] = _default_look(mid)
+    a["attach"] = check_attach(name, a["attach"])
     neighbours = sum(1 for x in CONFIG["avatars"] if x["overlay"] == a["overlay"])
     if "x" not in body and neighbours:             # spread new avatars out (on their own overlay)
         a["x"] = [50, 25, 75, 15, 85][neighbours % 5]
@@ -1826,6 +2010,11 @@ async def api_avatar_update(name: str, request: Request):
         library.model_dir(str(body["model"]))
     if "overlay" in body:
         body = {**body, "overlay": overlay_id(body["overlay"])}
+    if "attach" in body:                          # hung from another avatar (null lets go)
+        att = norm_attach(body["attach"], name)
+        if body["attach"] and att is None:
+            raise CommandError("`attach.to` is the name of another avatar")
+        body = {**body, "attach": check_attach(name, att)}
     new = norm_avatar({k: v for k, v in body.items() if k != "name"}, a)
     new["name"] = name
     if body.get("model") and body["model"] != a["model"] and "emotions" not in body:
@@ -1876,6 +2065,7 @@ async def api_avatar_rename(name: str, request: Request):
         raise CommandError(f"{new!r} is taken", 409)
     a = avatar(name)
     a["name"] = new
+    _attach_gone(name, new)                       # what hangs from it keeps hanging
     if name in LIVE:
         LIVE[new] = LIVE.pop(name)
     save_config()
@@ -1889,6 +2079,7 @@ async def api_avatar_delete(name: str):
     a = avatar(name)
     CONFIG["avatars"].remove(a)
     LIVE.pop(name, None)
+    _attach_gone(name, None)
     save_config()
     await broadcast_config()
     return {"ok": True}
@@ -1987,7 +2178,7 @@ async def api_avatar_live_params(name: str):
 # every command, also as its own route: POST /avatar/api/avatars/<name>/<command>
 COMMANDS = ["params", "release", "parts", "release_parts", "colors", "release_colors", "color_preset", "clear_color_presets", "expression", "clear_expressions", "motion", "stop_motion", "emotion", "face",
             "look", "gesture", "transform", "visible", "stop_speaking", "light", "item_add", "item_remove",
-            "item_update", "items_clear", "reload"]
+            "item_update", "items_clear", "attach", "detach", "reload"]
 
 
 def _source(request: Request) -> str:
@@ -2066,7 +2257,10 @@ API_ROUTES = [
     "POST /avatar/api/avatars/<name>/show | hide   {fade}",
     "POST /avatar/api/avatars/<name>/speak         audio (multipart / raw / {url} / {audio_b64}), ?wait=1",
     "POST /avatar/api/avatars/<name>/stop_speaking",
-    "POST /avatar/api/avatars/<name>/item_add      {item, x, y, scale, layer, pin}",
+    "POST /avatar/api/avatars/<name>/item_add      {item, x, y, scale, layer, pin, anchor, locked} - anchor: one of the model's pin points (GET .../info lists them); item_update takes the same",
+    "POST /avatar/api/avatars/<name>/attach        {to, anchor, x, y, dx, dy, layer, follow_angle, mirror} - hang this avatar from another on the same overlay (a mini model on a head); it rides the pin point",
+    "POST /avatar/api/avatars/<name>/detach        {x, y, scale, rotation, flip} - let go; back to its own spot unless you send another",
+    "GET  /avatar/api/models/<id>/anchors          the model's pin points  |  POST {name, pin} saves one (the tab makes pins), POST .../<name>/delete",
     "POST /avatar/api/avatars/<name>/light         {preset, color, intensity, angle, rim, ambient}",
     "POST /avatar/api/avatars/<name>/command       {cmd: <any of the above>, ...}",
     "WS   /avatar/ws/control                       the same commands as JSON, plus events back",

@@ -12,6 +12,7 @@
 <body>
 <div id="stage"></div>
 <div id="note"></div>
+<script src="/static/chroma.js"></script>
 <script>
 /* OBS browser source (1920x1080). It draws one overlay - /avatar/overlay is `main`, /avatar/overlay/guest is
    `guest` - which is the avatars the Avatars tab put on it, so each overlay can be scaled and moved in OBS
@@ -72,6 +73,7 @@
   stage.init().then(function () {
     ready = true;
     queue.splice(0).forEach(handle);
+    stage.listenClips();                                  // soundboard clips locked to an avatar here (its sound comes out of this source)
   }).catch(function (e) { say('Avatars: ' + e.message); console.error(e); });
   connect();
 })();

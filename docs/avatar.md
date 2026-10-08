@@ -33,7 +33,7 @@ That source shows the avatars on the **main overlay** — all of them, until you
 - **The live preview** is the same renderer as OBS, so what you see is what is on stream. **Drag** an avatar to move it, **scroll** to zoom around the cursor, drag the **dot** above it to rotate, **double-click** to reset; hold **Shift** to snap. Items drag and scroll the same way. The bar above it shows the OBS source's frame rate and what each avatar costs.
 - **Avatars** are named slots — `main`, `guest`, `cat` … — each showing a model. The name is what your bot uses. There is no limit on how many; the same model can be on two avatars. Chips above the preview select one (the ones on the overlay you are looking at); **Bring forward** / **Send back** change which is in front of the others on its overlay.
 - **Overlays** are the row above the chips: one tab per OBS source, a green dot when that source is connected, **+ Overlay** to add one. The preview shows the selected overlay only.
-- **The inspector** (right) for the selected avatar: Placement · Face & Mood (emotion, expression, motion and gesture buttons, a look-at pad, the emotion table) · Mouth (lipsync source, meters, tuning, "learn this voice") · Idle · Parameters (every parameter of the model, live; drag one to take it over) · Items · Light · API (ready-made calls for this avatar).
+- **The inspector** (right) for the selected avatar: Placement · Face & Mood (emotion, expression, motion and gesture buttons, a look-at pad, the emotion table) · Mouth (lipsync source, meters, tuning, "learn this voice") · Idle · Parameters (every parameter of the model, live; drag one to take it over) · Items (props, and the model's **pin points**) · Clips (Soundboard GIFs locked to this avatar) · Colors · Light · API (ready-made calls for this avatar). **Placement** also holds **Hang from another avatar**.
 - **Lock** an avatar so it can't be dragged by accident; untick **Visible** to take it off stream.
 - **Activity** at the bottom lists what bots asked for and what happened on stream (speech started / ended, motion finished, errors). A bot that streams `params` (or `release`) many times a second gets one line per avatar every few seconds — `x104 (26/s): MyHeadX, MyMouthOpen` — instead of one per message.
 
@@ -143,6 +143,39 @@ On the **Items** tab add items from the library to the avatar. Their position is
 
 **Pin** an item and it is glued to the part of the model under it — a hat to the head, a drink to a hand — following that art mesh as it moves, tilts and turns (the item keeps its angle relative to it). Drag a pinned item in the preview and it re-pins wherever you drop it; drop it off the model and it is unpinned. Items take the avatar's light.
 
+**Lock** an item (in its editor) and it can't be dragged or resized in the preview by accident; clicks go through it to the model underneath. A locked item still follows the model and its pin, and the bot can still change it with `item_update`.
+
+### Pin points
+
+A **pin point** is a *named* spot on a model's art — `head_top`, `left_hand`, `shoulder` — saved on the model (so every avatar showing it has them, and a copy of the model keeps them). Make one on the **Items** tab: type a name, press **Pick on the model** and click the spot in the preview. **📌 name** flashes it on the model; × deletes it.
+
+Anything can then be glued to a pin point by name: an item (its **Pin point** menu, or `"anchor": "head_top"` in `item_add` / `item_update`), another avatar ([below](#hanging-one-avatar-from-another)) and a Soundboard clip ([below](#soundboard-clips-on-a-model)). A bot never needs the art mesh ids or triangles — only the name, which `GET /avatar/api/avatars/<name>/info` lists as `anchors`. A name the model lacks is an error that lists the ones it has, and a pin point that disappears (the avatar now shows another model) lets what hangs from it fall back to the spot given as `x` / `y`. Names match without regard to case.
+
+A PNGtuber has pin points too: they are glued to the layer under the click and follow its bounce and wobble.
+
+## Hanging one avatar from another
+
+A mini model on a big model's head, a pet on a shoulder: on the small avatar's **Placement** tab pick **Hang from** → the other avatar (it has to be on the **same overlay**), then a **Pin point** of the other avatar's model. From then on it goes wherever that part goes — the head turns and nods, it turns and nods with it; the parent moves, grows, tilts or is flipped, and it comes along. It does not just float where the head used to be.
+
+- **Pin point** is the spot it hangs from. *A free spot* means a place in the parent's box (**Across %** / **Down %**, as items) that does not follow a part. **Drag it in the preview** to glue it somewhere else: dropped on a part, it sticks to that part; dropped off the parent, it is a free spot.
+- **Nudge across / down** move its centre from that spot, in % of its own size - `-45` down puts a model's feet on the spot instead of its middle. Its own **Zoom** and **Rotation** (Placement) apply on top of the parent's: a child of a parent at 1.5× is 1.5× its own size.
+- **Layer** draws it in front of or behind its parent (and just that far: an avatar between them in the order is not in the way).
+- **Turns with the part** keeps its angle to the part (off: always upright on the moving spot). **Mirrors with it**: when the parent is flipped left-right the child's position mirrors with it either way; with this on its art is mirrored too, off it keeps facing the way it does.
+- **Let go** frees it *where it stands now* (`detach` with no body goes back to its own X / Y instead).
+- Its own **Position X / Y** are only used when it hangs from nothing - or when the parent is not on its overlay (a different overlay, or deleted; the tab says so). Several avatars can hang from one, and one from another up to four deep; loops are refused. Renaming the parent keeps them hanging; deleting it lets them go.
+
+For a bot: `POST /avatar/api/avatars/mini/attach` `{"to": "hex", "anchor": "head_top", "dy": -45}` and `POST …/detach`. It is saved with the avatar (like items), so it stays until detached.
+
+## Soundboard clips on a model
+
+A GIF or video from the **Soundboard** can be locked to an avatar, so it plays glued to a spot on the model instead of at a fixed place on the Soundboard overlay — a heart over the head, a sparkle on the hand, following when the model moves and the part under it moves. On the avatar's **Clips** tab every Soundboard GIF / video is listed: **Lock to <avatar>**, then choose its **Pin point** (or a free spot), nudge, size, rotation and layer; **▶ Test** plays it (in the preview, and on stream). **Unlock** puts it back.
+
+- It is a setting **of the clip**: anything that plays it - a bot (`GET /api/play/<name>`), a hotkey, a redeem - gets it locked. For one play: `?avatar=hex&anchor=head_top&dy=-40&ascale=0.8` locks that play (tuning the clip's saved lock if it names the same avatar); `?avatar=` (empty) plays it on the Soundboard overlay whatever the clip says.
+- It plays **on the overlay that shows that avatar**, so **its sound comes out of that overlay's OBS source** — tick *Control audio via OBS* on it. (Keyed clips keep their chroma key and trim; the preview is silent.)
+- Size: `scale` is a factor of the clip's own size, on top of the avatar's own; the clip's Soundboard position and scale are used only when it is not locked.
+- If no open overlay draws the avatar (OBS is closed, or the avatar is on an overlay whose source is not open), the clip plays where the Soundboard puts it, as if it were not locked, and the play call answers `"attached": false`. `"attached": true` means an overlay drew it. (A *hidden* avatar still counts: the clip plays where it stands.)
+- Locking and reading it: `GET /index` lists `attach` for each video; `POST /attach` `{"file": "heart.mp4", "kind": "video", "attach": {"avatar": "hex", "anchor": "head_top", "x": 50, "y": 20, "dx": 0, "dy": -40, "scale": 1, "rotation": 0, "layer": "front", "follow_angle": true, "mirror": false}}` (`"attach": null` lets it go). The Soundboard page does not know what an avatar is — only the name travels — and Edit Mode keeps the lock when it saves a clip's position.
+
 ## Colors
 
 The **Colors** tab does what VTube Studio's *customize multiply / screen colour for art meshes* does — and presets and hotkeys, which here are API calls your bot makes.
@@ -231,8 +264,10 @@ For values every frame (your own lipsync, head motion from a tracker of your own
 | `POST …/show` · `POST …/hide` | `{"fade": 0.4, "save": false}` |
 | `POST …/speak` | the audio: a multipart file field `audio`, the raw bytes as the body, or JSON `{"url": "https://…"}` / `{"audio_b64": "…"}`; options `volume` (0–2), `text` (for the log), `interrupt` (stop what is playing; otherwise lines queue), `wait=1` (answer when the line has finished) |
 | `POST …/stop_speaking` | |
-| `POST …/item_add` | `{"item": "halo", "id": "halo1", "x": 50, "y": 5, "scale": 1, "rotation": 0, "layer": "front"\|"back", "opacity": 1, "flip": false, "fps": 12}` |
-| `POST …/item_update` | `{"id": "halo1", …any of the above…, "visible": false, "pin": null}` |
+| `POST …/item_add` | `{"item": "halo", "id": "halo1", "x": 50, "y": 5, "scale": 1, "rotation": 0, "layer": "front"\|"back", "opacity": 1, "flip": false, "fps": 12, "anchor": "head_top", "locked": false}` — `anchor` glues it to one of the model's pin points (`…/info` lists them) |
+| `POST …/item_update` | `{"id": "halo1", …any of the above…, "visible": false, "pin": null, "anchor": ""}` |
+| `POST …/attach` | `{"to": "hex", "anchor": "head_top", "x": 50, "y": 20, "dx": 0, "dy": -45, "layer": "front"\|"back", "follow_angle": true, "mirror": false}` — hang this avatar from another on the same overlay (a mini model on a head); `anchor` is a pin point of the *parent's* model, else `x` / `y` are a spot in its box (% of it) and `dx` / `dy` nudge this avatar's centre (% of its own size). Later calls change only what they name; a new `to` starts afresh. Saved with the avatar. An unknown parent or pin point, itself, a loop or more than 4 deep is an error |
+| `POST …/detach` | `{}` lets go (back to its own `x` / `y`), or `{"x": 61, "y": 70, "scale": 0.4, "rotation": 0, "flip": false}` to put it somewhere |
 | `POST …/item_remove` · `…/items_clear` | `{"id": "halo1"}` |
 | `POST …/light` | `{"enabled": true, "preset": "fire", "color": "#ffd9a8", "intensity": 0.8, "angle": -35, "rim": "#7fb6ff", "rim_amount": 0.6, "ambient": "#ffffff", "ambient_amount": 0.2, "speed": 1, "fade": 0.6, "save": false}` or `{"reset": true}` |
 | `POST …/reload` | load the model again |
@@ -258,13 +293,15 @@ Parameters and art meshes appear once the model has been drawn (by an overlay or
 | Call | Body |
 | --- | --- |
 | `POST /avatar/api/avatars` | `{"name": "guest", "model": "akari", "overlay": "guest"}` — create (`overlay` is optional: main; an overlay that doesn't exist is a 404) |
-| `POST /avatar/api/avatars/<name>` | any settings: `model`, `overlay`, `visible`, `locked`, `x`, `y`, `scale`, `rotation`, `flip`, `idle {…}`, `mouth {…}`, `emotions {…}`, `colors {…}` (`{"all", "parts", "meshes"}` as above; replaces the saved set), `light {…}` |
+| `POST /avatar/api/avatars/<name>` | any settings: `model`, `overlay`, `visible`, `locked`, `x`, `y`, `scale`, `rotation`, `flip`, `idle {…}`, `mouth {…}`, `emotions {…}`, `colors {…}` (`{"all", "parts", "meshes"}` as above; replaces the saved set), `attach {…}` (as the `attach` call; `null` lets go; replaces the saved one), `light {…}` |
 | `POST /avatar/api/avatars/<name>/rename` | `{"to": "host"}` |
 | `POST /avatar/api/avatars/<name>/delete` | |
 | `POST /avatar/api/overlays` | `{"name": "guest"}` — a new overlay, an OBS source at `/avatar/overlay/guest` |
 | `POST /avatar/api/overlays/<name>/delete` | its avatars move to main; main itself can't be deleted |
 | `GET /avatar/api/models/<id>/color_presets` | the model's colour presets: `{"presets": {"Night": {"parts": {…}, "meshes": {…}, "all": {…}}}}` |
 | `POST /avatar/api/models/<id>/color_presets` | `{"name": "Night", "avatar": "main", "default": false}` records what that avatar's colours are now as a preset (or `{"name": "Night", "look": {…}}`); the same name in any case replaces it; `"default": true` makes it the model's default. `POST …/color_presets/<name>/default` (`{"default": false}` for none) sets or clears the default - what an avatar starts in when it loads the model (`color_default` in the model's entry and in `…/info`); `POST …/color_presets/<name>/as_model` (`{"name": "Hiyori Night"}`) saves that preset together with the model as a new model of the library - a full copy that starts in it; the answer is its model entry; `POST …/color_presets/<name>/delete` removes one |
+| `GET /avatar/api/models/<id>/anchors` | the model's pin points: `{"anchors": {"head_top": {"mesh": …, "tri": […], "bary": […], "angle0": …}}}` |
+| `POST /avatar/api/models/<id>/anchors` | `{"name": "head_top", "pin": {…}}` saves one (the pin is what **Pick on the model** records: an art mesh, a triangle and a point in it); the same name in any case replaces it. `POST …/anchors/<name>/delete` removes one |
 | `POST /avatar/api/order` | `{"names": ["back", "middle", "front"]}` — draw order (among the avatars of one overlay, the later is in front) |
 | `POST /avatar/api/models/upload` | multipart `file` (zip) or `files` + `paths` (a folder) |
 | `POST /avatar/api/models/import` | `{"path": "C:/…/my model"}` — a folder on the Hexcast PC |
@@ -302,7 +339,8 @@ Any REST command works as `{"cmd": …, "avatar": …, …}` (plus `list` and `i
 | `config/avatar.json` | every avatar's settings (its overlay, placement, idle, mouth, emotions, items, colors, light), the list of overlays and the stage settings |
 | `config/avatar_runtime/` | the downloaded Live2D runtime and when its license was accepted |
 | `media/avatars/models/<id>/` (PNGtuber) | its pictures and `pngtuber.json` (the rig: states, roles or layers, bounce ...) |
-| `media/avatars/models/<id>/` | a model as shipped, plus `hexcast.json` (Hexcast's settings for it: mappings, idle animation, physics), `hexcast.info.json` (its parameters, cached) and `hexcast.colors.json` (its colour presets and which is the default - a PNGtuber has one too) |
+| `media/avatars/models/<id>/` | a model as shipped, plus `hexcast.json` (Hexcast's settings for it: mappings, idle animation, physics), `hexcast.info.json` (its parameters, cached), `hexcast.colors.json` (its colour presets and which is the default) and `hexcast.anchors.json` (its pin points) - a PNGtuber has the last two too |
+| `media/video/<clip>.json` | a Soundboard clip's settings (position, volume, trim, chroma key, cooldown) - and, if it is locked to an avatar, its `attach` |
 | `media/avatars/items/<id>/` | an item |
 
 ## Live2D licensing
@@ -314,6 +352,8 @@ Live2D's Cubism Core is Live2D Inc.'s software under the [Live2D Proprietary Sof
 - **The overlay stays empty** — the Live2D runtime isn't set up (open the tab), the avatar is hidden, or its model can't be drawn (the tab says why). Or the avatar is on another overlay: each source shows only its own (the tab says which overlay you are looking at, and its URL). `?note=1` on the overlay URL shows problems on the overlay itself.
 - **Two avatars scale and move together in OBS** — they are on the same overlay, which is one source. Make an overlay for one of them (**+ Overlay**, then **Overlay** on its Placement tab) and add that URL as its own Browser source.
 - **No sound from speech** — tick **Control audio via OBS** on the browser source (or OBS plays nothing from it), and check `overlays` in the `speak` answer.
+- **A model hangs in the air / is not where its parent's head is** — it only hangs from a parent on its own overlay (the Placement tab says when it does not), and a pin point the parent's *current* model lacks falls back to the free spot. Choose the pin point again, or drag the child onto the part in the preview.
+- **A locked clip plays at its old place on the Soundboard overlay** — no open Avatars overlay draws that avatar (OBS is closed, or the avatar is on an overlay whose source is not open), so the Soundboard played it as it always did; the play call said `"attached": false`. A locked clip is silent unless the overlay source has *Control audio via OBS* ticked.
 - **The mouth moves too little / all the time** — raise **Gain** / raise **Cutoff** on the Mouth tab; watch the meters.
 - **"saved by Cubism Editor 5.3"** — export the model again for Cubism 5.0 – 5.2.
 - **A model shows two versions of a part at once** (four arms ...) — Hexcast picks the parts its animations use; if the wrong set shows, switch it with **Parameters → Parts** or the `parts` call.

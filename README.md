@@ -481,14 +481,19 @@ GET|POST /api/play/{kind}/{name}   → explicit: kind = audio | video
      ?x=&y=&scale=                 → optional position override (video)
      ?volume=                      → optional volume override 0.0–1.0
      ?start=&end=                  → optional trim window in seconds
+     ?avatar=&anchor=&dx=&dy=      → video: play it glued to an avatar (Avatars plugin); ?avatar= alone (empty) plays it here
 GET|POST /api/stop                 → clear all visuals + stop all audio (panic)
 POST /rename                       → {file, kind, new_stem} → rename media + sidecar + poster
+POST /attach                       → {file, kind: "video", attach: {avatar, anchor, ...} | null} → lock a clip to an avatar
 ```
 
 Names are case-insensitive and match the filename stem (`airhorn`) or full name
 (`airhorn.mp3`). Saved editor values (position/scale/volume/trim) apply
 automatically. If a clip has a non-zero `cooldown_ms`, triggers during its
 cooldown return `{"ok": true, "delivered": 0, "suppressed": true, "next_in_ms": N}`.
+A video locked to an avatar plays on the Avatars overlay that shows it, and the answer
+adds `"attached": true`; when no open overlay shows that avatar it plays here as usual
+(`"attached": false`).
 
 ```bash
 curl http://localhost:4747/api/play/airhorn

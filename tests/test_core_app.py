@@ -163,3 +163,111 @@ def test_broken_plugins_never_stop_the_soundboard_from_starting(tmp_path):
     assert "ROOT 200 OVERLAY 200" in out.stdout
     assert "ERRORS ['garbage', 'raises']" in out.stdout
     assert "boom in setup" in out.stdout
+
+
+# ---------------------------------------------------------------- clips locked to an avatar (the Avatars plugin draws them)
+
+PNG_1X1 = bytes.fromhex("89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c6360000002000001e221bc330000000049454e44ae426082")
+
+
+def test_parse_attach_keeps_only_a_sane_lock(hexcast):
+    p = hexcast.parse_attach
+    assert p(None) is None and p("hex") is None and p({}) is None
+    assert p({"avatar": "../etc"}) is None and p({"avatar": ""}) is None
+    full = p({"avatar": " Hex ", "anchor": "  head   top ", "x": "30", "y": 9999, "dx": "bad", "scale": 0, "layer": "back",
+              "follow_angle": "false", "mirror": "1"})
+    assert full == {"avatar": "hex", "anchor": "head top", "x": 30.0, "y": 200.0, "dx": 0.0, "dy": 0.0, "scale": 0.02,
+                    "rotation": 0.0, "layer": "back", "follow_angle": False, "mirror": True}
+    assert p({"avatar": "hex"})["layer"] == "front" and p({"avatar": "hex"})["follow_angle"] is True
+
+
+def _locked_clip(hexcast, client, name="wow"):
+    (hexcast.VIDEO_DIR / f"{name}.png").write_bytes(PNG_1X1)
+    hexcast.reindex()
+    return f"{name}.png"
+
+
+def test_a_clip_lock_is_saved_listed_and_survives_the_position_editor(hexcast, client):
+    file = _locked_clip(hexcast, client, "lockme")
+    r = client.post("/attach", json={"file": file, "kind": "video", "attach": {"avatar": "hex", "anchor": "head_top", "dy": -40}})
+    assert r.status_code == 200 and r.json()["attach"]["avatar"] == "hex" and r.json()["attach"]["dy"] == -40
+    entry = next(v for v in client.get("/index").json()["video"] if v["file"] == file)
+    assert entry["attach"]["anchor"] == "head_top"
+    # Edit Mode saves x / y / scale without knowing about the lock: it stays
+    assert client.post("/position", json={"file": file, "kind": "video", "x": 10, "y": 20, "scale": 2}).json()["ok"]
+    entry = next(v for v in client.get("/index").json()["video"] if v["file"] == file)
+    assert entry["attach"]["anchor"] == "head_top" and entry["pos"]["x"] == 10
+    # ... unless it says otherwise
+    client.post("/position", json={"file": file, "kind": "video", "x": 10, "y": 20, "scale": 2, "attach": None})
+    assert next(v for v in client.get("/index").json()["video"] if v["file"] == file)["attach"] is None
+    # a lock without a usable avatar is refused, letting go is not
+    assert client.post("/attach", json={"file": file, "kind": "video", "attach": {"avatar": "No Way!"}}).status_code == 400
+    assert client.post("/attach", json={"file": "missing.mp4", "kind": "video", "attach": None}).status_code == 404
+    assert client.post("/attach", json={"file": file, "kind": "audio", "attach": None}).status_code == 400
+    client.post("/attach", json={"file": file, "kind": "video", "attach": {"avatar": "hex"}})
+    assert client.post("/attach", json={"file": file, "kind": "video", "attach": None}).json()["attach"] is None
+
+
+def test_a_locked_clip_plays_on_the_overlay_that_draws_its_avatar(hexcast, client):
+    file = _locked_clip(hexcast, client, "wow")
+    client.post("/attach", json={"file": file, "kind": "video", "attach": {"avatar": "hex", "anchor": "head_top"}})
+    with client.websocket_connect("/ws/overlay") as plain, \
+         client.websocket_connect("/ws/overlay?role=avatar") as obs, \
+         client.websocket_connect("/ws/overlay?role=avatar") as other, \
+         client.websocket_connect("/ws/overlay?role=preview") as tab:
+        obs.send_json({"type": "avatars", "names": ["Hex", "mini"]})
+        other.send_json({"type": "avatars", "names": ["guest"]})
+        tab.send_json({"type": "avatars", "names": ["hex"]})
+        for _ in range(100):                                   # (the names have to have arrived)
+            if all(m.get("avatars") for ws, m in hexcast.overlay_meta.items() if m["role"] in ("avatar", "preview") and m["avatars"]) \
+                    and sum(1 for m in hexcast.overlay_meta.values() if m["avatars"]) == 3:
+                break
+            time.sleep(0.02)
+        r = client.get("/api/play/video/wow").json()
+        assert r == {"ok": True, "delivered": 2, "attached": True}
+        assert client.get("/api/stop").json()["delivered"] == 4
+        clip = obs.receive_json()
+        assert clip["type"] == "video" and clip["attach"]["avatar"] == "hex" and clip["attach"]["anchor"] == "head_top"
+        assert tab.receive_json()["attach"]["avatar"] == "hex"
+        assert obs.receive_json()["type"] == "stop" and tab.receive_json()["type"] == "stop"
+        # the Soundboard overlay and the overlay without that avatar never saw the clip: their first message is the stop
+        assert plain.receive_json()["type"] == "stop" and other.receive_json()["type"] == "stop"
+
+        # per play: ?avatar= plays it on the Soundboard overlay whatever the clip says; others tune the saved lock
+        r = client.get("/api/play/video/wow?avatar=").json()
+        assert r["delivered"] == 1 and "attached" not in r
+        played = plain.receive_json()
+        assert played["type"] == "video" and "attach" not in played and played["x"] == 50
+        r = client.get("/api/play/video/wow?avatar=hex&dx=15&layer=back&follow=0").json()
+        assert r["attached"] is True
+        tuned = obs.receive_json()["attach"]
+        assert tuned["anchor"] == "head_top" and tuned["dx"] == 15 and tuned["layer"] == "back" and tuned["follow_angle"] is False
+        tab.receive_json()
+        r = client.get("/api/play/video/wow?avatar=mini&anchor=hat").json()
+        assert r["attached"] is True and obs.receive_json()["attach"] == {**hexcast.parse_attach({"avatar": "mini", "anchor": "hat"})}
+
+        # nobody draws the avatar: the clip plays where the Soundboard puts it, and the call says so
+        client.post("/attach", json={"file": file, "kind": "video", "attach": {"avatar": "ghost"}})
+        r = client.get("/api/play/video/wow").json()
+        assert r["attached"] is False and r["delivered"] == 1
+        fallback = plain.receive_json()
+        assert fallback["type"] == "video" and "attach" not in fallback
+    client.post("/attach", json={"file": file, "kind": "video", "attach": None})
+
+
+def test_the_avatars_tab_shows_a_locked_clip_even_when_no_overlay_is_open(hexcast, client):
+    file = _locked_clip(hexcast, client, "tabtest")
+    client.post("/attach", json={"file": file, "kind": "video", "attach": {"avatar": "hex"}})
+    with client.websocket_connect("/ws/overlay") as plain, client.websocket_connect("/ws/overlay?role=preview") as tab:
+        tab.send_json({"type": "avatars", "names": ["hex"]})
+        for _ in range(100):
+            if any(m["avatars"] for m in hexcast.overlay_meta.values()):
+                break
+            time.sleep(0.02)
+        r = client.get("/api/play/video/tabtest").json()
+        # no overlay in OBS draws hex: it plays on the Soundboard overlay, and the tab's preview still shows it locked
+        assert r == {"ok": True, "delivered": 2, "attached": False}
+        assert tab.receive_json()["attach"]["avatar"] == "hex"
+        shown = plain.receive_json()
+        assert shown["type"] == "video" and "attach" not in shown
+    client.post("/attach", json={"file": file, "kind": "video", "attach": None})

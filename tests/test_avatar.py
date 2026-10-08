@@ -1217,3 +1217,211 @@ def test_colours_come_in_layers_a_later_one_winning_field_by_field(engine):
 def test_colours_survive_a_new_model_and_an_old_runtime_and_reach_pngtuber_layers(engine):
     assert engine["reloadColoursTheNewModel"] == [1, 0, 0] and engine["oldRuntimeIsHarmless"]
     assert engine["pngLayer"] == [0x804000, 0x808080, 0xFFFFFF, 0.25, 0.5, 1]                            # a layer: its own x `all` (tint and alpha; no overlay)
+
+
+# ---------------------------------------------------------------- pin points, items locked / pinned by name, avatars hanging from avatars
+
+PIN = {"mesh": "ArtHead", "tri": [3, 4, 5], "bary": [0.2, 0.3, 0.5], "angle0": 0.1}
+
+
+def _two(av):
+    """A model with a pin point, an avatar `hex` showing it and a free avatar `mini` (no model)."""
+    m = _upload(av)
+    av.post("/avatar/api/avatars", json={"name": "hex", "model": m["id"]})
+    av.post("/avatar/api/avatars", json={"name": "mini"})
+    return m["id"]
+
+
+def test_pin_points_are_saved_on_the_model_and_listed(av):
+    mid = _two(av)
+    path = f"/avatar/api/models/{mid}/anchors"
+    assert av.get(path).json() == {"anchors": {}}
+    r = av.post(path, json={"name": "  head   top ", "pin": PIN}).json()
+    assert r["name"] == "head top" and r["anchors"] == ["head top"]
+    assert av.get(path).json()["anchors"]["head top"] == {**PIN, "follow_angle": True}
+    assert [m for m in av.get("/avatar/api/models").json()["models"] if m["id"] == mid][0]["anchors"]["head top"]["mesh"] == "ArtHead"
+    assert av.get("/avatar/api/avatars/hex/info").json()["anchors"] == ["head top"]
+    assert av.post(path, json={"name": "x"}).status_code == 400                        # no pin
+    assert av.post(path, json={"name": "x", "pin": {"mesh": "A", "tri": [1, 2], "bary": [1, 0, 0]}}).status_code == 400
+    assert av.post(path, json={"pin": PIN}).status_code == 400                         # no name
+    av.post(path, json={"name": "HEAD TOP", "pin": {**PIN, "mesh": "ArtHead2"}})       # a name is one pin point, whatever its case
+    assert list(av.lib.anchors(mid)) == ["HEAD TOP"] and av.lib.anchors(mid)["HEAD TOP"]["mesh"] == "ArtHead2"
+    assert av.post(path + "/head top/delete").json()["anchors"] == []
+    assert av.post(path + "/nope/delete").status_code == 404
+    assert not (av.lib.model_dir(mid) / "hexcast.anchors.json").exists()                # nothing left, no file left
+
+
+def test_pin_points_go_with_a_copy_of_the_model(av):
+    mid = _two(av)
+    av.post(f"/avatar/api/models/{mid}/anchors", json={"name": "hand", "pin": PIN})
+    av.post(f"/avatar/api/models/{mid}/color_presets", json={"name": "Night", "look": {"all": {"multiply": "#334466"}}})
+    new = av.post(f"/avatar/api/models/{mid}/color_presets/night/as_model", json={"name": "Night Copy"}).json()["model"]
+    assert new["anchors"]["hand"]["mesh"] == "ArtHead"
+
+
+def test_items_take_a_pin_point_by_name_and_can_be_locked(av):
+    mid = _two(av)
+    item = av.post("/avatar/api/items/upload", files={"file": ("Cat Hat.png", _png(40, 20), "image/png")}).json()["item"]
+    av.post(f"/avatar/api/models/{mid}/anchors", json={"name": "Head Top", "pin": PIN})
+    r = av.post("/avatar/api/avatars/hex/item_add", json={"item": item["id"], "id": "hat", "anchor": "head top", "locked": True})
+    got = r.json()["items"][0]
+    assert got["anchor"] == "Head Top" and got["locked"] is True and got["pin"] is None       # (the model's own spelling)
+    bad = av.post("/avatar/api/avatars/hex/item_update", json={"id": "hat", "anchor": "tail"})
+    assert bad.status_code == 404 and "Head Top" in bad.json()["error"]                      # an error that lists them
+    assert av.post("/avatar/api/avatars/mini/item_add", json={"item": item["id"], "anchor": "x"}).status_code == 404       # no model: no pin points
+    r = av.post("/avatar/api/avatars/hex/item_update", json={"id": "hat", "anchor": "", "locked": False, "pin": PIN})
+    got = r.json()["items"][0]
+    assert got["anchor"] == "" and got["locked"] is False and got["pin"]["mesh"] == "ArtHead"
+    assert av.get("/avatar/api/avatars/hex").json()["avatar"]["items"][0]["pin"]["bary"] == [0.2, 0.3, 0.5]
+
+
+def test_an_avatar_can_hang_from_another(av):
+    mid = _two(av)
+    av.post(f"/avatar/api/models/{mid}/anchors", json={"name": "Head Top", "pin": PIN})
+    r = av.post("/avatar/api/avatars/mini/attach", json={"to": "HEX", "anchor": "head top", "dy": -45, "layer": "back"}).json()
+    at = r["attach"]
+    assert at["to"] == "hex" and at["anchor"] == "Head Top" and at["dy"] == -45 and at["layer"] == "back" and at["follow_angle"] is True
+    assert r["note"] == ""
+    assert av.get("/avatar/api/avatars/mini").json()["avatar"]["attach"]["anchor"] == "Head Top"
+    assert av.get("/avatar/api/avatars/mini/info").json()["attach"]["to"] == "hex"
+    # later calls change what they name and keep the rest
+    at = av.post("/avatar/api/avatars/mini/attach", json={"dx": 12, "mirror": True}).json()["attach"]
+    assert at["to"] == "hex" and at["anchor"] == "Head Top" and at["dy"] == -45 and at["dx"] == 12 and at["mirror"] is True
+    at = av.post("/avatar/api/avatars/mini/attach", json={"anchor": "", "pin": PIN, "x": 40}).json()["attach"]
+    assert at["anchor"] == "" and at["pin"]["mesh"] == "ArtHead" and at["x"] == 40
+    # another parent starts afresh
+    av.post("/avatar/api/avatars", json={"name": "third"})
+    at = av.post("/avatar/api/avatars/mini/attach", json={"to": "third"}).json()["attach"]
+    assert at["to"] == "third" and at["anchor"] == "" and at["pin"] is None and at["dy"] == 0
+    # mistakes are named
+    assert av.post("/avatar/api/avatars/mini/attach", json={"to": "hex", "anchor": "tail"}).status_code == 404
+    assert av.post("/avatar/api/avatars/mini/attach", json={"to": "ghost"}).status_code == 404
+    assert av.post("/avatar/api/avatars/mini/attach", json={"to": "mini"}).status_code == 400
+    assert av.post("/avatar/api/avatars/mini/attach", json={"to": "Not A Name!"}).status_code == 400
+    assert av.post("/avatar/api/avatars/hex/attach", json={"dx": 5}).status_code == 400                       # nothing to hang from
+    assert av.get("/avatar/api/avatars/mini").json()["avatar"]["attach"]["to"] == "third"                     # failed calls changed nothing
+
+
+def test_avatars_cannot_hang_in_a_loop_or_too_deep(av):
+    for n in "abcdef":
+        av.post("/avatar/api/avatars", json={"name": n})
+    assert av.post("/avatar/api/avatars/b/attach", json={"to": "a"}).status_code == 200
+    assert av.post("/avatar/api/avatars/c/attach", json={"to": "b"}).status_code == 200
+    r = av.post("/avatar/api/avatars/a/attach", json={"to": "c"})                                             # a on c on b on a
+    assert r.status_code == 400 and "loop" in r.json()["error"]
+    assert av.post("/avatar/api/avatars/d/attach", json={"to": "c"}).status_code == 200
+    assert av.post("/avatar/api/avatars/e/attach", json={"to": "d"}).status_code == 200
+    r = av.post("/avatar/api/avatars/f/attach", json={"to": "e"})                                             # five deep
+    assert r.status_code == 400 and "deep" in r.json()["error"]
+    # the settings call checks the same
+    assert av.post("/avatar/api/avatars/a", json={"attach": {"to": "e"}}).status_code == 400
+    assert av.post("/avatar/api/avatars/a", json={"attach": {"to": "nobody"}}).status_code == 404
+
+
+def test_detach_lets_go_and_can_place_the_avatar(av):
+    _two(av)
+    av.post("/avatar/api/avatars/mini/attach", json={"to": "hex"})
+    r = av.post("/avatar/api/avatars/mini/detach", json={}).json()
+    assert r["attach"] is None and av.get("/avatar/api/avatars/mini").json()["avatar"]["attach"] is None
+    av.post("/avatar/api/avatars/mini/attach", json={"to": "hex"})
+    av.post("/avatar/api/avatars/mini/detach", json={"x": 61.5, "y": 70, "scale": 0.4, "rotation": 12, "flip": True})
+    a = av.get("/avatar/api/avatars/mini").json()["avatar"]
+    assert a["attach"] is None and (a["x"], a["y"], a["scale"], a["rotation"], a["flip"]) == (61.5, 70.0, 0.4, 12.0, True)
+    # the avatar's own settings call can hang it too, and let it go with null
+    assert av.post("/avatar/api/avatars/mini", json={"attach": {"to": "hex", "dy": -20}}).json()["avatar"]["attach"]["dy"] == -20
+    assert av.post("/avatar/api/avatars/mini", json={"x": 30}).json()["avatar"]["attach"]["to"] == "hex"       # other settings leave it
+    assert av.post("/avatar/api/avatars/mini", json={"attach": None}).json()["avatar"]["attach"] is None
+
+
+def test_what_hangs_from_an_avatar_follows_its_rename_and_lets_go_when_it_is_deleted(av):
+    _two(av)
+    av.post("/avatar/api/avatars/mini/attach", json={"to": "hex", "dy": -30})
+    assert av.post("/avatar/api/avatars/hex/rename", json={"to": "boss"}).status_code == 200
+    assert av.get("/avatar/api/avatars/mini").json()["avatar"]["attach"]["to"] == "boss"
+    av.post("/avatar/api/avatars/boss/delete")
+    assert av.get("/avatar/api/avatars/mini").json()["avatar"]["attach"] is None
+    # a saved config that names itself (or nothing usable) loads as free-standing
+    assert av.mod.norm_attach({"to": "mini"}, "mini") is None and av.mod.norm_attach("hex") is None and av.mod.norm_attach({}) is None
+
+
+def test_attach_reads_in_the_activity_line_and_warns_about_another_overlay(av):
+    _two(av)
+    r = av.post("/avatar/api/avatars/mini/attach", json={"to": "hex"}).json()
+    assert r["cmd"] == "attach" and av.mod._summary("attach", r) == "to hex"
+    assert av.mod._summary("detach", {}) == "let go"
+    av.post("/avatar/api/overlays", json={"name": "guest"})
+    av.post("/avatar/api/avatars/mini", json={"overlay": "guest"})
+    assert "only hangs from it while they share an overlay" in av.post("/avatar/api/avatars/mini/attach", json={"dx": 1}).json()["note"]
+
+
+# ---------------------------------------------------------------- the renderer: things glued to an avatar (needs node)
+
+@pytest.fixture(scope="module")
+def mount():
+    """avatar_engine.js with a fake parent model (tests/avatar_engine_mount.js): where an avatar hanging from it, an item and a clip end up."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed")
+    r = subprocess.run([node, str(HERE / "avatar_engine_mount.js"), str(ROOT / "catalog" / "avatar" / "static" / "avatar_engine.js")],
+                       capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout)
+
+
+def test_an_avatar_hangs_from_the_pin_point_and_goes_where_the_part_goes(mount):
+    # the parent is a triangle at the middle of the stage; its pin is the triangle's middle, (33.3, 33.3) from its centre
+    assert mount["onPin"] == {"x": 993.333, "y": 573.333, "rot": 0, "sx": 0.5, "sy": 0.5}
+    # the head turns a quarter: the point swings round with it, and the child turns with the part ...
+    assert mount["turned"]["x"] == pytest.approx(926.667, abs=0.01) and mount["turned"]["rot"] == pytest.approx(1.571, abs=0.001)
+    assert mount["upright"]["rot"] == 0 and mount["upright"]["x"] == mount["turned"]["x"]            # ... unless it should stay upright
+    # the whole parent moved, doubled and turned a quarter carries the child along (its size doubles with it)
+    assert mount["carried"] == {"x": 33.333, "y": 266.667, "rot": 1.571, "sx": 1, "sy": 1}
+    # the nudge is in the child's own size (a quarter of its 600 wide box, half its 1080 height up), scaled with it
+    assert mount["nudged"]["x"] == pytest.approx(993.333 + 75, abs=0.01) and mount["nudged"]["y"] == pytest.approx(573.333 - 270, abs=0.01)
+
+
+def test_a_flipped_parent_mirrors_the_spot_but_not_the_childs_art_unless_asked(mount):
+    assert mount["flippedParent"]["x"] == pytest.approx(926.667, abs=0.01) and mount["flippedParent"]["mirrored"] is False
+    assert mount["flippedParentMirror"]["mirrored"] is True
+    assert mount["ownFlip"]["mirrored"] is True and mount["ownFlip"]["x"] == pytest.approx(993.333, abs=0.01)    # (its own flip mirrors the art, not the spot)
+
+
+def test_the_child_falls_back_to_a_free_spot_or_to_its_own_place(mount):
+    assert mount["freeSpot"]["x"] == pytest.approx(1020) and mount["freeSpot"]["y"] == pytest.approx(324)       # % of the parent's box, around its centre
+    assert mount["noParent"] == {"x": 480, "y": 810, "parent": None}
+
+
+def test_pin_points_are_found_by_name_in_any_case(mount):
+    a = mount["anchor"]
+    assert a["exact"]["pinned"] is True and a["exact"]["x"] == 0 and a["exact"]["y"] == 0               # the pin point's own pin, not the raw one given
+    assert a["anyCase"] == pytest.approx(33.333, abs=0.01)
+    assert a["unknown"] == pytest.approx(33.333, abs=0.01) and a["none"] is None                          # a name the model lacks: the raw pin
+    assert a["freeBox"] == {"x": 300, "y": -540, "rot": 0, "pinned": False}
+
+
+def test_parents_update_first_children_draw_beside_them_and_loops_come_apart(mount):
+    m = mount["mounts"]
+    assert m["update"][:3] == ["a", "b", "c"]                                  # a parent before what hangs from it, whatever the list order
+    assert m["parents"] == ["b", "a", None, None, None, None, None]            # c on b on a; a loop (x, y) and a missing parent hang from nothing
+    assert m["z"]["b"] < m["z"]["c"] < m["z"]["a"]                              # b behind a; c in front of b but still behind a
+    assert m["draw"].index("b") < m["draw"].index("c") < m["draw"].index("a")
+
+
+def test_letting_go_keeps_the_place_the_avatar_stood_in(mount):
+    p = mount["placed"]
+    assert (p["x"], p["y"], p["scale"], p["rotation"], p["flip"]) == (1.7, 24.7, 1, 90, False)
+    assert mount["placedBesideFlipped"] == {"x": 48.3, "y": 53.1, "scale": 0.5, "rotation": 0, "flip": False}
+    assert mount["placedMirrored"]["flip"] is True
+
+
+def test_an_item_rides_its_pin_point_by_name(mount):
+    assert mount["item"]["x"] == pytest.approx(-33.333, abs=0.01) and mount["item"]["y"] == pytest.approx(33.333, abs=0.01)
+    assert mount["item"]["rot"] == pytest.approx(3.142, abs=0.001)             # its own 90 degrees plus the quarter turn of the part
+    assert mount["itemFree"] == {"x": 60, "y": 0, "rot": 0}                    # no pin point: % of the model's box
+
+
+def test_a_clip_locked_to_an_avatar_is_put_where_its_pin_point_is_on_the_page(mount):
+    c = mount["clip"]
+    assert c["matrix"] == [0.5, 0, 0, 0.5, 506.6667, 306.6667] and c["shown"] == "visible"      # (half size, 10 px and 20 px in)
+    assert c["rest"] == "rotate(15deg) scale(2) translate(5%,-10%) scaleX(1) translate(-50%,-50%)"
+    assert mount["clipHidden"] == "hidden" and mount["clipFlipped"] is True

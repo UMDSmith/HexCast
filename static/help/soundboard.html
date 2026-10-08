@@ -21,6 +21,20 @@
     <tr><td>?volume=0.5</td><td>0.0–1.0, audio and video-with-audio</td></tr>
     <tr><td>?start=2&amp;end=5</td><td>trim window in seconds (static images use it as display time)</td></tr>
   </table>
+  <h3>Lock a clip to an avatar</h3>
+  <p class="hint">With the <b>Avatars</b> plugin a video or GIF can play glued to a spot on a model - over a head, on a
+    hand - and follow it as it moves, instead of at a fixed place. Lock it on the avatar's <b>Clips</b> tab and anything
+    that plays it gets it locked; or ask for it in one call. It plays on the overlay that shows that avatar (its sound
+    comes out of that overlay's OBS source); if no open overlay shows the avatar it plays here as usual and the answer
+    says <code>"attached": false</code>. Edit Mode keeps a clip's lock when it saves the clip's position.</p>
+  <table class="api">
+    <tr><td>?avatar=hex&amp;anchor=head_top</td><td>video only: play it on avatar <code>hex</code>, at its pin point <code>head_top</code>
+      (or a spot in its box: <code>&amp;ax=50&amp;ay=20</code>); <code>&amp;dx=0&amp;dy=-40</code> nudge it (% of the clip's own size),
+      <code>&amp;ascale=0.8</code> its size, <code>&amp;layer=back</code> behind the model. <code>?avatar=</code> (empty) plays it here whatever
+      the clip says</td></tr>
+    <tr><td>POST /attach</td><td><code>{"file": "heart.mp4", "kind": "video", "attach": {"avatar": "hex", "anchor": "head_top", "dy": -40}}</code>
+      locks a clip for good; <code>"attach": null</code> lets it go</td></tr>
+  </table>
   <pre>curl http://localhost:4747/api/play/airhorn
 curl "http://localhost:4747/api/play/video/cheer?x=80&amp;y=20&amp;scale=2&amp;end=3"
 curl http://localhost:4747/api/stop</pre>

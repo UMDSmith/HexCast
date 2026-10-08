@@ -46,7 +46,7 @@ from hexcast_core import Installer, PluginHost, PluginService, build_router
 from hexcast_core import backgrounds as overlay_backgrounds
 from hexcast_core import migrate as plugin_migrate
 from hexcast_core.staticfiles import RevalidatingStaticFiles
-from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from watchdog.events import FileSystemEventHandler
@@ -107,6 +107,9 @@ log.addHandler(_ch)
 # ---- state -----------------------------------------------------------------
 index = {"audio": [], "video": []}
 overlay_clients: set[WebSocket] = set()
+# What each overlay socket is: role "" (the Soundboard's own /overlay), "avatar" (an Avatars overlay in OBS) or "preview"
+# (the Avatars tab's preview), and for the last two the avatars that page draws - where a clip locked to an avatar plays.
+overlay_meta: dict[WebSocket, dict] = {}
 control_clients: set[WebSocket] = set()
 main_loop: asyncio.AbstractEventLoop | None = None
 
@@ -211,9 +214,51 @@ def parse_chroma(raw) -> dict | None:
     return {"color": color.lower(), "tolerance": max(0.0, min(1.0, tol))}
 
 
+def _clamp(v, lo: float, hi: float, default: float) -> float:
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return default
+    return default if f != f else max(lo, min(hi, f))
+
+
+def _flag(v, default: bool) -> bool:
+    if v is None:
+        return default
+    if isinstance(v, str):
+        return v.strip().lower() not in ("", "0", "false", "no", "off")
+    return bool(v)
+
+
+def parse_attach(raw) -> dict | None:
+    """Validate a clip's lock to an avatar → {avatar, anchor, x, y, dx, dy, scale, rotation, layer, follow_angle, mirror}, or None
+    when absent/invalid. Hexcast does not know what an avatar is: only the name travels. The Avatars plugin draws a locked clip on the
+    overlay that shows that avatar, at its pin point `anchor` (else the box spot x / y, % of the model's box), nudged dx / dy
+    (% of the clip's own size); `scale` is a factor of the clip's own size, on top of the avatar's."""
+    if not isinstance(raw, dict):
+        return None
+    name = str(raw.get("avatar") or "").strip().lower()
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,31}", name):
+        return None
+    return {
+        "avatar": name,
+        "anchor": re.sub(r"\s+", " ", str(raw.get("anchor") or "")).strip()[:40],
+        "x": _clamp(raw.get("x"), -100, 200, 50.0), "y": _clamp(raw.get("y"), -100, 200, 20.0),
+        "dx": _clamp(raw.get("dx"), -300, 300, 0.0), "dy": _clamp(raw.get("dy"), -300, 300, 0.0),
+        "scale": _clamp(raw.get("scale"), 0.02, 20, 1.0), "rotation": _clamp(raw.get("rotation"), -360, 360, 0.0),
+        "layer": "back" if raw.get("layer") == "back" else "front",
+        "follow_angle": _flag(raw.get("follow_angle"), True), "mirror": _flag(raw.get("mirror"), False),
+    }
+
+
+# the query parameters of a play call that tune its lock, and the field each sets
+ATTACH_QUERY = {"avatar": "avatar", "anchor": "anchor", "ax": "x", "ay": "y", "dx": "dx", "dy": "dy", "ascale": "scale",
+                "arotation": "rotation", "layer": "layer", "follow": "follow_angle", "mirror": "mirror"}
+
+
 def read_sidecar(media_path: Path) -> dict:
     """Read the sidecar JSON next to a media file. Returns all keys with defaults.
-    x/y/scale + chroma → video. volume → audio/video. start/end + cooldown_ms → both kinds."""
+    x/y/scale + chroma + attach → video. volume → audio/video. start/end + cooldown_ms → both kinds."""
     out = {
         "x": DEFAULT_X, "y": DEFAULT_Y, "scale": DEFAULT_SCALE,
         "volume": 1.0,
@@ -221,6 +266,7 @@ def read_sidecar(media_path: Path) -> dict:
         "end": None,           # None = play to natural end
         "cooldown_ms": 0,      # 0 = no cooldown enforcement (current spam behavior)
         "chroma": None,        # None = no keying; {"color", "tolerance"} when enabled
+        "attach": None,        # None = plays where x/y say; else locked to an avatar (see parse_attach)
     }
     sidecar = media_path.with_suffix(".json")
     if sidecar.exists():
@@ -237,6 +283,7 @@ def read_sidecar(media_path: Path) -> dict:
                 except (TypeError, ValueError):
                     pass
             out["chroma"] = parse_chroma(data.get("chroma"))
+            out["attach"] = parse_attach(data.get("attach"))
         except Exception as e:
             log.warning("unreadable sidecar %s (using defaults): %s", sidecar.name, e)
     return out
@@ -457,6 +504,7 @@ def scan() -> dict:
                 entry["poster"] = f"{url_prefix}/{poster.name}" if poster else entry["url"]
                 entry["has_audio"] = has_audio_stream(p)
                 entry["chroma"] = sc["chroma"]
+                entry["attach"] = sc["attach"]
                 # Volume is meaningful only when the file actually carries audio.
                 if entry["has_audio"]:
                     entry["volume"] = sc["volume"]
@@ -643,12 +691,41 @@ async def get_index():
 _cooldown_until: dict[tuple[str, str], float] = {}
 
 
+def _overlay_targets(payload: dict) -> tuple[list[tuple[WebSocket, dict]], bool | None]:
+    """Who gets what, and - for a clip that asks to be locked to an avatar - whether an Avatars overlay draws that avatar.
+    `stop` goes to every overlay. A clip locked to an avatar goes to the Avatars overlays that draw that avatar, and to the
+    Avatars tab's previews that do; when no overlay does, the clip also plays where the Soundboard puts it (the lock is
+    dropped from that copy). Everything else goes to the Soundboard's own overlay."""
+    t = payload.get("type")
+    if t == "stop":
+        return [(ws, payload) for ws in overlay_clients], None
+    plain = [ws for ws in overlay_clients if not overlay_meta.get(ws, {}).get("role")]
+    if not payload.get("attach") or t != "video":
+        payload = {k: v for k, v in payload.items() if k != "attach"}
+        return [(ws, payload) for ws in plain], None
+    name = payload["attach"]["avatar"]
+
+    def draws(ws: WebSocket, role: str) -> bool:
+        m = overlay_meta.get(ws)
+        return bool(m) and m["role"] == role and name in m["avatars"]
+    hosts = [ws for ws in overlay_clients if draws(ws, "avatar")]
+    previews = [ws for ws in overlay_clients if draws(ws, "preview")]
+    sends = [(ws, payload) for ws in hosts + previews]
+    if hosts:
+        return sends, True
+    free = {k: v for k, v in payload.items() if k != "attach"}
+    return sends + [(ws, free) for ws in plain], False
+
+
 async def _broadcast_trigger(payload: dict) -> dict:
     """Broadcast a trigger to all overlays. Merges saved sidecar values when not explicitly
-    provided (position/volume/trim), tags videos with has_audio so the overlay can correctly
-    mute silent clips, and enforces per-clip cooldown if cooldown_ms > 0."""
+    provided (position/volume/trim/lock to an avatar), tags videos with has_audio so the overlay can
+    correctly mute silent clips, and enforces per-clip cooldown if cooldown_ms > 0."""
     t = payload.get("type")
     url = payload.get("url", "")
+    query = payload.pop("attach_query", None)        # a play call's own say about the lock (see ATTACH_QUERY)
+    if "attach" in payload:
+        payload["attach"] = parse_attach(payload["attach"])
     dir_map = {
         "audio": ("/media/audio/", AUDIO_DIR),
         "video": ("/media/video/", VIDEO_DIR),
@@ -688,6 +765,13 @@ async def _broadcast_trigger(payload: dict) -> dict:
                     payload.setdefault("has_audio", has_audio_stream(path))
                     if sc["chroma"] is not None:
                         payload.setdefault("chroma", sc["chroma"])
+                    if query is not None:
+                        # ?avatar=name locks this play to that avatar (the clip's saved lock for the same avatar, tuned by the
+                        # other parameters); ?avatar= with no name plays it on the Soundboard overlay whatever the clip says
+                        saved = sc["attach"] if sc["attach"] and sc["attach"]["avatar"] == str(query.get("avatar") or "").strip().lower() else {}
+                        payload["attach"] = parse_attach({**saved, **query})
+                    elif "attach" not in payload:
+                        payload["attach"] = sc["attach"]
                     if payload.get("has_audio"):
                         payload.setdefault("volume", sc["volume"])
                 elif t == "audio":
@@ -697,15 +781,20 @@ async def _broadcast_trigger(payload: dict) -> dict:
                 if sc["end"] is not None:
                     payload.setdefault("end", sc["end"])
 
-    msg = json.dumps(payload)
+    targets, attached = _overlay_targets(payload)
     dead = set()
-    for ws in overlay_clients:
+    for ws, body in targets:
         try:
-            await ws.send_text(msg)
+            await ws.send_text(json.dumps(body))
         except Exception:
             dead.add(ws)
     overlay_clients.difference_update(dead)
-    return {"ok": True, "delivered": len(overlay_clients)}
+    for ws in dead:
+        overlay_meta.pop(ws, None)
+    out = {"ok": True, "delivered": len(targets) - len(dead)}
+    if attached is not None:
+        out["attached"] = attached              # a clip locked to an avatar: was that avatar on an open overlay?
+    return out
 
 
 def find_media(name: str, kind: str | None = None) -> tuple[str, dict] | None:
@@ -739,6 +828,9 @@ async def api_root():
         "position_override (video)":   "?x=50&y=50&scale=2",
         "volume_override (audio/video)": "?volume=0.5  (0.0-1.0)",
         "trim_override (all kinds)":     "?start=2&end=5  (seconds; static images ignore start)",
+        "lock_to_avatar (video)":        "?avatar=hex[&anchor=head_top][&dx=0&dy=-40][&ascale=1] - plays glued to that avatar (Avatars plugin); "
+                                         "?avatar= (empty) plays it on the Soundboard overlay even if the clip is locked. "
+                                         "A clip can also be locked for good: POST /attach {file, kind:'video', attach:{avatar, anchor, ...}}",
         "examples": [
             "curl http://host:4747/api/play/airhorn",
             "curl http://host:4747/api/play/video/wow",
@@ -757,8 +849,17 @@ async def api_list():
     }
 
 
+def _attach_query(request: Request) -> dict | None:
+    """The lock a play call asks for in its query string (`?avatar=hex&anchor=head_top&dx=10`, see ATTACH_QUERY), or None when
+    it says nothing about one. `?avatar=` alone means "not locked, play it on the Soundboard overlay"."""
+    q = request.query_params
+    if "avatar" not in q:
+        return None
+    return {field: q[param] for param, field in ATTACH_QUERY.items() if param in q}
+
+
 @app.api_route("/api/play/{kind}/{name}", methods=["GET", "POST"])
-async def api_play_kind(kind: str, name: str,
+async def api_play_kind(kind: str, name: str, request: Request,
                         x: float | None = None, y: float | None = None,
                         scale: float | None = None, volume: float | None = None,
                         start: float | None = None, end: float | None = None):
@@ -775,11 +876,14 @@ async def api_play_kind(kind: str, name: str,
     if volume is not None: payload["volume"] = volume
     if start is not None:  payload["start"] = start
     if end is not None:    payload["end"] = end
+    aq = _attach_query(request)
+    if aq is not None and kind == "video":
+        payload["attach_query"] = aq
     return await _broadcast_trigger(payload)
 
 
 @app.api_route("/api/play/{name}", methods=["GET", "POST"])
-async def api_play_fuzzy(name: str,
+async def api_play_fuzzy(name: str, request: Request,
                          x: float | None = None, y: float | None = None,
                          scale: float | None = None, volume: float | None = None,
                          start: float | None = None, end: float | None = None):
@@ -795,6 +899,9 @@ async def api_play_fuzzy(name: str,
     if volume is not None: payload["volume"] = volume
     if start is not None:  payload["start"] = start
     if end is not None:    payload["end"] = end
+    aq = _attach_query(request)
+    if aq is not None and kind == "video":
+        payload["attach_query"] = aq
     return await _broadcast_trigger(payload)
 
 
@@ -861,6 +968,10 @@ async def set_position(payload: dict):
                 chroma = parse_chroma(raw_chroma)
                 if chroma is not None:
                     data["chroma"] = chroma
+            # A lock to an avatar is not part of what this editor sets: keep the clip's, unless one is sent.
+            lock = parse_attach(payload["attach"]) if "attach" in payload else read_sidecar(path)["attach"]
+            if lock is not None:
+                data["attach"] = lock
         # Trim window — applies to all kinds. Only write if non-default to keep JSON clean.
         start = float(payload.get("start", 0.0) or 0.0)
         if start > 0:
@@ -888,6 +999,42 @@ async def set_position(payload: dict):
     # something else causes a watcher event between save and re-open.
     reindex()
     return {"ok": True}
+
+
+@app.post("/attach")
+async def set_attach(payload: dict):
+    """Lock a video / GIF to an avatar (or - `attach: null` - let it go), leaving the rest of its settings alone.
+    {file, kind: "video", attach: {avatar, anchor, x, y, dx, dy, scale, rotation, layer, follow_angle, mirror} | null}.
+    The Avatars plugin draws a locked clip on the overlay that shows the avatar; see parse_attach."""
+    file = payload.get("file")
+    if payload.get("kind", "video") != "video" or not file:
+        raise HTTPException(400, "file and kind 'video' required (only a video or GIF can be locked to an avatar)")
+    path = VIDEO_DIR / safe_filename(file)
+    if not path.exists():
+        raise HTTPException(404, f"media file not found: {file}")
+    raw = payload.get("attach")
+    lock = parse_attach(raw)
+    if raw and lock is None:
+        raise HTTPException(400, "attach.avatar must be the name of an avatar (lowercase letters, digits, _ and -)")
+    sidecar = path.with_suffix(".json")
+    data: dict = {}
+    if sidecar.exists():
+        try:
+            data = json.loads(sidecar.read_text())
+        except (OSError, ValueError):
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+    if lock is not None:
+        data["attach"] = lock
+    else:
+        data.pop("attach", None)
+    if data:
+        write_sidecar(path, data)
+    elif sidecar.exists():
+        sidecar.unlink()
+    reindex()
+    return {"ok": True, "attach": lock}
 
 
 @app.post("/rename")
@@ -981,6 +1128,8 @@ async def upload(file: UploadFile = File(...)):
 @app.websocket("/ws/overlay")
 async def ws_overlay(ws: WebSocket):
     await ws.accept()
+    role = ws.query_params.get("role", "")
+    overlay_meta[ws] = {"role": role if role in ("avatar", "preview") else "", "avatars": set()}
     overlay_clients.add(ws)
     try:
         while True:
@@ -991,13 +1140,19 @@ async def ws_overlay(ws: WebSocket):
                 msg = json.loads(raw)
             except ValueError:
                 continue
+            if not isinstance(msg, dict):
+                continue
             if msg.get("type") == "error":
                 log.error("overlay playback error: %s (%s)",
                           msg.get("message", "?"), msg.get("url", "?"))
+            elif msg.get("type") == "avatars" and isinstance(msg.get("names"), list):
+                # An Avatars overlay says which avatars it draws: a clip locked to one plays there
+                overlay_meta[ws]["avatars"] = {str(n).strip().lower() for n in msg["names"][:64]}
     except WebSocketDisconnect:
         pass
     finally:
         overlay_clients.discard(ws)
+        overlay_meta.pop(ws, None)
 
 
 @app.websocket("/ws/control")

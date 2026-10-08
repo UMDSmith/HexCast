@@ -28,8 +28,20 @@ http://localhost:4747/avatar/overlay?audio=0         silent (another source play
     drag the dot to rotate, double-click to reset, Shift to snap; items drag and scroll the same way. The
     inspector has Placement, Face &amp; Mood (emotions, expressions, motions, gestures, a look-at pad, the
     emotion table), Mouth (lipsync source, meters, tuning, "learn this voice"), Idle, Parameters (every
-    parameter live — drag one to take it over — and the mappings), Items (add, place, pin to the model),
-    Light and API (ready-made calls for that avatar).</p>
+    parameter live — drag one to take it over — and the mappings), Items (add, place, lock, pin to the model,
+    and the model's pin points), Clips (Soundboard GIFs locked to the avatar), Colors, Light and API
+    (ready-made calls for that avatar).</p>
+  <h3>Pin points, and gluing things to a model</h3>
+  <p class="hint">A <b>pin point</b> is a named spot on a model's art (<code>head_top</code>, <code>left_hand</code>):
+    on the Items tab type a name, press <b>Pick on the model</b> and click the spot. It is saved on the model.
+    Glue things to it by name and they move with that part of the art, not just with the model:
+    an <b>item</b> (its Pin point menu; <b>Lock</b> keeps it from being dragged by accident);
+    <b>another avatar on the same overlay</b> — Placement → <b>Hang from another avatar</b>, a mini model on a
+    head, which rides the head as it turns and nods (drag it in the preview to glue it somewhere else; <b>Let go</b>
+    frees it where it stands); and a <b>Soundboard GIF or video</b> — the Clips tab, <b>Lock to</b> the avatar.
+    A locked clip plays on the overlay that shows the avatar, for anything that plays it (a bot, a hotkey, a
+    redeem), and its sound comes out of that overlay's OBS source. If no open overlay shows the avatar it plays
+    where the Soundboard puts it, and the play call says <code>"attached": false</code>.</p>
   <h3>PNGtubers</h3>
   <p class="hint">An avatar can be a PNGtuber instead: <b>simple</b> (pictures for quiet / talking / blinking / talking +
     blinking per state, optional half-open and per-vowel mouths - made from pictures with <b>New PNGtuber from
@@ -76,7 +88,8 @@ http://localhost:4747/avatar/overlay?audio=0         silent (another source play
     <tr><td>show · hide</td><td><code>{"fade": 0.4}</code></td></tr>
     <tr><td>speak</td><td>multipart field <code>audio</code>, raw audio, <code>{"url": …}</code> or <code>{"audio_b64": …}</code>; <code>volume</code>, <code>text</code>, <code>interrupt</code>; <code>?wait=1</code> answers when it has played</td></tr>
     <tr><td>stop_speaking</td><td></td></tr>
-    <tr><td>item_add · item_update · item_remove · items_clear</td><td><code>{"item": "halo", "id": "h1", "x": 50, "y": 5, "scale": 1, "layer": "front|back", "pin": null}</code></td></tr>
+    <tr><td>item_add · item_update · item_remove · items_clear</td><td><code>{"item": "halo", "id": "h1", "x": 50, "y": 5, "scale": 1, "layer": "front|back", "pin": null, "anchor": "head_top", "locked": false}</code> — <code>anchor</code> glues it to a pin point of the model (<code>anchors</code> in <code>/info</code>)</td></tr>
+    <tr><td>attach · detach</td><td><code>{"to": "hex", "anchor": "head_top", "dx": 0, "dy": -45, "layer": "front|back", "follow_angle": true, "mirror": false}</code> — hang this avatar from another on the same overlay (a mini model on a head); it rides the parent's pin point. <code>x</code> / <code>y</code> (% of the parent's box) are the spot when there is no <code>anchor</code>; <code>dx</code> / <code>dy</code> nudge its centre (% of its own size). Saved with the avatar. <code>detach</code> lets go (<code>{"x": 61, "y": 70}</code> to put it elsewhere)</td></tr>
     <tr><td>light</td><td><code>{"enabled": true, "preset": "fire", "color": "#ffd9a8", "intensity": 0.8, "angle": -35, "rim_amount": 0.6, "save": false}</code></td></tr>
     <tr><td>reload</td><td>load the model again</td></tr>
   </table>
@@ -89,6 +102,8 @@ http://localhost:4747/avatar/overlay?audio=0         silent (another source play
     <tr><td>GET /avatar/api/avatars/&lt;name&gt;/params/live</td><td>every parameter's value right now</td></tr>
     <tr><td>POST /avatar/api/avatars</td><td><code>{"name": "guest", "model": "akari", "overlay": "guest"}</code> — create; <code>POST …/&lt;name&gt;</code> changes settings (<code>{"overlay": "main"}</code> moves it to another overlay), <code>…/rename</code>, <code>…/delete</code></td></tr>
     <tr><td>GET /avatar/api/models · /items</td><td>the library; <code>POST …/upload</code> (zip or folder), <code>POST …/import</code> <code>{"path": …}</code></td></tr>
+    <tr><td>GET /avatar/api/models/&lt;id&gt;/anchors</td><td>the model's pin points · <code>POST</code> <code>{"name": "head_top", "pin": {…}}</code> saves one (the tab makes the pin), <code>POST …/&lt;name&gt;/delete</code></td></tr>
+    <tr><td>Soundboard: locking a clip</td><td><code>GET /api/play/video/&lt;clip&gt;?avatar=hex&amp;anchor=head_top&amp;dy=-40&amp;ascale=0.8</code> plays it glued to that avatar (<code>?avatar=</code> empty: on the Soundboard overlay); <code>POST /attach</code> <code>{"file": "heart.mp4", "kind": "video", "attach": {"avatar": "hex", "anchor": "head_top", "dy": -40}}</code> locks it for good (<code>null</code> lets go)</td></tr>
   </table>
   <h3>WebSocket</h3>
   <p class="hint"><code>ws://localhost:4747/avatar/ws/control</code> takes the same commands as JSON

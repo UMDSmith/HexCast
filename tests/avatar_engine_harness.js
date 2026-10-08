@@ -4,14 +4,15 @@
 'use strict';
 const fs = require('fs'), vm = require('vm');
 
-function load(file) {
+function load(file, extra) {                 // extra.PIXI: classes the stub should have for real (a Point with x and y ...)
   const env = { clock: 1.7e9 };
   class C {
     constructor() { this.children = []; this.style = {}; this.position = { set() {} }; this.scale = { set() {} }; }
     addChild() {} addChildAt() {} removeChild() {} destroy() {}
   }
   const sb = { console, window: {}, document: {}, setTimeout, clearTimeout,
-    performance: { now: () => env.clock * 1000, timeOrigin: 0 }, PIXI: new Proxy({}, { get: () => C }) };
+    performance: { now: () => env.clock * 1000, timeOrigin: 0 },
+    PIXI: new Proxy((extra && extra.PIXI) || {}, { get: (t, k) => (k in t ? t[k] : C) }) };
   sb.window.HexLipsync = { Analyzer: function () {
     this.out = { level: 0, open: 0, form: 0, volume: 0, frequency: 0.5, silence: 1, A: 0, I: 0, U: 0, E: 0, O: 0 };
     this.update = () => this.out; this.reset = () => {}; this.configure = () => {}; this.attachAnalyser = () => {}; } };

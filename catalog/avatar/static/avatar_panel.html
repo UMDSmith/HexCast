@@ -290,6 +290,7 @@
           <button data-p="png" id="tab-png" style="display:none">PNGtuber</button>
           <button data-p="params">Parameters</button>
           <button data-p="items">Items</button>
+          <button data-p="clips">Clips</button>
           <button data-p="colors">Colors</button>
           <button data-p="light">Light</button>
           <button data-p="api">API</button>
@@ -305,6 +306,20 @@
           <div class="f"><span>Layer</span><div class="ctl btns"><button class="sm" id="l-up">Bring forward</button><button class="sm" id="l-down">Send back</button><span class="dim" id="l-pos"></span></div></div>
           <div class="row" style="margin-top:10px"><button class="sm" id="p-center">Centre</button><button class="sm" id="p-reset">Reset</button></div>
           <p class="hint" style="margin-top:10px">Saved for this avatar. Bots move it for the moment with <span class="mono">transform</span> (add <span class="mono">"save": true</span> to keep it).</p>
+
+          <h3>Hang from another avatar</h3>
+          <p class="hint" style="margin-top:0">Glue this avatar to a spot on another one on the same overlay - a mini model on a head - and it moves, tilts and turns with that part. Its own Zoom and Rotation apply on top of the parent's. Drag it in the preview to glue it somewhere else.</p>
+          <div class="f"><span>Hang from</span><div class="ctl"><select id="at-to" class="grow"></select></div></div>
+          <div id="at-box" style="display:none">
+            <div class="f"><span>Pin point</span><div class="ctl"><select id="at-anchor" data-atk="anchor" class="grow" title="A named spot on the parent's art (make them in the Items tab, Pin points)"></select></div></div>
+            <div class="f" data-free="1"><span>Across %</span><div class="ctl"><input type="range" min="-20" max="120" step="0.5" data-atk="x"><span class="val"></span></div></div>
+            <div class="f" data-free="1"><span>Down %</span><div class="ctl"><input type="range" min="-20" max="120" step="0.5" data-atk="y"><span class="val"></span></div></div>
+            <div class="f"><span>Nudge across</span><div class="ctl"><input type="range" min="-150" max="150" step="1" data-atk="dx"><span class="val"></span></div></div>
+            <div class="f"><span>Nudge down</span><div class="ctl"><input type="range" min="-150" max="150" step="1" data-atk="dy"><span class="val"></span></div></div>
+            <div class="f"><span>Layer</span><div class="ctl"><select data-atk="layer"><option value="front">in front of it</option><option value="back">behind it</option></select></div></div>
+            <div class="f"><span>Moves with it</span><div class="ctl"><label class="sw" title="Tilts and turns with the part it is pinned to"><input type="checkbox" data-atk="follow_angle"> turns with the part</label><label class="sw" title="When the parent is flipped left-right, this one is mirrored too"><input type="checkbox" data-atk="mirror"> mirrors with it</label></div></div>
+            <div class="row" style="margin-top:6px"><button class="sm" id="at-let" title="Let go and stay where it is now">Let go</button><span class="dim" style="font-size:12px" id="at-note"></span></div>
+          </div>
         </div>
 
         <div class="pane" data-p="mood">
@@ -412,9 +427,18 @@
         </div>
 
         <div class="pane" data-p="items">
-          <p class="hint">Props on this avatar: pictures, GIFs, frame animations or Live2D items from the library. Position is in % of the model's box; <b>Pin</b> glues an item to the part of the model under it so it moves with the head, hands ...</p>
+          <p class="hint" style="margin-top:0">Props on this avatar: pictures, GIFs, frame animations or Live2D items from the library. Position is in % of the model's box; <b>Pin</b> glues an item to the part of the model under it so it moves with the head, hands ... <b>Lock</b> keeps it from being dragged by accident.</p>
           <div class="row"><select id="it-add-sel" class="grow"></select><button class="sm" id="it-add">Add</button></div>
           <div class="ilist" id="it-list"></div>
+          <h3>Pin points <span class="dim" style="text-transform:none;letter-spacing:0">(saved on this model)</span></h3>
+          <p class="hint" style="margin-top:0">A pin point is a named spot on the art - the top of the head, a hand. Items, another avatar (a mini model on a head) and soundboard clips are glued to one by name, and then move with that part. A bot says <span class="mono">"anchor": "head_top"</span>.</p>
+          <div class="btns" id="an-list"></div>
+          <div class="row" style="margin-top:6px"><input id="an-name" class="grow" placeholder="Name, e.g. head_top" maxlength="40"><button class="sm pick" id="an-pick" title="Then click the spot on the preview">Pick on the model</button></div>
+        </div>
+
+        <div class="pane" data-p="clips">
+          <p class="hint" style="margin-top:0">Lock a Soundboard GIF or video to this avatar and it plays on this avatar's overlay, glued to a spot on the model (or at a place in the model's box), instead of at a fixed place on the Soundboard overlay. It follows the model when it moves, and the pin point when the part under it moves. Anything that plays the clip - a bot, a hotkey, a redeem - gets it locked. <b>Its sound comes out of this overlay's OBS source</b> (tick <i>Control audio via OBS</i> on it).</p>
+          <div class="ilist" id="cl-list"></div>
         </div>
 
         <div class="pane" data-p="colors">
@@ -499,6 +523,7 @@
 <input type="file" id="f-core" accept=".js" style="display:none">
 
 <script src="/static/hexbar.js?v=2"></script>
+<script src="/static/chroma.js"></script>
 <!--HEXCAST-RUNTIME-->
 <script>
 (function () {
@@ -632,6 +657,7 @@
     stage.on('select', function (name) { if (name) selectAvatar(name); });
     stage.on('transform', function (e) { onTransform(e); });
     stage.on('item', function (e) { onItemDrag(e); });
+    stage.on('attach', function (e) { onAttachDrag(e); });
     stage.on('reset', function (name) { api('POST', '/avatar/api/avatars/' + encodeURIComponent(name), { x: 50, y: 55, scale: 1, rotation: 0 }); });
     stage.on('model_info', function (m) { if (rws && rws.readyState === 1) rws.send(JSON.stringify({ type: 'model_info', model: m.model, info: m.info })); infoChanged(m.model); });
     stage.on('stats', function (s) { S.pvStats = s; renderStats(); });
@@ -639,6 +665,7 @@
       $('pv-msg').style.display = 'none';
       rready = true; rqueue.splice(0).forEach(onRender);
       if (S.sel) stage.select(S.sel);
+      stage.listenClips();                                // soundboard clips locked to an avatar play here too (silently)
     }).catch(function (e) { $('pv-msg').textContent = 'The preview could not start: ' + e.message; });
     connectRender();
   }
@@ -858,7 +885,8 @@
     $('m-exprs-h').querySelector('span').textContent = isPng ? '(one at a time)' : "(the model's own - several can be on)";
     if (!isPng && paneSel === 'png') document.querySelector('#tabs [data-p=place]').click();
     if (isPng && paneSel === 'png') loadPng();
-    renderMood(); renderMouth(); renderItems(); renderLight(); renderApi(); renderColors();
+    renderMood(); renderMouth(); renderItems(); renderAttach(); renderLight(); renderApi(); renderColors();
+    if (paneSel === 'clips') { if (CL.index) renderClips(); else loadClips(); }
     if (paneSel === 'params' || (paneSel === 'colors' && !S.info[a.name])) loadInfo();
   }
   $('i-visible').onchange = function () { var a = cur(); if (a) api('POST', '/avatar/api/avatars/' + encodeURIComponent(a.name), { visible: this.checked }); };
@@ -889,6 +917,7 @@
     document.querySelectorAll('.pane').forEach(function (p) { p.classList.toggle('sel', p.dataset.p === paneSel); });
     stopPick();
     if (paneSel === 'params' || paneSel === 'colors') loadInfo();
+    if (paneSel === 'clips') loadClips();
     if (paneSel === 'mouth') loadDevices();
     if (paneSel === 'png') loadPng();
   });
@@ -1185,24 +1214,36 @@
 
   /* ---------------------------------------------------------------- items */
   function itemsById() { var o = {}; S.items.forEach(function (it) { o[it.id] = it; }); return o; }
+  function ci(x, y) { x = x.toLowerCase(); y = y.toLowerCase(); return x < y ? -1 : x > y ? 1 : 0; }
+  function anchorsOf(a) { return ((a && S.models[a.model]) || {}).anchors || {}; }
+  /* <option>s for a pin point menu: the model's pin points, the current one (even if the model lost it) selected */
+  function anchorOptions(names, current, none) {
+    var opts = '<option value="">' + esc(none) + '</option>' + names.map(function (n) { return '<option value="' + esc(n) + '"' + (n === current ? ' selected' : '') + '>' + esc(n) + '</option>'; }).join('');
+    if (current && names.indexOf(current) < 0) opts += '<option value="' + esc(current) + '" selected>' + esc(current) + ' (this model has no such pin point)</option>';
+    return opts;
+  }
   function renderItems() {
     var a = cur(); if (!a) return;
-    var lib = itemsById();
+    renderAnchors();
+    var lib = itemsById(), names = Object.keys(anchorsOf(a)).sort(ci);
     $('it-add-sel').innerHTML = S.items.length ? S.items.map(function (it) { return '<option value="' + esc(it.id) + '"' + (it.ok ? '' : ' disabled') + '>' + esc(it.name) + ' (' + it.kind + ')</option>'; }).join('')
       : '<option value="">The item library is empty - add some below</option>';
     var open = {};
     $('it-list').querySelectorAll('.it.open').forEach(function (e) { open[e.dataset.id] = 1; });
     $('it-list').innerHTML = (a.items || []).map(function (it) {
-      var meta = lib[it.item] || {}, pic = meta.icon || meta.url || '';
+      var meta = lib[it.item] || {}, pic = meta.icon || meta.url || '', glued = !!(it.pin || it.anchor);
       var f = function (k, label, min, max, step) { return '<div class="f"><span>' + label + '</span><div class="ctl"><input type="range" min="' + min + '" max="' + max + '" step="' + step + '" data-ik="' + k + '" value="' + it[k] + '"><span class="val">' + fmt(it[k]) + '</span></div></div>'; };
+      var where = it.anchor ? '&#128204; on the pin point ' + esc(it.anchor) : it.pin ? '&#128204; pinned to ' + esc(it.pin.mesh) : it.layer === 'back' ? 'behind the model' : 'in front';
       return '<div class="it' + (open[it.id] ? ' open' : '') + '" data-id="' + esc(it.id) + '"><div class="thumb" style="background-image:url(\'' + esc(pic) + '\')"></div>' +
-        '<div style="min-width:0"><b>' + esc(meta.name || it.item) + '</b> <span class="dim mono">' + esc(it.id) + '</span><br><span class="dim" style="font-size:12px">' + (it.pin ? '&#128204; pinned to ' + esc(it.pin.mesh) : it.layer === 'back' ? 'behind the model' : 'in front') + '</span></div>' +
+        '<div style="min-width:0"><b>' + esc(meta.name || it.item) + '</b> <span class="dim mono">' + esc(it.id) + '</span><br><span class="dim" style="font-size:12px">' + where + (it.locked ? ' &middot; &#128274; locked' : '') + '</span></div>' +
         '<div class="btns"><button class="sm" data-a="vis">' + (it.visible ? 'Hide' : 'Show') + '</button><button class="sm" data-a="edit">Edit</button><button class="sm danger" data-a="del">&times;</button></div>' +
-        '<div class="ctls">' + (it.pin ? '' : f('x', 'Across %', -60, 160, 0.5) + f('y', 'Down %', -60, 160, 0.5)) + f('scale', 'Size', 0.05, 6, 0.01) + f('rotation', 'Rotation', -180, 180, 1) + f('opacity', 'Opacity', 0, 1, 0.01) +
+        '<div class="ctls">' + (glued ? '' : f('x', 'Across %', -60, 160, 0.5) + f('y', 'Down %', -60, 160, 0.5)) + f('scale', 'Size', 0.05, 6, 0.01) + f('rotation', 'Rotation', -180, 180, 1) + f('opacity', 'Opacity', 0, 1, 0.01) +
+        '<div class="f"><span>Pin point</span><div class="ctl"><select data-ik="anchor" class="grow">' + anchorOptions(names, it.anchor || '', it.pin ? 'the spot pinned here' : 'none (free)') + '</select></div></div>' +
         '<div class="f"><span>Layer</span><div class="ctl"><select data-ik="layer"><option value="front"' + (it.layer === 'front' ? ' selected' : '') + '>in front</option><option value="back"' + (it.layer === 'back' ? ' selected' : '') + '>behind</option></select>' +
-        '<label class="sw"><input type="checkbox" data-ik="flip"' + (it.flip ? ' checked' : '') + '> flip</label></div></div>' +
+        '<label class="sw"><input type="checkbox" data-ik="flip"' + (it.flip ? ' checked' : '') + '> flip</label>' +
+        '<label class="sw" title="It cannot be dragged or resized in the preview, and clicks go through it to the model"><input type="checkbox" data-ik="locked"' + (it.locked ? ' checked' : '') + '> lock</label></div></div>' +
         (meta.kind === 'sequence' ? f('fps', 'Frames / s', 1, 60, 1) : '') +
-        '<div class="row" style="margin-top:6px">' + (it.pin ? '<button class="sm" data-a="unpin">Unpin</button>' : '<button class="sm" data-a="pin" title="Glue it to the part of the model under it">&#128204; Pin to the model here</button>') + '</div></div></div>';
+        '<div class="row" style="margin-top:6px">' + (it.pin || it.anchor ? '<button class="sm" data-a="unpin">Unpin</button>' : '<button class="sm" data-a="pin" title="Glue it to the part of the model under it">&#128204; Pin to the model here</button>') + '</div></div></div>';
     }).join('') || '<div class="empty">No items on this avatar.</div>';
   }
   $('it-add').onclick = function () {
@@ -1227,10 +1268,47 @@
       case 'edit': row.classList.toggle('open'); break;
       case 'del': cmd('item_remove', { id: id }); break;
       case 'vis': cmd('item_update', { id: id, visible: !it.visible }); break;
-      case 'unpin': cmd('item_update', { id: id, pin: null }); break;
+      case 'unpin': cmd('item_update', { id: id, pin: null, anchor: '' }); break;
       case 'pin': pinItem(a, it); break;
     }
   });
+
+  /* pin points: named spots on the model's art, saved on the model */
+  function renderAnchors() {
+    var a = cur(); if (!a) return;
+    var names = Object.keys(anchorsOf(a)).sort(ci);
+    $('an-list').innerHTML = names.map(function (n) {
+      return '<span class="btns" style="gap:2px;flex-wrap:nowrap"><button class="sm" data-an="show" data-n="' + esc(n) + '" title="Mark it on the model in the preview">&#128204; ' + esc(n) + '</button>' +
+        '<button class="sm ghost danger" data-an="del" data-n="' + esc(n) + '" title="Delete this pin point">&times;</button></span>';
+    }).join('') || '<span class="empty">' + (a.model ? 'No pin points on this model yet.' : 'This avatar has no model.') + '</span>';
+  }
+  $('an-list').onclick = function (e) {
+    var b = e.target.closest('[data-an]'), a = cur(); if (!b || !a) return;
+    if (b.dataset.an === 'show') {
+      var av = stage && stage.avatars[a.name];
+      if (av && av.model) av.flashPin(b.dataset.n, 2.5); else toast('The preview has to show the avatar', true);
+    } else if (a.model) {
+      api('POST', '/avatar/api/models/' + encodeURIComponent(a.model) + '/anchors/' + encodeURIComponent(b.dataset.n) + '/delete').then(function (r) { if (r) toast('Pin point deleted'); });
+    }
+  };
+  $('an-pick').onclick = function () {
+    var btn = this, a = cur(), av = stage && a && stage.avatars[a.name], name = $('an-name').value.trim();
+    if (btn.classList.contains('on')) { stopPick(); return; }
+    if (!a || !a.model) { toast('This avatar has no model', true); return; }
+    if (!name) { toast('Give the pin point a name first', true); $('an-name').focus(); return; }
+    if (!av || !av.model) { toast('The preview has to be showing the model', true); return; }
+    btn.classList.add('on');
+    stage.pickPin(a.name, function (pin) {
+      btn.classList.remove('on');
+      if (!pin) { toast('Nothing there - click on the model itself', true); return; }
+      api('POST', '/avatar/api/models/' + encodeURIComponent(a.model) + '/anchors', { name: name, pin: pin }).then(function (r) {
+        if (!r) return;
+        toast('Pin point ' + r.name + ' saved');
+        $('an-name').value = '';
+        setTimeout(function () { av.flashPin(pin, 2); }, 200);
+      });
+    });
+  };
   function pinItem(a, it) {
     var av = stage && stage.avatars[a.name], live = av && av.items.filter(function (x) { return x.cfg.id === it.id; })[0];
     if (!av || !av.model || !live) { toast('The preview has to show the avatar to pin', true); return; }
@@ -1238,6 +1316,130 @@
     if (!pin) { toast('There is no part of the model under the item - move it onto the model first', true); return; }
     cmd('item_update', { id: it.id, pin: pin }).then(function (r) { if (r) toast('Pinned to ' + pin.mesh); });
   }
+
+  /* ---------------------------------------------------------------- hanging from another avatar */
+  function renderAttach() {
+    var a = cur(); if (!a) return;
+    var at = a.attach, others = S.config.avatars.filter(function (x) { return x.name !== a.name; });
+    $('at-to').innerHTML = '<option value="">(stands on its own)</option>' + others.map(function (x) {
+      var same = ovOf(x) === ovOf(a);
+      return '<option value="' + esc(x.name) + '"' + (at && at.to === x.name ? ' selected' : '') + (same || (at && at.to === x.name) ? '' : ' disabled') + '>' + esc(x.name) + (same ? '' : ' (on overlay ' + esc(ovOf(x)) + ')') + '</option>';
+    }).join('');
+    $('at-box').style.display = at ? '' : 'none';
+    if (!at) return;
+    var parent = others.filter(function (x) { return x.name === at.to; })[0], names = Object.keys(anchorsOf(parent)).sort(ci);
+    $('at-anchor').innerHTML = anchorOptions(names, at.anchor || '', at.pin ? 'the spot it was dropped on' : 'a free spot (set below, or drag it)');
+    var glued = !!(at.anchor || at.pin);
+    document.querySelectorAll('#at-box [data-free]').forEach(function (el) { el.style.display = glued ? 'none' : ''; });
+    document.querySelectorAll('#at-box [data-atk]').forEach(function (el) {
+      if (el.tagName === 'SELECT' && el.id === 'at-anchor') return;
+      if (el === document.activeElement && el.type === 'range') return;
+      var v = at[el.dataset.atk];
+      if (el.type === 'checkbox') el.checked = !!v; else if (v != null) el.value = v;
+      if (el.nextElementSibling && el.nextElementSibling.classList.contains('val')) el.nextElementSibling.textContent = fmt(v);
+    });
+    $('at-note').textContent = parent && ovOf(parent) !== ovOf(a) ? at.to + ' is on another overlay: it only follows while they share one.' : !parent ? at.to + ' is gone.' : '';
+  }
+  $('at-to').onchange = function () {
+    var a = cur(); if (!a) return;
+    if (!this.value) { letGo(a); return; }
+    cmd('attach', { to: this.value }).then(function (r) { if (r) toast('Hanging from ' + r.attach.to + ' - drag it into place, or pick a pin point'); });
+  };
+  var atPending = {};
+  var atFlush = debounce(function () { var p = atPending; atPending = {}; cmd('attach', p); }, 90);
+  function atField(el) {
+    var k = el.dataset.atk; if (!k) return;
+    var v = el.type === 'checkbox' ? el.checked : el.tagName === 'SELECT' ? el.value : parseFloat(el.value);
+    if (typeof v === 'number' && isNaN(v)) return;
+    var a = cur(); if (a && a.attach) a.attach[k] = v;
+    if (el.nextElementSibling && el.nextElementSibling.classList.contains('val')) el.nextElementSibling.textContent = fmt(v);
+    atPending[k] = v; atFlush();
+  }
+  $('at-box').addEventListener('input', function (e) { if (e.target.type === 'range') atField(e.target); });
+  $('at-box').addEventListener('change', function (e) { if (e.target.type !== 'range') atField(e.target); });
+  /* let go where it stands: the preview knows where it is on the stage */
+  function letGo(a) {
+    var av = stage && stage.avatars[a.name], wp = av && av.model ? av.worldPlacement() : null;
+    cmd('detach', wp || {}).then(function (r) { if (r) toast('Let go'); });
+  }
+  $('at-let').onclick = function () { var a = cur(); if (a) letGo(a); };
+  function onAttachDrag(e) {                                 // dropped in the preview: glued there (to the part under it, if it was glued to a part)
+    api('POST', '/avatar/api/avatars/' + encodeURIComponent(e.avatar) + '/attach', e.patch).then(function (r) {
+      if (r && 'pin' in e.patch) toast(e.patch.pin ? 'Glued to ' + e.patch.pin.mesh : 'Dropped off the model - glued to a free spot');
+    });
+  }
+
+  /* ---------------------------------------------------------------- soundboard clips locked to the avatar */
+  var CL = { index: null, open: {} };
+  async function loadClips() {
+    var j = await fetch('/index', { cache: 'no-store' }).then(function (r) { return r.json(); }).catch(function () { return null; });
+    if (!j) { $('cl-list').innerHTML = '<div class="empty">The Soundboard did not answer.</div>'; return; }
+    CL.index = j;
+    renderClips();
+  }
+  var CLIP_DEFAULT = { avatar: '', anchor: '', x: 50, y: 20, dx: 0, dy: 0, scale: 1, rotation: 0, layer: 'front', follow_angle: true, mirror: false };
+  function renderClips() {
+    var a = cur(); if (!a) return;
+    if (!CL.index) { $('cl-list').innerHTML = '<div class="empty">Loading the Soundboard...</div>'; return; }
+    var names = Object.keys(anchorsOf(a)).sort(ci), vids = CL.index.video || [];
+    $('cl-list').innerHTML = vids.map(function (c) {
+      var lk = c.attach, mine = lk && lk.avatar === a.name, open = mine && CL.open[c.file];
+      var f = function (k, label, min, max, step) { return '<div class="f"><span>' + label + '</span><div class="ctl"><input type="range" min="' + min + '" max="' + max + '" step="' + step + '" data-ck="' + k + '" value="' + (mine ? lk[k] : 0) + '"><span class="val">' + (mine ? fmt(lk[k]) : '') + '</span></div></div>'; };
+      var state = !lk ? 'plays on the Soundboard overlay' : '&#128274; locked to <b>' + esc(lk.avatar) + '</b>' + (lk.anchor ? ' at ' + esc(lk.anchor) : '');
+      var btns = '<button class="sm" data-c="test" title="Play it now">&#9654; Test</button>' +
+        (mine ? '<button class="sm" data-c="edit">Edit</button><button class="sm" data-c="unlock" title="Back to the Soundboard overlay">Unlock</button>'
+              : '<button class="sm" data-c="lock" title="Glue it to ' + esc(a.name) + '">' + (lk ? 'Lock to ' + esc(a.name) + ' instead' : 'Lock to ' + esc(a.name)) + '</button>');
+      return '<div class="it' + (open ? ' open' : '') + '" data-file="' + esc(c.file) + '" data-name="' + esc(c.name) + '"><div class="thumb" style="background-image:url(\'' + esc(c.poster || c.url) + '\')"></div>' +
+        '<div style="min-width:0"><b>' + esc(c.name) + '</b><br><span class="dim" style="font-size:12px">' + state + '</span></div><div class="btns">' + btns + '</div>' +
+        (mine ? '<div class="ctls">' +
+          '<div class="f"><span>Pin point</span><div class="ctl"><select data-ck="anchor" class="grow">' + anchorOptions(names, lk.anchor || '', 'a free spot (set below)') + '</select></div></div>' +
+          (lk.anchor ? '' : f('x', 'Across %', -20, 120, 0.5) + f('y', 'Down %', -20, 120, 0.5)) +
+          f('dx', 'Nudge across', -150, 150, 1) + f('dy', 'Nudge down', -150, 150, 1) + f('scale', 'Size', 0.05, 4, 0.01) + f('rotation', 'Rotation', -180, 180, 1) +
+          '<div class="f"><span>Layer</span><div class="ctl"><select data-ck="layer"><option value="front"' + (lk.layer !== 'back' ? ' selected' : '') + '>in front of the model</option><option value="back"' + (lk.layer === 'back' ? ' selected' : '') + '>behind the model</option></select></div></div>' +
+          '<div class="f"><span>Moves with it</span><div class="ctl"><label class="sw"><input type="checkbox" data-ck="follow_angle"' + (lk.follow_angle !== false ? ' checked' : '') + '> turns with the part</label><label class="sw"><input type="checkbox" data-ck="mirror"' + (lk.mirror ? ' checked' : '') + '> mirrors with the model</label></div></div>' +
+          '</div>' : '') + '</div>';
+    }).join('') || '<div class="empty">The Soundboard has no GIFs or videos yet - add some on the Soundboard page (an animated GIF becomes a video).</div>';
+  }
+  function lockedTo(c) { return c && c.attach ? c.attach.avatar : ''; }
+  async function saveClipLock(file, attach) {
+    var r = await api('POST', '/attach', { file: file, kind: 'video', attach: attach });
+    if (!r) return false;
+    var c = (CL.index.video || []).filter(function (x) { return x.file === file; })[0];
+    if (c) c.attach = r.attach;
+    return true;
+  }
+  var clSaveSoon = debounce(function (file, attach) { saveClipLock(file, attach); }, 200);
+  $('cl-list').addEventListener('click', async function (e) {
+    var b = e.target.closest('[data-c]'); if (!b) return;
+    var row = b.closest('.it'), file = row.dataset.file, a = cur(); if (!a) return;
+    var c = (CL.index.video || []).filter(function (x) { return x.file === file; })[0]; if (!c) return;
+    switch (b.dataset.c) {
+      case 'test':
+        fetch('/api/play/video/' + encodeURIComponent(c.name)).then(function (r) { return r.json(); }).then(function (j) {
+          toast(j.attached === false ? 'Shown in the preview. No open OBS overlay shows ' + (lockedTo(c) || a.name) + ', so on stream it played where the Soundboard puts it' : j.attached ? 'Playing on ' + (lockedTo(c) || a.name) : 'Playing');
+        }).catch(function () { toast('The Soundboard did not answer', true); });
+        break;
+      case 'lock':
+        if (await saveClipLock(file, Object.assign({}, CLIP_DEFAULT, { avatar: a.name }))) { CL.open[file] = true; renderClips(); toast('Locked to ' + a.name + ' - press Test'); }
+        break;
+      case 'unlock':
+        if (await saveClipLock(file, null)) { c.attach = null; renderClips(); toast('Back on the Soundboard overlay'); }
+        break;
+      case 'edit': CL.open[file] = !CL.open[file]; row.classList.toggle('open', !!CL.open[file]); break;
+    }
+  });
+  function clField(el) {
+    var k = el.dataset.ck, row = el.closest('.it'); if (!k || !row) return;
+    var c = (CL.index.video || []).filter(function (x) { return x.file === row.dataset.file; })[0]; if (!c || !c.attach) return;
+    var v = el.type === 'checkbox' ? el.checked : el.tagName === 'SELECT' ? el.value : parseFloat(el.value);
+    if (typeof v === 'number' && isNaN(v)) return;
+    c.attach[k] = v;
+    if (el.nextElementSibling && el.nextElementSibling.classList.contains('val')) el.nextElementSibling.textContent = fmt(v);
+    clSaveSoon(c.file, c.attach);
+    if (k === 'anchor') renderClips();                     // (the free-spot sliders come and go)
+  }
+  $('cl-list').addEventListener('input', function (e) { if (e.target.type === 'range') clField(e.target); });
+  $('cl-list').addEventListener('change', function (e) { if (e.target.type !== 'range') clField(e.target); });
 
   /* ---------------------------------------------------------------- PNGtuber editor */
   var PNG = { mid: null, rig: null, dirty: false };
@@ -1819,7 +2021,7 @@
     row.classList.remove('flash'); void row.offsetWidth; row.classList.add('flash');
     setTimeout(function () { row.classList.remove('flash'); }, 1500);
   }
-  function stopPick() { $('co-pick').classList.remove('on'); if (stage) stage.cancelPick(); }
+  function stopPick() { $('co-pick').classList.remove('on'); $('an-pick').classList.remove('on'); if (stage) stage.cancelPick(); }
   $('co-pick').onclick = function () {
     var btn = this, av = stage && S.sel && stage.avatars[S.sel];
     if (btn.classList.contains('on')) { stopPick(); return; }

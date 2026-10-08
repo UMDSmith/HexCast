@@ -34,6 +34,7 @@ ITEMS_DIR = ROOT / "items"
 URL = "/avatar/lib"
 SETTINGS_FILE = "hexcast.json"
 COLORS_FILE = "hexcast.colors.json"          # the model's colour presets (Live2D and PNGtuber alike)
+ANCHORS_FILE = "hexcast.anchors.json"        # the model's named pin points (Live2D and PNGtuber alike)
 
 # The newest .moc3 format the Cubism Core Hexcast downloads can read (Core 5.1 -> moc3 v5, which is
 # every model saved by Cubism Editor 3.0 - 5.2). Cubism 5.3 saves v6 - the web engine cannot draw
@@ -317,7 +318,7 @@ def _png_meta(mid: str, folder: Path) -> dict:
         "pictures": _folder_pictures(folder), "layers": len(rig.get("layers") or []), "size": size,
         "mappings_from": "", "hotkeys": [], "idle_motion": "", "use_physics": False, "editor": "PNG",
         "source": rig.get("source", ""), "color_presets": sorted(color_presets(mid), key=str.lower),
-        "color_default": color_default(mid),
+        "color_default": color_default(mid), "anchors": anchors(mid),
     }
 
 
@@ -359,6 +360,7 @@ def model_meta(mid: str) -> dict:
         "mappings_from": settings.get("mappings_from", "default"), "hotkeys": settings.get("hotkeys", []),
         "idle_motion": settings.get("idle_motion", ""), "use_physics": bool(settings.get("physics", True)),
         "color_presets": sorted(color_presets(mid), key=str.lower), "color_default": color_default(mid),
+        "anchors": anchors(mid),
     }
 
 
@@ -396,6 +398,25 @@ def save_color_presets(mid: str, presets: dict, default: str = "") -> None:
     path = model_dir(mid) / COLORS_FILE
     if presets:
         _write_json(path, {"version": 1, "presets": presets, **({"default": default} if default in presets else {})})
+    else:
+        try:
+            path.unlink()
+        except OSError:
+            pass
+
+
+def anchors(mid: str) -> dict:
+    """The model's named pin points (name -> pin, see avatar._norm_pin): a spot on the art that things can be glued to -
+    an item, a soundboard clip, another model. Kept in the model's own folder, so they go wherever the model goes."""
+    d = _read_json(model_dir(mid) / ANCHORS_FILE)
+    a = d.get("anchors") if isinstance(d, dict) else None
+    return a if isinstance(a, dict) else {}
+
+
+def save_anchors(mid: str, table: dict) -> None:
+    path = model_dir(mid) / ANCHORS_FILE
+    if table:
+        _write_json(path, {"version": 1, "anchors": table})
     else:
         try:
             path.unlink()
