@@ -28,7 +28,7 @@ def _png(w=8, h=6) -> bytes:
         chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
 
 
-def _model_zip(moc_version=3, vts=True, nested="My Model/runtime/", extra_rows=()) -> bytes:
+def _model_zip(moc_version=3, vts=True, nested="My Model/runtime/", extra_rows=(), vts_extra=None) -> bytes:
     model3 = {"Version": 3, "FileReferences": {"Moc": "m.moc3", "Textures": ["m.2048/texture_00.png"],
                                                "Expressions": [{"Name": "Smile", "File": "smile.exp3.json"}],
                                                "Motions": {"Idle": [{"File": "motions/idle.motion3.json"}]}}}
@@ -52,6 +52,7 @@ def _model_zip(moc_version=3, vts=True, nested="My Model/runtime/", extra_rows=(
                                        "InputRangeLower": 0, "InputRangeUpper": 1, "OutputRangeLower": 0,
                                        "OutputRangeUpper": 2.1, "Smoothing": 0}, *extra_rows],
                 "Hotkeys": [{"Name": "Angry", "Action": "ToggleExpression", "File": "angry.exp3.json"}],
+                **(vts_extra or {}),
             }))
     return buf.getvalue()
 
@@ -436,6 +437,120 @@ def test_a_pngtuber_preset_can_be_saved_as_a_new_pngtuber(av):
     assert av.get(f"/avatar/api/models/{new['id']}/engine").json()["states"]["neutral"]["idle"] == "idle.png"
     assert av.lib.color_presets(new["id"])["Warm"] == look and av.lib.color_default(m["id"]) == ""
     assert _avatar(av, "w", model=new["id"])["colors"] == look
+
+
+# ---------------------------------------------------------------- colours that VTube Studio saved with a model
+
+def _tint(mesh, mul, scr=(0, 0, 0)):
+    """An art mesh colour entry as Unity would write it (0-1 floats)."""
+    return {"ArtMeshID": mesh, "MultiplyColor": dict(zip("rgba", (*mul, 1.0))), "ScreenColor": dict(zip("rgba", (*scr, 1.0)))}
+
+
+VTS_COLORS = {
+    "ArtMeshDetails": {"ArtMeshMultiplyAndScreenColors": [
+        {"ArtMeshID": "ArtHair1", "MultiplyColor": {"r": 1.0, "g": 0.5, "b": 0.0, "a": 0.5}, "ScreenColor": {"r": 0.0, "g": 0.0, "b": 0.2, "a": 1.0}},
+        _tint("ArtEye1", (1, 1, 1))]},                                              # this one changes nothing
+    "Hotkeys": [
+        {"Name": "Angry", "Action": "ToggleExpression", "File": "angry.exp3.json", "ColorScreenMultiplyPreset": {"ArtMeshMultiplyAndScreenColors": []}},
+        {"Name": "Night", "Action": "ColorPreset", "ColorScreenMultiplyPreset": {"ArtMeshMultiplyAndScreenColors": [
+            _tint("ArtHair1", (0.2, 0.2, 0.4)), _tint("ArtEye1", (1, 1, 1))]}}],
+}
+VTS_LOOK = {"meshes": {"ArtHair1": {"multiply": "#ff8000", "overlay": "#000033", "alpha": 0.5}}}
+VTS_NIGHT = {"meshes": {"ArtHair1": {"multiply": "#333366", "overlay": "#000000", "alpha": 1.0},
+                        "ArtEye1": {"multiply": "#ffffff", "overlay": "#000000", "alpha": 1.0}}}   # (white stays: in a preset it undoes what is under it)
+
+
+def test_vts_colours_are_read_whatever_the_entries_look_like(av):
+    def mine(*entries):
+        found = av.lib.read_vts_colors({"ArtMeshDetails": {"ArtMeshMultiplyAndScreenColors": list(entries)}})
+        return found["current"].get("meshes", {}), found
+
+    assert mine(*VTS_COLORS["ArtMeshDetails"]["ArtMeshMultiplyAndScreenColors"])[0] == VTS_LOOK["meshes"]      # white / black / alpha 1 are left out
+    # whole numbers are bytes; arrays and hex strings; one entry for several meshes (the alpha is the multiply colour's A)
+    assert mine({"ArtMeshID": "A", "MultiplyColor": {"r": 255, "g": 0, "b": 0, "a": 255}})[0] == {"A": {"multiply": "#ff0000"}}
+    both = {"multiply": "#0000ff", "overlay": "#00ff00", "alpha": 0.25}
+    assert mine({"ArtMeshIDs": ["B", "C"], "Multiply": [0, 0, 255, 0.25], "Screen": "#00ff00"})[0] == {"B": both, "C": both}
+    assert mine({"ID": "B", "ColorMultiply": "00F"})[1]["unread"] == 1                                 # (3-digit hex is nothing VTube Studio writes)
+    # separate numbers, a box around both colours, and a table keyed by the mesh
+    assert mine({"ID": "D", "MultiplyR": 1, "MultiplyG": 0, "MultiplyB": 0, "MultiplyA": 0})[0] == {"D": {"multiply": "#ff0000", "alpha": 0.0}}
+    assert mine({"Name": "E", "Colors": {"Multiply": {"r": 0, "g": 1, "b": 0}, "Screen": {"r": 0, "g": 0, "b": 1}}})[0] == {"E": {"multiply": "#00ff00", "overlay": "#0000ff"}}
+    table = av.lib.read_vts_colors({"ArtMeshDetails": {"ArtMeshMultiplyAndScreenColors": {"F": {"Multiply": {"r": 0, "g": 0, "b": 0}}}}})
+    assert table["current"] == {"meshes": {"F": {"multiply": "#000000"}}}
+    # what cannot be read is counted, not guessed at
+    got, found = mine({"ArtMeshNumber": 4, "Multiply": {"r": 0, "g": 0, "b": 0}}, {"ArtMeshID": "G"}, {"ArtMeshID": "H", "Multiply": [0, 0, 0]})
+    assert got == {"H": {"multiply": "#000000"}} and found["entries"] == 3 and found["unread"] == 2 and found["sample"] == ["ArtMeshNumber", "Multiply"]
+    assert av.lib.read_vts_colors({}) == {"current": {}, "presets": {}, "entries": 0, "unread": 0, "sample": []}
+    assert av.lib.read_vts_colors("nope")["presets"] == {}
+
+
+def test_vts_colour_hotkeys_become_presets_under_their_own_names(av):
+    def hot(name, mesh="A", colors=True):
+        return {"Name": name, "ColorScreenMultiplyPreset": {"ArtMeshMultiplyAndScreenColors": [_tint(mesh, (0, 0, 0))] if colors else []}}
+
+    found = av.lib.read_vts_colors({"Hotkeys": [hot("Night"), hot("Plain", colors=False), hot("night"), hot(""), hot("VTube Studio"), "junk"]})
+    assert list(found["presets"]) == ["Night", "night 2", "Colours 4", "VTube Studio 2"]            # (the empty one is no preset; names are unique in any case)
+    assert found["presets"]["Night"] == {"meshes": {"A": {"multiply": "#000000", "overlay": "#000000", "alpha": 1.0}}}
+    assert found["current"] == {}
+
+
+def test_a_model_that_comes_in_with_vtube_studio_colours_keeps_them(av):
+    plain = _upload(av)
+    assert plain["color_presets"] == [] and plain["color_default"] == ""                              # nothing is made up
+    m = _upload(av, _model_zip(vts_extra=VTS_COLORS))
+    assert m["color_presets"] == ["Night", "VTube Studio"] and m["color_default"] == "VTube Studio"
+    assert av.lib.color_presets(m["id"]) == {"VTube Studio": VTS_LOOK, "Night": VTS_NIGHT}
+    assert _avatar(av, "b", model=m["id"])["colors"] == VTS_LOOK                                       # an avatar that loads it starts the way it was set up in VTube Studio
+    # a model already in the library is not touched by new colours showing up in its file: that is the import's job
+    folder = av.lib.MODELS_DIR / plain["id"]
+    next(folder.rglob("*.vtube.json")).write_text(json.dumps(VTS_COLORS), encoding="utf-8")
+    assert av.lib.model_meta(plain["id"])["color_presets"] == []
+
+
+def test_vtube_studio_colours_are_imported_into_a_model_from_its_file_or_another_one(av, renderers):
+    obs = renderers("main")
+    m = _upload(av)                                                                                    # its own .vtube.json has no colours
+    mid, path = m["id"], f"/avatar/api/models/{m['id']}/color_presets/import"
+    bad = av.post(path)
+    assert bad.status_code == 400 and "no colours" in bad.json()["error"]
+    assert av.post(path, json={"vts": "{not json"}).status_code == 400 and av.post(path, json={"vts": "[1]"}).status_code == 400
+    unreadable = {"ArtMeshDetails": {"ArtMeshMultiplyAndScreenColors": [{"Mesh#": 3, "Tint": [1, 0, 0]}]}}
+    bad = av.post(path, json={"vts": unreadable})
+    assert bad.status_code == 400 and "could not read" in bad.json()["error"] and "Mesh#" in bad.json()["error"]
+
+    # from a file the streamer chose (as text, the way the browser sends it): the model's own tints and each colour hotkey
+    r = av.post(path, json={"vts": json.dumps(VTS_COLORS)}).json()
+    assert r["added"] == ["VTube Studio", "Night"] and r["replaced"] == [] and r["default"] == "VTube Studio" and r["meshes"] == 1
+    assert r["current"] == VTS_LOOK and r["presets"] == ["Night", "VTube Studio"]
+    assert av.lib.color_presets(mid) == {"VTube Studio": VTS_LOOK, "Night": VTS_NIGHT} and av.lib.color_default(mid) == "VTube Studio"
+    assert [x for x in av.get("/avatar/api/models").json()["models"] if x["id"] == mid][0]["color_presets"] == ["Night", "VTube Studio"]
+    # the same again changes nothing; a changed one is replaced - and an avatar that has it switched on is brought up to date
+    again = av.post(path, json={"vts": VTS_COLORS}).json()                                             # (parsed JSON works too)
+    assert again["added"] == [] and again["replaced"] == [] and again["unchanged"] == ["VTube Studio", "Night"]
+    av.post("/avatar/api/avatars", json={"name": "main", "model": mid})
+    av.post("/avatar/api/avatars/main/color_preset", json={"name": "Night"})
+    changed = json.loads(json.dumps(VTS_COLORS))
+    changed["Hotkeys"][1]["ColorScreenMultiplyPreset"]["ArtMeshMultiplyAndScreenColors"][0] = _tint("ArtHair1", (0.0, 0.0, 1.0))
+    obs.ws.sent.clear()
+    r = av.post(path, json={"vts": changed}).json()
+    assert r["replaced"] == ["Night"] and r["added"] == [] and r["unchanged"] == ["VTube Studio"]
+    told = [x for x in obs.ws.sent if isinstance(x, dict) and x.get("cmd") == "color_preset"]
+    assert told and told[0]["rules"]["Night"]["meshes"]["ArtHair1"]["multiply"] == "#0000ff"
+    # the default: left as it is when the model has one, unless asked
+    av.post(f"/avatar/api/models/{mid}/color_presets/night/default")
+    assert av.post(path, json={"vts": changed}).json()["default"] == "Night"
+    assert av.post(path, json={"vts": changed, "default": True}).json()["default"] == "VTube Studio"
+
+    # a model without a file, and a PNGtuber, have nothing to read
+    plain = _upload(av, _model_zip(vts=False, nested=""), "plain.zip")
+    gone = av.post(f"/avatar/api/models/{plain['id']}/color_presets/import")
+    assert gone.status_code == 404 and ".vtube.json" in gone.json()["error"]
+    assert av.post(f"/avatar/api/models/{plain['id']}/color_presets/import", json={"vts": changed}).json()["added"] == ["VTube Studio", "Night"]
+    assert av.post("/avatar/api/models/nobody/color_presets/import").status_code == 404
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("Tuber/idle.png", _png(20, 30))
+    tuber = _upload(av, buf.getvalue(), "tuber.zip")
+    assert av.post(f"/avatar/api/models/{tuber['id']}/color_presets/import", json={"vts": changed}).status_code == 400
 
 
 def _capture_world(av, monkeypatch, soundcard_opens, portaudio_opens=True, mme_name_cut=False):

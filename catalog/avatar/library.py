@@ -8,7 +8,7 @@
 
 Everything is served at /avatar/lib/... (the plugin mounts media/avatars there). A model comes in
 as a zip, as a folder picked in the browser, or copied from a folder on this PC (a VTube Studio
-model folder works as it is: its .vtube.json is read for the parameter mappings and hotkeys).
+model folder works as it is: its .vtube.json is read for the parameter mappings, hotkeys and art mesh colours).
 """
 
 from __future__ import annotations
@@ -205,6 +205,172 @@ def read_vts(path: Path) -> dict:
     return out
 
 
+# VTube Studio's art mesh colours. Its .vtube.json keeps them in two places: the model's own tints
+# (ArtMeshDetails.ArtMeshMultiplyAndScreenColors) and, on a colour-preset hotkey, that preset
+# (Hotkeys[].ColorScreenMultiplyPreset.ArtMeshMultiplyAndScreenColors). The file is not documented, so an entry is read
+# loosely: the art mesh id(s) and a multiply and a screen colour, each as {r,g,b,a}, [r,g,b,a] or "#rrggbbaa" (0-1 or
+# 0-255); the multiply colour's alpha is the mesh's alpha (its "A" slider). What comes out is a Hexcast look (see
+# avatar.norm_look): {"meshes": {id: {"multiply", "overlay", "alpha"}}}.
+
+VTS_COLORS_NAME = "VTube Studio"                  # the preset the model's own tints become
+_NO_TINT = {"multiply": "#ffffff", "overlay": "#000000", "alpha": 1.0}
+_CHANNELS = {"r": 0, "red": 0, "g": 1, "green": 1, "b": 2, "blue": 2, "a": 3, "alpha": 3}
+_ID_KEYS = {"id", "ids", "name", "names", "mesh", "meshes", "artmesh", "artmeshes"}
+MAX_COLOR_PRESETS = 100                           # a model keeps up to this many (the API enforces it as well)
+
+
+def _letters(k) -> str:
+    return re.sub(r"[^a-z]", "", str(k).lower())
+
+
+def _is_num(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and v == v
+
+
+def _vts_rgba(v) -> tuple[str, float | None] | None:
+    """A colour as VTube Studio might write it -> ("#rrggbb", alpha or None), or None when `v` is not a colour."""
+    numeric, ch = True, None
+    if isinstance(v, str):
+        m = re.fullmatch(r"#?([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})?", v.strip())
+        if m:
+            numeric, ch = False, [int(x, 16) / 255 for x in m.groups() if x]
+    elif isinstance(v, (list, tuple)) and 3 <= len(v) <= 4 and all(_is_num(x) for x in v):
+        ch = [float(x) for x in v]
+    elif isinstance(v, dict):
+        got = {_CHANNELS[_letters(k)]: float(x) for k, x in v.items() if _letters(k) in _CHANNELS and _is_num(x)}
+        if all(i in got for i in (0, 1, 2)):
+            ch = [got[0], got[1], got[2]] + ([got[3]] if 3 in got else [])
+    if ch is None:
+        return None
+    rgb, a = ch[:3], (ch[3] if len(ch) > 3 else None)
+    if numeric and max(rgb) > 1.0:                # Unity writes 0-1 floats; whole numbers up to 255 are read as bytes
+        rgb = [x / 255 for x in rgb]
+    if numeric and a is not None and a > 1.0:
+        a /= 255
+    return ("#" + "".join(f"{round(max(0.0, min(1.0, x)) * 255):02x}" for x in rgb),
+            None if a is None else round(max(0.0, min(1.0, a)), 3))
+
+
+def _vts_flat(node: dict, token: str):
+    """A colour written as separate numbers on the entry (MultiplyR, MultiplyG ...)."""
+    got = {}
+    for k, x in node.items():
+        n = _letters(k)
+        if token in n and _is_num(x):
+            i = _CHANNELS.get(n.replace(token, "").replace("colour", "").replace("color", ""))
+            if i is not None:
+                got["rgba"[i]] = float(x)
+    return _vts_rgba(got) if got else None
+
+
+def _vts_find(node, token: str, depth: int = 3):
+    """The colour under the first key that names `token` ("multiply", "screen"; "" = any key), a few levels down."""
+    if not isinstance(node, dict) or depth < 0:
+        return None
+    c = _vts_flat(node, token) if token else None
+    if c:
+        return c
+    for k, v in node.items():
+        if token in _letters(k):
+            c = _vts_rgba(v) or _vts_find(v, "", depth - 1)
+            if c:
+                return c
+    for k, v in node.items():                     # a box around both: {"Colors": {"Multiply": ..., "Screen": ...}}
+        if isinstance(v, dict) and token not in _letters(k):
+            c = _vts_find(v, token, depth - 1)
+            if c:
+                return c
+    return None
+
+
+def _vts_alpha(entry: dict) -> float | None:
+    for k, v in entry.items():
+        if _letters(k) in ("alpha", "opacity", "multiplyalpha", "coloralpha") and _is_num(v):
+            f = float(v)
+            return round(max(0.0, min(1.0, f / 255 if f > 1 else f)), 3)
+    return None
+
+
+def _vts_ids(entry: dict) -> list[str]:
+    ids: list[str] = []
+    for k, v in entry.items():
+        n = _letters(k)
+        if n in _ID_KEYS or ("mesh" in n and ("id" in n or "name" in n)):
+            for x in v if isinstance(v, list) else [v]:
+                if isinstance(x, str) and x.strip() and x.strip() not in ids:
+                    ids.append(x.strip())
+    return ids
+
+
+def _vts_entries(container) -> list[dict]:
+    if isinstance(container, dict):               # {"ArtMesh12": {...}}: the id is the key
+        return [{"ID": k, **v} for k, v in container.items() if isinstance(v, dict)]
+    return [e for e in container if isinstance(e, dict)] if isinstance(container, list) else []
+
+
+def _vts_look(container, keep_neutral: bool) -> tuple[dict, list[dict], int]:
+    """(look, the entries that could not be read, how many entries there were). A model's own tints leave out what changes
+    nothing (white multiply, black screen, alpha 1); a preset keeps it, because there it undoes what is under it."""
+    meshes: dict[str, dict] = {}
+    unread: list[dict] = []
+    entries = _vts_entries(container)
+    for e in entries:
+        ids = _vts_ids(e)
+        m, s = _vts_find(e, "multiply"), _vts_find(e, "screen") or _vts_find(e, "overlay")
+        spec: dict = {}
+        if m:
+            spec["multiply"] = m[0]
+        if s:
+            spec["overlay"] = s[0]
+        a = m[1] if m and m[1] is not None else _vts_alpha(e)
+        if a is not None:
+            spec["alpha"] = a
+        if not ids or not spec:
+            unread.append(e)
+            continue
+        if not keep_neutral:
+            spec = {k: v for k, v in spec.items() if v != _NO_TINT[k]}
+        for i in ids:
+            if spec and len(meshes) < 4096:
+                meshes[i[:120]] = dict(spec)
+    return ({"meshes": meshes} if meshes else {}), unread, len(entries)
+
+
+def read_vts_colors(d: Any) -> dict:
+    """The art mesh colours in a parsed .vtube.json: {"current": look (the model's own tints), "presets": {hotkey name:
+    look}, "entries": how many colour entries the file has, "unread": how many of them could not be understood,
+    "sample": the keys of the first one that could not}."""
+    d = d if isinstance(d, dict) else {}
+    out: dict = {"current": {}, "presets": {}, "entries": 0, "unread": 0, "sample": []}
+
+    def note(unread: list[dict], n: int) -> None:
+        out["entries"] += n
+        out["unread"] += len(unread)
+        if unread and not out["sample"]:
+            out["sample"] = [str(k) for k in unread[0]][:12]
+
+    details = d.get("ArtMeshDetails")
+    out["current"], bad, n = _vts_look(details.get("ArtMeshMultiplyAndScreenColors") if isinstance(details, dict) else None, False)
+    note(bad, n)
+    taken = {VTS_COLORS_NAME.lower()}
+    for i, h in enumerate(d.get("Hotkeys") or []):
+        box = h.get("ColorScreenMultiplyPreset") if isinstance(h, dict) else None
+        cont = box.get("ArtMeshMultiplyAndScreenColors") if isinstance(box, dict) else None
+        if not cont:                              # (every hotkey has the field; an empty one is no preset)
+            continue
+        look, bad, n = _vts_look(cont, True)
+        note(bad, n)
+        if not look or len(out["presets"]) >= MAX_COLOR_PRESETS - 1:
+            continue
+        base = (str(h.get("Name") or "").strip() or f"Colours {i + 1}")[:36]
+        name, k = base, 2
+        while name.lower() in taken:
+            name, k = f"{base} {k}", k + 1
+        taken.add(name.lower())
+        out["presets"][name] = look
+    return out
+
+
 # --------------------------------------------------------------------------------------------
 # models
 # --------------------------------------------------------------------------------------------
@@ -231,6 +397,7 @@ def _model_settings(folder: Path, model3: Path) -> dict:
         s = {"version": 1, "name": v["name"] or folder.name, "mappings": v["mappings"] or default_mappings(),
              "mappings_from": "vts" if v["mappings"] else "default", "hotkeys": v["hotkeys"],
              "idle_motion": v["idle_motion"], "physics": v["physics"], "icon": v.get("icon", "")}
+        _first_colors(folder, vts)
     else:
         s = {"version": 1, "name": _stem(model3.name, ".model3.json"), "mappings": default_mappings(),
              "mappings_from": "default", "hotkeys": [], "idle_motion": "", "physics": True, "icon": ""}
@@ -403,6 +570,68 @@ def save_color_presets(mid: str, presets: dict, default: str = "") -> None:
             path.unlink()
         except OSError:
             pass
+
+
+def _first_colors(folder: Path, vts: Path) -> None:
+    """A model that comes in with colours saved by VTube Studio keeps them: its own tints become the preset "VTube Studio"
+    - the model's default, so every avatar that loads it starts in them - and each colour hotkey a preset of its name.
+    Only when the model has no presets of its own yet; a model already in the library is left alone (the Colors tab can
+    import again)."""
+    path = folder / COLORS_FILE
+    if path.exists():
+        return
+    try:
+        found = read_vts_colors(_read_json(vts))
+        table = {**({VTS_COLORS_NAME: found["current"]} if found["current"] else {}), **found["presets"]}
+        if table:
+            _write_json(path, {"version": 1, "presets": table, **({"default": VTS_COLORS_NAME} if found["current"] else {})})
+    except (OSError, ValueError):
+        pass
+
+
+def model_vts_colors(mid: str, data: Any = None) -> dict:
+    """read_vts_colors of the .vtube.json that sits with the model - or of `data`, a parsed one the streamer chose."""
+    model3 = find_model3(model_dir(mid))
+    if not model3:
+        raise LibraryError("only a Live2D model comes with a VTube Studio file")
+    if data is None:
+        vts = _vts_file(model3)
+        if not vts:
+            raise LibraryError("this model has no .vtube.json beside its .model3.json - choose one from your VTube Studio folder", 404)
+        data = _read_json(vts)
+    if not isinstance(data, dict):
+        raise LibraryError("that .vtube.json can't be read", 422)
+    return read_vts_colors(data)
+
+
+def import_vts_colors(mid: str, found: dict, default: bool | None = None) -> dict:
+    """Put what read_vts_colors found into the model's presets: the model's own tints as "VTube Studio", each colour hotkey
+    under its name; a preset of the same name is replaced (re-importing brings it back to VTube Studio's). `default`: make
+    "VTube Studio" the model's default - None: only when the model has no default yet. Returns what happened."""
+    table = color_presets(mid)
+    dflt = color_default(mid)
+    incoming = {**({VTS_COLORS_NAME: found["current"]} if found["current"] else {}), **found["presets"]}
+    added, replaced, unchanged = [], [], []
+    for name, look in incoming.items():
+        old = next((k for k in table if k.lower() == name.lower()), None)
+        if old is not None and table[old] == look and old == name:
+            unchanged.append(name)
+            continue
+        if old is not None:
+            if old == dflt:
+                dflt = name
+            del table[old]
+            replaced.append(name)
+        else:
+            added.append(name)
+        table[name] = look
+    if len(table) > MAX_COLOR_PRESETS:
+        raise LibraryError(f"a model keeps up to {MAX_COLOR_PRESETS} colour presets - delete some first")
+    if found["current"] and (default is True or (default is None and not dflt)):
+        dflt = VTS_COLORS_NAME
+    if added or replaced or dflt != color_default(mid):
+        save_color_presets(mid, table, dflt)
+    return {"added": added, "replaced": replaced, "unchanged": unchanged, "default": dflt if dflt in table else ""}
 
 
 def anchors(mid: str) -> dict:

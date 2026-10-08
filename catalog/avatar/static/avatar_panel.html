@@ -442,10 +442,10 @@
         </div>
 
         <div class="pane" data-p="colors">
-          <p class="hint" style="margin-top:0">Recolour parts of the model like VTube Studio does: <b>Multiply</b> tints and darkens (the art is multiplied by the colour - white is no change), <b>Overlay</b> lightens (the colour is added on top), <b>Alpha</b> fades a part out, 0 hides it. Pick the whole model, a part (a folder of art meshes) or a single art mesh in the list and set its colours. Saved for this avatar; <b>presets</b> keep a set of colours on the model, and a bot switches them on and off like hotkeys.</p>
+          <p class="hint" style="margin-top:0">Recolour parts of the model like VTube Studio does: <b>Multiply</b> tints and darkens (the art is multiplied by the colour - white is no change), <b>Overlay</b> lightens (the colour is added on top), <b>Alpha</b> fades a part out, 0 hides it. Pick the whole model, a part (a folder of art meshes) or a single art mesh in the list and set its colours. Saved for this avatar; <b>presets</b> keep a set of colours on the model, and a bot switches them on and off like hotkeys. Coming from VTube Studio? <b>Import from VTube Studio</b> brings in the colours you saved there.</p>
           <h3 style="margin-top:6px">Presets <span class="dim" style="text-transform:none;letter-spacing:0">(saved on this model)</span></h3>
           <div class="btns" id="co-presets"></div>
-          <div class="row" style="margin:6px 0 0"><button class="sm" id="co-save" title="Record the colours set on this avatar as a preset of the model">Save the colours below as a preset...</button><span class="dim" style="font-size:12px" id="co-presets-hint"></span></div>
+          <div class="row" style="margin:6px 0 0"><button class="sm" id="co-save" title="Record the colours set on this avatar as a preset of the model">Save the colours below as a preset...</button><button class="sm" id="co-vts" title="Bring in the art mesh colours VTube Studio saved for this model">Import from VTube Studio...</button><span class="dim" style="font-size:12px" id="co-presets-hint"></span></div>
           <div id="co-held" class="pill warn" style="display:none;white-space:normal;margin-top:8px"><span id="co-held-t"></span><button class="sm" id="co-held-x" style="margin-left:8px">Let go</button></div>
           <h3>Colours of</h3>
           <div class="coedit" id="co-edit">
@@ -2113,6 +2113,36 @@
         toast('Saved "' + r.name + '"');
       });
     setTimeout(function () { var i = $('cp-name'); if (i) i.focus(); }, 50);
+  };
+  /* the colours VTube Studio saved with the model (or in a .vtube.json the streamer picks) become presets of this model */
+  $('co-vts').onclick = function () {
+    var a = cur(); if (!a) return;
+    var m = S.models[a.model] || {}, bare = !Object.keys(a.colors || {}).length;
+    if (m.type === 'png') { toast('A PNGtuber has no VTube Studio colours', true); return; }
+    dialog('Import colours from VTube Studio',
+      '<p class="hint">Brings in what VTube Studio saved for <b>' + esc(m.name || a.model) + '</b>: the model\'s own tints become the preset <b>VTube Studio</b>, and every colour-preset hotkey becomes a preset under its name. A preset with the same name is replaced, so importing again brings it back to how VTube Studio has it.</p>' +
+      '<div class="f"><span>File</span><div class="ctl"><input type="file" id="vi-file" class="grow" accept=".json"></div></div>' +
+      '<p class="hint" style="margin-top:0">Leave it empty to read the <code>.vtube.json</code> in this model\'s own folder, or choose another one (it sits in the model\'s folder in your VTube Studio install).</p>' +
+      '<div class="f"><span>Default</span><div class="ctl"><label class="sw"><input type="checkbox" id="vi-default"' + (m.color_default ? '' : ' checked') + '> Make "VTube Studio" the model\'s default: an avatar that loads this model starts in it</label></div></div>' +
+      '<div class="f"><span>Avatar</span><div class="ctl"><label class="sw"><input type="checkbox" id="vi-wear"' + (bare ? ' checked' : '') + '> Put the VTube Studio colours on ' + esc(a.name) + ' now' + (bare ? '' : ' (replaces its colours)') + '</label></div></div>',
+      async function () {
+        var ok = $('dlg-ok'), body = { default: $('vi-default').checked }, f = $('vi-file').files[0];
+        if (ok.disabled) return false;
+        if (f) {
+          if (f.size > 8 * 1024 * 1024) { toast('That is too big to be a VTube Studio model file', true); return false; }
+          body.vts = await f.text();
+        }
+        ok.disabled = true;
+        try {
+          var r = await api('POST', '/avatar/api/models/' + encodeURIComponent(a.model) + '/color_presets/import', body);
+          if (!r) return false;
+          var wear = $('vi-wear').checked && r.current && Object.keys(r.current).length;
+          if (wear && !(await api('POST', '/avatar/api/avatars/' + encodeURIComponent(a.name), { colors: r.current }))) return false;
+          var got = r.added.concat(r.replaced);
+          toast((got.length ? 'Imported ' + got.join(', ') : 'Nothing new: these colours are already on the model') +
+            (wear ? '; ' + a.name + ' wears them' : '') + (r.unread ? ' (' + r.unread + ' colour entries could not be read)' : ''), !!r.unread && !got.length);
+        } finally { ok.disabled = false; }
+      });
   };
 
   // colours a bot holds for now win over the ones here: say so, and let them go

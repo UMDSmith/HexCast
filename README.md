@@ -147,7 +147,7 @@ has finished.
 
 **Models.** Cubism 3, 4 and 5 models from a zip or a folder — or straight from
 VTube Studio if it's installed, with their VTube Studio parameter setup, hotkey
-expressions and idle animation. **PNGtubers** too: a few pictures (quiet, talking,
+expressions, idle animation and art mesh colours. **PNGtubers** too: a few pictures (quiet, talking,
 blinking — per state, optionally a mouth per vowel), or a layered **PNGTuber Plus**
 avatar imported from its `.save`, with the same API. Live2D's own runtime is downloaded once after you
 accept Live2D's license in the tab (it doesn't ship with Hexcast).

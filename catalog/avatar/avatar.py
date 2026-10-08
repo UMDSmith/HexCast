@@ -1756,6 +1756,43 @@ async def api_color_preset_delete(mid: str, name: str):
     return {"ok": True, "presets": sorted(table, key=str.lower), "default": "" if default == real else default}
 
 
+@router.post("/api/models/{mid}/color_presets/import")
+@guarded
+async def api_color_import(mid: str, request: Request):
+    """Take the art mesh colours VTube Studio saved into the model's presets: its own tints become the preset "VTube Studio"
+    (the model's default when it has none), each colour-preset hotkey a preset of its name; a preset of the same name is
+    replaced. Reads the .vtube.json in the model's folder, or `vts` - another one, as text or as parsed JSON. `default`:
+    true / false decides whether "VTube Studio" becomes the model's default (left out: only when it has none)."""
+    body = {}
+    if (request.headers.get("content-length") or "0") != "0" or request.headers.get("transfer-encoding"):
+        body = await _json(request)
+    src = body.get("vts")
+    if isinstance(src, str) and src.strip():
+        try:
+            src = json.loads(src.lstrip("﻿"))
+        except ValueError:
+            raise CommandError("that file is not a VTube Studio .vtube.json (it is not JSON)")
+    elif src in ("", None):
+        src = None
+    if src is not None and not isinstance(src, dict):
+        raise CommandError("send `vts` as the .vtube.json's text or as its JSON object")
+    found = library.model_vts_colors(mid, src)
+    if not found["current"] and not found["presets"]:
+        if found["unread"]:
+            raise CommandError(f"Hexcast could not read the {found['unread']} colour entries in this file (fields: "
+                               f"{', '.join(found['sample'])}) - it is a layout it has not seen; send that file to get it supported")
+        raise CommandError("no colours in this VTube Studio file: it has no tinted art meshes and no colour-preset hotkeys")
+    default = body.get("default") if isinstance(body.get("default"), bool) else None
+    res = library.import_vts_colors(mid, found, default)
+    table = library.color_presets(mid)
+    for name in res["added"] + res["replaced"]:
+        await _presets_changed(mid, name, table.get(name))
+    if not res["added"] and not res["replaced"]:
+        await broadcast_library()
+    return {"ok": True, **res, "unread": found["unread"], "current": found["current"],
+            "meshes": len((found["current"] or {}).get("meshes") or {}), "presets": sorted(table, key=str.lower)}
+
+
 @router.get("/api/models/{mid}/anchors")
 @guarded
 async def api_anchors(mid: str):
@@ -2246,6 +2283,7 @@ API_ROUTES = [
     "POST /avatar/api/avatars/<name>/clear_color_presets  {fade}",
     "GET  /avatar/api/models/<id>/color_presets    the model's colour presets  |  POST {name, avatar, default} saves what that avatar looks like now (or {name, look}), POST .../<name>/delete",
     "POST /avatar/api/models/<id>/color_presets/<name>/default  {default: false for none} - the model's default colours: what an avatar starts in when it loads the model",
+    "POST /avatar/api/models/<id>/color_presets/import  {vts, default} - take the art mesh colours VTube Studio saved (the model's own .vtube.json, or `vts`: another one as text) into presets: its tints as \"VTube Studio\", each colour hotkey by name",
     "POST /avatar/api/models/<id>/color_presets/<name>/as_model {name} - a preset + its model saved as a new model of the library (a full copy that starts in it)",
     "POST /avatar/api/avatars/<name>/expression    {name} or {names:[...]}, state:on|off|toggle, only, for",
     "POST /avatar/api/avatars/<name>/motion        {name} or {group, index}, loop",

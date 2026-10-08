@@ -58,7 +58,7 @@ Why more than one: OBS scales, crops and moves a *source* as a whole. Two avatar
 
 - **Import a zip** — the folder holding the `.model3.json` is kept (a whole export zip is fine).
 - **Import a folder** — pick the model's folder in the browser.
-- **From VTube Studio** — if VTube Studio is installed (Steam) the library lists its models; tick and import. Its `.vtube.json` is read: the parameter setup (the rigger's input ranges and smoothing), the expressions and animations its hotkeys use, its idle animation and the physics switch. Expression and motion files that are only in the folder (VTube Studio lists them in hotkeys, not in the model) are found too.
+- **From VTube Studio** — if VTube Studio is installed (Steam) the library lists its models; tick and import. Its `.vtube.json` is read: the parameter setup (the rigger's input ranges and smoothing), the expressions and animations its hotkeys use, its idle animation, the physics switch and the **art mesh colours** you saved (see [Colours from VTube Studio](#colours-from-vtube-studio)). Expression and motion files that are only in the folder (VTube Studio lists them in hotkeys, not in the model) are found too.
 
 Models saved by **Cubism Editor 5.3** (moc3 version 6) can't be drawn by the web renderer yet; the library says so — export again in the 5.0 – 5.2 format. Cubism 2 models (`.model.json` + `.moc`) are not supported.
 
@@ -199,6 +199,18 @@ What is set here belongs to the **avatar**.
 
 Presets are VTube Studio's *ArtMesh Color Preset* hotkeys, and the bot switches them through the API (`color_preset`): **on**, **off** or **toggle**, any number at once (each over the ones before it, field by field), `"only": true` to switch every other off, `for` to switch one off by itself, `fade` to blend. A preset that is on is drawn over the avatar's own colours; what a bot holds with `colors` goes over both. A preset that sets a colour back (white, alpha 1) can undo what the avatar's own colours do.
 
+### Colours from VTube Studio
+
+The colours you set up in VTube Studio come with the model — they are saved in its `.vtube.json`, in two places: the **model's own tints** (what the model wears when VTube Studio loads it) and, on each **colour-preset hotkey**, that preset. Hexcast reads both:
+
+- The model's own tints become the preset **VTube Studio**, and — as the model's default — the colours an avatar starts in when it loads the model. A model that comes into the library with such a file does this by itself, so a new avatar looks the way it did in VTube Studio.
+- Each colour-preset hotkey becomes a preset **under the hotkey's name**, that your bot switches on and off like the rest (`color_preset`).
+- **Import from VTube Studio…** (Colors tab) does the same for a model that is already in the library, or from another `.vtube.json` you choose (the one in your VTube Studio install, say, if you have tinted the model again since). A preset with the same name is replaced, so importing again brings it back to how VTube Studio has it; the others are left alone. *Make "VTube Studio" the model's default* is ticked when the model has none; *Put the colours on this avatar now* is ticked when the avatar has none of its own (it replaces them otherwise).
+- VTube Studio colours **art meshes**, so what comes in are art mesh colours: **multiply**, **screen** (this tab's *Overlay*) and the multiply colour's **A** as **alpha**. In the model's own tints a mesh set to white / black / opaque is left out (it changes nothing); in a preset it is kept, because there it undoes what is under it.
+- Not brought in: the *colour overlay* hotkeys (a screen or window colour that follows what is on the PC), and the scene-lighting multipliers.
+
+VTube Studio does not document its model file, so Hexcast reads a colour entry loosely (colours as `{r,g,b,a}`, `[r,g,b,a]` or `#rrggbbaa`, 0-1 or 0-255). An entry it cannot make sense of is counted and named in the answer ("could not read N colour entries … fields: …") instead of being guessed at.
+
 ### The model's default, and loading a preset
 
 A preset is also a **saved config of the model**, to bring back whenever you load it again:
@@ -301,6 +313,7 @@ Parameters and art meshes appear once the model has been drawn (by an overlay or
 | `POST /avatar/api/overlays/<name>/delete` | its avatars move to main; main itself can't be deleted |
 | `GET /avatar/api/models/<id>/color_presets` | the model's colour presets: `{"presets": {"Night": {"parts": {…}, "meshes": {…}, "all": {…}}}}` |
 | `POST /avatar/api/models/<id>/color_presets` | `{"name": "Night", "avatar": "main", "default": false}` records what that avatar's colours are now as a preset (or `{"name": "Night", "look": {…}}`); the same name in any case replaces it; `"default": true` makes it the model's default. `POST …/color_presets/<name>/default` (`{"default": false}` for none) sets or clears the default - what an avatar starts in when it loads the model (`color_default` in the model's entry and in `…/info`); `POST …/color_presets/<name>/as_model` (`{"name": "Hiyori Night"}`) saves that preset together with the model as a new model of the library - a full copy that starts in it; the answer is its model entry; `POST …/color_presets/<name>/delete` removes one |
+| `POST /avatar/api/models/<id>/color_presets/import` | takes the art mesh colours VTube Studio saved into the model's presets: its own tints as **VTube Studio**, each colour hotkey under its name. Reads the model's own `.vtube.json`, or `{"vts": "<another .vtube.json's text>"}` (parsed JSON works too); `"default": true` makes **VTube Studio** the model's default (left out: only when it has none). The answer: `added`, `replaced`, `unchanged` (preset names), `default`, `current` (the VTube Studio look), `meshes`, `unread`; a file with no colours, or none it can read, is a 400 that says so |
 | `GET /avatar/api/models/<id>/anchors` | the model's pin points: `{"anchors": {"head_top": {"mesh": …, "tri": […], "bary": […], "angle0": …}}}` |
 | `POST /avatar/api/models/<id>/anchors` | `{"name": "head_top", "pin": {…}}` saves one (the pin is what **Pick on the model** records: an art mesh, a triangle and a point in it); the same name in any case replaces it. `POST …/anchors/<name>/delete` removes one |
 | `POST /avatar/api/order` | `{"names": ["back", "middle", "front"]}` — draw order (among the avatars of one overlay, the later is in front) |
