@@ -161,6 +161,7 @@ A mini model on a big model's head, a pet on a shoulder: on the small avatar's *
 - **Nudge across / down** move its centre from that spot, in % of its own size - `-45` down puts a model's feet on the spot instead of its middle. Its own **Zoom** and **Rotation** (Placement) apply on top of the parent's: a child of a parent at 1.5× is 1.5× its own size.
 - **Layer** draws it in front of or behind its parent (and just that far: an avatar between them in the order is not in the way).
 - **Turns with the part** keeps its angle to the part (off: always upright on the moving spot). **Mirrors with it**: when the parent is flipped left-right the child's position mirrors with it either way; with this on its art is mirrored too, off it keeps facing the way it does.
+- It is placed from the parent's pose *of the same frame* - the model is updated at the start of the frame whenever something is glued to it - so it stays on the spot through the parent's own animations, motions and physics instead of trailing a frame behind. (Items pinned to a model and locked clips get the same.)
 - **Let go** frees it *where it stands now* (`detach` with no body goes back to its own X / Y instead).
 - Its own **Position X / Y** are only used when it hangs from nothing - or when the parent is not on its overlay (a different overlay, or deleted; the tab says so). Several avatars can hang from one, and one from another up to four deep; loops are refused. Renaming the parent keeps them hanging; deleting it lets them go.
 

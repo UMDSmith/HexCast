@@ -1425,3 +1425,48 @@ def test_a_clip_locked_to_an_avatar_is_put_where_its_pin_point_is_on_the_page(mo
     assert c["matrix"] == [0.5, 0, 0, 0.5, 506.6667, 306.6667] and c["shown"] == "visible"      # (half size, 10 px and 20 px in)
     assert c["rest"] == "rotate(15deg) scale(2) translate(5%,-10%) scaleX(1) translate(-50%,-50%)"
     assert mount["clipHidden"] == "hidden" and mount["clipFlipped"] is True
+
+
+def test_what_is_glued_to_an_avatar_wants_its_pose_updated_early_and_once(mount):
+    assert mount["poseBeforeMounts"] == {"hex": False, "lone": False}
+    assert mount["poseHung"] == {"hex": True, "lone": False}                   # something hangs from hex
+    assert mount["poseLetGo"] == {"hex": False, "lone": False}
+    assert mount["poseFreeItem"] is False and mount["posePinnedItem"] is True and mount["poseAnchoredItem"] is True
+    assert mount["poseClip"] is True and mount["poseNothing"] is False        # a clip locked to it; nothing at all: the old way
+    assert mount["poseCalls"] == [[16, 500]] and mount["poseDeltaAfter"] == 0   # one update with the time that was waiting; the second finds none
+
+
+# ---------------------------------------------------------------- expressions and held values on parameters nothing else drives (needs node)
+
+@pytest.fixture(scope="module")
+def expr():
+    """avatar_engine.js against a fake Cubism model that saves the parameters after the input layer and loads them at the end of
+    every update, as the engine's own update does (tests/avatar_engine_expr.js); `unfixed` is the same without the engine's guard."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed")
+    r = subprocess.run([node, str(HERE / "avatar_engine_expr.js"), str(ROOT / "catalog" / "avatar" / "static" / "avatar_engine.js")],
+                       capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout)
+
+
+def test_an_expression_that_moves_a_free_parameter_lets_go_when_it_is_switched_off(expr):
+    f = expr["fixed"]
+    assert (f["on"]["WingFlap"], f["on"]["ToeTap"]) == (1, 8)                    # Overwrite 1, Add 8
+    assert (f["off"]["WingFlap"], f["off"]["ToeTap"]) == (0, 0) and f["gone"] is True
+    assert (f["later"]["WingFlap"], f["later"]["ToeTap"]) == (0, 0)             # and they stay back
+    assert f["addLong"] == 5                                                    # an Add expression does not pile up the longer it is on
+
+
+def test_the_unguarded_cycle_does_stick_which_is_what_the_guard_is_for(expr):
+    u = expr["unfixed"]
+    assert u["off"]["WingFlap"] == 1 and u["off"]["ToeTap"] == 30 and u["addLong"] == 30     # (the control: why the bug showed)
+
+
+def test_a_value_the_api_holds_comes_back_when_released_and_a_motion_keeps_its_own(expr):
+    f = expr["fixed"]
+    assert f["held"] == 20 and f["released"] == 0
+    assert expr["unfixed"]["released"] == 20
+    assert f["finalHeld"] == 12 and f["finalReleased"] == 0                     # the final layer was never affected
+    assert f["overMotion"] == 14 and f["motionAlone"] == 10                     # the motion's 10 plus the expression's 4, then the motion alone

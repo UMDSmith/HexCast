@@ -148,4 +148,22 @@ function pair(parentOpts, attach, childScale) {
   HA.Stage.prototype._clipsTick.call(s);
   out.clipFlipped = visual.style.transform.indexOf('scaleX(-1)') >= 0;
 }
+{ // anything glued to an avatar wants its pose updated at the start of the frame (not when it is drawn), once
+  const s = stageWith([{ name: 'hex', verts: TRI }, { name: 'mini', cfg: { attach: at() } }, { name: 'lone' }]);
+  const calls = [], hex = s.avatars.hex, lone = s.avatars.lone;
+  hex.model.deltaTime = 16; hex.model.elapsedTime = 500; hex.model.internalModel.update = (dt, e) => calls.push([dt, e]);
+  const want = () => ({ hex: hex._wantsFreshPose(), lone: lone._wantsFreshPose() });
+  out.poseBeforeMounts = want();
+  s._mounts();
+  out.poseHung = want();                                               // mini hangs from hex
+  s.avatars.mini.cfg = Object.assign({}, s.avatars.mini.cfg, { attach: null }); s._mounts();
+  out.poseLetGo = want();
+  lone.items = [{ cfg: { pin: null, anchor: '' } }]; out.poseFreeItem = lone._wantsFreshPose();
+  lone.items = [{ cfg: { pin: PIN } }]; out.posePinnedItem = lone._wantsFreshPose();
+  lone.items = [{ cfg: { anchor: 'Top' } }]; out.poseAnchoredItem = lone._wantsFreshPose();
+  lone.items = []; s.clips = [{ avatar: 'lone' }]; out.poseClip = lone._wantsFreshPose();
+  s.clips = []; out.poseNothing = lone._wantsFreshPose();
+  hex._poseNow(); hex._poseNow();                                      // the second finds nothing pending
+  out.poseCalls = calls; out.poseDeltaAfter = hex.model.deltaTime;
+}
 console.log(JSON.stringify(out));

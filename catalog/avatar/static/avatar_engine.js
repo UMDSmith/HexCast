@@ -693,6 +693,7 @@
     this.lip = new window.HexLipsync.Analyzer();
     this.speech = { queue: [], cur: null };
     this.ov = {};                // param / input overrides
+    this.inBase = null;          // what the parameters the input layer added to were before it (see _hookLoad)
     this.inputs = Object.create(null);   // the input names the model's mappings take (set by _setInputs)
     this.partOv = {};            // part opacity overrides (the `parts` command)
     this.colOv = {};            // colours a bot holds for now (the `colors` command): 'all' / 'parts:id' / 'meshes:id' -> {kind, id, spec, until}
@@ -860,6 +861,7 @@
     if (typeof draw === 'function') im.draw = function (gl) { self._applyColors(); return draw.call(this, gl); };
     im.on('afterMotionUpdate', function () { self._inputLayer(cm); });
     im.on('beforeModelUpdate', function () { self._finalLayer(cm); });
+    this._hookLoad(cm);
     // live state that arrived before the model
     for (var k in this.exprs) this._loadExpr(k);
     this._reportInfo();
@@ -1055,12 +1057,35 @@
     this._drive(step, now);
     this._colorTick(step, now);
     if (this.png) { var tp = performance.now(); this.png.update(step, this.frame, now); this.msAcc += performance.now() - tp; }
-    else this.model.update(step * 1000);                                   // (the model's own update runs when it is drawn: see _applyColors)
+    else {
+      this.model.update(step * 1000);                                      // (the model's own update runs when it is drawn: see _applyColors)
+      if (this._wantsFreshPose()) this._poseNow();
+    }
     for (var i = 0; i < this.items.length; i++) this.items[i].tick(step);
     if (this._pinMark) this._drawPinMark(now);
     this._lightTick(step, now);
     this.msAcc += performance.now() - t0;
     this.msN++;
+  };
+
+  /* The engine updates a model (motions, physics, Cubism's deformation) when it is drawn - after everything that is placed in
+     the frame has been placed, so what is glued to a part of this model (an item, a clip, another avatar) would be put where
+     the part was a frame ago and trail behind it. When something is glued to it the update is done here instead, at the start of
+     the frame, and the draw finds nothing left to do: the same one update per frame, a little earlier. */
+  Avatar.prototype._wantsFreshPose = function () {
+    var i, k, av = this.stage.avatars, cl = this.stage.clips;
+    if (this._pinMark) return true;
+    for (i = 0; i < this.items.length; i++) { var c = this.items[i].cfg; if (c.pin || c.anchor) return true; }
+    for (k in av) if (av[k].mountParent === this) return true;
+    if (cl) for (i = 0; i < cl.length; i++) if (cl[i].avatar === this.name) return true;
+    return false;
+  };
+
+  Avatar.prototype._poseNow = function () {
+    var m = this.model, dt = m.deltaTime;
+    if (!dt || !m.internalModel) return;
+    m.deltaTime = 0;
+    m.internalModel.update(dt, m.elapsedTime);
   };
 
   Avatar.prototype._drive = function (dt, now) {
@@ -1240,11 +1265,29 @@
     }
   };
 
+  /* Cubism saves the parameters right after the input layer below and puts them back at the end of every update, so whatever
+     the input layer adds on top of a parameter - an expression, a value the API holds - would be the next frame's starting
+     point: a parameter that nothing else drives (the toggle of a hat, a pair of wings) would never come back, and an Add
+     expression would pile up to the parameter's maximum. So the input layer notes what each parameter it adds to was
+     (`inBase`) and it is put back once the update is done. */
+  Avatar.prototype._hookLoad = function (cm) {
+    var self = this, load = cm.loadParameters;
+    if (typeof load !== 'function' || cm.hexLoadHooked) return;
+    cm.hexLoadHooked = true;
+    cm.loadParameters = function () {
+      var r = load.apply(cm, arguments), b = self.inBase;
+      self.inBase = null;
+      if (b) for (var k in b) cm.setParameterValueByIndex(+k, b[k]);
+      return r;
+    };
+  };
+
   /* input layer: after the motions, before expressions are added and physics runs */
   Avatar.prototype._inputLayer = function (cm) {
     var F = this.frame;
     if (!F || !this.maps) return;
     var dt = F.dt, maps = this.maps, ov = this.ov, own = this.own, i, o, k;
+    var base = this.inBase = {};
     this._trackMotion();
     var idleAnim = this.motionPri <= 1, talking = !!(F.lip && F.lip.level > 0.01) || !!this.speech.cur;
     for (k in own) {                                       // parameters a motion is animating
@@ -1276,6 +1319,7 @@
       if (!e.data || e.w <= 0) continue;
       for (i = 0; i < e.data.length; i++) {
         var p = e.data[i], idx = p.idx, cur = cm.getParameterValueByIndex(idx), w = e.w;
+        if (!(idx in base)) base[idx] = cur;
         if (p.blend === 'Multiply') cur = cur * (1 + (p.value - 1) * w);
         else if (p.blend === 'Overwrite') cur = cur + (p.value - cur) * w;
         else cur = cur + p.value * w;
@@ -1296,6 +1340,7 @@
       var idx = P.index[k];
       if (idx === undefined) continue;
       var cur = cm.getParameterValueByIndex(idx);
+      if (layer === 'input' && this.inBase && !(idx in this.inBase)) this.inBase[idx] = cur;      // (the final layer is not saved: it goes by itself)
       var target = o.mode === 'add' ? cur + o.value : o.value;
       if (o.dur > 0 && o.from != null) {                 // eased toward its value over `duration`
         var u = ease(o.ease, (performance.now() - o.started) / (o.dur * 1000));
