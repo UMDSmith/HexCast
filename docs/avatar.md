@@ -209,7 +209,9 @@ The colours you set up in VTube Studio come with the model — they are saved in
 - VTube Studio colours **art meshes**, so what comes in are art mesh colours: **multiply**, **screen** (this tab's *Overlay*) and the multiply colour's **A** as **alpha**. In the model's own tints a mesh set to white / black / opaque is left out (it changes nothing); in a preset it is kept, because there it undoes what is under it.
 - Not brought in: the *colour overlay* hotkeys (a screen or window colour that follows what is on the PC), and the scene-lighting multipliers.
 
-VTube Studio does not document its model file, so Hexcast reads a colour entry loosely (colours as `{r,g,b,a}`, `[r,g,b,a]` or `#rrggbbaa`, 0-1 or 0-255). An entry it cannot make sense of is counted and named in the answer ("could not read N colour entries … fields: …") instead of being guessed at.
+A copy of a model in the library is a snapshot: tints you set in VTube Studio *after* the model was added are not in it until you import them (pick the model's `.vtube.json` in your VTube Studio install, in `…/VTube Studio_Data/StreamingAssets/Live2DModels/<model>/`).
+
+VTube Studio's own entry is `{"ID": "ArtMesh11", "Value": "04FF00FF|000000FF"}` — the multiply colour, then the screen colour, each as `RRGGBBAA` — and that is read exactly. Colour-preset hotkeys are read the same way, and failing that loosely (colours as `{r,g,b,a}`, `[r,g,b,a]` or `#rrggbbaa`, 0-1 or 0-255). An entry it cannot make sense of is counted and named in the answer ("could not read N colour entries … fields: …") instead of being guessed at.
 
 ### The model's default, and loading a preset
 

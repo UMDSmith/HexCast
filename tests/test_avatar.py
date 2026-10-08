@@ -483,6 +483,23 @@ def test_vts_colours_are_read_whatever_the_entries_look_like(av):
     assert av.lib.read_vts_colors("nope")["presets"] == {}
 
 
+def test_vtube_studios_own_colour_entries_are_read(av):
+    # copied from a real hex_master0.vtube.json: {"ID", "Value": "<multiply RRGGBBAA>|<screen RRGGBBAA>"}
+    real = [{"ID": "ArtMesh11", "Value": "04FF00FF|000000FF"}, {"ID": "ArtMesh13", "Value": "F7FF00FF|0000FFFF"},
+            {"ID": "ArtMesh27", "Value": "FFED00FF|0000FFFF"}, {"ID": "ArtMesh31", "Value": "FFDD00FF|0000FFFF"}]
+    found = av.lib.read_vts_colors({"ArtMeshDetails": {"ArtMeshMultiplyAndScreenColors": real}})
+    assert found["entries"] == 4 and found["unread"] == 0
+    assert found["current"] == {"meshes": {"ArtMesh11": {"multiply": "#04ff00"},
+                                           "ArtMesh13": {"multiply": "#f7ff00", "overlay": "#0000ff"},
+                                           "ArtMesh27": {"multiply": "#ffed00", "overlay": "#0000ff"},
+                                           "ArtMesh31": {"multiply": "#ffdd00", "overlay": "#0000ff"}}}
+    # the multiply colour's last byte is the mesh's alpha (80 = 50 %); a colour hotkey presumably holds the same entries
+    half = {"ID": "ArtMesh5", "Value": "FFFFFF80|000000FF"}
+    hot = {"Hotkeys": [{"Name": "Ghost", "ColorScreenMultiplyPreset": {"ArtMeshMultiplyAndScreenColors": [half]}}]}
+    assert av.lib.read_vts_colors(hot)["presets"] == {"Ghost": {"meshes": {"ArtMesh5": {"multiply": "#ffffff", "overlay": "#000000", "alpha": 0.502}}}}
+    assert av.lib.read_vts_colors({"ArtMeshDetails": {"ArtMeshMultiplyAndScreenColors": [half]}})["current"] == {"meshes": {"ArtMesh5": {"alpha": 0.502}}}
+
+
 def test_vts_colour_hotkeys_become_presets_under_their_own_names(av):
     def hot(name, mesh="A", colors=True):
         return {"Name": name, "ColorScreenMultiplyPreset": {"ArtMeshMultiplyAndScreenColors": [_tint(mesh, (0, 0, 0))] if colors else []}}

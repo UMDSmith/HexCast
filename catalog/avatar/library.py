@@ -207,10 +207,12 @@ def read_vts(path: Path) -> dict:
 
 # VTube Studio's art mesh colours. Its .vtube.json keeps them in two places: the model's own tints
 # (ArtMeshDetails.ArtMeshMultiplyAndScreenColors) and, on a colour-preset hotkey, that preset
-# (Hotkeys[].ColorScreenMultiplyPreset.ArtMeshMultiplyAndScreenColors). The file is not documented, so an entry is read
-# loosely: the art mesh id(s) and a multiply and a screen colour, each as {r,g,b,a}, [r,g,b,a] or "#rrggbbaa" (0-1 or
-# 0-255); the multiply colour's alpha is the mesh's alpha (its "A" slider). What comes out is a Hexcast look (see
-# avatar.norm_look): {"meshes": {id: {"multiply", "overlay", "alpha"}}}.
+# (Hotkeys[].ColorScreenMultiplyPreset.ArtMeshMultiplyAndScreenColors). The file is not documented. An entry the model's own
+# tints use (seen in real files) is {"ID": "ArtMesh11", "Value": "04FF00FF|000000FF"}: the multiply colour, then the
+# screen colour, each "RRGGBBAA". A colour-preset hotkey has not been seen filled in, so any other entry is read loosely:
+# the art mesh id(s) and a multiply and a screen colour, each as {r,g,b,a}, [r,g,b,a] or "#rrggbbaa" (0-1 or 0-255). The
+# multiply colour's alpha is the mesh's alpha (its "A" slider). What comes out is a Hexcast look (see avatar.norm_look):
+# {"meshes": {id: {"multiply", "overlay", "alpha"}}}.
 
 VTS_COLORS_NAME = "VTube Studio"                  # the preset the model's own tints become
 _NO_TINT = {"multiply": "#ffffff", "overlay": "#000000", "alpha": 1.0}
@@ -249,6 +251,18 @@ def _vts_rgba(v) -> tuple[str, float | None] | None:
         a /= 255
     return ("#" + "".join(f"{round(max(0.0, min(1.0, x)) * 255):02x}" for x in rgb),
             None if a is None else round(max(0.0, min(1.0, a)), 3))
+
+
+_PAIR = re.compile(r"\s*#?([0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?)\s*\|\s*#?([0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?)\s*")
+
+
+def _vts_pair(entry: dict):
+    """VTube Studio's own entry: a text "RRGGBBAA|RRGGBBAA" (multiply | screen) -> (multiply, screen), each as _vts_rgba."""
+    for v in entry.values():
+        m = _PAIR.fullmatch(v) if isinstance(v, str) else None
+        if m:
+            return _vts_rgba(m[1]), _vts_rgba(m[2])
+    return None
 
 
 def _vts_flat(node: dict, token: str):
@@ -316,7 +330,7 @@ def _vts_look(container, keep_neutral: bool) -> tuple[dict, list[dict], int]:
     entries = _vts_entries(container)
     for e in entries:
         ids = _vts_ids(e)
-        m, s = _vts_find(e, "multiply"), _vts_find(e, "screen") or _vts_find(e, "overlay")
+        m, s = _vts_pair(e) or (_vts_find(e, "multiply"), _vts_find(e, "screen") or _vts_find(e, "overlay"))
         spec: dict = {}
         if m:
             spec["multiply"] = m[0]
