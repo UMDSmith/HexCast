@@ -1292,7 +1292,9 @@
     var idleAnim = this.motionPri <= 1, talking = !!(F.lip && F.lip.level > 0.01) || !!this.speech.cur;
     for (k in own) {                                       // parameters a motion is animating
       var ow = own[k];
-      ow.w = ow.to > ow.w ? Math.min(1, ow.w + dt / 0.3) : Math.max(0, ow.w - dt / 0.45);
+      // toward `to`, and rest when there: (an `else` that also took w == to ramped a fully owned parameter down every other frame,
+      // so the tracker leaked into the animation at half the frame rate - the idle animation twitched)
+      ow.w = ow.w < ow.to ? Math.min(ow.to, ow.w + dt / 0.3) : ow.w > ow.to ? Math.max(ow.to, ow.w - dt / 0.45) : ow.w;
       if (ow.w <= 0 && ow.to <= 0) delete own[k];
     }
     for (i = 0; i < maps.length; i++) {

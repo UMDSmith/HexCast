@@ -1602,3 +1602,27 @@ def test_a_value_the_api_holds_comes_back_when_released_and_a_motion_keeps_its_o
     assert expr["unfixed"]["released"] == 20
     assert f["finalHeld"] == 12 and f["finalReleased"] == 0                     # the final layer was never affected
     assert f["overMotion"] == 14 and f["motionAlone"] == 10                     # the motion's 10 plus the expression's 4, then the motion alone
+
+
+# ---------------------------------------------------------------- a playing animation owns the parameters it moves (needs node)
+
+@pytest.fixture(scope="module")
+def owned():
+    """avatar_engine.js against a fake Cubism model with an idle animation moving a parameter the tracker maps an input onto
+    (tests/avatar_engine_owned.js)."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed")
+    r = subprocess.run([node, str(HERE / "avatar_engine_owned.js"), str(ROOT / "catalog" / "avatar" / "static" / "avatar_engine.js")],
+                       capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout)
+
+
+def test_an_idle_animation_is_drawn_as_it_is_with_no_tracker_leaking_into_it(owned):
+    assert owned["weights"] == [1]                                              # once handed over the parameter stays the animation's ...
+    assert owned["worstStep"] < 1e-4                                            # ... so every frame is its value (it twitched at half the frame rate)
+
+
+def test_the_tracker_has_the_parameter_back_when_the_animation_ends(owned):
+    assert owned["releasedEntry"] is False and owned["trackerBack"] is True
