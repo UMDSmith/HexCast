@@ -143,7 +143,8 @@ WebSocket), toggle the model's **expressions** (several at once), play its
 tilt**, move / zoom / hide the avatar, add **items** (pictures, GIFs, frame
 animations, Live2D items — pinned to the head or a hand if you like) and change
 its **light** (key, rim, ambient, animated presets). Events tell it when a line
-has finished.
+has finished. A copy-and-run starter script for a bot,
+[`hexcast_demo.py`](catalog/avatar/examples/hexcast_demo.py), connects to an avatar and moves it.
 
 **Models.** Cubism 3, 4 and 5 models from a zip or a folder — or straight from
 VTube Studio if it's installed, with their VTube Studio parameter setup, hotkey

@@ -340,6 +340,8 @@ Uploads, imports and deletes only accept requests from Hexcast's own pages or fr
 
 Any REST command works as `{"cmd": …, "avatar": …, …}` (plus `list` and `info`). Replies only come when you send a `rid` (or when something failed). Events: `speech_start`, `speech_end`, `speech_error`, `motion_start`, `motion_end`, `loaded`, `error`.
 
+**A starting point.** [`hexcast_demo.py`](../catalog/avatar/examples/hexcast_demo.py) is the smallest working client — about a hundred lines, nothing but `pip install websockets`. It connects to this socket, lists the avatars and the chosen one's model, then makes it happy, look left, nod and turn its head with a stream of frames, and lets go. Copy it into your bot and keep the `Avatar` class: `send()` waits for a command's reply (with a `rid`), `stream()` fires frames without waiting. Run it with `python hexcast_demo.py [avatar]` (the first avatar when you leave the name out); once the plugin is installed it is in `plugins/avatar/examples/`. Point `HEXCAST_WS` at the Hexcast PC's address when the bot runs on another PC.
+
 ## Performance
 
 - One WebGL canvas draws every avatar; an avatar costs what its model costs, nothing more.
@@ -358,6 +360,7 @@ Any REST command works as `{"cmd": …, "avatar": …, …}` (plus `list` and `i
 | `media/avatars/models/<id>/` | a model as shipped, plus `hexcast.json` (Hexcast's settings for it: mappings, idle animation, physics), `hexcast.info.json` (its parameters, cached), `hexcast.colors.json` (its colour presets and which is the default) and `hexcast.anchors.json` (its pin points) - a PNGtuber has the last two too |
 | `media/video/<clip>.json` | a Soundboard clip's settings (position, volume, trim, chroma key, cooldown) - and, if it is locked to an avatar, its `attach` |
 | `media/avatars/items/<id>/` | an item |
+| `plugins/avatar/examples/hexcast_demo.py` | a starter script for a bot: connects to the control WebSocket and moves an avatar ([above](#websocket)) |
 
 ## Live2D licensing
 

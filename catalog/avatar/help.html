@@ -110,6 +110,9 @@ http://localhost:4747/avatar/overlay?audio=0         silent (another source play
     (<code>{"cmd": "params", "avatar": "main", "values": {…}, "rid": 1}</code>) — for values every frame — and
     sends events: <code>speech_start</code>, <code>speech_end</code>, <code>speech_error</code>,
     <code>motion_start</code>, <code>motion_end</code>, <code>loaded</code>, <code>error</code>.</p>
+  <p class="hint">A starting point for a bot: <code>plugins/avatar/examples/hexcast_demo.py</code> connects to that socket,
+    lists the avatars, then makes one happy, look left, nod and turn its head with a stream of frames
+    (<code>pip install websockets</code>, then <code>python hexcast_demo.py [avatar]</code>).</p>
   <pre>curl -X POST "http://localhost:4747/avatar/api/avatars/main/speak?wait=1" -F "audio=@line.wav"
 curl -X POST http://localhost:4747/avatar/api/avatars/main/emotion -H "Content-Type: application/json" -d "{\"name\":\"happy\",\"for\":5}"
 curl -X POST http://localhost:4747/avatar/api/avatars/main/params -H "Content-Type: application/json" -d "{\"values\":{\"ParamAngleX\":20},\"duration\":0.5,\"for\":3}"</pre>

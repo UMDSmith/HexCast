@@ -1171,6 +1171,50 @@ def test_a_websocket_stream_of_params_does_not_flood_the_panel(av, activity):
     assert len(activity.rendered) == 500
 
 
+class _DemoSocket:
+    """The websockets client the starter script expects, over the test client's socket."""
+
+    def __init__(self, ws):
+        self.ws = ws
+
+    def send(self, text):
+        self.ws.send_text(text)
+
+    def recv(self):
+        return self.ws.receive_text()
+
+
+def test_the_starter_script_runs_against_the_control_socket(av, monkeypatch, capsys):
+    """examples/hexcast_demo.py - the copy-and-run start for a bot - ships with the plugin and works on the real route."""
+    import importlib.util
+    import types
+    path = Path(av.mod.__file__).parent / "examples" / "hexcast_demo.py"           # the installed copy
+    spec = importlib.util.spec_from_file_location("hexcast_demo", path)
+    demo = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(demo)
+    monkeypatch.setattr(demo, "time", types.SimpleNamespace(sleep=lambda s: None))
+    seen = []
+    real = av.mod.command
+
+    async def spy(name, cmd, source="api"):
+        seen.append(cmd["cmd"])
+        return await real(name, cmd, source)
+
+    monkeypatch.setattr(av.mod, "command", spy)
+    with av.websocket_connect("/avatar/ws/control") as ws:
+        with pytest.raises(RuntimeError, match="no avatar yet"):
+            demo.run(_DemoSocket(ws))
+    av.post("/avatar/api/avatars", json={"name": "main", "model": _upload(av)["id"]})
+    with av.websocket_connect("/avatar/ws/control") as ws:
+        with pytest.raises(RuntimeError, match="no avatar named 'ghost' .*avatars: main"):
+            demo.run(_DemoSocket(ws), "ghost")
+    assert seen == []                                                              # refused before anything moved
+    with av.websocket_connect("/avatar/ws/control") as ws:
+        demo.run(_DemoSocket(ws))                                                  # no name: the first avatar
+    assert seen ==["emotion", "look", "look", "gesture"] + ["params"] * 60 + ["release"]
+    assert "Driving 'main' - model 'Test Model'" in capsys.readouterr().out
+
+
 def test_every_avatar_has_its_own_window_and_a_quiet_spell_starts_over(av, activity):
     async def go():
         await av.mod.command("main", _params(), "ws")
