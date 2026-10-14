@@ -57,7 +57,8 @@ http://localhost:4747/avatar/overlay?audio=0         silent (another source play
     Hexcast records it and streams it to the overlays), or <b>nothing</b> (the bot moves the mouth with
     <code>params</code> / <code>face</code>). The analysis gives VTube Studio's advanced-lipsync inputs
     (<code>VoiceA</code> … <code>VoiceO</code>, <code>VoiceVolume</code>, <code>VoiceSilence</code>,
-    <code>VoiceFrequency</code>) plus <code>MouthOpen</code> and a mouth form for any model.</p>
+    <code>VoiceFrequency</code>) plus <code>MouthOpen</code> and a mouth form for any model. A bot switches the <b>Lipsync</b> tick box
+    with the <code>lipsync</code> command (<code>{"state": "toggle"}</code>, below; over the WebSocket too).</p>
   <h3>Files</h3>
   <p class="hint">Models in <code>media/avatars/models/</code>, items in <code>media/avatars/items/</code>,
     settings in <code>config/avatar.json</code>. Full guide: <code>docs/avatar.md</code>.</p>
@@ -73,14 +74,14 @@ http://localhost:4747/avatar/overlay?audio=0         silent (another source play
   <table class="api">
     <tr><td>params</td><td><code>{"values": {"ParamMouthOpenY": 0.8, "MouthSmile": 1}, "weight": 1, "duration": 0.3, "for": 2, "hold": true, "mode": "set|add", "layer": "input|final"}</code> — any Live2D parameter, or a tracker input (VTube Studio's names, or a <b>custom input</b> that one of the model's mappings takes - see <code>custom_inputs</code> in <code>/info</code> - through the model's mappings; a mapping wins over a parameter of the same id); held until released unless <code>for</code> / <code>"hold": false</code>. Streamed <code>params</code> show in Activity as one line every few seconds</td></tr>
     <tr><td>release</td><td><code>{"ids": ["ParamMouthOpenY"], "fade": 0.3}</code> — <code>{}</code> releases everything</td></tr>
-    <tr><td>expression</td><td><code>{"name": "Smile", "state": "on|off|toggle", "for": 5}</code> — several can be on at once; several in one call: <code>{"names": ["Smile", "Blush"]}</code>, <code>"only": true</code> switches the others off</td></tr>
+    <tr><td>expression</td><td><code>{"name": "Smile", "state": "on|off|toggle", "for": 5}</code> — switched on, it replaces the ones that are on (a crossfade), or stacks on them: the avatar's <b>A new expression replaces the others</b> setting (<code>replace_expressions</code>), unless the call says <code>"only": true</code> (replace) / <code>false</code> (stack); several in one call: <code>{"names": ["Smile", "Blush"]}</code></td></tr>
     <tr><td>parts · release_parts</td><td><code>{"values": {"PartArmA": 0, "PartArmB": 1}}</code> — show / hide whole parts (a second arm set, a prop …), held until <code>release_parts</code></td></tr>
     <tr><td>colors · release_colors</td><td><code>{"parts": {"PartHair": {"multiply": "#ff8800", "overlay": "#202040", "alpha": 0.9}}, "meshes": {"ArtMesh12": {"alpha": 0}}, "all": {"multiply": "#aabbcc"}, "fade": 0.3, "for": 10, "save": false}</code> — VTube Studio's multiply / screen ("overlay") colours and alpha for parts, art meshes (<code>/info</code> lists them) and the whole model; <code>multiply</code> darkens / tints, <code>overlay</code> lightens, <code>alpha</code> 0 hides; <code>null</code> lets a field go back. Held until <code>release_colors</code> (<code>{"parts": […], "meshes": […], "all": true}</code>, <code>{}</code> = all) or <code>for</code>; <code>"save": true</code> keeps it</td></tr>
     <tr><td>color_preset · clear_color_presets</td><td><code>{"name": "Night", "state": "on|off|toggle", "for": 20}</code> or <code>{"names": […], "only": true}</code> — a colour preset saved on the avatar's model (the Colors tab; <code>color_presets</code> in <code>/info</code>): a VTube Studio colour hotkey. Several can be on, each over the ones before</td></tr>
     <tr><td>clear_expressions</td><td></td></tr>
-    <tr><td>motion</td><td><code>{"name": "wave"}</code> or <code>{"group": "TapBody", "index": 0}</code>, <code>"loop": true</code></td></tr>
+    <tr><td>motion</td><td><code>{"name": "wave"}</code> or <code>{"group": "TapBody", "index": 0}</code>, <code>"loop": true</code> — takes over from the motion playing (no need to stop it first); <code>"priority": "normal"</code> is skipped while another one plays instead</td></tr>
     <tr><td>stop_motion</td><td></td></tr>
-    <tr><td>emotion</td><td><code>{"name": "happy", "intensity": 1, "for": 6}</code> — neutral, happy, sad, angry, surprised, smug, sleepy, thinking, embarrassed, or your own</td></tr>
+    <tr><td>emotion</td><td><code>{"name": "happy", "intensity": 1, "for": 6}</code> — neutral, happy, sad, angry, surprised, smug, sleepy, thinking, embarrassed, or your own; <code>"only"</code> as for <code>expression</code></td></tr>
     <tr><td>face</td><td><code>{"smile": 0.6, "brows": 0.3, "eyes": 0.9, "mouth_open": 0, "cheek": 0, "mouth_x": 0, "tilt": 0, "wink_left": 0, "wink_right": 0, "for": 3}</code> or <code>{"release": true}</code></td></tr>
     <tr><td>look</td><td><code>{"x": 0.7, "y": 0.2}</code> · <code>{"at": "camera"}</code> · <code>{"stage_x": 85, "stage_y": 30}</code>, <code>"head"</code>, <code>"for"</code> · <code>{"release": true}</code></td></tr>
     <tr><td>gesture</td><td><code>{"name": "nod|double_nod|shake|tilt|bounce|lean_left|lean_right|look_away", "amount": 1}</code></td></tr>
@@ -88,6 +89,7 @@ http://localhost:4747/avatar/overlay?audio=0         silent (another source play
     <tr><td>show · hide</td><td><code>{"fade": 0.4}</code></td></tr>
     <tr><td>speak</td><td>multipart field <code>audio</code>, raw audio, <code>{"url": …}</code> or <code>{"audio_b64": …}</code>; <code>volume</code>, <code>text</code>, <code>interrupt</code>; <code>?wait=1</code> answers when it has played</td></tr>
     <tr><td>stop_speaking</td><td></td></tr>
+    <tr><td>lipsync</td><td><code>{"state": "on|off|toggle"}</code> — the Mouth tab's <b>Lipsync</b> tick box (saved, like ticking it); the answer has <code>state</code>, what it is now. Takes effect at once, also mid-line</td></tr>
     <tr><td>item_add · item_update · item_remove · items_clear</td><td><code>{"item": "halo", "id": "h1", "x": 50, "y": 5, "scale": 1, "layer": "front|back", "pin": null, "anchor": "head_top", "locked": false}</code> — <code>anchor</code> glues it to a pin point of the model (<code>anchors</code> in <code>/info</code>)</td></tr>
     <tr><td>attach · detach</td><td><code>{"to": "hex", "anchor": "head_top", "dx": 0, "dy": -45, "layer": "front|back", "follow_angle": true, "mirror": false}</code> — hang this avatar from another on the same overlay (a mini model on a head); it rides the parent's pin point. <code>x</code> / <code>y</code> (% of the parent's box) are the spot when there is no <code>anchor</code>; <code>dx</code> / <code>dy</code> nudge its centre (% of its own size). Saved with the avatar. <code>detach</code> lets go (<code>{"x": 61, "y": 70}</code> to put it elsewhere)</td></tr>
     <tr><td>light</td><td><code>{"enabled": true, "preset": "fire", "color": "#ffd9a8", "intensity": 0.8, "angle": -35, "rim_amount": 0.6, "save": false}</code></td></tr>
@@ -100,16 +102,24 @@ http://localhost:4747/avatar/overlay?audio=0         silent (another source play
     <tr><td>GET /avatar/api/avatars</td><td>settings + live state of every avatar</td></tr>
     <tr><td>GET /avatar/api/avatars/&lt;name&gt;/info</td><td>the model's parameters (with ranges and names), parts, art meshes, expressions, motions, emotions, inputs (VTube Studio's, then the model's custom ones - also <code>custom_inputs</code>), mappings</td></tr>
     <tr><td>GET /avatar/api/avatars/&lt;name&gt;/params/live</td><td>every parameter's value right now</td></tr>
-    <tr><td>POST /avatar/api/avatars</td><td><code>{"name": "guest", "model": "akari", "overlay": "guest"}</code> — create; <code>POST …/&lt;name&gt;</code> changes settings (<code>{"overlay": "main"}</code> moves it to another overlay), <code>…/rename</code>, <code>…/delete</code></td></tr>
+    <tr><td>POST /avatar/api/avatars</td><td><code>{"name": "guest", "model": "akari", "overlay": "guest"}</code> — create; <code>POST …/&lt;name&gt;</code> changes settings, only the keys you send (<code>{"overlay": "main"}</code> moves it to another overlay, <code>{"mouth": {"lipsync": false}}</code> switches lipsync off, <code>{"replace_expressions": false}</code> makes expressions stack), <code>…/rename</code>, <code>…/delete</code></td></tr>
     <tr><td>GET /avatar/api/models · /items</td><td>the library; <code>POST …/upload</code> (zip or folder), <code>POST …/import</code> <code>{"path": …}</code></td></tr>
     <tr><td>GET /avatar/api/models/&lt;id&gt;/anchors</td><td>the model's pin points · <code>POST</code> <code>{"name": "head_top", "pin": {…}}</code> saves one (the tab makes the pin), <code>POST …/&lt;name&gt;/delete</code></td></tr>
     <tr><td>Soundboard: locking a clip</td><td><code>GET /api/play/video/&lt;clip&gt;?avatar=hex&amp;anchor=head_top&amp;dy=-40&amp;ascale=0.8</code> plays it glued to that avatar (<code>?avatar=</code> empty: on the Soundboard overlay); <code>POST /attach</code> <code>{"file": "heart.mp4", "kind": "video", "attach": {"avatar": "hex", "anchor": "head_top", "dy": -40}}</code> locks it for good (<code>null</code> lets go)</td></tr>
   </table>
   <h3>WebSocket</h3>
-  <p class="hint"><code>ws://localhost:4747/avatar/ws/control</code> takes the same commands as JSON
-    (<code>{"cmd": "params", "avatar": "main", "values": {…}, "rid": 1}</code>) — for values every frame — and
+  <p class="hint"><code>ws://localhost:4747/avatar/ws/control</code> takes every command as JSON
+    (<code>{"cmd": "params", "avatar": "main", "values": {…}, "rid": 1}</code>) — for values every frame — plus
+    <code>speak</code>, <code>list</code>, <code>info</code> and the other REST calls by name: <code>settings</code>
+    (<code>{"cmd": "settings", "avatar": "main", "mouth": {"gain": 2}}</code>), <code>get</code>, <code>avatars</code>,
+    <code>status</code>, <code>create_avatar</code>, <code>rename_avatar</code>, <code>delete_avatar</code>,
+    <code>create_overlay</code>, <code>delete_overlay</code>, <code>order</code>, <code>stage</code>, <code>models</code>,
+    <code>model</code>, <code>items</code>, <code>devices</code>, <code>params_live</code>, the model's colour presets and pin
+    points (<code>color_presets</code>, <code>save_color_preset</code>, <code>save_anchor</code> …; <code>model</code> or
+    <code>avatar</code>) — all but uploads, library deletes and installing the runtime. The <code>hello</code> it sends
+    first lists them (<code>commands</code>). It
     sends events: <code>speech_start</code>, <code>speech_end</code>, <code>speech_error</code>,
-    <code>motion_start</code>, <code>motion_end</code>, <code>loaded</code>, <code>error</code>.</p>
+    <code>motion_start</code>, <code>motion_end</code> (<code>reason</code>: finished, replaced or stopped), <code>loaded</code>, <code>error</code>.</p>
   <p class="hint">A starting point for a bot: <code>plugins/avatar/examples/hexcast_demo.py</code> connects to that socket,
     lists the avatars, then makes one happy, look left, nod and turn its head with a stream of frames
     (<code>pip install websockets</code>, then <code>python hexcast_demo.py [avatar]</code>).</p>

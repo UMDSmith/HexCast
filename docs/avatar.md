@@ -98,12 +98,14 @@ The analysis (advanced lipsync) finds the voice's formants every frame and turns
 
 A bot's own mouth values win over the lipsync for as long as it holds them (with their weight), so mixing both works.
 
+**Lipsync on / off from a bot.** The `lipsync` command switches the **Lipsync** tick box: `{"state": "off"}`, `"on"` or `"toggle"`, over REST (`POST /avatar/api/avatars/<name>/lipsync`) or the WebSocket (`{"cmd": "lipsync", "avatar": "main", "state": "toggle"}`). It is the saved setting (`mouth.lipsync`, the tick box follows), it takes effect at once — also in the middle of a line — and the answer says what it is now (`"state": "on"`). The other Mouth tab settings change through the avatar's settings: `{"cmd": "settings", "avatar": "main", "mouth": {"gain": 2}}` on the WebSocket, `POST /avatar/api/avatars/<name>` over REST (see [Avatars and the library](#avatars-and-the-library)).
+
 ## Face, emotions, expressions, motions
 
 - **Face** controls work on any model, relative to its neutral pose: `smile` (-1 frown … 1 smile), `brows` (-1 … 1), `eyes` (0 shut … 1 normal … 1.6 wide), `mouth_open`, `cheek` (blush / puff, if the model maps it), `mouth_x`, `tilt`, `wink_left`, `wink_right`.
 - **Emotions** are named face shapes plus, optionally, any number of the model's own expressions and a motion: `neutral`, `happy`, `sad`, `angry`, `surprised`, `smug`, `sleepy`, `thinking`, `embarrassed`, and any you add. When an avatar is made, expressions whose names suggest an emotion (`Smile`, `Mad`, `Shock`, `Cry` …) are filled in; change the table on **Face & Mood → Emotion → expression table**. `intensity` scales the face, `for` reverts after so many seconds.
-- **Expressions** are the model's `.exp3.json` files. Several can be on at once (each with its own fade), the way VTube Studio stacks them — and one call can switch several (`"names": ["Smile", "Blush"]`; `"only": true` switches every other one off in the same step). Names match in any case. In the tab, tick **Pick several**, click the expressions and press **Fire together** (or **Only these**).
-- **Motions** are the model's `.motion3.json` animations, by name (or group + index); `loop` repeats one.
+- **Expressions** are the model's `.exp3.json` files. **A new expression replaces the others** (Face & Mood, on for a new avatar): switching one on fades out the ones that were on while it fades in, so you go from one to the next without switching the first off. Untick it and they stack instead, the way VTube Studio does — several on at once, each with its own fade. Avatars made before the setting existed keep stacking until you tick it. The setting is what a bot's `expression` and `emotion` calls do unless they say: `"only": true` replaces, `"only": false` stacks, either way. Switching one *off* never touches the others. One call can switch several (`"names": ["Smile", "Blush"]`). Names match in any case. In the tab, tick **Pick several**, click the expressions and press **Fire together** (they stack, whatever the setting) or **Only these**. The expressions an emotion switches on are on like any other: they are lit in the tab, listed in `active`, and each can be switched off by itself (`"state": "off"` or `"toggle"`); one you switch by hand is yours from then on - the emotion changing or running out leaves it alone, and a reloaded OBS source does not bring it back.
+- **Motions** are the model's `.motion3.json` animations, by name (or group + index); `loop` repeats one. A motion started while another plays takes over from it straight away — no need to stop the first, and no jump: the new one fades in from the pose the model is in. `"priority": "normal"` waits its turn instead: it is skipped while another motion plays. Starting the motion that is already playing does nothing. **Stop** ends the motion at once.
 - **Gestures** are built-in head movements for any model: `nod`, `double_nod`, `shake`, `tilt`, `bounce`, `lean_left`, `lean_right`, `look_away`.
 - **Parts** are whole pieces of the model (a second set of arms, glasses, a prop): `parts` shows or hides them (opacity 0 – 1), `release_parts` gives them back to the model. Many models switch parts in their animations (two arm poses, for instance) without a Live2D pose file; Hexcast applies those switches the way VTube Studio does, and at rest shows the parts as the idle animation (or the first animation that sets them) begins — so such a model never shows every variant at once.
 - **Look**: a direction (`x`, `y` in -1 … 1, from the viewer: +x right, +y up), a named spot (`camera`, `left`, `up_right` …), or a point on the stage (`stage_x`, `stage_y` in %, e.g. where the chat box is) — the eyes go there and the head follows (`head` 0 … 2). `release` lets the eyes wander again.
@@ -261,7 +263,7 @@ For values every frame (your own lipsync, head motion from a tracker of your own
 
 | Call | Body |
 | --- | --- |
-| `POST …/expression` | `{"name": "Smile", "state": "on"\|"off"\|"toggle", "for": 5, "fade": 0.4}`; several at once: `{"names": ["Smile", "Blush"]}`, plus `"only": true` to switch every other one off. The answer lists `states` (what each became) and `active` (all that are on). An unknown name is a 400 listing the model's expressions |
+| `POST …/expression` | `{"name": "Smile", "state": "on"\|"off"\|"toggle", "for": 5, "fade": 0.4}`; several at once: `{"names": ["Smile", "Blush"]}`, plus `"only": true` to switch every other one off (`false` keeps them on; left out, the avatar's `replace_expressions` setting decides when something is switched on). The answer lists `states` (what each became, the ones switched off by `only` too) and `active` (all that are on). An unknown name is a 400 listing the model's expressions |
 | `POST …/parts` | `{"values": {"PartArmA": 0, "PartArmB": 1}, "fade": 0.3, "for": 5}` — part opacity 0 – 1, held until released |
 | `POST …/release_parts` | `{"ids": ["PartArmA"]}` (`{}` = all) |
 | `POST …/colors` | `{"parts": {"PartHair": {"multiply": "#ff8800", "overlay": "#202040", "alpha": 0.9}}, "meshes": {"ArtMesh12": {"alpha": 0}}, "all": {"multiply": "#aabbcc"}, "fade": 0.3, "for": 10, "save": false}` — recolour parts (`…/info` lists `parts`, `art_meshes` and which part each art mesh is in), art meshes and the whole model (`all`). A spec has any of `multiply` (darkens / tints), `overlay` (lightens) — `#rrggbb`, `#rgb` or `rrggbb` — and `alpha` (0 invisible … 1); a bare colour (`"PartHair": "#ff8800"`) is a multiply, `"hidden": true` is `alpha: 0`. Held until released or `for` runs out; `null` for a field (or a whole target) lets it go back; `"save": true` keeps it in the avatar's settings instead (merged field by field). A PNGtuber's layers are its `parts` (no `overlay`, no `meshes`) |
@@ -269,9 +271,10 @@ For values every frame (your own lipsync, head motion from a tracker of your own
 | `POST …/color_preset` | `{"name": "Night", "state": "on"\|"off"\|"toggle", "for": 20, "fade": 0.4}`; several at once: `{"names": ["Night", "Neon"]}`, plus `"only": true` to switch every other off. Any case. A preset saved on the avatar's model (`color_presets` in `…/info`); an unknown name is a 400 listing them. The answer lists `states` and `active` |
 | `POST …/clear_color_presets` | `{"fade": 0.4}` — every preset off |
 | `POST …/clear_expressions` | `{"fade": 0.4}` |
-| `POST …/motion` | `{"name": "wave"}` or `{"group": "TapBody", "index": 0}`, `"loop": true`, `"priority": "force"` |
+| `POST …/lipsync` | `{"state": "on"\|"off"\|"toggle"}` — the Mouth tab's **Lipsync** tick box (saved, like ticking it); the answer has `state` (what it is now). Takes effect at once, also mid-line |
+| `POST …/motion` | `{"name": "wave"}` or `{"group": "TapBody", "index": 0}`, `"loop": true`. It takes over from the motion playing; `"priority": "normal"` skips it while another motion plays instead (`"force"`, the default, takes over). Events `motion_start` / `motion_end` (with the answer's `id`) |
 | `POST …/stop_motion` | |
-| `POST …/emotion` | `{"name": "happy", "intensity": 1, "for": 6, "fade": 0.5}` |
+| `POST …/emotion` | `{"name": "happy", "intensity": 1, "for": 6, "fade": 0.5}`; `"only"` as for `expression`: whether its expressions replace the ones that are on (left out: the avatar's `replace_expressions`) |
 | `POST …/face` | `{"smile": 0.6, "brows": 0.3, "eyes": 0.9, "for": 3}` or `{"release": true}` |
 | `POST …/look` | `{"x": 0.7, "y": 0.2}`, `{"at": "camera"}`, `{"stage_x": 85, "stage_y": 30}`, `"head": 1`, `"for": 4`, `"speed": 1`, or `{"release": true}` |
 | `POST …/gesture` | `{"name": "nod", "amount": 1, "duration": 0.7}` |
@@ -308,7 +311,7 @@ Parameters and art meshes appear once the model has been drawn (by an overlay or
 | Call | Body |
 | --- | --- |
 | `POST /avatar/api/avatars` | `{"name": "guest", "model": "akari", "overlay": "guest"}` — create (`overlay` is optional: main; an overlay that doesn't exist is a 404) |
-| `POST /avatar/api/avatars/<name>` | any settings: `model`, `overlay`, `visible`, `locked`, `x`, `y`, `scale`, `rotation`, `flip`, `idle {…}`, `mouth {…}`, `emotions {…}`, `colors {…}` (`{"all", "parts", "meshes"}` as above; replaces the saved set), `attach {…}` (as the `attach` call; `null` lets go; replaces the saved one), `light {…}` |
+| `POST /avatar/api/avatars/<name>` | any settings: `model`, `overlay`, `visible`, `locked`, `x`, `y`, `scale`, `rotation`, `flip`, `replace_expressions` (true: a new expression replaces the others; false: they stack), `idle {…}`, `mouth {…}` (`lipsync` true / false, `source` `speech` / `device` / `none`, `device`, `gain`, `cutoff`, `vowels`, `smoothing`, `delay_ms`, `open`; send only the keys you change: `{"mouth": {"lipsync": false}}`), `emotions {…}`, `colors {…}` (`{"all", "parts", "meshes"}` as above; replaces the saved set), `attach {…}` (as the `attach` call; `null` lets go; replaces the saved one), `light {…}` |
 | `POST /avatar/api/avatars/<name>/rename` | `{"to": "host"}` |
 | `POST /avatar/api/avatars/<name>/delete` | |
 | `POST /avatar/api/overlays` | `{"name": "guest"}` — a new overlay, an OBS source at `/avatar/overlay/guest` |
@@ -328,7 +331,7 @@ Uploads, imports and deletes only accept requests from Hexcast's own pages or fr
 
 ### WebSocket
 
-`ws://localhost:4747/avatar/ws/control` — for bots that send a lot, or want to know what happened:
+`ws://localhost:4747/avatar/ws/control` — everything a bot does, on one connection: it sends a lot, it hears what happened, and it never needs the REST API as well:
 
 ```json
 → {"cmd": "params", "avatar": "main", "values": {"FaceAngleX": 12, "MouthOpen": 0.4}, "hold": false, "rid": 7}
@@ -336,9 +339,33 @@ Uploads, imports and deletes only accept requests from Hexcast's own pages or fr
 → {"cmd": "speak", "avatar": "main", "url": "http://127.0.0.1:5005/line.wav"}
 ← {"type": "event", "event": "speech_start", "avatar": "main", "id": "…", "duration": 3.4}
 ← {"type": "event", "event": "speech_end", "avatar": "main", "id": "…", "duration": 3.4}
+→ {"cmd": "lipsync", "avatar": "main", "state": "toggle", "rid": 8}
+← {"ok": true, "avatar": "main", "state": "off", "lipsync": false, ..., "rid": 8}
+→ {"cmd": "settings", "avatar": "main", "replace_expressions": false, "rid": 9}
+← {"ok": true, "avatar": {...the avatar's settings...}, "rid": 9}
 ```
 
-Any REST command works as `{"cmd": …, "avatar": …, …}` (plus `list` and `info`). Replies only come when you send a `rid` (or when something failed). Events: `speech_start`, `speech_end`, `speech_error`, `motion_start`, `motion_end`, `loaded`, `error`.
+Every command above works as `{"cmd": …, "avatar": …, …}`, plus `speak` (with `url` or `audio_b64`), `list` and `info`. The rest of the REST API is there too, by name — each one *is* its REST call (same checks, same answer), with the path's parts as fields and everything else as the body:
+
+| `cmd` | Fields | Same as |
+| --- | --- | --- |
+| `status` · `avatars` · `overlays` · `models` · `items` · `devices` | | `GET …/status` · `/avatars` · `/overlays` · `/models` · `/items` · `/devices` |
+| `get` | `avatar` | `GET /avatar/api/avatars/<avatar>` — its settings and live state |
+| `params_live` | `avatar` | `GET …/<avatar>/params/live` |
+| `model` · `color_presets` · `anchors` | `model` (or `avatar`: its model) | `GET /avatar/api/models/<model>` · `…/color_presets` · `…/anchors` |
+| `settings` | `avatar`, any settings | `POST /avatar/api/avatars/<avatar>` — e.g. `"mouth": {"gain": 2}`, `"replace_expressions": false`, `"x": 30` |
+| `create_avatar` | `avatar` (or `name`), `model`, `overlay`, … | `POST /avatar/api/avatars` |
+| `rename_avatar` · `delete_avatar` | `avatar` (`to` for the new name) | `POST …/<avatar>/rename` · `…/delete` |
+| `order` · `stage` | `names` · stage settings | `POST /avatar/api/order` · `/stage` |
+| `create_overlay` · `delete_overlay` | `name` · `overlay` | `POST /avatar/api/overlays` · `…/<overlay>/delete` |
+| `model_settings` | `model` (or `avatar`), the settings | `POST /avatar/api/models/<model>/settings` |
+| `save_color_preset` · `import_vts_colors` | `model` (or `avatar`), the body | `POST …/models/<model>/color_presets` · `…/import` |
+| `default_color_preset` · `delete_color_preset` · `color_preset_as_model` | `model` (or `avatar`), `preset` | `POST …/color_presets/<preset>/default` · `…/delete` · `…/as_model` |
+| `save_anchor` · `delete_anchor` | `model` (or `avatar`); `name`, `pin` · `anchor` | `POST …/models/<model>/anchors` · `…/anchors/<anchor>/delete` |
+
+Only these stay off the socket: uploading or importing models and items (files), deleting a model or an item from the library, and installing the Live2D runtime (the streamer accepts Live2D's licence) — the Avatars tab or REST does those. The `hello` message a new connection gets lists every `cmd` it takes (`commands`).
+
+Replies only come when you send a `rid` (or when something failed). Events: `speech_start`, `speech_end`, `speech_error`, `motion_start`, `motion_end`, `loaded`, `error`. `motion_end` has a `reason`: `finished` (it ran out, back to idle), `replaced` (another motion took over; its `motion_start` comes right after) or `stopped` (`stop_motion`). A looping motion ends only when it is replaced or stopped.
 
 **A starting point.** [`hexcast_demo.py`](../catalog/avatar/examples/hexcast_demo.py) is the smallest working client — about a hundred lines, nothing but `pip install websockets`. It connects to this socket, lists the avatars and the chosen one's model, then makes it happy, look left, nod and turn its head with a stream of frames, and lets go. Copy it into your bot and keep the `Avatar` class: `send()` waits for a command's reply (with a `rid`), `stream()` fires frames without waiting. Run it with `python hexcast_demo.py [avatar]` (the first avatar when you leave the name out); once the plugin is installed it is in `plugins/avatar/examples/`. Point `HEXCAST_WS` at the Hexcast PC's address when the bot runs on another PC.
 

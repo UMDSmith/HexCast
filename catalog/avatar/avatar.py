@@ -37,6 +37,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
@@ -53,6 +54,7 @@ STATIC_DIR = BASE_DIR / "static"
 CONFIG_PATH = paths.CONFIG_DIR / "avatar.json"
 _NOCACHE = {"Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache"}
 STATIC_URL = "/plugins/avatar/static"          # set by attach() from the plugin host
+APP = None                                      # the FastAPI app (attach), for the control socket's REST calls
 
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 
@@ -108,6 +110,9 @@ AVATAR_DEFAULTS: dict[str, Any] = {
     "mouth": {"lipsync": True, "source": "speech", "device": "", "gain": 1.0, "cutoff": 0.08,
               "vowels": True, "smoothing": 45, "delay_ms": 60, "open": 1.0, "calibration": None},
     "emotions": {},
+    # an expression switched on fades out the ones that were on (Cubism's way) - false stacks them, the way VTube Studio does;
+    # what `expression` / `emotion` do when the call does not say (`only`). Avatars from before the setting stack (load_config)
+    "replace_expressions": True,
     "items": [],
     # the avatar's own colours (see norm_look): {"all": spec, "parts": {id: spec}, "meshes": {id: spec}}
     "colors": {},
@@ -351,6 +356,7 @@ def norm_avatar(d: dict, existing: dict | None = None) -> dict:
         "x": _num(a.get("x"), -100, 200, 50), "y": _num(a.get("y"), -100, 200, 55),
         "scale": _num(a.get("scale"), 0.02, 20, 1), "rotation": _num(a.get("rotation"), -360, 360, 0),
         "flip": bool(a.get("flip")),
+        "replace_expressions": bool(a.get("replace_expressions", True)),
     }
     i = a.get("idle") or {}
     out["idle"] = {"blink": bool(i.get("blink", True)), "breath": bool(i.get("breath", True)),
@@ -418,7 +424,7 @@ def load_config() -> dict:
     for a in raw.get("avatars") or []:
         if isinstance(a, dict) and NAME_RE.match(str(a.get("name") or "")) and a["name"] not in seen:
             seen.add(a["name"])
-            avatars.append(norm_avatar({}, a))
+            avatars.append(norm_avatar({}, {"replace_expressions": False, **a}))     # (saved before the setting: they stacked)
     overlays = norm_overlays(raw.get("overlays"))          # a config from before overlays: everything is on `main`
     for a in avatars:
         if a["overlay"] not in overlays:
@@ -504,6 +510,14 @@ def _expression_names(a: dict, names: list[str]) -> list[str]:
         raise CommandError(f"{a['name']}'s model has no {what} {', '.join(map(repr, missing))} "
                            f"(it has: {', '.join(have) or 'none'})")
     return out
+
+
+def _emotion_forget(st: dict, names=None) -> None:
+    """An expression switched on or off by itself is no longer the emotion's: the emotion's record (what a renderer that joins
+    late is told, and what the next emotion switches off) lets go of it - `names` None lets go of all of them."""
+    emo = st["emotion"]
+    if emo and emo.get("expressions"):
+        emo["expressions"] = [] if names is None else [n for n in emo["expressions"] if n not in names]
 
 
 def _look_key(kind: str, ident: str) -> str:
@@ -1053,7 +1067,7 @@ async def _command_one(name: str, kind: str, cmd: dict, source: str) -> dict:
         raw = cmd.get("names", cmd.get("name"))
         names = [raw] if isinstance(raw, str) else raw if isinstance(raw, list) else []
         names = [str(n).strip() for n in names if str(n).strip()][:32]
-        only = bool(cmd.get("only"))
+        only = bool(cmd["only"]) if "only" in cmd else None       # None: the avatar's `replace_expressions` (below)
         if not names and not only:
             raise CommandError("send the expression `name` or `names` (see GET /avatar/api/avatars/<name>/info)")
         names = _expression_names(a, names)
@@ -1078,18 +1092,22 @@ async def _command_one(name: str, kind: str, cmd: dict, source: str) -> dict:
                 st["expressions"][n] = until or 0
             else:
                 st["expressions"].pop(n, None)
+        if only is None:                          # one switched on takes over from the others (a switch off is just that one)
+            only = a["replace_expressions"] and "on" in states.values()
         off = []
         if only:
             off = [n for n in st["expressions"] if n not in states or states[n] == "off"]
             for n in off:
                 st["expressions"].pop(n, None)
                 states.setdefault(n, "off")
+        _emotion_forget(st, states)
         out.update({"names": list(states), "states": states, "until": until, "only": only,
                     "fade": _num(cmd.get("fade", 0.4), 0, 30, 0.4), "active": sorted(st["expressions"])})
         if len(names) == 1:                       # the single-expression answer stays as it was
             out.update({"name": names[0], "state": states[names[0]]})
     elif kind == "clear_expressions":
         st["expressions"].clear()
+        _emotion_forget(st)
         out["fade"] = _num(cmd.get("fade", 0.4), 0, 30, 0.4)
     elif kind == "motion":
         if _model_type(a) == "png":
@@ -1100,7 +1118,8 @@ async def _command_one(name: str, kind: str, cmd: dict, source: str) -> dict:
             raise CommandError("send the motion `name` (or `group` and `index`)")
         out.update({"name": mname, "group": None if group is None else str(group),
                     "index": None if cmd.get("index") is None else int(_num(cmd.get("index"), 0, 9999, 0)),
-                    "loop": bool(cmd.get("loop")), "priority": "force" if cmd.get("priority") == "force" else "normal",
+                    # it takes over from the motion playing; "normal" waits its turn: skipped while another one plays
+                    "loop": bool(cmd.get("loop")), "priority": "normal" if cmd.get("priority") == "normal" else "force",
                     "id": uuid.uuid4().hex[:10]})
     elif kind == "stop_motion":
         pass
@@ -1115,6 +1134,15 @@ async def _command_one(name: str, kind: str, cmd: dict, source: str) -> dict:
                     "motion": e.get("motion") or "", "intensity": _num(cmd.get("intensity", 1), 0, 1.5, 1),
                     "fade": _num(cmd.get("fade", 0.5), 0, 30, 0.5), "until": _until(cmd),
                     "previous": (prev or {}).get("expressions") or []})
+        replace = bool(cmd["only"]) if "only" in cmd else a["replace_expressions"]
+        if replace and out["expressions"] and _model_type(a) != "png":    # its expressions take over from every other one
+            out["previous"] = list(dict.fromkeys(out["previous"] + list(st["expressions"])))
+        if _model_type(a) != "png":               # the emotion's expressions are on like any other: they show in `active`, a toggle turns them off
+            for n in out["previous"]:
+                if n not in out["expressions"]:
+                    st["expressions"].pop(n, None)
+            for n in out["expressions"]:
+                st["expressions"][n] = out["until"] or 0
         st["emotion"] = None if ename == "neutral" else {k: out[k] for k in ("name", "face", "expressions", "intensity", "until")}
     elif kind == "face":
         face = _norm_face(cmd.get("face") if isinstance(cmd.get("face"), dict) else cmd)
@@ -1200,6 +1228,17 @@ async def _command_one(name: str, kind: str, cmd: dict, source: str) -> dict:
         out.update(await _items_command(a, kind, cmd))
     elif kind in ("attach", "detach"):
         out.update(await _attach_command(a, kind, cmd))
+    elif kind == "lipsync":
+        # the Mouth tab's Lipsync tick box (a saved setting): whether the voice moves the mouth
+        state = cmd.get("state", "on")
+        if state not in ("on", "off", "toggle"):
+            raise CommandError("state is 'on', 'off' or 'toggle'")
+        on = not a["mouth"]["lipsync"] if state == "toggle" else state == "on"
+        out.update({"state": "on" if on else "off", "lipsync": on})
+        if on != a["mouth"]["lipsync"]:           # the renderers (mid-line too), the tick box and a recorded device follow the config
+            a["mouth"]["lipsync"] = on
+            save_config()
+            await broadcast_config()
     elif kind == "reload":
         await broadcast_library()                 # files added to the model's folder show up
     else:
@@ -1298,6 +1337,8 @@ def _summary(kind: str, out: dict) -> str:
         return f"to {at.get('to')}" + (f" at {at['anchor']}" if at.get("anchor") else "")
     if kind == "detach":
         return "let go"
+    if kind == "lipsync":
+        return out["state"]
     if kind == "expression" and len(out.get("states") or {}) > 1:
         return ", ".join(f"{n} {s}" for n, s in out["states"].items())
     for k in ("name", "visible"):
@@ -2214,7 +2255,7 @@ async def api_avatar_live_params(name: str):
 
 # every command, also as its own route: POST /avatar/api/avatars/<name>/<command>
 COMMANDS = ["params", "release", "parts", "release_parts", "colors", "release_colors", "color_preset", "clear_color_presets", "expression", "clear_expressions", "motion", "stop_motion", "emotion", "face",
-            "look", "gesture", "transform", "visible", "stop_speaking", "light", "item_add", "item_remove",
+            "look", "gesture", "transform", "visible", "stop_speaking", "lipsync", "light", "item_add", "item_remove",
             "item_update", "items_clear", "attach", "detach", "reload"]
 
 
@@ -2295,17 +2336,87 @@ API_ROUTES = [
     "POST /avatar/api/avatars/<name>/show | hide   {fade}",
     "POST /avatar/api/avatars/<name>/speak         audio (multipart / raw / {url} / {audio_b64}), ?wait=1",
     "POST /avatar/api/avatars/<name>/stop_speaking",
+    "POST /avatar/api/avatars/<name>/lipsync       {state:on|off|toggle} - the Mouth tab's Lipsync tick box (saved); the answer has the new state",
     "POST /avatar/api/avatars/<name>/item_add      {item, x, y, scale, layer, pin, anchor, locked} - anchor: one of the model's pin points (GET .../info lists them); item_update takes the same",
     "POST /avatar/api/avatars/<name>/attach        {to, anchor, x, y, dx, dy, layer, follow_angle, mirror} - hang this avatar from another on the same overlay (a mini model on a head); it rides the pin point",
     "POST /avatar/api/avatars/<name>/detach        {x, y, scale, rotation, flip} - let go; back to its own spot unless you send another",
     "GET  /avatar/api/models/<id>/anchors          the model's pin points  |  POST {name, pin} saves one (the tab makes pins), POST .../<name>/delete",
     "POST /avatar/api/avatars/<name>/light         {preset, color, intensity, angle, rim, ambient}",
     "POST /avatar/api/avatars/<name>/command       {cmd: <any of the above>, ...}",
-    "WS   /avatar/ws/control                       the same commands as JSON, plus events back",
+    "WS   /avatar/ws/control                       every command as JSON ({cmd, avatar, ..., rid}), plus speak, list, info and the REST calls by name: "
+    "status, avatars, get, params_live, overlays, models, model, items, devices, color_presets, anchors, settings, create_avatar, "
+    "rename_avatar, delete_avatar, order, stage, create_overlay, delete_overlay, model_settings, save_color_preset, "
+    "default_color_preset, delete_color_preset, color_preset_as_model, import_vts_colors, save_anchor, delete_anchor; events back",
 ]
 
 
 # ---- websockets ----
+
+# The control socket does what the REST API does, so a bot needs nothing else: every command (COMMANDS), `speak`, `list`,
+# `info`, and these - each one IS its REST call (run in-process: the same checks, answers and errors). `{avatar}` /
+# `{model}` / ... come from the message's fields (`model` falls back to the avatar's model); the rest of the message is
+# the body. Not here: uploads and imports (files), deleting models or items, installing the runtime (the streamer accepts
+# Live2D's licence) - the calls that refuse other web pages stay with REST and the Avatars tab.
+SOCKET_CALLS: dict[str, tuple[str, str]] = {
+    "status": ("GET", "/api/status"),
+    "avatars": ("GET", "/api/avatars"),
+    "get": ("GET", "/api/avatars/{avatar}"),
+    "params_live": ("GET", "/api/avatars/{avatar}/params/live"),
+    "overlays": ("GET", "/api/overlays"),
+    "models": ("GET", "/api/models"),
+    "model": ("GET", "/api/models/{model}"),
+    "items": ("GET", "/api/items"),
+    "devices": ("GET", "/api/devices"),
+    "color_presets": ("GET", "/api/models/{model}/color_presets"),
+    "anchors": ("GET", "/api/models/{model}/anchors"),
+    "settings": ("POST", "/api/avatars/{avatar}"),
+    "create_avatar": ("POST", "/api/avatars"),
+    "rename_avatar": ("POST", "/api/avatars/{avatar}/rename"),
+    "delete_avatar": ("POST", "/api/avatars/{avatar}/delete"),
+    "order": ("POST", "/api/order"),
+    "stage": ("POST", "/api/stage"),
+    "create_overlay": ("POST", "/api/overlays"),
+    "delete_overlay": ("POST", "/api/overlays/{overlay}/delete"),
+    "model_settings": ("POST", "/api/models/{model}/settings"),
+    "save_color_preset": ("POST", "/api/models/{model}/color_presets"),
+    "default_color_preset": ("POST", "/api/models/{model}/color_presets/{preset}/default"),
+    "delete_color_preset": ("POST", "/api/models/{model}/color_presets/{preset}/delete"),
+    "color_preset_as_model": ("POST", "/api/models/{model}/color_presets/{preset}/as_model"),
+    "import_vts_colors": ("POST", "/api/models/{model}/color_presets/import"),
+    "save_anchor": ("POST", "/api/models/{model}/anchors"),
+    "delete_anchor": ("POST", "/api/models/{model}/anchors/{anchor}/delete"),
+}
+
+
+async def _socket_call(kind: str, msg: dict) -> dict:
+    """One of SOCKET_CALLS, as its REST call."""
+    if APP is None:
+        raise CommandError("the plugin is not running", 503)
+    method, route = SOCKET_CALLS[kind]
+    fields = {k: v for k, v in msg.items() if k not in ("cmd", "rid")}
+    if kind == "create_avatar" and not fields.get("name") and fields.get("avatar"):
+        fields["name"] = fields["avatar"]           # (`avatar` names it, as in every other call)
+    if "{model}" in route and not fields.get("model") and fields.get("avatar"):
+        fields["model"] = avatar(str(fields["avatar"]))["model"]
+    params = re.findall(r"\{(\w+)\}", route)
+    path = route
+    for p in params:
+        v = str(fields.get(p) or "").strip()
+        if not v:
+            raise CommandError(f"`{kind}` needs `{p}`")
+        path = path.replace("{" + p + "}", quote(v, safe=""))
+    body = {k: v for k, v in fields.items() if k not in params}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=APP), base_url="http://hexcast") as cl:
+        r = await cl.request(method, router.prefix + path, json=body if method == "POST" else None)
+    try:
+        j = r.json()
+    except ValueError:
+        j = None
+    if r.status_code >= 400:
+        err = (j.get("error") or j.get("detail")) if isinstance(j, dict) else None
+        return {"ok": False, "error": str(err or f"{kind} failed ({r.status_code})")}
+    return {"ok": True, **j} if isinstance(j, dict) else {"ok": True, "result": j}
+
 
 @router.websocket("/ws/render")
 async def ws_render(ws: WebSocket):
@@ -2367,15 +2478,17 @@ async def ws_panel(ws: WebSocket):
 
 @router.websocket("/ws/control")
 async def ws_control(ws: WebSocket):
-    """For bots: send {"cmd": "params", "avatar": "main", "values": {...}} (any command of the REST
-    API, plus "speak" with `url` or `audio_b64`); every reply carries the `rid` you sent, and
-    events (speech_start / speech_end / motion_end ...) arrive as {"type": "event", ...}."""
+    """For bots: send {"cmd": "params", "avatar": "main", "values": {...}} - any command, "speak" with `url` or
+    `audio_b64`, "list", "info", and the REST API's other calls by name (SOCKET_CALLS: settings, create_avatar ...);
+    every reply carries the `rid` you sent, and events (speech_start / speech_end / motion_end ...) arrive as
+    {"type": "event", ...}."""
     await ws.accept()
     c = Client(ws, "control")
     HUB.clients.add(c)
     try:
         await ws.send_text(json.dumps({"type": "hello", "avatars": [a["name"] for a in CONFIG["avatars"]],
-                                       "inputs": INPUTS, "gestures": GESTURES}))
+                                       "inputs": INPUTS, "gestures": GESTURES,
+                                       "commands": COMMANDS + ["speak", "list", "info"] + list(SOCKET_CALLS)}))
         while True:
             text = await ws.receive_text()
             try:
@@ -2402,6 +2515,8 @@ async def ws_control(ws: WebSocket):
                     res = {"ok": True, "avatars": CONFIG["avatars"]}
                 elif msg.get("cmd") == "info":
                     res = {"ok": True, **avatar_info(name)}
+                elif msg.get("cmd") in SOCKET_CALLS:
+                    res = await _socket_call(str(msg["cmd"]), msg)
                 else:
                     res = await command(name, msg)
             except (CommandError, library.LibraryError) as exc:
@@ -2423,9 +2538,10 @@ async def ws_control(ws: WebSocket):
 # --------------------------------------------------------------------------------------------
 
 def attach(ctx) -> None:
-    global STATIC_URL
+    global STATIC_URL, APP
     library.ensure_dirs()
     STATIC_URL = str(ctx.static_url).rstrip("/")
+    APP = ctx.app
     ctx.include_router(router)
     ctx.app.mount(library.URL, RevalidatingStaticFiles(directory=str(library.ROOT)), name="avatar-lib")
     print(f"  Avatars panel:       http://localhost:{ctx.port}/avatar", flush=True)

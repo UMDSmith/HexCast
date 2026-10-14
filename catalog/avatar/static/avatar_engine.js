@@ -718,6 +718,7 @@
     this.gestures = [];
     this.own = {};               // param index -> {w, to}: parameters the playing motion animates
     this.motionKey = '';
+    this.motionNow = null;       // the motion the API started, until it ends: {key, name, id} (see _motionEnded)
     this.frame = null;
     this.acc = 0;
     this.msAcc = 0; this.msN = 0;
@@ -767,7 +768,10 @@
     if (!this.lightOverride) this.setLight(cfg.light, 0.5);
     this._readColors(cfg, false);
     this._syncItems();
-    if (this.speech.cur && cfg.mouth && cfg.mouth.lipsync === false) this.lip.attachAnalyser(null);
+    if (this.speech.cur && cfg.mouth) {                 // lipsync switched off, or back on, in the middle of a line
+      if (cfg.mouth.lipsync === false) this.lip.attachAnalyser(null);
+      else if (prev && prev.mouth && prev.mouth.lipsync === false && this.speech.cur.nodes) this.lip.attachAnalyser(this.speech.cur.nodes[0]);
+    }
   };
 
   Avatar.prototype.unload = function () {
@@ -1356,6 +1360,7 @@
   Avatar.prototype._trackMotion = function () {
     var mm = this.model.internalModel.motionManager, st = mm.state || {};
     var key = st.currentGroup != null && st.currentPriority > 0 ? st.currentGroup + '#' + st.currentIndex : '';
+    if (this.motionNow && this.motionNow.key !== key) this._motionEnded('finished');      // (back to idle, or nothing)
     this.motionPri = st.currentPriority || 0;
     if (key === this.motionKey) return;
     this.motionKey = key;
@@ -1751,10 +1756,13 @@
         }
         if (c.states) { for (k in c.states) this._expression(k, c.states[k] === 'on', c.fade, c.until); }
         else this._expression(c.name, c.state !== 'off', c.fade, c.until);
+        // switched by itself, an expression is no longer the emotion's: the emotion running out does not touch it
+        var mine = c.states ? Object.keys(c.states) : [c.name];
+        if (this.emo.exprs) this.emo.exprs = this.emo.exprs.filter(function (n) { return mine.indexOf(n) < 0; });
         break;
-      case 'clear_expressions': if (this.png) this.png.setState(null); for (k in this.exprs) { this.exprs[k].to = 0; this.exprs[k].fadeOut = c.fade || this.exprs[k].fadeOut; } break;
+      case 'clear_expressions': if (this.png) this.png.setState(null); for (k in this.exprs) { this.exprs[k].to = 0; this.exprs[k].fadeOut = c.fade || this.exprs[k].fadeOut; } this.emo.exprs = []; break;
       case 'motion': this._motion(c); break;
-      case 'stop_motion': if (this.model && !this.png) this.model.internalModel.motionManager.stopAllMotions(); break;
+      case 'stop_motion': if (this.model && !this.png) { this.model.internalModel.motionManager.stopAllMotions(); this._motionEnded('stopped'); } break;
       case 'emotion': {
         var self = this;
         if (this.png) this.png.setState(c.name === 'neutral' ? null : ((c.expressions || [])[0] || c.name));
@@ -1791,7 +1799,7 @@
       case 'speak': this.speak(c); break;
       case 'stop_speaking': this.stopSpeaking(); break;
       case 'light': this.lightOverride = !c.save && !c.reset; this.setLight(c.light, c.fade == null ? 0.6 : c.fade); break;
-      case 'item_add': case 'item_remove': case 'item_update': case 'items_clear': case 'attach': case 'detach': break;   // arrives as config
+      case 'item_add': case 'item_remove': case 'item_update': case 'items_clear': case 'attach': case 'detach': case 'lipsync': break;   // arrives as config
       case 'reload': if (this.cfg.model) this.load(this.cfg.model); break;
     }
   };
@@ -1837,15 +1845,29 @@
       if (!m) { this.stage.emit('event', { event: 'error', avatar: this.name, message: 'no motion "' + c.name + '"' }); return; }
       group = m.group; index = m.index;
     }
-    var pri = c.priority === 'force' ? 3 : 2, id = c.id;
-    this.model.motion(group, index == null ? undefined : index, pri, {
+    // FORCE takes over from the motion playing; NORMAL is skipped while another one plays. No jump either way: the parameters
+    // are saved after the motions each frame, so the new motion fades in from the pose the model is in
+    var pri = c.priority === 'normal' ? 2 : 3, id = c.id, model = this.model;
+    model.motion(group, index == null ? undefined : index, pri, {
       loop: c.loop ? true : undefined,
-      onFinish: function () { self.stage.emit('event', { event: 'motion_end', avatar: self.name, name: c.name || group, id: id }); },
       onError: function (e) { self.stage.emit('event', { event: 'error', avatar: self.name, message: 'motion: ' + (e && e.message || e) }); }
     }).then(function (ok) {
-      if (ok) self.stage.emit('event', { event: 'motion_start', avatar: self.name, name: c.name || group, id: id });
+      if (!ok || self.model !== model) return;
+      var st = model.internalModel.motionManager.state || {};
+      self._motionEnded('replaced');
+      self.motionNow = { key: st.currentGroup + '#' + st.currentIndex, name: c.name || group, id: id };
+      self.stage.emit('event', { event: 'motion_start', avatar: self.name, name: c.name || group, id: id });
     });
   };
+
+  /* the motion started through the API is over: `motion_end` (the engine's own finish callback only runs for a motion with a sound) */
+  Avatar.prototype._motionEnded = function (reason) {
+    var m = this.motionNow;
+    if (!m) return;
+    this.motionNow = null;
+    this.stage.emit('event', { event: 'motion_end', avatar: this.name, name: m.name, id: m.id, reason: reason });
+  };
+
 
   /* -------------------------------------------- speech */
 

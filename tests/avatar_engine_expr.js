@@ -77,6 +77,21 @@ for (const [label, hooked] of [['fixed', true], ['unfixed', false]]) {
   o.overMotion = mo.run(1, { ArmWiggle: 10 }).ArmWiggle;    // the motion's 10, plus the expression's 4
   mo.av.exprs.wiggle.to = 0;
   o.motionAlone = mo.run(1.5, { ArmWiggle: 10 }).ArmWiggle;
+  // an expression an emotion brought in, switched by itself, is no longer the emotion's: the emotion running out leaves it on
+  const em = model(hooked);
+  em.av.command({ cmd: 'emotion', name: 'happy', face: {}, expressions: ['wings', 'hat'], previous: [], fade: 0.1 });
+  em.av.command({ cmd: 'expression', name: 'wings', state: 'on', fade: 0.1 });
+  o.emoOwns = em.av.emo.exprs.slice();
+  em.av._emotionOff();
+  o.emoEndKept = em.av.exprs.wings.to;
+  o.emoEndDropped = em.av.exprs.hat.to;
+  // switched off by itself, it goes (the emotion's other expression stays), and "all off" makes the emotion let go of the rest
+  const eo = model(hooked);
+  eo.av.command({ cmd: 'emotion', name: 'happy', face: {}, expressions: ['wings', 'hat'], previous: [], fade: 0.1 });
+  eo.av.command({ cmd: 'expression', names: ['wings'], states: { wings: 'off' }, fade: 0.1 });
+  o.emoOffOne = [eo.av.exprs.wings.to, eo.av.exprs.hat.to, eo.av.emo.exprs.slice()];
+  eo.av.command({ cmd: 'clear_expressions', fade: 0.1 });
+  o.emoAllOff = [eo.av.exprs.hat.to, eo.av.emo.exprs.slice()];
   out[label] = o;
 }
 console.log(JSON.stringify(out));

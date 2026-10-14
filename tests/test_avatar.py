@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import io
+import itertools
 import json
 import re
 import shutil
@@ -183,6 +184,152 @@ def test_several_expressions_in_one_call(av):
     # an emotion can bring several expressions
     av.post("/avatar/api/avatars/main", json={"emotions": {"happy": {"face": {"smile": 1}, "expressions": ["Smile", "angry"]}}})
     assert av.post("/avatar/api/avatars/main/emotion", json={"name": "happy"}).json()["expressions"] == ["Smile", "angry"]
+
+
+def test_an_emotions_expressions_are_on_like_any_other_and_go_off_one_by_one(av):
+    m = _upload(av)
+    av.post("/avatar/api/avatars", json={"name": "main", "model": m["id"]})
+    av.post("/avatar/api/avatars/main", json={"emotions": {"happy": {"face": {"smile": 1}, "expressions": ["Smile", "angry"]}},
+                                              "replace_expressions": False})              # (stacking, the way VTube Studio does)
+    live = lambda: av.get("/avatar/api/avatars").json()["live"]["main"]
+    expr = lambda body: av.post("/avatar/api/avatars/main/expression", json=body).json()
+
+    av.post("/avatar/api/avatars/main/emotion", json={"name": "happy"})
+    assert sorted(live()["expressions"]) == ["Smile", "angry"]               # on, so the tab shows them lit and `active` lists them
+    r = expr({"name": "angry", "state": "toggle"})                           # (it answered "on" before: the server did not know it was on)
+    assert r["state"] == "off" and r["active"] == ["Smile"]
+    assert live()["emotion"]["expressions"] == ["Smile"]                     # the emotion let go of it: a renderer that joins late does not switch it back on
+    assert expr({"name": "angry", "state": "toggle"})["state"] == "on"       # and it is its own now
+    assert live()["emotion"]["expressions"] == ["Smile"]
+    # the next emotion switches off what the last one had, not what was switched on by itself in between
+    av.post("/avatar/api/avatars/main/emotion", json={"name": "neutral"})
+    assert list(live()["expressions"]) == ["angry"]
+    # "only" and "all off" also take the emotion's expressions with them
+    av.post("/avatar/api/avatars/main/emotion", json={"name": "happy"})
+    r = expr({"names": ["Smile"], "only": True})
+    assert r["states"] == {"Smile": "on", "angry": "off"} and r["active"] == ["Smile"]
+    av.post("/avatar/api/avatars/main/emotion", json={"name": "happy"})
+    assert av.post("/avatar/api/avatars/main/clear_expressions", json={}).status_code == 200
+    assert live()["expressions"] == {} and live()["emotion"]["expressions"] == []
+    # an emotion's `for` is its expressions' too (they run out with it)
+    av.post("/avatar/api/avatars/main/emotion", json={"name": "happy", "for": 30})
+    assert all(u > 0 for u in live()["expressions"].values()) and len(live()["expressions"]) == 2
+
+
+def test_a_new_expression_replaces_the_others_unless_the_avatar_stacks_them(av):
+    m = _upload(av)
+    a = av.post("/avatar/api/avatars", json={"name": "main", "model": m["id"]}).json()["avatar"]
+    assert a["replace_expressions"] is True                                  # a new avatar: Cubism's way
+    av.post("/avatar/api/avatars/main", json={"emotions": {"happy": {"face": {}, "expressions": ["Smile"]}}})
+    live = lambda: av.get("/avatar/api/avatars").json()["live"]["main"]
+    expr = lambda body: av.post("/avatar/api/avatars/main/expression", json=body).json()
+
+    assert expr({"name": "Smile"})["active"] == ["Smile"]
+    r = expr({"name": "angry", "state": "toggle"})                           # the tab's button: straight from one to the next
+    assert r["states"] == {"angry": "on", "Smile": "off"} and r["active"] == ["angry"] and r["only"] is True
+    assert r["name"] == "angry" and r["state"] == "on"                       # (the single-expression answer is as it was)
+    r = expr({"name": "angry", "state": "toggle"})                           # switching one off is only that
+    assert r["states"] == {"angry": "off"} and r["active"] == []
+    expr({"name": "Smile"})
+    assert expr({"name": "angry", "only": False})["active"] == ["Smile", "angry"]     # a call can still stack ...
+    assert expr({"name": "Smile", "state": "off"})["active"] == ["angry"]             # ... and "off" leaves the rest on
+    # an emotion's expressions take over too, unless it says
+    assert av.post("/avatar/api/avatars/main/emotion", json={"name": "happy"}).json()["previous"] == ["angry"]
+    assert list(live()["expressions"]) == ["Smile"]
+    av.post("/avatar/api/avatars/main/emotion", json={"name": "neutral"})
+    expr({"name": "angry"})
+    av.post("/avatar/api/avatars/main/emotion", json={"name": "happy", "only": False})
+    assert sorted(live()["expressions"]) == ["Smile", "angry"]
+    # stacking, the way VTube Studio does
+    av.post("/avatar/api/avatars/main", json={"replace_expressions": False})
+    av.post("/avatar/api/avatars/main/clear_expressions", json={})
+    expr({"name": "Smile"})
+    assert expr({"name": "angry", "state": "toggle"})["active"] == ["Smile", "angry"]
+    assert expr({"name": "Smile", "only": True})["active"] == ["Smile"]
+
+
+def test_avatars_saved_before_the_setting_keep_stacking(av):
+    avatar = av.mod
+    path = avatar.CONFIG_PATH
+    old = path.read_text(encoding="utf-8") if path.exists() else None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"avatars": [{"name": "old"}, {"name": "set", "replace_expressions": True}]}), encoding="utf-8")
+        cfg = avatar.load_config()
+        assert [a["replace_expressions"] for a in cfg["avatars"]] == [False, True]
+    finally:
+        if old is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.write_text(old, encoding="utf-8")
+
+
+def test_lipsync_is_a_command_over_rest_and_the_socket(av):
+    av.post("/avatar/api/avatars", json={"name": "main"})
+    av.post("/avatar/api/avatars/main", json={"mouth": {"gain": 2}})
+    mouth = lambda: av.get("/avatar/api/avatars/main").json()["avatar"]["mouth"]
+    lip = lambda body: av.post("/avatar/api/avatars/main/lipsync", json=body)
+    r = lip({"state": "off"}).json()
+    assert r["state"] == "off" and r["lipsync"] is False                     # the answer says what it is now ...
+    assert mouth()["lipsync"] is False and mouth()["gain"] == 2              # ... and it is the tick box itself (saved), nothing else moved
+    assert lip({"state": "toggle"}).json()["state"] == "on" and mouth()["lipsync"] is True
+    assert lip({}).json()["state"] == "on"                                   # "on" when not said, like expression
+    assert lip({"state": "maybe"}).status_code == 400 and mouth()["lipsync"] is True
+    with av.websocket_connect("/avatar/ws/control") as ws:
+        ws.receive_json()                                                    # the greeting
+        ws.send_json({"cmd": "lipsync", "avatar": "main", "state": "toggle", "rid": 7})
+        msg = ws.receive_json()
+        while msg.get("rid") != 7:
+            msg = ws.receive_json()
+    assert msg["ok"] and msg["state"] == "off" and mouth()["lipsync"] is False
+
+
+def test_the_control_socket_does_what_the_rest_api_does(av):
+    m = _upload(av)
+    with av.websocket_connect("/avatar/ws/control") as ws:
+        hello = ws.receive_json()
+        rid = itertools.count(1)
+
+        def call(cmd, **fields):
+            r = next(rid)
+            ws.send_json({"cmd": cmd, "rid": r, **fields})
+            msg = ws.receive_json()
+            while msg.get("rid") != r:
+                msg = ws.receive_json()
+            return msg
+
+        assert {"settings", "create_avatar", "delete_avatar", "lipsync", "speak", "params"} <= set(hello["commands"])
+        made = call("create_avatar", avatar="main", model=m["id"])             # `avatar` names it, as everywhere else
+        assert made["ok"] and made["avatar"]["name"] == "main"
+        r = call("settings", avatar="main", replace_expressions=False, mouth={"gain": 2})
+        assert r["ok"] and r["avatar"]["replace_expressions"] is False and r["avatar"]["mouth"]["gain"] == 2
+        assert r["avatar"]["mouth"]["lipsync"] is True                         # (only what was sent changes)
+        g = call("get", avatar="main")
+        assert g["ok"] and g["avatar"]["mouth"]["gain"] == 2 and "live" in g
+        assert [a["name"] for a in call("avatars")["avatars"]] == ["main"]
+        assert call("models")["models"][0]["id"] == m["id"]
+        assert call("color_presets", avatar="main")["ok"]                       # the avatar's model
+        assert call("create_overlay", name="guest")["overlay"]["id"] == "guest"
+        assert call("settings", avatar="main", overlay="guest")["avatar"]["overlay"] == "guest"
+        assert call("delete_overlay", overlay="guest")["moved"] == ["main"]
+        assert call("rename_avatar", avatar="main", to="host")["avatar"]["name"] == "host"
+        assert call("stage", show_fps=True)["stage"]["show_fps"] is True
+        # the errors are the REST ones
+        bad = call("get", avatar="ghost")
+        assert bad["ok"] is False and "no avatar named 'ghost'" in bad["error"]
+        assert call("rename_avatar", to="x")["error"] == "`rename_avatar` needs `avatar`"
+        assert call("delete_model", model=m["id"])["ok"] is False                # library deletes stay off the socket
+        assert call("delete_avatar", avatar="host")["ok"]
+    assert av.get("/avatar/api/avatars").json()["avatars"] == []
+    assert av.get("/avatar/api/models").json()["models"][0]["id"] == m["id"]
+
+
+def test_a_motion_takes_over_from_the_one_playing_unless_it_waits_its_turn(av):
+    m = _upload(av)
+    av.post("/avatar/api/avatars", json={"name": "main", "model": m["id"]})
+    assert av.post("/avatar/api/avatars/main/motion", json={"name": "wave"}).json()["priority"] == "force"
+    assert av.post("/avatar/api/avatars/main/motion", json={"name": "wave", "priority": "normal"}).json()["priority"] == "normal"
+    assert av.post("/avatar/api/avatars/main/motion", json={"name": "wave", "priority": "loud"}).json()["priority"] == "force"
 
 
 def test_parts(av):
@@ -1640,6 +1787,14 @@ def test_the_unguarded_cycle_does_stick_which_is_what_the_guard_is_for(expr):
     assert u["off"]["WingFlap"] == 1 and u["off"]["ToeTap"] == 30 and u["addLong"] == 30     # (the control: why the bug showed)
 
 
+def test_an_expression_switched_by_itself_is_no_longer_its_emotions(expr):
+    for f in (expr["fixed"], expr["unfixed"]):
+        assert f["emoOwns"] == ["hat"]                                          # 'wings' was taken over, 'hat' is still the emotion's
+        assert f["emoEndKept"] == 1 and f["emoEndDropped"] == 0                # the emotion running out switches off only 'hat'
+        assert f["emoOffOne"] == [0, 1, ["hat"]]                                # one off, the other stays, the emotion keeps just that one
+        assert f["emoAllOff"] == [0, []]                                        # "all off": nothing left of the emotion's either
+
+
 def test_a_value_the_api_holds_comes_back_when_released_and_a_motion_keeps_its_own(expr):
     f = expr["fixed"]
     assert f["held"] == 20 and f["released"] == 0
@@ -1670,3 +1825,29 @@ def test_an_idle_animation_is_drawn_as_it_is_with_no_tracker_leaking_into_it(own
 
 def test_the_tracker_has_the_parameter_back_when_the_animation_ends(owned):
     assert owned["releasedEntry"] is False and owned["trackerBack"] is True
+
+
+@pytest.fixture(scope="module")
+def motion():
+    """avatar_engine.js with a fake motion manager shaped like the Live2D engine's, and a fake line of speech
+    (tests/avatar_engine_motion.js)."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed")
+    r = subprocess.run([node, str(HERE / "avatar_engine_motion.js"), str(ROOT / "catalog" / "avatar" / "static" / "avatar_engine.js")],
+                       capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout)
+
+
+def test_motions_take_over_and_say_when_they_end(motion):
+    assert motion["priorities"] == [3, 3, 2, 3, 3]                               # FORCE unless "normal" was asked for
+    assert motion["started"] == [["motion_start", "w1", ""]] and motion["looping"] == []
+    assert motion["replaced"] == [["motion_end", "w1", "replaced"], ["motion_start", "n1", ""]]
+    assert motion["waited"] == [] and motion["again"] == []                      # "normal" skipped; the one playing: nothing
+    assert motion["finished"] == [["motion_end", "n1", "finished"]] and motion["idle"] == []
+    assert motion["stopped"] == [["motion_start", "w3", ""], ["motion_end", "w3", "stopped"]]
+
+
+def test_lipsync_switched_back_on_mid_line_picks_the_line_up_again(motion):
+    assert motion["lipsync"] == [None, "analyser", None]                         # off, on again (not twice), off while loading

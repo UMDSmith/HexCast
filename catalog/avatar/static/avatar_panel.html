@@ -333,6 +333,7 @@
             <button class="sm l2d-only" id="x-only" disabled title="Switch the picked ones on and every other expression off">Only these</button>
             <span class="grow"></span><button class="sm ghost" id="x-clear" title="Switch every expression off">All off</button>
           </div>
+          <label class="sw dim l2d-only" style="font-size:12px;margin-top:6px" title="Off: they stack, the way VTube Studio does. Also what a bot's expression and emotion calls do unless they say (&quot;only&quot;)"><input type="checkbox" data-k="replace_expressions"> A new expression replaces the others (crossfade)</label>
           <h3 class="l2d-only">Motions</h3>
           <div class="btns l2d-only" id="m-motions"></div>
           <h3>Gestures</h3>
@@ -940,8 +941,8 @@
     renderEmoTable(a, m, emoNames);
   }
   $('m-emos').onclick = function (e) { var b = e.target.closest('[data-e]'); if (b) cmd('emotion', { name: b.dataset.e }).then(function () { refreshLive(); }); };
-  /* an expression button toggles that one; with "Pick several" it picks it instead, and the picked
-     ones go out in one call (as {"names": [...]}) */
+  /* an expression button toggles that one (switched on, it replaces the others if the avatar says so - the server
+     decides); with "Pick several" it picks it instead, and the picked ones go out in one call (as {"names": [...]}) */
   S.picks = {};
   function pickedNames() { return Object.keys(S.picks).filter(function (k) { return S.picks[k]; }); }
   function updatePickButtons() {
@@ -955,7 +956,7 @@
     cmd('expression', { name: b.dataset.x, state: 'toggle' }).then(function () { refreshLive(); });
   };
   $('x-pick').onchange = function () { if (!this.checked) { S.picks = {}; $('m-exprs').querySelectorAll('.pick').forEach(function (b) { b.classList.remove('pick'); }); } updatePickButtons(); };
-  $('x-fire').onclick = function () { cmd('expression', { names: pickedNames(), state: 'on' }).then(function () { refreshLive(); }); };
+  $('x-fire').onclick = function () { cmd('expression', { names: pickedNames(), state: 'on', only: false }).then(function () { refreshLive(); }); };
   $('x-only').onclick = function () { cmd('expression', { names: pickedNames(), state: 'on', only: true }).then(function () { refreshLive(); }); };
   $('x-clear').onclick = function () { cmd('clear_expressions').then(function () { refreshLive(); }); };
   $('m-motions').onclick = function (e) { if (e.target.id === 'mo-stop') { cmd('stop_motion'); return; } var b = e.target.closest('[data-mo]'); if (b) cmd('motion', { name: b.dataset.mo }); };
@@ -2179,7 +2180,8 @@
       ['Recolour a part for 10 seconds (multiply / overlay / alpha; "meshes" and "all" too; null lets go; "save": true keeps it)', 'curl -X POST ' + b + '/colors -H "Content-Type: application/json" -d "{\\"parts\\": {\\"' + ((((S.info[a.name] || {}).parts || [])[0] || {}).id || 'PartHair') + '\\": {\\"multiply\\": \\"#ff8800\\", \\"overlay\\": \\"#202040\\", \\"alpha\\": 0.9}}, \\"for\\": 10}"'],
       ['Hide an art mesh (a prop, a hat ...)', 'curl -X POST ' + b + '/colors -H "Content-Type: application/json" -d "{\\"meshes\\": {\\"' + (((S.info[a.name] || {}).art_meshes || [])[0] || 'ArtMesh12') + '\\": {\\"alpha\\": 0}}}"'],
       ['Colour preset of the model, like a hotkey (on / off / toggle; several can be on)', 'curl -X POST ' + b + '/color_preset -H "Content-Type: application/json" -d "{\\"name\\": \\"' + ((S.models[a.model] || {}).color_presets || ['Night'])[0] + '\\", \\"state\\": \\"toggle\\"}"'],
-      ['Slide in from the side', 'curl -X POST ' + b + '/transform -H "Content-Type: application/json" -d "{\\"x\\": ' + Math.round(a.x) + ', \\"duration\\": 1.2, \\"ease\\": \\"out\\"}"']
+      ['Slide in from the side', 'curl -X POST ' + b + '/transform -H "Content-Type: application/json" -d "{\\"x\\": ' + Math.round(a.x) + ', \\"duration\\": 1.2, \\"ease\\": \\"out\\"}"'],
+      ['Lipsync on / off / toggle (the Lipsync tick box of the Mouth tab; WebSocket: {"cmd": "lipsync", "avatar": "' + a.name + '", "state": "toggle"})', 'curl -X POST ' + b + '/lipsync -H "Content-Type: application/json" -d "{\\"state\\": \\"toggle\\"}"']
     ];
     if (ex) rows.splice(3, 0, ['Expression "' + ex.name + '"', 'curl -X POST ' + b + '/expression -H "Content-Type: application/json" -d "{\\"name\\": \\"' + ex.name + '\\", \\"state\\": \\"toggle\\"}"']);
     if (mo) rows.splice(4, 0, ['Motion "' + mo.name + '"', 'curl -X POST ' + b + '/motion -H "Content-Type: application/json" -d "{\\"name\\": \\"' + mo.name + '\\"}"']);
