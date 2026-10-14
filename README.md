@@ -136,15 +136,23 @@ while talking.
 
 **What a bot can do.** Speak a line (it hands over the audio; the overlay plays it
 with **advanced lipsync** — vowel shapes, VTube Studio's `VoiceA`…`VoiceO`), or
-lip-sync from an audio device / virtual cable, or move the mouth itself. Set **any
-Live2D parameter** (held, eased, weighted, or streamed every frame over a
-WebSocket), toggle the model's **expressions** (several at once), play its
-**motions**, set an **emotion** or face, **look** at a point, **nod / shake /
-tilt**, move / zoom / hide the avatar, add **items** (pictures, GIFs, frame
-animations, Live2D items — pinned to the head or a hand if you like) and change
-its **light** (key, rim, ambient, animated presets). Events tell it when a line
-has finished. A copy-and-run starter script for a bot,
-[`hexcast_demo.py`](catalog/avatar/examples/hexcast_demo.py), connects to an avatar and moves it.
+lip-sync from an audio device / virtual cable, or move the mouth itself, and
+switch the lipsync on or off. Set **any Live2D parameter** (held, eased, weighted,
+or streamed every frame), switch the model's **expressions** (each new one
+replacing the last, or several stacked), play its **motions** (one straight after
+another, no stop in between), set an **emotion** or face, **look** at a point,
+**nod / shake / tilt**, move / zoom / hide the avatar, add **items** (pictures,
+GIFs, frame animations, Live2D items — pinned to the head or a hand if you like)
+and change its **light** (key, rim, ambient, animated presets).
+
+**One WebSocket for a bot.** Every call has a REST route, and all a bot needs is
+also on one control **WebSocket** (`/avatar/ws/control`): every command, speech, the
+avatar's settings, creating and renaming avatars and overlays, reading the model.
+**Events** come back on it: when a line starts and has played, and when a motion
+has started and ended (and why). A copy-and-run starter script,
+[`hexcast_demo.py`](catalog/avatar/examples/hexcast_demo.py), connects to an
+avatar and runs through expressions, motions, speech with the lipsync switched
+off and on, and a stream of head frames. The docs add a Node.js example.
 
 **Models.** Cubism 3, 4 and 5 models from a zip or a folder — or straight from
 VTube Studio if it's installed, with their VTube Studio parameter setup, hotkey

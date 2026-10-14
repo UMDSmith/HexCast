@@ -105,7 +105,7 @@ A bot's own mouth values win over the lipsync for as long as it holds them (with
 - **Face** controls work on any model, relative to its neutral pose: `smile` (-1 frown … 1 smile), `brows` (-1 … 1), `eyes` (0 shut … 1 normal … 1.6 wide), `mouth_open`, `cheek` (blush / puff, if the model maps it), `mouth_x`, `tilt`, `wink_left`, `wink_right`.
 - **Emotions** are named face shapes plus, optionally, any number of the model's own expressions and a motion: `neutral`, `happy`, `sad`, `angry`, `surprised`, `smug`, `sleepy`, `thinking`, `embarrassed`, and any you add. When an avatar is made, expressions whose names suggest an emotion (`Smile`, `Mad`, `Shock`, `Cry` …) are filled in; change the table on **Face & Mood → Emotion → expression table**. `intensity` scales the face, `for` reverts after so many seconds.
 - **Expressions** are the model's `.exp3.json` files. **A new expression replaces the others** (Face & Mood, on for a new avatar): switching one on fades out the ones that were on while it fades in, so you go from one to the next without switching the first off. Untick it and they stack instead, the way VTube Studio does — several on at once, each with its own fade. Avatars made before the setting existed keep stacking until you tick it. The setting is what a bot's `expression` and `emotion` calls do unless they say: `"only": true` replaces, `"only": false` stacks, either way. Switching one *off* never touches the others. One call can switch several (`"names": ["Smile", "Blush"]`). Names match in any case. In the tab, tick **Pick several**, click the expressions and press **Fire together** (they stack, whatever the setting) or **Only these**. The expressions an emotion switches on are on like any other: they are lit in the tab, listed in `active`, and each can be switched off by itself (`"state": "off"` or `"toggle"`); one you switch by hand is yours from then on - the emotion changing or running out leaves it alone, and a reloaded OBS source does not bring it back.
-- **Motions** are the model's `.motion3.json` animations, by name (or group + index); `loop` repeats one. A motion started while another plays takes over from it straight away — no need to stop the first, and no jump: the new one fades in from the pose the model is in. `"priority": "normal"` waits its turn instead: it is skipped while another motion plays. Starting the motion that is already playing does nothing. **Stop** ends the motion at once.
+- **Motions** are the model's `.motion3.json` animations, by name (or group + index). A motion plays once, even one whose file was exported with Cubism's Loop setting on; `loop` repeats it until another motion takes over or it is stopped. A motion started while another plays takes over from it straight away — no need to stop the first, and no jump: the new one fades in from the pose the model is in. `"priority": "normal"` waits its turn instead: it is skipped while another motion plays. Starting the motion that is already playing does nothing. **Stop** ends the motion at once.
 - **Gestures** are built-in head movements for any model: `nod`, `double_nod`, `shake`, `tilt`, `bounce`, `lean_left`, `lean_right`, `look_away`.
 - **Parts** are whole pieces of the model (a second set of arms, glasses, a prop): `parts` shows or hides them (opacity 0 – 1), `release_parts` gives them back to the model. Many models switch parts in their animations (two arm poses, for instance) without a Live2D pose file; Hexcast applies those switches the way VTube Studio does, and at rest shows the parts as the idle animation (or the first animation that sets them) begins — so such a model never shows every variant at once.
 - **Look**: a direction (`x`, `y` in -1 … 1, from the viewer: +x right, +y up), a named spot (`camera`, `left`, `up_right` …), or a point on the stage (`stage_x`, `stage_y` in %, e.g. where the chat box is) — the eyes go there and the head follows (`head` 0 … 2). `release` lets the eyes wander again.
@@ -257,7 +257,7 @@ A key is a **Live2D parameter id** (`GET .../info` lists the model's, with range
 
 A model's own mappings can name **custom inputs** too — VTube Studio's *custom parameters* (`MyHeadX`, `MyMouthOpen` … whatever the model's `.vtube.json` maps; `GET .../info` lists them as `custom_inputs`, and in `inputs` after the standard ones). Send them like any other input: the row's input range, output range and smoothing apply. Nothing in the tracker moves a custom input, so hold the value and keep it updated; until you send one it rests where the output parameter's default puts it. A name that is both a mapping's input and a Live2D parameter id is the **input** — the mapping wins, as in VTube Studio. A row marked *use blinking* (a custom eye input, say) blinks — toward the low end of its output range — on top of the value you hold, whenever **Blink by itself** is on in the avatar's Idle settings.
 
-For values every frame (your own lipsync, head motion from a tracker of your own) use the WebSocket with `"hold": false` — or hold and keep updating.
+For values every frame (your own lipsync, head motion from a tracker of your own) use the WebSocket with `"hold": false` — or hold and keep updating ([Streaming frames](#streaming-frames)).
 
 ### Everything else
 
@@ -272,7 +272,7 @@ For values every frame (your own lipsync, head motion from a tracker of your own
 | `POST …/clear_color_presets` | `{"fade": 0.4}` — every preset off |
 | `POST …/clear_expressions` | `{"fade": 0.4}` |
 | `POST …/lipsync` | `{"state": "on"\|"off"\|"toggle"}` — the Mouth tab's **Lipsync** tick box (saved, like ticking it); the answer has `state` (what it is now). Takes effect at once, also mid-line |
-| `POST …/motion` | `{"name": "wave"}` or `{"group": "TapBody", "index": 0}`, `"loop": true`. It takes over from the motion playing; `"priority": "normal"` skips it while another motion plays instead (`"force"`, the default, takes over). Events `motion_start` / `motion_end` (with the answer's `id`) |
+| `POST …/motion` | `{"name": "wave"}` or `{"group": "TapBody", "index": 0}`; `"loop": true` repeats it (without it, it plays once, whatever the file's Loop flag says). It takes over from the motion playing; `"priority": "normal"` skips it while another motion plays instead (`"force"`, the default, takes over). Events `motion_start` / `motion_end` (with the answer's `id`) |
 | `POST …/stop_motion` | |
 | `POST …/emotion` | `{"name": "happy", "intensity": 1, "for": 6, "fade": 0.5}`; `"only"` as for `expression`: whether its expressions replace the ones that are on (left out: the avatar's `replace_expressions`) |
 | `POST …/face` | `{"smile": 0.6, "brows": 0.3, "eyes": 0.9, "for": 3}` or `{"release": true}` |
@@ -331,29 +331,93 @@ Uploads, imports and deletes only accept requests from Hexcast's own pages or fr
 
 ### WebSocket
 
-`ws://localhost:4747/avatar/ws/control` — everything a bot does, on one connection: it sends a lot, it hears what happened, and it never needs the REST API as well:
+`ws://localhost:4747/avatar/ws/control` (from another PC, the Hexcast PC's address) is everything a bot needs on one connection: every command above, speech, the rest of the API by name, and events that say what happened on stream. Send as often as you like. A bot that uses it never needs the REST API as well.
+
+#### Connecting
+
+A new connection is greeted first:
 
 ```json
-→ {"cmd": "params", "avatar": "main", "values": {"FaceAngleX": 12, "MouthOpen": 0.4}, "hold": false, "rid": 7}
-← {"ok": true, "avatar": "main", ..., "rid": 7}
-→ {"cmd": "speak", "avatar": "main", "url": "http://127.0.0.1:5005/line.wav"}
-← {"type": "event", "event": "speech_start", "avatar": "main", "id": "…", "duration": 3.4}
-← {"type": "event", "event": "speech_end", "avatar": "main", "id": "…", "duration": 3.4}
-→ {"cmd": "lipsync", "avatar": "main", "state": "toggle", "rid": 8}
-← {"ok": true, "avatar": "main", "state": "off", "lipsync": false, ..., "rid": 8}
-→ {"cmd": "settings", "avatar": "main", "replace_expressions": false, "rid": 9}
-← {"ok": true, "avatar": {...the avatar's settings...}, "rid": 9}
+← {"type": "hello", "avatars": ["main", "guest"], "inputs": ["FaceAngleX", "FaceAngleY", …], "gestures": ["nod", "shake", …], "commands": ["params", "release", …, "speak", "list", "info", "status", "avatars", "get", …]}
 ```
 
-Every command above works as `{"cmd": …, "avatar": …, …}`, plus `speak` (with `url` or `audio_b64`), `list` and `info`. The rest of the REST API is there too, by name — each one *is* its REST call (same checks, same answer), with the path's parts as fields and everything else as the body:
+`avatars` are the names commands go to, `inputs` the tracker inputs `params` takes (VTube Studio's), `gestures` the built-in head movements and `commands` every `cmd` the socket takes. Any number of bots can be connected at once (`status` counts them: `controls`). When Hexcast restarts or the plugin is updated the socket closes: connect again (wait a few seconds between tries). Nothing has to be set up again, because the avatars are saved in Hexcast.
+
+#### Messages and replies
+
+A message is one JSON object: `cmd`, `avatar` (`*` for every avatar) and the call's fields, the same as the REST body. `rid` (any number or string you choose) asks for a reply, which is what the REST call answers plus `"ok": true` and your `rid`:
+
+```json
+→ {"cmd": "expression", "avatar": "main", "name": "EyesLove", "rid": 1}
+← {"ok": true, "avatar": "main", "cmd": "expression", "states": {"EyesLove": "on"}, "active": ["EyesLove"], …, "rid": 1}
+→ {"cmd": "expression", "avatar": "main", "name": "Nope", "rid": 2}
+← {"ok": false, "error": "main's model has no expression 'Nope' (it has: EyesCry, EyesLove, SignAngry, SignShock)", "rid": 2}
+→ {"cmd": "look", "avatar": "ghost", "at": "left"}
+← {"ok": false, "error": "no avatar named 'ghost' (avatars: main, guest)"}
+```
+
+- **Without a `rid`, nothing comes back unless the message failed.** The error then arrives without a `rid`, so a stream of frames costs no replies but a mistake still shows. A bot that always sends a `rid` can tell any reply without one is about a message it streamed.
+- **One connection runs its messages one at a time, in the order sent**, and the replies come back in that order. A `speak` with a `url` holds up the messages after it until Hexcast has fetched the audio, so give a bot that streams frames a second connection for speech. Separate connections run side by side.
+- Text that isn't JSON gets `{"ok": false, "error": "not JSON"}`. JSON that isn't an object is ignored.
+- As over REST, numbers may be strings and times are seconds.
+
+#### Streaming frames
+
+For values every frame (your own head tracking, your own lipsync), leave out the `rid`:
+
+```json
+→ {"cmd": "params", "avatar": "main", "values": {"FaceAngleX": 12, "MouthOpen": 0.4}, "hold": false}
+```
+
+`"hold": false` makes each message a pulse that Hexcast lets go of right after, so when the frames stop, the model's own motion takes back over. With `hold` (the default) the last value stays until `release`. A message per frame is fine, and the Activity log folds a stream into one line every few seconds.
+
+#### Speech
+
+```json
+→ {"cmd": "speak", "avatar": "main", "url": "http://127.0.0.1:5005/line.wav", "text": "Hello chat!", "rid": 3}
+← {"ok": true, "avatar": "main", "id": "4ba10010f863", "bytes": 81964, "mime": "audio/wav", "overlays": 1, "rid": 3}
+← {"type": "event", "event": "speech_start", "avatar": "main", "id": "4ba10010f863", "duration": 2.5, "text": "Hello chat!", …}
+← {"type": "event", "event": "speech_end", "avatar": "main", "id": "4ba10010f863", "duration": 2.51, …}
+```
+
+- **The audio** is a `url` or `audio_b64`. Hexcast fetches a `url` itself, so the address has to work from the Hexcast PC. `audio_b64` is the file's bytes in base64 (a `data:` URL works too). It can be WAV, MP3, OGG, FLAC or WebM.
+- **Options** are the same as over REST: `volume`, `text` (for the log) and `interrupt`. Without `interrupt`, lines queue.
+- **On the socket `speak` answers at once** (there is no `wait`). Match `speech_end` / `speech_error` to the answer's `id` to know when the line has played.
+- **`overlays`** is how many OBS sources play the line. With 0, nobody hears it and no speech events will come.
+
+#### Events
+
+Every connected bot gets every event, for every avatar, including what someone does in the Avatars tab:
+
+```json
+← {"type": "event", "event": "motion_end", "avatar": "main", "name": "wave", "id": "5ece8cae61", "reason": "replaced", "role": "obs", "at": 1760412345.12}
+```
+
+| `event` | Fields | When |
+| --- | --- | --- |
+| `speech_start` | `id`, `duration` (s), `text` | a line starts playing |
+| `speech_end` | `id`, `duration` (as played) | the line has played to its end |
+| `speech_error` | `id`, `duration`, `error` | it didn't: `stopped` (`stop_speaking`, or a line with `interrupt`), or the audio could not be played |
+| `motion_start` | `id`, `name` | a motion from a `motion` call (`id` is the call's answer's) or from an emotion (no `id`) begins |
+| `motion_end` | `id`, `name`, `reason` | it is over: `finished` (it ran out, back to idle), `replaced` (another motion took over; its `motion_start` comes right after) or `stopped` (`stop_motion`). A motion plays once unless the call said `loop`; a looping one ends only when replaced or stopped |
+| `loaded` | `model` | a model has loaded on an overlay (after `reload`, a model change, or an OBS source opening) |
+| `error` | `message` | an overlay couldn't do something: an unknown expression or motion, a model or item that failed to load |
+
+**Events come from the overlays**, so with none open nothing comes. An OBS source showing the avatar's overlay sends them all (`"role": "obs"`). The Avatars tab's preview sends `motion_start`, `loaded` and `error` too (`"role": "preview"`), but not the speech events or `motion_end`, because those report what happened on stream. Two OBS sources on the same overlay both report, so match on `id`. `at` is when Hexcast passed the event on (Unix time, seconds).
+
+Config changes (an avatar created, renamed, moved) are not sent to bots: ask `avatars` or `get` when you need the current state.
+
+#### The rest of the API, by name
+
+Every command above works as `{"cmd": …, "avatar": …, …}`, and so do `speak`, `list` (every avatar's settings) and `info` (the model, as `GET …/info`). The rest of the REST API is there too, by name. Each one *is* its REST call (same checks, same answer), with the path's parts as fields and everything else as the body:
 
 | `cmd` | Fields | Same as |
 | --- | --- | --- |
 | `status` · `avatars` · `overlays` · `models` · `items` · `devices` | | `GET …/status` · `/avatars` · `/overlays` · `/models` · `/items` · `/devices` |
-| `get` | `avatar` | `GET /avatar/api/avatars/<avatar>` — its settings and live state |
+| `get` | `avatar` | `GET /avatar/api/avatars/<avatar>`: its settings and live state |
 | `params_live` | `avatar` | `GET …/<avatar>/params/live` |
 | `model` · `color_presets` · `anchors` | `model` (or `avatar`: its model) | `GET /avatar/api/models/<model>` · `…/color_presets` · `…/anchors` |
-| `settings` | `avatar`, any settings | `POST /avatar/api/avatars/<avatar>` — e.g. `"mouth": {"gain": 2}`, `"replace_expressions": false`, `"x": 30` |
+| `settings` | `avatar`, any settings | `POST /avatar/api/avatars/<avatar>`, e.g. `"mouth": {"gain": 2}`, `"replace_expressions": false`, `"x": 30` |
 | `create_avatar` | `avatar` (or `name`), `model`, `overlay`, … | `POST /avatar/api/avatars` |
 | `rename_avatar` · `delete_avatar` | `avatar` (`to` for the new name) | `POST …/<avatar>/rename` · `…/delete` |
 | `order` · `stage` | `names` · stage settings | `POST /avatar/api/order` · `/stage` |
@@ -363,11 +427,52 @@ Every command above works as `{"cmd": …, "avatar": …, …}`, plus `speak` (w
 | `default_color_preset` · `delete_color_preset` · `color_preset_as_model` | `model` (or `avatar`), `preset` | `POST …/color_presets/<preset>/default` · `…/delete` · `…/as_model` |
 | `save_anchor` · `delete_anchor` | `model` (or `avatar`); `name`, `pin` · `anchor` | `POST …/models/<model>/anchors` · `…/anchors/<anchor>/delete` |
 
-Only these stay off the socket: uploading or importing models and items (files), deleting a model or an item from the library, and installing the Live2D runtime (the streamer accepts Live2D's licence) — the Avatars tab or REST does those. The `hello` message a new connection gets lists every `cmd` it takes (`commands`).
+```json
+→ {"cmd": "settings", "avatar": "main", "mouth": {"gain": 2}, "replace_expressions": false, "rid": 4}
+← {"ok": true, "avatar": {…the avatar's settings…}, "rid": 4}
+→ {"cmd": "create_avatar", "avatar": "guest", "model": "akari", "overlay": "guest", "rid": 5}
+→ {"cmd": "lipsync", "avatar": "main", "state": "toggle", "rid": 6}
+← {"ok": true, "avatar": "main", "cmd": "lipsync", "state": "off", "lipsync": false, "rid": 6}
+```
 
-Replies only come when you send a `rid` (or when something failed). Events: `speech_start`, `speech_end`, `speech_error`, `motion_start`, `motion_end`, `loaded`, `error`. `motion_end` has a `reason`: `finished` (it ran out, back to idle), `replaced` (another motion took over; its `motion_start` comes right after) or `stopped` (`stop_motion`). A looping motion ends only when it is replaced or stopped.
+Only these stay off the socket: uploading or importing models and items (files), deleting a model or an item from the library, and installing the Live2D runtime (the streamer accepts Live2D's licence). The Avatars tab or REST does those.
 
-**A starting point.** [`hexcast_demo.py`](../catalog/avatar/examples/hexcast_demo.py) is the smallest working client — about a hundred lines, nothing but `pip install websockets`. It connects to this socket, lists the avatars and the chosen one's model, then makes it happy, look left, nod and turn its head with a stream of frames, and lets go. Copy it into your bot and keep the `Avatar` class: `send()` waits for a command's reply (with a `rid`), `stream()` fires frames without waiting. Run it with `python hexcast_demo.py [avatar]` (the first avatar when you leave the name out); once the plugin is installed it is in `plugins/avatar/examples/`. Point `HEXCAST_WS` at the Hexcast PC's address when the bot runs on another PC.
+#### Example: Node.js
+
+Node 22 and later have `WebSocket` built in (older versions: `npm install ws`). A browser page works the same way.
+
+```js
+const ws = new WebSocket('ws://localhost:4747/avatar/ws/control');
+let rid = 0;
+const waiting = new Map();
+
+function call(cmd, fields = {}) {                     // send one command, resolve with Hexcast's answer
+  const id = ++rid;
+  ws.send(JSON.stringify({ cmd, avatar: 'main', rid: id, ...fields }));
+  return new Promise((resolve, reject) => waiting.set(id, { resolve, reject }));
+}
+
+ws.onmessage = (m) => {
+  const msg = JSON.parse(m.data);
+  if (msg.type === 'event') return console.log(msg.event, msg);
+  const w = waiting.get(msg.rid);
+  if (!w) return msg.ok === false && console.error('Hexcast:', msg.error);   // a streamed message failed
+  waiting.delete(msg.rid);
+  msg.ok === false ? w.reject(new Error(msg.error)) : w.resolve(msg);
+};
+
+ws.onopen = async () => {
+  await call('emotion', { name: 'happy', for: 3 });
+  const { state } = await call('lipsync', { state: 'toggle' });
+  console.log('lipsync is', state);
+};
+```
+
+#### Example: Python
+
+[`hexcast_demo.py`](../catalog/avatar/examples/hexcast_demo.py) is a complete client that needs nothing but `pip install websockets`. It connects, lists the avatars and the chosen one's model, and asks `get` and `status` whether an OBS source shows it. Then it makes the avatar happy, looks left, nods, switches two expressions and plays two motions back to back, waiting for `motion_end`. It speaks a short hum (generated, standing in for your TTS) with the lipsync switched off and on again mid-line, waiting for `speech_end`. Finally it turns the head with a stream of frames and lets go.
+
+Copy it into your bot and keep the `Avatar` class: `send()` waits for a command's reply, `stream()` sends frames without waiting, and `wait_for()` waits for an event (by `id`), keeping the events that arrive in between. Run it with `python hexcast_demo.py [avatar]` (it takes the first avatar when you leave the name out). Once the plugin is installed it is in `plugins/avatar/examples/`. Point `HEXCAST_WS` at the Hexcast PC's address when the bot runs on another PC.
 
 ## Performance
 

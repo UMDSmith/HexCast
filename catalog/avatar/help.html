@@ -79,7 +79,7 @@ http://localhost:4747/avatar/overlay?audio=0         silent (another source play
     <tr><td>colors · release_colors</td><td><code>{"parts": {"PartHair": {"multiply": "#ff8800", "overlay": "#202040", "alpha": 0.9}}, "meshes": {"ArtMesh12": {"alpha": 0}}, "all": {"multiply": "#aabbcc"}, "fade": 0.3, "for": 10, "save": false}</code> — VTube Studio's multiply / screen ("overlay") colours and alpha for parts, art meshes (<code>/info</code> lists them) and the whole model; <code>multiply</code> darkens / tints, <code>overlay</code> lightens, <code>alpha</code> 0 hides; <code>null</code> lets a field go back. Held until <code>release_colors</code> (<code>{"parts": […], "meshes": […], "all": true}</code>, <code>{}</code> = all) or <code>for</code>; <code>"save": true</code> keeps it</td></tr>
     <tr><td>color_preset · clear_color_presets</td><td><code>{"name": "Night", "state": "on|off|toggle", "for": 20}</code> or <code>{"names": […], "only": true}</code> — a colour preset saved on the avatar's model (the Colors tab; <code>color_presets</code> in <code>/info</code>): a VTube Studio colour hotkey. Several can be on, each over the ones before</td></tr>
     <tr><td>clear_expressions</td><td></td></tr>
-    <tr><td>motion</td><td><code>{"name": "wave"}</code> or <code>{"group": "TapBody", "index": 0}</code>, <code>"loop": true</code> — takes over from the motion playing (no need to stop it first); <code>"priority": "normal"</code> is skipped while another one plays instead</td></tr>
+    <tr><td>motion</td><td><code>{"name": "wave"}</code> or <code>{"group": "TapBody", "index": 0}</code>, <code>"loop": true</code> repeats it (otherwise it plays once) — takes over from the motion playing (no need to stop it first); <code>"priority": "normal"</code> is skipped while another one plays instead</td></tr>
     <tr><td>stop_motion</td><td></td></tr>
     <tr><td>emotion</td><td><code>{"name": "happy", "intensity": 1, "for": 6}</code> — neutral, happy, sad, angry, surprised, smug, sleepy, thinking, embarrassed, or your own; <code>"only"</code> as for <code>expression</code></td></tr>
     <tr><td>face</td><td><code>{"smile": 0.6, "brows": 0.3, "eyes": 0.9, "mouth_open": 0, "cheek": 0, "mouth_x": 0, "tilt": 0, "wink_left": 0, "wink_right": 0, "for": 3}</code> or <code>{"release": true}</code></td></tr>
@@ -108,21 +108,41 @@ http://localhost:4747/avatar/overlay?audio=0         silent (another source play
     <tr><td>Soundboard: locking a clip</td><td><code>GET /api/play/video/&lt;clip&gt;?avatar=hex&amp;anchor=head_top&amp;dy=-40&amp;ascale=0.8</code> plays it glued to that avatar (<code>?avatar=</code> empty: on the Soundboard overlay); <code>POST /attach</code> <code>{"file": "heart.mp4", "kind": "video", "attach": {"avatar": "hex", "anchor": "head_top", "dy": -40}}</code> locks it for good (<code>null</code> lets go)</td></tr>
   </table>
   <h3>WebSocket</h3>
-  <p class="hint"><code>ws://localhost:4747/avatar/ws/control</code> takes every command as JSON
-    (<code>{"cmd": "params", "avatar": "main", "values": {…}, "rid": 1}</code>) — for values every frame — plus
-    <code>speak</code>, <code>list</code>, <code>info</code> and the other REST calls by name: <code>settings</code>
+  <p class="hint"><code>ws://localhost:4747/avatar/ws/control</code> is everything a bot needs on one connection. A message
+    is JSON: <code>{"cmd": "expression", "avatar": "main", "name": "Smile", "rid": 1}</code>. With a <code>rid</code> the
+    reply is what the REST call answers, plus <code>"ok"</code> and your <code>rid</code>. Without one nothing comes back
+    unless the message failed (<code>{"ok": false, "error": …}</code> with no <code>rid</code>), so stream
+    <code>params</code> every frame with <code>"hold": false</code> and no <code>rid</code>. A connection runs its
+    messages one at a time, in order.</p>
+  <p class="hint">It takes every command above, plus <code>speak</code>. Give <code>speak</code> a <code>url</code> (Hexcast
+    fetches it) or <code>audio_b64</code>; it answers at once with the line's <code>id</code>. It also takes
+    <code>list</code>, <code>info</code> and the other REST calls by name: <code>settings</code>
     (<code>{"cmd": "settings", "avatar": "main", "mouth": {"gain": 2}}</code>), <code>get</code>, <code>avatars</code>,
     <code>status</code>, <code>create_avatar</code>, <code>rename_avatar</code>, <code>delete_avatar</code>,
     <code>create_overlay</code>, <code>delete_overlay</code>, <code>order</code>, <code>stage</code>, <code>models</code>,
-    <code>model</code>, <code>items</code>, <code>devices</code>, <code>params_live</code>, the model's colour presets and pin
-    points (<code>color_presets</code>, <code>save_color_preset</code>, <code>save_anchor</code> …; <code>model</code> or
-    <code>avatar</code>) — all but uploads, library deletes and installing the runtime. The <code>hello</code> it sends
-    first lists them (<code>commands</code>). It
-    sends events: <code>speech_start</code>, <code>speech_end</code>, <code>speech_error</code>,
-    <code>motion_start</code>, <code>motion_end</code> (<code>reason</code>: finished, replaced or stopped), <code>loaded</code>, <code>error</code>.</p>
-  <p class="hint">A starting point for a bot: <code>plugins/avatar/examples/hexcast_demo.py</code> connects to that socket,
-    lists the avatars, then makes one happy, look left, nod and turn its head with a stream of frames
-    (<code>pip install websockets</code>, then <code>python hexcast_demo.py [avatar]</code>).</p>
+    <code>model</code>, <code>items</code>, <code>devices</code> and <code>params_live</code>. The model's colour presets
+    and pin points are there too (<code>color_presets</code>, <code>save_color_preset</code>, <code>save_anchor</code> …;
+    send <code>model</code> or <code>avatar</code>). Everything is on the socket except uploads, library deletes and
+    installing the runtime. The <code>hello</code> it sends first lists the avatars and every <code>cmd</code>
+    (<code>commands</code>).</p>
+  <p class="hint">Every connected bot gets every event, as <code>{"type": "event", "event": …, "avatar": …}</code>.
+    <code>speech_start</code>, <code>speech_end</code> and <code>speech_error</code> carry the speak's <code>id</code>.
+    <code>motion_start</code> and <code>motion_end</code> carry the motion call's <code>id</code>, and
+    <code>motion_end</code> also has a <code>reason</code>: finished, replaced or stopped. The others are
+    <code>loaded</code> and <code>error</code>. Events come from the OBS source that shows the avatar, so with none open,
+    none come. Settings changes are not sent to bots; ask <code>get</code> when you need them.</p>
+  <pre>→ {"cmd": "speak", "avatar": "main", "url": "http://127.0.0.1:5005/line.wav", "rid": 2}
+← {"ok": true, "avatar": "main", "id": "4ba10010f863", "overlays": 1, …, "rid": 2}
+← {"type": "event", "event": "speech_start", "avatar": "main", "id": "4ba10010f863", "duration": 2.5, …}
+← {"type": "event", "event": "speech_end", "avatar": "main", "id": "4ba10010f863", "duration": 2.51, …}
+→ {"cmd": "lipsync", "avatar": "main", "state": "toggle", "rid": 3}
+← {"ok": true, "avatar": "main", "cmd": "lipsync", "state": "off", "lipsync": false, "rid": 3}</pre>
+  <p class="hint">A starting point for a bot: <code>plugins/avatar/examples/hexcast_demo.py</code> connects to that socket
+    and lists the avatars. Then it makes one happy, look left and nod, switches expressions and plays motions (waiting
+    for <code>motion_end</code>), speaks a hum with the lipsync switched off and on mid-line (waiting for
+    <code>speech_end</code>), and turns its head with a stream of frames. Run it with <code>pip install websockets</code>,
+    then <code>python hexcast_demo.py [avatar]</code>. A Node.js example and the full event table are in
+    <code>docs/avatar.md</code> (WebSocket).</p>
   <pre>curl -X POST "http://localhost:4747/avatar/api/avatars/main/speak?wait=1" -F "audio=@line.wav"
 curl -X POST http://localhost:4747/avatar/api/avatars/main/emotion -H "Content-Type: application/json" -d "{\"name\":\"happy\",\"for\":5}"
 curl -X POST http://localhost:4747/avatar/api/avatars/main/params -H "Content-Type: application/json" -d "{\"values\":{\"ParamAngleX\":20},\"duration\":0.5,\"for\":3}"</pre>

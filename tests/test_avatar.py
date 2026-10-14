@@ -1327,19 +1327,23 @@ class _DemoSocket:
     def send(self, text):
         self.ws.send_text(text)
 
-    def recv(self):
+    def recv(self, timeout=None):
         return self.ws.receive_text()
+
+
+def _load_demo(path):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("hexcast_demo", path)
+    demo = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(demo)
+    return demo
 
 
 def test_the_starter_script_runs_against_the_control_socket(av, monkeypatch, capsys):
     """examples/hexcast_demo.py - the copy-and-run start for a bot - ships with the plugin and works on the real route."""
-    import importlib.util
     import types
-    path = Path(av.mod.__file__).parent / "examples" / "hexcast_demo.py"           # the installed copy
-    spec = importlib.util.spec_from_file_location("hexcast_demo", path)
-    demo = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(demo)
-    monkeypatch.setattr(demo, "time", types.SimpleNamespace(sleep=lambda s: None))
+    demo = _load_demo(Path(av.mod.__file__).parent / "examples" / "hexcast_demo.py")      # the installed copy
+    monkeypatch.setattr(demo, "time", types.SimpleNamespace(sleep=lambda s: None, monotonic=time.monotonic))
     seen = []
     real = av.mod.command
 
@@ -1358,8 +1362,45 @@ def test_the_starter_script_runs_against_the_control_socket(av, monkeypatch, cap
     assert seen == []                                                              # refused before anything moved
     with av.websocket_connect("/avatar/ws/control") as ws:
         demo.run(_DemoSocket(ws))                                                  # no name: the first avatar
-    assert seen ==["emotion", "look", "look", "gesture"] + ["params"] * 60 + ["release"]
-    assert "Driving 'main' - model 'Test Model'" in capsys.readouterr().out
+    assert seen == (["emotion", "look", "look", "gesture", "expression", "expression", "clear_expressions", "motion",
+                     "lipsync", "lipsync"] + ["params"] * 60 + ["release"])        # wave, not the idle motion
+    out = capsys.readouterr().out
+    assert "Driving 'main' - model 'Test Model'" in out
+    assert "no OBS source shows it" in out and "nobody heard it" in out          # nothing to wait for: no hang
+    assert "lipsync off" in out and "lipsync on" in out
+    assert av.get("/avatar/api/avatars/main").json()["avatar"]["mouth"]["lipsync"] is True     # flipped back
+
+
+class _ScriptedSocket:
+    """Plays back what Hexcast would send; nothing left = the wait runs out."""
+
+    def __init__(self, *msgs):
+        self.msgs, self.sent = list(msgs), []
+
+    def send(self, text):
+        self.sent.append(json.loads(text))
+
+    def recv(self, timeout=None):
+        if not self.msgs:
+            raise TimeoutError
+        return json.dumps(self.msgs.pop(0))
+
+
+def test_the_starter_script_keeps_events_for_whoever_waits_for_them():
+    demo = _load_demo(Path(__file__).parents[1] / "catalog" / "avatar" / "examples" / "hexcast_demo.py")
+    ev = lambda **k: {"type": "event", "event": "motion_end", "avatar": "main", **k}
+    ws = _ScriptedSocket(ev(id="a", avatar="guest"), ev(id="b", reason="replaced"), {"ok": True, "id": "c", "rid": 1},
+                         {"ok": False, "error": "no motion 'nope'", "rid": 2}, {"ok": False, "error": "bad values"})
+    a = demo.Avatar(ws, "main")
+    assert a.send("motion", {"name": "wave"})["id"] == "c"                         # the events before the reply are kept
+    assert ws.sent == [{"cmd": "motion", "avatar": "main", "rid": 1, "name": "wave"}]
+    assert a.wait_for("motion_end", "b")["reason"] == "replaced"
+    assert a.wait_for(("speech_end", "motion_end"), "a", timeout=0) is None        # another avatar's
+    with pytest.raises(RuntimeError, match="refused motion: no motion 'nope'"):
+        a.send("motion", {"name": "nope"})
+    with pytest.raises(RuntimeError, match="refused a streamed command: bad values"):
+        a.wait_for("motion_end", "c")
+    assert a.wait_for("motion_end", "c", timeout=5) is None                        # nothing more comes
 
 
 def test_every_avatar_has_its_own_window_and_a_quiet_spell_starts_over(av, activity):
@@ -1842,6 +1883,7 @@ def motion():
 
 def test_motions_take_over_and_say_when_they_end(motion):
     assert motion["priorities"] == [3, 3, 2, 3, 3]                               # FORCE unless "normal" was asked for
+    assert motion["loops"] == [True, False, False, False, False]                 # once unless `loop` (not the file's Loop flag)
     assert motion["started"] == [["motion_start", "w1", ""]] and motion["looping"] == []
     assert motion["replaced"] == [["motion_end", "w1", "replaced"], ["motion_start", "n1", ""]]
     assert motion["waited"] == [] and motion["again"] == []                      # "normal" skipped; the one playing: nothing

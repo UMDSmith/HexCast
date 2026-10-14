@@ -1849,7 +1849,7 @@
     // are saved after the motions each frame, so the new motion fades in from the pose the model is in
     var pri = c.priority === 'normal' ? 2 : 3, id = c.id, model = this.model;
     model.motion(group, index == null ? undefined : index, pri, {
-      loop: c.loop ? true : undefined,
+      loop: !!c.loop,       // always say: left out, the engine takes the file's Loop flag - on in most exported motions, which then never end
       onError: function (e) { self.stage.emit('event', { event: 'error', avatar: self.name, message: 'motion: ' + (e && e.message || e) }); }
     }).then(function (ok) {
       if (!ok || self.model !== model) return;

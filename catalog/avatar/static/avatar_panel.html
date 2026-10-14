@@ -2185,7 +2185,12 @@
     ];
     if (ex) rows.splice(3, 0, ['Expression "' + ex.name + '"', 'curl -X POST ' + b + '/expression -H "Content-Type: application/json" -d "{\\"name\\": \\"' + ex.name + '\\", \\"state\\": \\"toggle\\"}"']);
     if (mo) rows.splice(4, 0, ['Motion "' + mo.name + '"', 'curl -X POST ' + b + '/motion -H "Content-Type: application/json" -d "{\\"name\\": \\"' + mo.name + '\\"}"']);
-    rows.push(['WebSocket (stream values every frame)', 'ws://' + location.host + '/avatar/ws/control\n{"cmd": "params", "avatar": "' + a.name + '", "values": {"FaceAngleX": 12, "MouthOpen": 0.4}, "hold": false}']);
+    // the control socket: everything above as JSON, events back (docs/avatar.md, WebSocket)
+    var n = '"avatar": "' + a.name + '"', wsu = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/avatar/ws/control';
+    rows.push(['WebSocket - one connection for all of the above: the same calls as JSON ("rid" asks for the reply)', wsu + '\n{"cmd": "emotion", ' + n + ', "name": "happy", "for": 5, "rid": 1}\n<- {"ok": true, ' + n + ', "cmd": "emotion", ..., "rid": 1}'],
+      ['WebSocket - stream values every frame (no "rid": no reply, unless it fails)', '{"cmd": "params", ' + n + ', "values": {"FaceAngleX": 12, "MouthOpen": 0.4}, "hold": false}'],
+      ['WebSocket - speak: the answer has the line\'s id, and the speech_end event says it has played (motion_end does the same for a motion)', '{"cmd": "speak", ' + n + ', "url": "https://example.com/line.mp3", "rid": 2}\n<- {"ok": true, ' + n + ', "id": "4ba10010f863", "overlays": 1, ..., "rid": 2}\n<- {"type": "event", "event": "speech_end", ' + n + ', "id": "4ba10010f863", "duration": 2.51, ...}'],
+      ['WebSocket - the rest of the API by name: settings, get, status, create_avatar, rename_avatar ... (the hello message lists them)', '{"cmd": "settings", ' + n + ', "mouth": {"gain": 2}, "rid": 3}\n{"cmd": "get", ' + n + ', "rid": 4}']);
     $('api-ex').innerHTML = rows.map(function (r) { return '<div class="dim" style="font-size:12px;margin-top:8px">' + esc(r[0]) + '</div><pre class="code">' + esc(r[1]) + '</pre>'; }).join('');
   }
 

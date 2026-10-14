@@ -13,15 +13,15 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
   // motion_start / motion_end, and which priority a motion asks for
   {
     const { HA } = load(file);
-    const av = bare(HA), events = [], pris = [];
+    const av = bare(HA), events = [], pris = [], loops = [];
     av.stage.emit = (kind, e) => { if (kind === 'event') events.push([e.event, e.id, e.reason || '']); };
     const state = { currentGroup: undefined, currentIndex: undefined, currentPriority: 0 };
     av.meta = { motions: [{ name: 'wave', group: 'wave', index: 0 }, { name: 'nod', group: 'nod', index: 0 }] };
     av.spec = { FileReferences: { Motions: {} } };
     av.model = {
       internalModel: { motionManager: { state, stopAllMotions() { Object.assign(state, { currentGroup: undefined, currentIndex: undefined, currentPriority: 0 }); } } },
-      motion(group, index, pri) {
-        pris.push(pri);
+      motion(group, index, pri, opts) {
+        pris.push(pri); loops.push(opts.loop);
         if (group === state.currentGroup && index === state.currentIndex) return Promise.resolve(false);       // "already playing"
         if (pri < 3 && pri <= state.currentPriority) return Promise.resolve(false);
         Object.assign(state, { currentGroup: group, currentIndex: index, currentPriority: pri });
@@ -48,6 +48,7 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
     av.command({ cmd: 'stop_motion' });
     step('stopped');
     out.priorities = pris;
+    out.loops = loops;                                      // always said: left out, the file's Loop flag decides
   }
   // lipsync switched off and back on in the middle of a line
   {
