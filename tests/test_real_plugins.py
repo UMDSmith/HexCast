@@ -65,7 +65,7 @@ def test_every_catalog_plugin_has_a_valid_manifest_and_help(real_world):
     entries = real_world.host.catalog.entries()
     assert real_world.host.catalog.errors == {}
     assert {"twitch", "music", "avatar", "discord", "clips", "countdown", "games", "ticker", "ytdlp",
-            "games_roulette", "games_craps", "games_russian", "games_trivia", "games_hexfall", "games_climb", "games_blackjack"} <= set(entries)
+            "games_roulette", "games_craps", "games_russian", "games_trivia", "games_hexfall", "games_climb", "games_blackjack", "games_derby"} <= set(entries)
     for pid, e in entries.items():
         m = e.manifest
         assert m.description and m.name and m.version, pid

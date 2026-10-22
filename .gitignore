@@ -31,6 +31,12 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 
+# --- art sources -------------------------------------------------------------
+# Downloaded models (see each art/*/README.md for where they come from) and raw
+# renders. Only the finished sprite sheets ship, inside catalog/<plugin>/static/.
+art/*/source/
+art/*/out/
+
 # --- editors and OS --------------------------------------------------------
 .vscode/
 .idea/

@@ -1,9 +1,9 @@
 # Games — bot-driven overlay games (Roulette)
 
 > **A plugin with add-ons.** This page documents the Games plugin and its first game, **Roulette** (the `games_roulette`
-> add-on). Craps, Russian Roulette, Trivia, Hexfall, Soul Climb and Blackjack are add-ons too - see [Craps](craps.md),
-> [Russian Roulette](russian_roulette.md), [Trivia](trivia.md), [Hexfall](hexfall.md), [Soul Climb](climb.md) and
-> [Blackjack](blackjack.md) - and all of them are installed from the **+** inside
+> add-on). Craps, Russian Roulette, Trivia, Hexfall, Soul Climb, Blackjack and Hellhound Derby are add-ons too - see
+> [Craps](craps.md), [Russian Roulette](russian_roulette.md), [Trivia](trivia.md), [Hexfall](hexfall.md), [Soul Climb](climb.md),
+> [Blackjack](blackjack.md) and [Hellhound Derby](derby.md) - and all of them are installed from the **+** inside
 > the Games tab. Only the games you install have a tab, an overlay layer and API routes.
 
 A home for games your chat — or a bot — can play on stream. The first one is
@@ -35,13 +35,14 @@ lives under `/games/*`.
 | **Hexfall** | a hex-themed plinko: a token drops through hexagonal pegs into multiplier and bust slots; chat puts up a bet before every drop | [docs/hexfall.md](hexfall.md) |
 | **Soul Climb** | a damned soul climbs out of a hell pit; chat bets how high he gets and is paid that height's multiplier if he reaches it | [docs/climb.md](climb.md) |
 | **Blackjack** | Vegas blackjack with Hex as the dealer: up to 14 seats, a shoe that grows with the player count, everyone acting at once, chip stacks at every seat | [docs/blackjack.md](blackjack.md) |
+| **Hellhound Derby** | hellhounds race on one track; chat bets on the winner by its race number, at odds from each hound's form (streaks and slumps), with trash talk and photo finishes | [docs/derby.md](derby.md) |
 
 They share one panel at `/games` — **one tab per game** under the top bar
-(`/games#roulette`, `/games#craps`, `/games#russian`, `/games#trivia`, `/games#hexfall`, `/games#climb`, `/games#blackjack` open
+(`/games#roulette`, `/games#craps`, `/games#russian`, `/games#trivia`, `/games#hexfall`, `/games#climb`, `/games#blackjack`, `/games#derby` open
 straight to one) — one OBS browser source (`/games/overlay` shows every game;
-`?game=roulette`, `?game=craps`, `?game=russian`, `?game=trivia`, `?game=hexfall`, `?game=climb` or `?game=blackjack` limits a
+`?game=roulette`, `?game=craps`, `?game=russian`, `?game=trivia`, `?game=hexfall`, `?game=climb`, `?game=blackjack` or `?game=derby` limits a
 source to one), the same Edit Mode, the same `/games/api/{game}/...` API shape,
-and one [ledger](#the-shared-ledger). Russian Roulette, Trivia, Hexfall, Soul Climb and Blackjack are *round
+and one [ledger](#the-shared-ledger). Russian Roulette, Trivia, Hexfall, Soul Climb, Blackjack and Hellhound Derby are *round
 games* — one multi-round game at a time, started with `/start` instead of a
 spin (their `/spin` and `/timer` answer 400). They have no test spin to carry
 the Edit Mode editor's **Test in OBS**, so theirs is `POST /games/api/{game}/preview`
@@ -94,9 +95,9 @@ Games is a plugin, and each game is an **add-on** of it, so you install only wha
 
 1. Open the **+** tab in the top bar, find **Games** and press **Install**. A **Games** tab appears.
 2. In the Games tab, click the **+** at the end of its own tab strip. Pick a game - **Roulette**, **Craps**,
-   **Russian Roulette**, **Trivia**, **Hexfall**, **Soul Climb**, **Blackjack** - and press **Install**. Its tab appears at once.
+   **Russian Roulette**, **Trivia**, **Hexfall**, **Soul Climb**, **Blackjack**, **Hellhound Derby** - and press **Install**. Its tab appears at once.
 
-From a terminal: `python hexcast.py plugins install games games_roulette games_craps games_russian games_trivia games_hexfall games_climb games_blackjack`
+From a terminal: `python hexcast.py plugins install games games_roulette games_craps games_russian games_trivia games_hexfall games_climb games_blackjack games_derby`
 (add only the games you want). There are no extra Python packages.
 
 Removing a game keeps its settings (`config/games.json`) and its table file, so putting it back brings everything
@@ -831,7 +832,7 @@ pay from a spin's reply — pay from the ledger.
 
 ### The shared ledger
 
-Every game shares one ledger — roulette, craps, Russian Roulette, Trivia, Hexfall, Soul Climb and Blackjack:
+Every game shares one ledger — roulette, craps, Russian Roulette, Trivia, Hexfall, Soul Climb, Blackjack and Hellhound Derby:
 one file, `config/games_ledger.jsonl`, one `seq` numbering, and every event
 names its game in `game`. A bank running every game tails
 `GET /games/api/ledger?since=<last_seq>` once.
@@ -845,7 +846,8 @@ names its game in `game`. A bank running every game tails
 | `GET /games/api/hexfall/ledger?since=0&limit=500` | Hexfall's (see [hexfall.md](hexfall.md)) |
 | `GET /games/api/climb/ledger?since=0&limit=500` | Soul Climb's (see [climb.md](climb.md)) |
 | `GET /games/api/blackjack/ledger?since=0&limit=500` | Blackjack's (see [blackjack.md](blackjack.md)) |
-| `GET /games/api/ledger?since=0&limit=500` | every game's; add `&game=roulette` (or `craps`, `russian`, `trivia`, `hexfall`, `climb`, `blackjack`) for one — an unknown name is a 404 `unknown game` |
+| `GET /games/api/derby/ledger?since=0&limit=500` | Hellhound Derby's (see [derby.md](derby.md#ledger-reasons)) |
+| `GET /games/api/ledger?since=0&limit=500` | every game's; add `&game=roulette` (or `craps`, `russian`, `trivia`, `hexfall`, `climb`, `blackjack`, `derby`) for one — an unknown name is a 404 `unknown game` |
 
 ```
 curl "http://localhost:4747/games/api/roulette/ledger?since=0"
@@ -877,7 +879,7 @@ events.)
 - `type` is `debit` (coins the bank takes) or `credit` (coins the bank pays);
   `bet` is a readable label, `bet_id` the table bet, and `roll_id` the spin's
   `id` on a win (`null` otherwise). Craps', Russian Roulette's, Trivia's,
-  Hexfall's, Soul Climb's and Blackjack's reasons are in their own docs; roulette's:
+  Hexfall's, Soul Climb's, Blackjack's and Hellhound Derby's reasons are in their own docs; roulette's:
 
 | `type` | `reason` | When |
 | --- | --- | --- |
@@ -1393,7 +1395,7 @@ overlay for the current (or last) spin. It's the display call for
 display only — it doesn't touch the result, any bets, the history or the
 stats. Roulette and craps have it (on the craps tray it replaces the payouts board —
 see [Craps → Announce and board](craps.md#announce-and-board)); the round games
-(Russian Roulette, Trivia, Hexfall, Soul Climb, Blackjack) answer 400 — their game-over card is built in (`STATE.game.summary`). Parameters go
+(Russian Roulette, Trivia, Hexfall, Soul Climb, Blackjack, Hellhound Derby) answer 400 — their game-over card is built in (`STATE.game.summary`). Parameters go
 in the query string, a JSON body (POST), or both — the body wins where they
 overlap.
 

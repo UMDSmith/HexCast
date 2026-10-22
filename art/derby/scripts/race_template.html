@@ -1,0 +1,973 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Hellhound Derby race prototype</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  #stage { position: absolute; left: 0; top: 0; }
+  #c { position: absolute; inset: 0; }
+  .ui { position: fixed; right: 10px; bottom: 10px; z-index: 5; font: 13px system-ui, sans-serif; color: #ddd;
+        background: rgba(0,0,0,.55); padding: 6px 10px; border-radius: 6px; }
+  .ui button { font: inherit; background: #3a1208; color: #ffb27a; border: 1px solid #7a2a10; border-radius: 4px; padding: 3px 10px; cursor: pointer; }
+  .ui label { margin-left: 10px; }
+  .ui a { color: #ff9a5a; margin-left: 10px; }
+</style></head>
+<body>
+<div id="stage"><canvas id="c" width="1920" height="1080"></canvas></div>
+<div class="ui"><button id="again">New race</button>
+  <label><input type="checkbox" id="slow"> slow-mo</label>
+  <label><input type="checkbox" id="clean"> clean language</label>
+  <a href="preview.html">← hounds</a></div>
+<script>
+// a prototype: show any script error on the page
+addEventListener("error", e => document.body.insertAdjacentHTML("beforeend",
+  `<div style="position:fixed;left:0;top:0;z-index:9;background:#b00;color:#fff;font:16px monospace;padding:4px">${e.message} (line ${e.lineno})</div>`));
+/*FX*/
+const CFG = /*ROSTER*/null;
+const { FX, drawFX, flame, spark, smoke, dust, rnd, fire } = HoundFX;
+const $ = id => document.getElementById(id);
+const W = 1920, H = 1080, NF = CFG.frames;
+const cv = $("c"), ctx = cv.getContext("2d");
+// the canvas is as many real pixels as it covers on screen (a 1920x1080 canvas stretched by the
+// browser's display scaling blurs the text); everything is drawn in 1920x1080 stage units
+let VIEW = 1;
+function fit() {
+  const k = Math.min(innerWidth / W, innerHeight / H), dpr = devicePixelRatio || 1;
+  for (const el of [$("stage"), cv]) { el.style.width = `${W * k}px`; el.style.height = `${H * k}px`; }
+  cv.width = Math.round(W * k * dpr); cv.height = Math.round(H * k * dpr);
+  VIEW = k * dpr;
+}
+addEventListener("resize", fit); fit();
+const pick = a => a[Math.floor(Math.random() * a.length)];
+// test switches: ?photo=win|last forces a photo finish, ?fast=4 runs time four times as fast
+const Q = new URLSearchParams(location.search), FAST = +(Q.get("fast") || 1), FORCE_PHOTO = Q.get("photo");
+const INTRO = +(Q.get("intro") ?? 22);      // the lineup / betting window before the gate, seconds
+const EDGE = .05;                           // the house edge on a win bet
+const BET_HINT = "!derby <number> <coins>"; // how chat bets (the bot decides; a setting in the real game)
+
+// ---- the form book: every hound's record, kept between races (the real game keeps it on the server) ----
+// { id: { races, wins, last: [places, newest first, up to 10], streak: +n wins in a row / -n without a win } }
+const FORM_KEY = "derby-form";
+let FORM = {};
+try { FORM = JSON.parse(localStorage.getItem(FORM_KEY) || "{}"); } catch (e) { FORM = {}; }
+const formOf = id => FORM[id] || (FORM[id] = { races: 0, wins: 0, last: [], streak: 0 });
+function saveForm() { try { localStorage.setItem(FORM_KEY, JSON.stringify(FORM)); } catch (e) { /* private window */ } }
+// how strong a hound looks going in: its recent win rate (from the last 10, eased toward average when it
+// has few races), a lift for a winning streak, a dip for a long losing run, and a little luck on the day
+function strength(id) {
+  const f = formOf(id), recent = f.last.slice(0, 10), wins = recent.filter(p => p === 1).length;
+  const rate = (wins + 1) / (recent.length + 6) * 6;                       // 1 = an average hound
+  const streak = f.streak > 0 ? Math.min(.6, .15 * f.streak) : -Math.min(.3, .03 * -f.streak);
+  return Math.pow(rate, .8) * (1 + streak) * Math.exp(rnd(-.35, .35));
+}
+// a short line about a hound's form, for the odds board
+function formNote(r) {
+  const f = formOf(r.id);
+  if (f.streak >= 2) return `🔥 won the last ${f.streak}`;
+  if (f.streak === 1) return "won last time";
+  if (f.streak <= -4) return `${-f.streak} races without a win`;
+  if (f.races) return `${f.wins} win${f.wins === 1 ? "" : "s"} in ${f.races}`;
+  return "first race";
+}
+const shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+const ease = u => u * u * (3 - 2 * u);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+// ---- the hounds' frames ---------------------------------------------------------------------------
+const IMG = {};
+for (const h of CFG.hounds) IMG[h.id] = Array.from({ length: NF }, (_, i) => { const im = new Image(); im.src = `${h.id}/gallop_${String(i).padStart(2, "0")}.png`; return im; });
+const UI_COLOUR = { terry: "#d8301c", harry: "#e9dfc6", mange: "#9a7b55" };
+const colourOf = h => UI_COLOUR[h.id] || `hsl(${(24 + (h.hue || 0)) % 360} 95% 58%)`;
+
+// ---- the track ------------------------------------------------------------------------------------
+const FIELD = 6;
+const D = 31000;                 // race length in world px (sprite px at scale 1; 100 px = 1 m): about 45 s
+const SPRK = 0.95;               // sprite px -> stage px on the nearest row
+const CX = 800;                  // where the camera's focus sits on screen
+const TRACK_TOP = 600, TRACK_BOT = 1048;
+const ROWS = Array.from({ length: FIELD }, (_, r) => ({ y: 650 + r * 68, s: (0.70 + r * 0.07) * SPRK }));   // far -> near
+const S_FAR = ROWS[0].s * .92, S_NEAR = ROWS[FIELD - 1].s * 1.08;
+const NOSE = 318;                // where the nose is in a sprite, px from its left edge
+const BODY = [190, 140];         // the middle of the body in a sprite (tumbles turn about it)
+const sx = (x, s, cam) => CX + (x - cam) * s;
+
+// ---- what they say (art/derby/lines.json) -------------------------------------------------------------
+const LINES = CFG.lines;
+const SWEAR = /\b(motherfuck\w*|fuck\w*|shit\w*|ass(hole|holes)?|bitch\w*|dick\w*|piss\w*|prick|pussy|goddamm\w*|taint)\b/gi;
+const say = s => $("clean").checked ? s.replace(SWEAR, w => "#@$%&!*".repeat(5).slice(0, w.length)) : s;
+const fill = (s, o = {}) => s.replace(/\{(\w+)\}/g, (m, k) => o[k] ?? m);
+const line = (pool, o) => fill(pick(pool), o);
+// what a hound says passing another: the general pool, a line aimed at that hound, or its own voice
+function taunt(a, b) {
+  const fa = formOf(a.id), fb = formOf(b.id);
+  const pools = [[LINES.trash, 6], [LINES.at[b.id] || [], 3], [LINES.by[a.id] || [], 2],
+    [fa.streak >= 2 ? LINES.hot : [], 4], [fb.streak >= 2 ? LINES.at_hot : [], 4], [fb.streak <= -4 ? LINES.at_cold : [], 4]]
+    .filter(p => p[0].length);
+  const o = { t: b.short || b.name, n: Math.abs(pools.length && (fb.streak <= -4 || fb.streak >= 2) ? fb.streak : fa.streak) };
+  let x = Math.random() * pools.reduce((n, p) => n + p[1], 0);
+  for (const [pool, w] of pools) if ((x -= w) <= 0) {
+    if (pool === LINES.hot) o.n = fa.streak;
+    if (pool === LINES.at_cold || pool === LINES.at_hot) o.n = Math.abs(fb.streak);
+    return line(pool, o);
+  }
+  return line(LINES.trash, o);
+}
+const tick = (type, o) => race.ticker.unshift({ text: fill(pick(LINES.ticker[type]), o).toUpperCase(), t: race.t });
+
+// ---- race events --------------------------------------------------------------------------------------
+// dur: seconds; me / them: the speed of the hound in it / of its victim, through it (u = 0..1). The big
+// ones (a tumble, the demon hand, Bubba eating, Harry running back) cost a lot; slime, bites, zaps and
+// Terry's arguing cost some; a bonk, a kick or yapping hardly anything; the flaming ass ends up a booster.
+// hazard: a thing on the track for it; at: where it sits from the hound's nose when the event starts
+const TUMBLE = u => u < .72 ? .04 : .04 + (u - .72) / .28 * .96;
+const EV = {
+  trip:     { dur: 1.7, who: "any", me: TUMBLE },
+  junk:     { dur: 1.7, who: "any", thrown: "land", at: 70, me: TUMBLE },
+  hand:     { dur: 1.7, who: "any", hazard: "hand", at: -250, me: u => u < .85 ? 0 : 1 },
+  snack:    { dur: 2.0, who: "bubba", hazard: "soul", at: 20, me: u => u < .88 ? 0 : 1 },
+  junkfood: { dur: 2.0, who: "bubba", thrown: "land", at: 30, me: u => u < .88 ? 0 : 1 },
+  femur:    { dur: 1.9, who: "harry", hazard: "bone", at: -360, me: u => u < .4 ? -.85 : u < .52 ? 0 : 1.1 },
+  slime:    { dur: 1.3, who: "any", hazard: "slime", at: -40, me: u => .2 + .8 * u * u },
+  fleas:    { dur: 1.3, who: "mange", me: u => u < .8 ? .05 : 1 },
+  argue:    { dur: 1.6, who: "terry", me: () => .5 },
+  bite:     { dur: .9, who: "pair", me: () => 1.12, them: u => .3 + .7 * u, behind: true },
+  snap:     { dur: .9, who: "gnash", pair: true, me: () => 1.12, them: u => .3 + .7 * u, behind: true },
+  zap:      { dur: 1.0, who: "sparks", pair: true, me: () => 1, them: u => u < .55 ? .1 : 1, behind: false },
+  kick:     { dur: .8, who: "pair", me: () => 1, them: u => .6 + .4 * u, behind: false },
+  flare:    { dur: .7, who: "cinder", pair: true, me: () => 1, them: u => .6 + .4 * u, behind: false },
+  bonk:     { dur: .8, who: "any", thrown: "hit", me: u => .6 + .4 * u },
+  yap:      { dur: 1.0, who: "brimstone", me: () => .85 },
+  showoff:  { dur: 1.0, who: "ember", me: () => .8 },
+  leap:     { dur: .8, who: "any", hazard: "geyser", at: 120, me: () => 1.05 },
+  scorch:   { dur: 2.0, who: "any", hazard: "geyser", at: -230, me: u => u < .15 ? .45 : 1.35 },
+};
+// who says what when an event starts: [the hound ("a") or its victim ("b"), the lines.json pool]
+const SAYS = { trip: ["a", "ouch"], junk: ["a", "ouch"], hand: ["a", "hand"], snack: ["a", "snack"], junkfood: ["a", "snack"],
+  femur: ["a", "femur"], slime: ["a", "slime"], fleas: ["a", "fleas"], bite: ["b", "bitten"], snap: ["b", "bitten"],
+  zap: ["b", "zapped"], kick: ["b", "kicked"], flare: ["b", "flared"], bonk: ["a", "bonk"], yap: ["a", "yap"],
+  showoff: ["a", "showoff"], leap: ["a", "leap"], scorch: ["a", "scorch"] };
+// how often each comes up (the flaming ass and the crowd are crowd-pleasers)
+const WEIGHT = { trip: 2.5, slime: 2, leap: 1.2, scorch: 3.5, hand: 1.5, bite: 2, kick: 1.5, bonk: 3.5, junk: 2.5, junkfood: 2,
+  snack: 1.5, femur: 2, fleas: 1.5, argue: 2, yap: 1, zap: 1.5, showoff: 1, flare: 1.5, snap: 1.5 };
+const weighted = types => { let x = Math.random() * types.reduce((n, k) => n + WEIGHT[k], 0); for (const k of types) if ((x -= WEIGHT[k]) <= 0) return k; return types[types.length - 1]; };
+// what the crowd throws
+const JUNK = ["BONE", "SKULL", "FLAMING TRASH BAG", "MUG OF BLOOD", "TOILET", "ROTTEN EYEBALL", "SEVERED HAND"];
+
+// ---- one race --------------------------------------------------------------------------------------
+let race = null;
+
+function runnerFor(h, row) {
+  const R = ROWS[row];
+  const r = { h, id: h.id, name: h.name, short: h.short || h.name, A: h.anchors, imgs: IMG[h.id], row, y: R.y, s: R.s, hue: h.hue || 0, sat: h.sat ?? 1.2,
+    colour: colourOf(h), fx: (h.fx || []).map(n => FX[n]).filter(Boolean), parts: [], size: R.s / (240 / 360),
+    ground: R.y, speed: 0, dx: 0, f: 0, phase: Math.random(), x: 0, v: 0, ox: 0, oy: 0, rot: 0, flip: false, frozen: false,
+    left: 0, top: 0, shown: null, done: false };
+  r.pt = key => { const fr = r.A.frames[r.f], p = fr[key] || fr.tail; return [r.left + p[0] * r.s, r.top + p[1] * r.s]; };
+  return r;
+}
+
+// a hound's raw run: speed with its own wobble, out of the gate, through its events -> x every 1/60 s
+const V = 700, DT = 1 / 60;
+function simulate(r, evs) {
+  const a1 = rnd(.03, .06), a2 = rnd(.02, .04), w1 = rnd(.4, .8), w2 = rnd(1.2, 2), p1 = rnd(0, 6.3), p2 = rnd(0, 6.3);
+  const xs = [0]; let x = 0, t = 0, R = null;
+  while (t < 90) {
+    t += DT;
+    let v = V * (1 + a1 * Math.sin(w1 * t + p1) + a2 * Math.sin(w2 * t + p2)) * Math.min(1, t / 1.3) ** .6;
+    for (const e of evs) if (t >= e.tau && t < e.tau + e.len) v *= e.k((t - e.tau) / e.len);
+    x += v * DT; xs.push(x);
+    if (R === null && x >= D) R = t;
+    if (R !== null && t > R + 10) break;
+  }
+  return { xs, R };
+}
+const sample = (xs, t) => { const i = t / DT, j = Math.floor(i); if (j >= xs.length - 1) return xs[xs.length - 1]; if (j < 0) return 0; return xs[j] + (xs[j + 1] - xs[j]) * (i - j); };
+
+function newRace() {
+  const field = shuffle(CFG.hounds.slice()).slice(0, FIELD);
+  const rows = shuffle([...Array(FIELD).keys()]);
+  const runners = field.map((h, i) => runnerFor(h, rows[i]));
+  // the odds come from form (the form book): hot hounds are favourites and pay less, cold ones are
+  // longshots and pay more; a bet on the winner pays (1 - edge) / chance. Each hound wears a number.
+  const wts = runners.map(r => strength(r.id)), tot = wts.reduce((a, b) => a + b, 0);
+  runners.forEach((r, i) => { r.num = i + 1; r.p = wts[i] / tot; r.pays = Math.max(1.1, Math.floor((1 - EDGE) / r.p * 10) / 10); });
+  // the result first (in the real game the server draws it): the winner drawn with those chances, the
+  // rest of the order with the same weights; then finishing times
+  const order = [], left = runners.slice();
+  while (left.length) {
+    let x = Math.random() * left.reduce((n, r) => n + r.p, 0);
+    const i = left.findIndex(r => (x -= r.p) <= 0);
+    order.push(left.splice(i < 0 ? left.length - 1 : i, 1)[0]);
+  }
+  let t = D / V * rnd(1.0, 1.04);
+  // usually clear gaps; now and then a photo finish for the win, or for dead last
+  const close = k => (k === 1 && (FORCE_PHOTO === "win" || (!FORCE_PHOTO && Math.random() < .3)))
+    || (k === order.length - 1 && (FORCE_PHOTO === "last" || (!FORCE_PHOTO && Math.random() < .2)));
+  order.forEach((r, k) => { if (k) t += close(k) ? rnd(.015, .08) : rnd(.15, .75); r.T = t; r.place = k + 1; });
+  // a first run without events, to know roughly where everyone is when
+  for (const r of runners) { const s = simulate(r, []); r.w = s.R / r.T; r.xs = s.xs; }
+  const where = (r, t) => sample(r.xs, t * r.w);
+  // the events: one every ~2-3 s from the gate to the last stretch
+  const events = [];
+  const tEnd = order[0].T - 2.2;
+  let te = rnd(2.2, 3.0);
+  const used = new Set();
+  while (te < tEnd) {
+    const ev = planEvent(runners, te, where, used);
+    if (ev) { events.push(ev); used.add(ev.type + ev.actor.id); }
+    te += rnd(2.4, 3.6);
+  }
+  // the real run, events included, stretched so each hound crosses the line at its own time
+  for (const r of runners) {
+    const mine = [];
+    for (const e of events) {
+      const spec = EV[e.type];
+      if (e.actor === r) mine.push({ tau: e.t * r.w, len: spec.dur * r.w, k: spec.me });
+      if (e.target === r) mine.push({ tau: e.t * r.w, len: spec.dur * r.w, k: spec.them });
+    }
+    const s = simulate(r, mine);
+    r.xs = s.xs; r.w = s.R / r.T;
+  }
+  // hazards sit where their hound will be when the event happens
+  const hazards = [];
+  for (const e of events) {
+    const spec = EV[e.type];
+    if (spec.hazard) hazards.push({ kind: spec.hazard, x: where(e.actor, e.t) + spec.at, row: e.actor.row, t: e.t, dur: spec.dur, ev: e });
+    if (spec.thrown) {     // thrown from the stands a second before, on an arc to the hound or the track
+      const R = ROWS[e.actor.row], fly = spec.thrown === "hit" ? .9 : 1.1, tl = spec.thrown === "hit" ? e.t : e.t - .7, t0 = tl - fly;
+      const x1 = spec.thrown === "hit" ? where(e.actor, e.t) - 170 : where(e.actor, e.t) + spec.at;
+      hazards.push({ kind: "thrown", mode: spec.thrown, obj: e.obj, t0, tl, t: e.t, dur: spec.dur, row: e.actor.row, eats: e.type === "junkfood",
+        x0: where(e.actor, t0) + rnd(-300, 700), x1, y1: spec.thrown === "hit" ? R.y - 120 * R.s : R.y - 8 * R.s, spin: rnd(6, 14) * (Math.random() < .5 ? -1 : 1), ev: e });
+    }
+  }
+  race = { runners, order, events, hazards, t: -3.2 - INTRO, cam: 0, camV: 0, bubbles: [], ticker: [], nextTalk: 4,
+    finished: [], announced: new Set(), done: false, junk: [], nextLob: 1.5, photo: null };
+}
+
+function planEvent(runners, t, where, used) {
+  const here = Object.keys(EV).filter(k => ["any", "pair"].includes(EV[k].who) || runners.some(r => r.id === EV[k].who));
+  for (let n = 0; n < 14; n++) {
+    const type = weighted(here), spec = EV[type];
+    let actor, target = null;
+    if (spec.who === "any") actor = pick(runners);
+    else if (spec.who === "pair") actor = pick(runners);
+    else actor = runners.find(r => r.id === spec.who);
+    if (!actor || used.has(type + actor.id)) continue;
+    if (spec.thrown && actor.id === "bubba" && type === "junk") continue;          // Bubba doesn't trip over food
+    if (spec.who === "pair" || spec.pair) {
+      const ax = where(actor, t);
+      const near = runners.filter(r => r !== actor).map(r => ({ r, d: where(r, t) - ax }))
+        .filter(o => spec.behind ? (o.d > 40 && o.d < 520) : (o.d < -40 && o.d > -560));
+      if (!near.length) continue;
+      target = near.sort((a, b) => Math.abs(a.d) - Math.abs(b.d))[0].r;
+    }
+    return { type, t, actor, target, obj: spec.thrown ? pick(JUNK) : null };
+  }
+  return null;
+}
+
+// ---- what a hound looks like right now: offsets, turns, frozen frames, its own bubbles ---------------
+function pose(r, t) {
+  r.ox = 0; r.oy = 0; r.rot = 0; r.flip = false; r.frozen = false;
+  for (const e of race.events) {
+    if (t < e.t || t > e.t + EV[e.type].dur) continue;
+    const u = (t - e.t) / EV[e.type].dur, s = r.s;
+    if (e.actor === r) {
+      switch (e.type) {
+        case "trip":   // a forward somersault, a moment on the deck, then up
+          r.frozen = true;
+          if (u < .55) { const k = ease(u / .55); r.rot = k * 6.283; r.oy = -80 * s * Math.sin(Math.PI * u / .55); }
+          else if (u < .75) { r.rot = 6.283 + .25; r.oy = 10 * s; }
+          break;
+        case "slime": r.frozen = true; r.rot = .4 * Math.sin(u * 20) * (1 - u); r.ox = 30 * s * u; break;
+        case "leap": r.oy = -110 * s * Math.sin(Math.PI * u); break;
+        case "scorch":   // bunny-hopping with its backside in the air
+          if (u < .92) { r.oy = -75 * s * Math.abs(Math.sin(t * 12)); r.rot = .14 + .08 * Math.sin(t * 24); } break;
+        case "bonk": r.oy = -20 * s * Math.sin(Math.PI * Math.min(1, u / .3)); r.rot = .22 * Math.sin(t * 22) * (1 - u); break;
+        case "junk":
+          r.frozen = true;
+          if (u < .55) { const k = ease(u / .55); r.rot = k * 6.283; r.oy = -80 * s * Math.sin(Math.PI * u / .55); }
+          else if (u < .75) { r.rot = 6.283 + .25; r.oy = 10 * s; }
+          break;
+        case "junkfood": r.frozen = true; r.oy = 8 * s * Math.abs(Math.sin(t * 14)); r.rot = .08; break;
+        case "hand": r.frozen = u < .8; r.ox = (u < .8 ? Math.sin(t * 60) * 3 : 0) * s; r.rot = u < .8 ? .06 * Math.sin(t * 40) : 0; break;
+        case "bite": case "snap": r.ox = 70 * s * Math.sin(Math.PI * Math.min(1, u / .45)); break;
+        case "snack": r.frozen = true; r.oy = 8 * s * Math.abs(Math.sin(t * 14)); r.rot = .08; break;
+        case "femur": r.flip = u < .42; break;
+        case "fleas": r.frozen = u < .8; r.rot = u < .8 ? .1 * Math.sin(t * 50) : 0; r.oy = u < .8 ? 4 * s * Math.sin(t * 37) : 0; break;
+        case "argue": r.ox = 6 * s * Math.sin(t * 30); break;
+        case "yap": r.oy = -14 * s * Math.abs(Math.sin(t * 18)); break;
+        case "showoff": r.oy = -30 * s * Math.sin(Math.PI * u); r.rot = -.08 * Math.sin(Math.PI * u); break;
+      }
+    }
+    if (e.target === r) {
+      switch (e.type) {
+        case "bite": case "snap": r.oy = -45 * s * Math.sin(Math.PI * Math.min(1, u / .4)); r.rot = -.2 * Math.sin(Math.PI * Math.min(1, u / .4)); break;
+        case "kick": case "flare": r.rot = .07 * Math.sin(t * 45) * (1 - u); break;
+        case "zap": r.frozen = u < .5; r.rot = u < .5 ? .25 * Math.sin(t * 70) : 0; r.oy = u < .5 ? -12 * s * Math.abs(Math.sin(t * 50)) : 0; break;
+      }
+    }
+  }
+}
+
+// things that happen at the start of an event: the commentary, one line from whoever got the worst of it
+function begin(e) {
+  const a = e.actor, b = e.target;
+  tick(e.type, { a: a.name, b: b && b.name, o: e.obj });
+  if (e.type === "argue") {        // Terry's three heads, one after another
+    const l = shuffle(LINES.react.argue.slice());
+    bubble(a, l[0], 0); bubble(a, l[1], .9); bubble(a, l[2], 1.8);
+    return;
+  }
+  const [who, pool] = SAYS[e.type] || [];
+  const r = who === "b" ? b : a, other = who === "b" ? a : (b || a);
+  const lines = pool === "ouch" ? LINES.ouch : LINES.react[pool];
+  if (r && lines && (e.type !== "leap" || Math.random() < .5)) bubble(r, line(lines, { o: e.obj, t: other.short || other.name }), who === "b" ? .3 : .15);
+  if (e.type === "trip" || e.type === "junk") for (let i = 0; i < 10; i++) dust(a, ...a.pt("RF"), { size: 2 });
+}
+
+// ---- bubbles ----------------------------------------------------------------------------------------
+// a bubble stays up long enough to read and never more than three at once
+function bubble(r, text, delay = 0) {
+  const live = race.bubbles.filter(b => race.t < b.t0 + b.life).length;
+  if (live >= 3) return;
+  race.bubbles.push({ r, text: say(text), t0: race.t + delay, life: 2.8, x: null });
+}
+// trash talk only when a hound passes another (and not every time)
+function passed(a, b) {
+  if (race.t < race.nextTalk) return;
+  race.nextTalk = race.t + rnd(3.5, 6);
+  bubble(a, taunt(a, b));
+  if (Math.random() < .35) bubble(b, line(LINES.retort, { t: a.short || a.name }), 1.6);
+}
+
+// ---- drawing ------------------------------------------------------------------------------------------
+const PEAKS = Array.from({ length: 40 }, (_, i) => ({ x: i * 160, h: rnd(60, 220) }));
+const CROWD = Array.from({ length: 120 }, (_, i) => ({ x: i * 55 + rnd(-10, 10), y: rnd(0, 3) | 0, k: rnd(.8, 1.2), ph: rnd(0, 6), horn: Math.random() < .7 }));
+
+function drawBackdrop(cam, t) {
+  const g = ctx.createLinearGradient(0, 0, 0, TRACK_TOP);
+  g.addColorStop(0, "#0b0204"); g.addColorStop(.55, "#2a0705"); g.addColorStop(1, "#5a1406");
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, TRACK_TOP + 2);
+  // the glow of the pit behind the mountains
+  const glow = ctx.createRadialGradient(W * .55, 470, 40, W * .55, 470, 900);
+  glow.addColorStop(0, "rgba(255,110,30,.55)"); glow.addColorStop(.4, "rgba(200,40,10,.25)"); glow.addColorStop(1, "rgba(80,0,0,0)");
+  ctx.fillStyle = glow; ctx.fillRect(0, 0, W, TRACK_TOP);
+  // far mountains with lava falls
+  const off = -(cam * .05) % 6400;
+  ctx.fillStyle = "#170405";
+  ctx.beginPath(); ctx.moveTo(0, 450);
+  for (let rep = -1; rep < 2; rep++) for (const p of PEAKS) ctx.lineTo(off + rep * 6400 + p.x, 450 - p.h);
+  ctx.lineTo(W, 450); ctx.lineTo(W, 500); ctx.lineTo(0, 500); ctx.fill();
+  ctx.globalCompositeOperation = "lighter";
+  for (let rep = -1; rep < 2; rep++) for (let i = 3; i < 40; i += 7) {
+    const p = PEAKS[i], x = off + rep * 6400 + p.x;
+    if (x < -50 || x > W + 50) continue;
+    const lg = ctx.createLinearGradient(0, 450 - p.h, 0, 470);
+    lg.addColorStop(0, "rgba(255,120,20,.0)"); lg.addColorStop(.3, `rgba(255,${110 + 30 * Math.sin(t * 3 + i)},20,.7)`); lg.addColorStop(1, "rgba(255,60,10,.2)");
+    ctx.fillStyle = lg; ctx.fillRect(x - 4, 450 - p.h + 10, 8, p.h + 20);
+  }
+  ctx.globalCompositeOperation = "source-over";
+  // the stands: a dark bank of demons cheering
+  const so = -(cam * .35) % 6600;
+  ctx.fillStyle = "#1c0807"; ctx.fillRect(0, 490, W, 112);
+  for (let rep = -1; rep < 2; rep++) for (const c of CROWD) {
+    const x = so + rep * 6600 + c.x;
+    if (x < -40 || x > W + 40) continue;
+    const y = 528 + c.y * 22 + Math.sin(t * 6 + c.ph) * 4, k = c.k;
+    ctx.fillStyle = c.y === 0 ? "#2c0c0a" : "#3a100c";
+    ctx.beginPath(); ctx.arc(x, y, 12 * k, 0, 6.283); ctx.fill();
+    ctx.fillRect(x - 14 * k, y + 8 * k, 28 * k, 30);
+    if (c.horn) { ctx.beginPath(); ctx.moveTo(x - 9 * k, y - 6 * k); ctx.lineTo(x - 14 * k, y - 22 * k); ctx.lineTo(x - 4 * k, y - 9 * k);
+      ctx.moveTo(x + 9 * k, y - 6 * k); ctx.lineTo(x + 14 * k, y - 22 * k); ctx.lineTo(x + 4 * k, y - 9 * k); ctx.fill(); }
+    ctx.fillStyle = "rgba(255,90,20,.8)"; ctx.fillRect(x - 5 * k, y - 2 * k, 3, 2); ctx.fillRect(x + 2 * k, y - 2 * k, 3, 2);
+  }
+  // the track: dark scorched dirt in perspective, with a rail along the far side
+  const tg = ctx.createLinearGradient(0, TRACK_TOP, 0, TRACK_BOT);
+  tg.addColorStop(0, "#3a170e"); tg.addColorStop(.6, "#5a2412"); tg.addColorStop(1, "#6e2c14");
+  ctx.fillStyle = tg; ctx.fillRect(0, TRACK_TOP, W, H - TRACK_TOP);
+  ctx.fillStyle = "#0e0404"; ctx.fillRect(0, TRACK_TOP - 8, W, 8);
+  for (let x = Math.floor((cam - 2000) / 300) * 300; x < cam + 3000; x += 300) {
+    const px = sx(x, S_FAR, cam);
+    if (px < -20 || px > W + 20) continue;
+    ctx.fillStyle = "#3c1410"; ctx.fillRect(px - 3, TRACK_TOP - 34, 6, 30);
+  }
+  // marker lines across the track every 10 m, and the start and finish
+  ctx.lineWidth = 2;
+  for (let x = Math.floor((cam - 2500) / 1000) * 1000; x < cam + 3500; x += 1000) {
+    if (x <= 0 || x >= D) continue;
+    const a = sx(x, S_FAR, cam), b = sx(x, S_NEAR, cam);
+    if (Math.max(a, b) < -50 || Math.min(a, b) > W + 50) continue;
+    ctx.strokeStyle = "rgba(255,120,60,.18)"; ctx.beginPath(); ctx.moveTo(a, TRACK_TOP); ctx.lineTo(b, TRACK_BOT); ctx.stroke();
+    ctx.fillStyle = "rgba(255,170,120,.55)"; ctx.font = "bold 22px Impact, sans-serif"; ctx.textAlign = "center";
+    ctx.fillText(`${Math.round((D - x) / 100)} m`, a, TRACK_TOP - 44);
+  }
+  for (const [x, kind] of [[0, "start"], [D, "finish"]]) {
+    const a = sx(x, S_FAR, cam), b = sx(x, S_NEAR, cam);
+    if (Math.max(a, b) < -200 || Math.min(a, b) > W + 200) continue;
+    const n = 14;
+    for (let i = 0; i < n; i++) for (let j = 0; j < 2; j++) {
+      const y0 = TRACK_TOP + (TRACK_BOT - TRACK_TOP) * i / n, y1 = TRACK_TOP + (TRACK_BOT - TRACK_TOP) * (i + 1) / n;
+      const x0 = a + (b - a) * i / n, x1 = a + (b - a) * (i + 1) / n, w = 14 + 8 * i / n;
+      ctx.fillStyle = (i + j) % 2 ? "#eee" : "#111";
+      ctx.beginPath(); ctx.moveTo(x0 + j * w, y0); ctx.lineTo(x0 + (j + 1) * w, y0); ctx.lineTo(x1 + (j + 1) * w, y1); ctx.lineTo(x1 + j * w, y1); ctx.fill();
+    }
+    if (kind === "finish") {   // an arch of bones over the line (its near post is drawn over the hounds)
+      ctx.strokeStyle = "#d9cfb8"; ctx.lineWidth = 14;
+      ctx.beginPath(); ctx.moveTo(a - 10, TRACK_TOP); ctx.lineTo(a - 10, 360); ctx.lineTo(b + 30, 330); ctx.stroke();
+      ctx.fillStyle = "#7a0e08"; ctx.fillRect(a - 30, 330, b - a + 80, 70);
+      ctx.fillStyle = "#ffd7a0"; ctx.font = "bold 54px Impact, sans-serif"; ctx.textAlign = "center";
+      ctx.fillText("FINISH", (a + b) / 2 + 20, 386);
+    }
+  }
+}
+
+// the finish arch's near post stands between the camera and every hound, so it is drawn over them
+function drawNearPost(cam) {
+  const b = sx(D, S_NEAR, cam);
+  if (b < -60 || b > W + 60) return;
+  ctx.strokeStyle = "#d9cfb8"; ctx.lineWidth = 14; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(b + 30, 330); ctx.lineTo(b + 30, H + 20); ctx.stroke();
+  ctx.strokeStyle = "rgba(60,30,20,.5)"; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(b + 35, 340); ctx.lineTo(b + 35, H + 20); ctx.stroke();
+  ctx.lineCap = "butt";
+}
+
+// ---- photo finish -----------------------------------------------------------------------------------
+// how far behind `chase` is when `lead` crosses the line, in world px (a hound is about 330 long)
+const behind = (lead, chase) => D - sample(chase.xs, lead.T * chase.w);
+const margin = gap => gap < 12 ? "A WHISKER" : gap < 35 ? "A NOSE" : gap < 70 ? "A TONGUE" : gap < 120 ? "A HEAD" : "A NECK";
+const snapCv = document.createElement("canvas");
+function snapshot(R) {      // the track at the instant of the crossing, before tags and bubbles
+  const P = R.photo, cam = R.cam;
+  // the finish line runs slanted across the track: mark it in red right on the track, then crop
+  // round the two hounds in it, where they cross
+  const lineAt = y => { const a = sx(D, S_FAR, cam), b = sx(D, S_NEAR, cam); return a + (b - a) * (y - TRACK_TOP) / (TRACK_BOT - TRACK_TOP); };
+  ctx.strokeStyle = "rgba(230,20,10,.95)"; ctx.lineWidth = 3; ctx.setLineDash([14, 9]);
+  ctx.beginPath(); ctx.moveTo(lineAt(TRACK_TOP), TRACK_TOP); ctx.lineTo(lineAt(TRACK_BOT), TRACK_BOT); ctx.stroke(); ctx.setLineDash([]);
+  snapCv.width = cv.width; snapCv.height = cv.height;
+  snapCv.getContext("2d").drawImage(cv, 0, 0);
+  P.snapped = true;
+  const ya = ROWS[P.a.row].y, yb = ROWS[P.b.row].y;
+  const top = Math.min(ya, yb) - 250 * S_NEAR, bot = Math.max(ya, yb) + 40;
+  const sh = Math.max(380, bot - top), sw = sh * 16 / 9, cy = (top + bot) / 2;
+  P.src = [lineAt(cy) - sw * .55, cy - sh / 2, sw, sh];
+}
+function drawPhoto(P) {
+  const age = P.age;
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(snapCv, 0, 0); ctx.setTransform(VIEW, 0, 0, VIEW, 0, 0);
+  ctx.fillStyle = `rgba(0,0,0,${Math.min(.65, age * 2)})`; ctx.fillRect(0, 0, W, H);
+  // the print: the finish line zoomed in, in sepia, a little crooked
+  const [cx, cy, sw, sh] = P.src;
+  const k = ease(Math.min(1, age / .5)), pw = 1240, ph = pw * sh / sw, px = (W - pw) / 2, py = 110 + (1 - k) * 50;
+  ctx.save();
+  ctx.globalAlpha = k;
+  ctx.translate(W / 2, py + ph / 2); ctx.rotate(-.025 * k); ctx.translate(-W / 2, -(py + ph / 2));
+  ctx.fillStyle = "#efe4cf"; ctx.fillRect(px - 20, py - 20, pw + 40, ph + 120);
+  ctx.filter = "sepia(.85) saturate(1.4) contrast(1.25) brightness(1.05)";
+  ctx.drawImage(snapCv, cx * VIEW, cy * VIEW, sw * VIEW, sh * VIEW, px, py, pw, ph);
+  ctx.filter = "none";
+  for (let i = 0; i < 600; i++) {   // film grain
+    ctx.fillStyle = Math.random() < .5 ? `rgba(0,0,0,${Math.random() * .14})` : `rgba(255,255,255,${Math.random() * .12})`;
+    ctx.fillRect(px + Math.random() * pw, py + Math.random() * ph, 2, 2);
+  }
+  ctx.fillStyle = "#1a0d06"; ctx.font = "bold 62px Impact, sans-serif"; ctx.textAlign = "center";
+  const who = P.a.name.toUpperCase();
+  ctx.fillText(P.kind === "win" ? `${who} WINS BY ${P.label}!` : `${who} IS DEAD LAST BY ${P.label}!`, W / 2, py + ph + 76);
+  ctx.translate(px + 190, py + 78); ctx.rotate(-.12);
+  ctx.strokeStyle = "#b0140c"; ctx.lineWidth = 6; ctx.strokeRect(-165, -44, 330, 88);
+  ctx.fillStyle = "#b0140c"; ctx.font = "bold 54px Impact, sans-serif"; ctx.fillText("PHOTO FINISH", 0, 19);
+  ctx.restore();
+  ctx.globalAlpha = 1;
+  if (age < .22) { ctx.fillStyle = `rgba(255,255,255,${1 - age / .22})`; ctx.fillRect(0, 0, W, H); }   // the flash
+}
+
+// ---- the crowd lobs junk all race long: most of it misses and lies on the track (it changes nothing) ----
+function lob(R, t) {
+  const live = R.runners.filter(q => q.x < D - 1500 && q.x > 400);
+  if (!live.length) return;
+  const r = pick(live), fly = rnd(.9, 1.3);
+  R.junk.push({ obj: pick(JUNK), t0: t, tl: t + fly, row: r.row, x0: r.x + rnd(-300, 700),
+    x1: r.x + r.v * fly + rnd(-380, 420), spin: rnd(6, 14) * (Math.random() < .5 ? -1 : 1), near: r });
+}
+function drawLob(j, cam, t, air) {
+  if (t < j.t0) return;
+  const R = ROWS[j.row];
+  if (t < j.tl) {                                 // in the air (drawn over everyone)
+    if (!air) return;
+    const k = (t - j.t0) / (j.tl - j.t0), s0 = S_FAR * .75, sc = s0 + (R.s - s0) * k;
+    const X = sx(j.x0 + (j.x1 - j.x0) * k, sc, cam), Y = 530 + (R.y - 8 * R.s - 530) * k - 340 * 4 * k * (1 - k);
+    drawJunk(j.obj, X, Y, sc / SPRK, (t - j.t0) * j.spin, t);
+    if (j.obj === "FLAMING TRASH BAG" && Math.random() < .6) flame(race.lavaHost, X, Y - 20 * sc, { size: 1.1 });
+    return;
+  }
+  if (air) return;
+  if (!j.landed) {                                // a near miss sometimes gets a word from the hound
+    j.landed = true;
+    if (Math.abs(j.x1 - j.near.x) < 320 && Math.random() < .25) bubble(j.near, line(LINES.react.miss, {}), .1);
+  }
+  const b = Math.min(1, (t - j.tl) / .45), X = sx(j.x1 + 70 * b, R.s, cam);
+  if (X < -250) { j.gone = true; return; }
+  const Y = R.y - 8 * R.s - 46 * R.s * Math.sin(Math.PI * b) * (1 - b * .5);
+  drawJunk(j.obj, X, Y, R.s / SPRK, (j.tl - j.t0) * j.spin + b * 2.5, t);
+  if (j.obj === "FLAMING TRASH BAG" && Math.random() < .35) flame(race.lavaHost, X, Y - 16 * R.s, { size: .9 });
+}
+
+function drawHazard(z, cam, t) {
+  const s = ROWS[z.row].s, x = sx(z.x, s, cam), y = ROWS[z.row].y;
+  if (x < -300 || x > W + 300) return;
+  const u = (t - z.t) / z.dur;
+  switch (z.kind) {
+    case "slime":
+      ctx.fillStyle = "rgba(70,200,40,.85)"; ctx.beginPath(); ctx.ellipse(x, y + 4, 80 * s, 14 * s, 0, 0, 6.283); ctx.fill();
+      ctx.fillStyle = "rgba(170,255,120,.6)"; ctx.beginPath(); ctx.ellipse(x - 20 * s, y + 1, 30 * s, 4 * s, 0, 0, 6.283); ctx.fill();
+      break;
+    case "soul": {     // a lost soul shuffling across the track, until it gets eaten
+      if (u > .1) break;
+      const bob = Math.sin(t * 5) * 6;
+      ctx.globalCompositeOperation = "lighter";
+      const g = ctx.createRadialGradient(x, y - 50 * s + bob, 2, x, y - 50 * s + bob, 40 * s);
+      g.addColorStop(0, "rgba(180,255,230,.8)"); g.addColorStop(1, "rgba(120,255,200,0)");
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y - 50 * s + bob, 40 * s, 0, 6.283); ctx.fill();
+      ctx.globalCompositeOperation = "source-over";
+      ctx.fillStyle = "#0a1a14"; ctx.fillRect(x - 8 * s, y - 58 * s + bob, 4 * s, 6 * s); ctx.fillRect(x + 4 * s, y - 58 * s + bob, 4 * s, 6 * s);
+      break;
+    }
+    case "geyser": {  // a vent that erupts as the hound reaches it
+      ctx.fillStyle = "#120302"; ctx.beginPath(); ctx.ellipse(x, y + 4, 40 * s, 9 * s, 0, 0, 6.283); ctx.fill();
+      ctx.fillStyle = "rgba(255,90,20,.7)"; ctx.beginPath(); ctx.ellipse(x, y + 4, 26 * s, 5 * s, 0, 0, 6.283); ctx.fill();
+      if (u > -.5 && u < 1.2) {
+        const k = Math.max(0, Math.min(1, (u + .5) / .4)) * Math.max(0, Math.min(1, (1.2 - u) / .4));
+        const L = { parts: race.lava, hue: 0, size: s * 1.4 };
+        for (let i = 0; i < 6 * k; i++) flame(L, x + rnd(-15, 15) * s, y, { vy: -rnd(300, 520), life: 1.3, size: 1.6 });
+      }
+      break;
+    }
+    case "thrown": {  // junk from the stands: in the air, then bounced off a hound or lying on the track
+      if (t < z.t0) break;
+      const R = ROWS[z.row];
+      let X, Y, sc, rot = (t - z.t0) * z.spin;
+      if (t < z.tl) {
+        const k = (t - z.t0) / (z.tl - z.t0), s0 = S_FAR * .75;
+        sc = s0 + (R.s - s0) * k;
+        X = sx(z.x0 + (z.x1 - z.x0) * k, sc, cam);
+        Y = 530 + (z.y1 - 530) * k - 340 * 4 * k * (1 - k);
+      } else if (z.mode === "hit") {
+        const k = Math.min(1, (t - z.tl) / .8);
+        if (t - z.tl > 1.6) break;
+        sc = R.s; X = sx(z.x1 - 380 * k, sc, cam); Y = z.y1 + (R.y - 10 * R.s - z.y1) * k - 140 * R.s * Math.sin(Math.PI * k);
+        if (k >= 1) rot = 0;
+      } else {
+        const u = (t - z.t) / z.dur;
+        if (z.eats && u > .15) break;                     // Bubba got it
+        sc = R.s; rot = .5;
+        if (u > .2) {                                     // sent flying by the hound that tripped on it
+          const k = Math.min(1, (u - .2) / .35);
+          if (k >= 1) break;
+          X = sx(z.x1 + 500 * k, sc, cam); Y = z.y1 - 180 * R.s * Math.sin(Math.PI * k); rot = .5 + k * 9;
+        } else { X = sx(z.x1, sc, cam); Y = z.y1; }
+      }
+      drawJunk(z.obj, X, Y, sc / SPRK, rot, t);
+      if (z.obj === "FLAMING TRASH BAG" && Math.random() < .7) flame(race.lavaHost, X, Y - 20 * sc, { size: 1.2 });
+      break;
+    }
+    case "bone": {    // Harry's femur on the track, until he gets back to it
+      if (u < 0 || u > .45) break;
+      ctx.fillStyle = "#e6dcc4"; ctx.strokeStyle = "#3a2a20"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.roundRect(x - 34 * s, y - 6 * s, 68 * s, 10 * s, 5 * s); ctx.fill(); ctx.stroke();
+      for (const e of [-1, 1]) for (const d of [-1, 1]) { ctx.beginPath(); ctx.arc(x + e * 36 * s, y - 1 * s + d * 5 * s, 7 * s, 0, 6.283); ctx.fill(); ctx.stroke(); }
+      break;
+    }
+    case "hand": {    // a demon's hand out of the ground round the hind leg
+      const k = u < 0 ? 0 : u < .15 ? u / .15 : u < .85 ? 1 : Math.max(0, 1 - (u - .85) / .15);
+      if (k <= 0) break;
+      const hx = x, top = y - 70 * s * k;
+      ctx.fillStyle = "#3a0a0a"; ctx.strokeStyle = "#140202"; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(hx - 16 * s, y + 4); ctx.lineTo(hx - 12 * s, top + 20 * s); ctx.lineTo(hx + 12 * s, top + 20 * s); ctx.lineTo(hx + 16 * s, y + 4); ctx.fill();
+      for (let f = -2; f <= 2; f++) { ctx.beginPath(); ctx.moveTo(hx + f * 6 * s, top + 22 * s); ctx.quadraticCurveTo(hx + f * 9 * s, top - 4 * s, hx + f * 4 * s + 10 * s, top + 2 * s); ctx.lineWidth = 6 * s; ctx.strokeStyle = "#3a0a0a"; ctx.stroke(); }
+      break;
+    }
+  }
+}
+
+// the crowd's junk, drawn simply at size s round (x, y), turned by rot
+function drawJunk(name, x, y, s, rot, t) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.scale(s, s);
+  ctx.lineWidth = 3; ctx.strokeStyle = "#1a0d08";
+  switch (name) {
+    case "BONE":
+      ctx.fillStyle = "#e6dcc4";
+      ctx.beginPath(); ctx.roundRect(-30, -5, 60, 10, 5); ctx.fill(); ctx.stroke();
+      for (const e of [-1, 1]) for (const d of [-1, 1]) { ctx.beginPath(); ctx.arc(e * 32, d * 6, 8, 0, 6.283); ctx.fill(); ctx.stroke(); }
+      break;
+    case "SKULL":
+      ctx.fillStyle = "#e9e0c8"; ctx.beginPath(); ctx.arc(0, -6, 22, 0, 6.283); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.roundRect(-13, 8, 26, 14, 4); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = "#1a0d08"; ctx.beginPath(); ctx.arc(-8, -6, 6, 0, 6.283); ctx.arc(8, -6, 6, 0, 6.283); ctx.fill();
+      ctx.fillRect(-7, 12, 3, 8); ctx.fillRect(-1, 12, 3, 8); ctx.fillRect(5, 12, 3, 8);
+      break;
+    case "FLAMING TRASH BAG":
+      ctx.fillStyle = "#151515"; ctx.beginPath(); ctx.ellipse(0, 4, 24, 20, 0, 0, 6.283); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(-6, -14); ctx.lineTo(0, -24); ctx.lineTo(6, -14); ctx.fill();
+      break;
+    case "MUG OF BLOOD":
+      ctx.fillStyle = "#c9c2b0"; ctx.beginPath(); ctx.roundRect(-16, -18, 32, 38, 4); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.arc(20, 0, 9, -1.4, 1.4); ctx.lineWidth = 5; ctx.strokeStyle = "#c9c2b0"; ctx.stroke();
+      ctx.fillStyle = "#8a0a06"; ctx.fillRect(-13, -15, 26, 10);
+      break;
+    case "TOILET":
+      ctx.fillStyle = "#f2f2ee";
+      ctx.beginPath(); ctx.roundRect(-26, -34, 22, 34, 4); ctx.fill(); ctx.stroke();            // tank
+      ctx.beginPath(); ctx.ellipse(6, -4, 24, 9, 0, 0, 6.283); ctx.fill(); ctx.stroke();        // seat
+      ctx.beginPath(); ctx.moveTo(-8, -2); ctx.lineTo(20, -2); ctx.lineTo(12, 22); ctx.lineTo(-2, 22); ctx.closePath(); ctx.fill(); ctx.stroke();
+      break;
+    case "ROTTEN EYEBALL":
+      ctx.fillStyle = "#e8e4c8"; ctx.beginPath(); ctx.arc(0, 0, 16, 0, 6.283); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = "#5a7a1a"; ctx.beginPath(); ctx.arc(5, -2, 7, 0, 6.283); ctx.fill();
+      ctx.fillStyle = "#000"; ctx.beginPath(); ctx.arc(6, -2, 3, 0, 6.283); ctx.fill();
+      ctx.strokeStyle = "#a01a10"; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(-14, 4); ctx.lineTo(-6, 2); ctx.moveTo(-12, -8); ctx.lineTo(-5, -5); ctx.stroke();
+      break;
+    case "SEVERED HAND":
+      ctx.fillStyle = "#7a2a1a";
+      ctx.beginPath(); ctx.roundRect(-14, -10, 24, 22, 6); ctx.fill(); ctx.stroke();
+      for (let f = 0; f < 4; f++) { ctx.beginPath(); ctx.roundRect(8, -10 + f * 6, 18, 5, 2); ctx.fill(); ctx.stroke(); }
+      ctx.fillStyle = "#c01a10"; ctx.fillRect(-18, -8, 5, 18);
+      break;
+  }
+  ctx.restore();
+}
+
+function drawRunner(r, cam, t) {
+  const nose = sx(r.x, r.s, cam);
+  const left = nose - NOSE * r.s + r.ox, top = r.y - r.A.ground * r.s + r.oy;
+  r.dx = r.shown === null ? 0 : left - r.left;
+  r.left = left; r.top = top; r.shown = left;
+  const img = r.imgs[r.f];
+  ctx.save();
+  if (r.hue || r.sat !== 1.2) ctx.filter = `hue-rotate(${r.hue}deg) saturate(${r.sat})`;
+  const cx = left + BODY[0] * r.s, cy = top + BODY[1] * r.s;
+  ctx.translate(cx, cy); ctx.rotate(r.rot); if (r.flip) ctx.scale(-1, 1);
+  ctx.drawImage(img, -BODY[0] * r.s, -BODY[1] * r.s, img.width * r.s, img.height * r.s);
+  ctx.restore();
+}
+
+function drawTag(r) {
+  const p = r.pt("head"), s = r.s;
+  const k = s / SPRK, text = r.name;
+  ctx.font = `bold ${Math.round(20 * k)}px system-ui, sans-serif`;
+  const bw = 30 * k, w = ctx.measureText(text).width + bw + 16;
+  const x = clamp(p[0] - w / 2, 4, W - w - 4), y = p[1] - 64 * s;
+  ctx.fillStyle = "rgba(10,4,4,.75)"; ctx.beginPath(); ctx.roundRect(x, y - 19 * k, w, 28 * k, 8); ctx.fill();
+  ctx.fillStyle = r.colour; ctx.beginPath(); ctx.roundRect(x, y - 19 * k, bw, 28 * k, 8); ctx.fill();
+  ctx.fillStyle = "#000"; ctx.textAlign = "center"; ctx.font = `900 ${Math.round(22 * k)}px Impact, sans-serif`; ctx.fillText(String(r.num), x + bw / 2, y + 2 * k);
+  ctx.fillStyle = "#fff"; ctx.textAlign = "left"; ctx.font = `bold ${Math.round(20 * k)}px system-ui, sans-serif`; ctx.fillText(text, x + bw + 8, y + 1);
+}
+
+// a speech bubble rides above the hound's lane, not its bobbing head, and glides after it, so it
+// can be read; bubbles that would overlap stack upwards
+function drawBubble(b, placed, dt) {
+  const r = b.r, age = race.t - b.t0;
+  if (age < 0 || age > b.life) return;
+  const s = Math.max(.85, r.s / SPRK);
+  ctx.font = `900 ${Math.round(30 * s)}px Impact, "Arial Black", sans-serif`;
+  const w = Math.min(600, ctx.measureText(b.text).width + 34), h = 50 * s;
+  const nose = sx(r.x, r.s, race.cam);
+  const tx = clamp(nose - 120 * r.s - w * .35, 8, W - w - 8);
+  let ty = clamp(r.y - 290 * r.s, 8, H - h - 8);
+  for (let k = 0; k < 8; k++) {
+    const hit = placed.find(q => tx < q.x + q.w && tx + w > q.x && ty < q.y + q.h && ty + h > q.y);
+    if (!hit) break;
+    ty = hit.y - h - 10;
+  }
+  if (b.x === null) { b.x = tx; b.y = ty; }
+  const k = Math.min(1, dt * 5);
+  b.x += (tx - b.x) * k; b.y += (ty - b.y) * k;
+  const x = b.x, y = b.y;
+  placed.push({ x, y, w, h });
+  const tipX = clamp(nose - 130 * r.s, x + 16, x + w - 16), tipY = r.y - 215 * r.s;
+  ctx.globalAlpha = Math.min(1, age / .15, (b.life - age) / .3);
+  ctx.fillStyle = "#fff"; ctx.strokeStyle = "#000"; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.roundRect(x, y, w, h, 16); ctx.fill(); ctx.stroke();
+  const bx = clamp(tipX - 14, x + 10, x + w - 40);
+  ctx.beginPath(); ctx.moveTo(bx, y + h - 2); ctx.lineTo(tipX, Math.max(tipY, y + h + 14)); ctx.lineTo(bx + 26, y + h - 2); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(bx, y + h); ctx.lineTo(tipX, Math.max(tipY, y + h + 14)); ctx.lineTo(bx + 26, y + h); ctx.stroke();
+  ctx.fillStyle = "#111"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText(b.text, x + w / 2, y + h / 2 + 1, w - 18);
+  ctx.textBaseline = "alphabetic"; ctx.globalAlpha = 1;
+}
+
+function drawHud(t) {
+  if (t < -3.2) return;            // the lineup has the screen while bets are open
+  // title and clock
+  ctx.fillStyle = "rgba(10,2,2,.7)"; ctx.beginPath(); ctx.roundRect(24, 22, 430, 70, 12); ctx.fill();
+  ctx.fillStyle = "#ff8a3d"; ctx.font = "bold 40px Impact, sans-serif"; ctx.textAlign = "left"; ctx.fillText("HELLHOUND DERBY", 40, 72);
+  ctx.fillStyle = "rgba(10,2,2,.7)"; ctx.beginPath(); ctx.roundRect(W - 180, 22, 156, 70, 12); ctx.fill();
+  ctx.fillStyle = "#fff"; ctx.font = "bold 40px Impact, sans-serif"; ctx.textAlign = "right";
+  ctx.fillText(t < 0 ? "0.0" : t.toFixed(1), W - 40, 72);
+  // the field: a strip from the gate to the line with everyone on it
+  const x0 = 520, x1 = W - 240, y = 56;
+  ctx.fillStyle = "rgba(10,2,2,.7)"; ctx.beginPath(); ctx.roundRect(x0 - 20, 30, x1 - x0 + 60, 52, 12); ctx.fill();
+  ctx.strokeStyle = "#6a2a1a"; ctx.lineWidth = 6; ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke();
+  ctx.fillStyle = "#eee"; ctx.fillRect(x1, y - 14, 6, 28);
+  for (const r of race.runners.slice().sort((a, b) => a.x - b.x)) {
+    const px = x0 + (x1 - x0) * clamp(r.x / D, 0, 1);
+    ctx.fillStyle = r.colour; ctx.beginPath(); ctx.arc(px, y, 15, 0, 6.283); ctx.fill();
+    ctx.strokeStyle = "#000"; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = "#000"; ctx.font = "900 20px Impact, sans-serif"; ctx.textAlign = "center"; ctx.fillText(String(r.num), px, y + 7);
+  }
+  // the commentary ticker
+  const line = race.ticker[0];
+  ctx.fillStyle = "rgba(10,2,2,.82)"; ctx.fillRect(0, H - 64, W, 64);
+  ctx.fillStyle = "#ff5a1a"; ctx.fillRect(0, H - 64, W, 4);
+  if (line) {
+    const a = Math.min(1, (race.t - line.t) / .2);
+    ctx.globalAlpha = a; ctx.fillStyle = "#ffd7a0"; ctx.font = "bold 34px Impact, sans-serif"; ctx.textAlign = "center";
+    ctx.fillText(line.text, W / 2, H - 20); ctx.globalAlpha = 1;
+  }
+  if (t < 0 && t >= -3.2) {
+    const n = Math.ceil(-t);
+    ctx.fillStyle = "#ffcf7a"; ctx.font = "bold 220px Impact, sans-serif"; ctx.textAlign = "center";
+    ctx.fillText(n > 2 ? "READY" : String(n), W / 2, 420);
+  } else if (t >= 0 && t < .8) {
+    ctx.fillStyle = `rgba(255,90,30,${1 - t / .8})`; ctx.font = "bold 240px Impact, sans-serif"; ctx.textAlign = "center"; ctx.fillText("GO!", W / 2, 430);
+  }
+}
+
+// ---- the lineup: the betting window before the gate ------------------------------------------------------
+// the odds board stays up the whole time; a spotlight shows each runner in turn, big and running
+const spot = { r: null, phase: 0, host: null, line: "" };
+function drawLineup(t, dt) {
+  const R = race, left = -3.2 - t, byNum = R.runners.slice().sort((a, b) => a.num - b.num);
+  ctx.fillStyle = "rgba(6,1,1,.78)"; ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = "left"; ctx.fillStyle = "#ff8a3d"; ctx.font = "bold 72px Impact, sans-serif"; ctx.fillText("PLACE YOUR BETS", 70, 130);
+  ctx.fillStyle = "#e8d6c8"; ctx.font = "30px system-ui, sans-serif"; ctx.fillText("Pick the winner. Bet on its number.", 74, 178);
+  // the spotlight
+  const each = INTRO / byNum.length, idx = clamp(Math.floor((INTRO - left) / each), 0, byNum.length - 1), r = byNum[idx];
+  if (spot.r !== r) {
+    spot.r = r; spot.phase = 0;
+    const f = formOf(r.id);
+    spot.line = f.streak >= 2 ? fill(pick(LINES.hot), { n: f.streak }) : f.streak <= -4 ? fill(pick(LINES.cold), { n: -f.streak })
+      : fill(pick((LINES.by[r.id] || LINES.win)), { t: "losers" });
+    spot.host = { parts: [], hue: r.hue, size: 1.55, speed: 0, dx: 0, ground: 820, pt: null };
+  }
+  const k = 1.55 * 240 / 360, gx = 120, gy = 820, A = r.A;
+  spot.phase += 2.4 * dt * (r.h.cadence || 1);
+  const prevF = spot.f || 0, f = Math.floor((spot.phase % 1) * NF);
+  spot.f = f;
+  const left0 = gx, top0 = gy - A.ground * k;
+  spot.host.pt = key => { const fr = A.frames[f], p = fr[key] || fr.tail; return [left0 + p[0] * k, top0 + p[1] * k]; };
+  spot.host.speed = A.stride * k * 2.4 * (r.h.cadence || 1);
+  ctx.strokeStyle = "rgba(255,110,40,.35)"; ctx.lineWidth = 3;               // a treadmill of light under it
+  const off = (spot.phase * A.stride * k) % 80;
+  for (let x = gx - 40 - off; x < gx + 660; x += 80) { ctx.beginPath(); ctx.moveTo(x, gy + 4); ctx.lineTo(x + 40, gy + 4); ctx.stroke(); }
+  ctx.save();
+  if (r.hue || r.sat !== 1.2) ctx.filter = `hue-rotate(${r.hue}deg) saturate(${r.sat})`;
+  ctx.drawImage(r.imgs[f], left0, top0, r.imgs[f].width * k, r.imgs[f].height * k);
+  ctx.restore();
+  const downs = [];
+  for (let q = prevF; q !== f; q = (q + 1) % NF) {
+    const a = A.frames[q], b = A.frames[(q + 1) % NF];
+    for (const pw of ["LH", "RH", "LF", "RF"]) if (!a[pw][2] && b[pw][2]) downs.push(spot.host.pt(pw));
+  }
+  for (const fx of r.fx) { if (fx.tick) fx.tick(spot.host, dt); if (fx.step && downs.length) fx.step(spot.host, downs); }
+  drawFX(spot.host, ctx, dt);
+  // its name, number, what it's like and its odds
+  ctx.fillStyle = r.colour; ctx.beginPath(); ctx.roundRect(80, 240, 120, 120, 18); ctx.fill();
+  ctx.fillStyle = "#000"; ctx.font = "900 96px Impact, sans-serif"; ctx.textAlign = "center"; ctx.fillText(String(r.num), 140, 336);
+  ctx.textAlign = "left"; ctx.fillStyle = "#fff"; ctx.font = "bold 76px Impact, sans-serif"; ctx.fillText(r.name.toUpperCase(), 222, 312);
+  ctx.fillStyle = "#c8b4a8"; ctx.font = "italic 28px system-ui, sans-serif"; ctx.fillText(r.h.note || "", 224, 352, 820);
+  ctx.fillStyle = "#ffd27a"; ctx.font = "bold 44px Impact, sans-serif"; ctx.fillText(`PAYS ×${r.pays}`, 224, 410);
+  ctx.fillStyle = "#e8d6c8"; ctx.font = "26px system-ui, sans-serif"; ctx.fillText(`${Math.round(r.p * 100)}% to win`, 470, 408);
+  ctx.font = "900 34px Impact, \"Arial Black\", sans-serif";                      // and something to say
+  const qw = Math.min(760, ctx.measureText(say(spot.line)).width + 40);
+  ctx.fillStyle = "#fff"; ctx.strokeStyle = "#000"; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.roundRect(560, 470, qw, 62, 18); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = "#111"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(say(spot.line), 560 + qw / 2, 502, qw - 24); ctx.textBaseline = "alphabetic";
+  // the odds board
+  const bx = 1190, by = 110, bw = 660;
+  ctx.fillStyle = "rgba(20,6,4,.9)"; ctx.beginPath(); ctx.roundRect(bx, by, bw, 128 + byNum.length * 108, 20); ctx.fill();
+  ctx.strokeStyle = "#ff5a1a"; ctx.lineWidth = 3; ctx.stroke();
+  ctx.fillStyle = "#ff8a3d"; ctx.font = "bold 46px Impact, sans-serif"; ctx.textAlign = "center"; ctx.fillText("TONIGHT'S DAMNED", bx + bw / 2, by + 66);
+  const fav = byNum.reduce((a, b) => a.p > b.p ? a : b), long = byNum.reduce((a, b) => a.p < b.p ? a : b);
+  byNum.forEach((q, i) => {
+    const y = by + 108 + i * 108, on = q === r;
+    ctx.fillStyle = on ? "rgba(255,120,40,.22)" : "rgba(255,255,255,.04)"; ctx.beginPath(); ctx.roundRect(bx + 18, y, bw - 36, 92, 14); ctx.fill();
+    ctx.fillStyle = q.colour; ctx.beginPath(); ctx.roundRect(bx + 30, y + 12, 68, 68, 12); ctx.fill();
+    ctx.fillStyle = "#000"; ctx.font = "900 54px Impact, sans-serif"; ctx.textAlign = "center"; ctx.fillText(String(q.num), bx + 64, y + 66);
+    ctx.textAlign = "left"; ctx.fillStyle = "#fff"; ctx.font = "bold 38px Impact, sans-serif"; ctx.fillText(q.name, bx + 118, y + 52);
+    ctx.fillStyle = "#b8a49a"; ctx.font = "20px system-ui, sans-serif";
+    ctx.fillText(`${q === fav ? "the favourite · " : q === long ? "the longshot · " : ""}${formNote(q)}`, bx + 120, y + 80);
+    ctx.textAlign = "right"; ctx.fillStyle = "#ffd27a"; ctx.font = "bold 46px Impact, sans-serif"; ctx.fillText(`×${q.pays}`, bx + bw - 38, y + 62);
+  });
+  // bets close in...
+  const by2 = 930, frac = clamp(left / INTRO, 0, 1);
+  ctx.fillStyle = "rgba(255,255,255,.08)"; ctx.beginPath(); ctx.roundRect(80, by2, 1020, 26, 13); ctx.fill();
+  ctx.fillStyle = left < 5 ? "#ff3a1a" : "#ff8a3d"; ctx.beginPath(); ctx.roundRect(80, by2, 1020 * frac, 26, 13); ctx.fill();
+  ctx.textAlign = "left"; ctx.fillStyle = "#fff"; ctx.font = "bold 40px Impact, sans-serif"; ctx.fillText(`BETS CLOSE IN ${Math.ceil(left)}`, 80, by2 - 16);
+  ctx.textAlign = "right"; ctx.fillStyle = "#e8d6c8"; ctx.font = "bold 30px system-ui, sans-serif"; ctx.fillText(BET_HINT, 1100, by2 - 18);
+}
+
+function drawResults() {
+  const fin = race.finished;
+  if (!fin.length) return;
+  const first = fin[0];
+  const since = race.t - first.T;
+  if (since < 3 || fin.length < race.runners.length) {     // the winner, big
+    if (since < 3) {
+      ctx.fillStyle = "rgba(0,0,0,.45)"; ctx.fillRect(0, 160, W, 140);
+      ctx.fillStyle = first.colour; ctx.font = "bold 110px Impact, sans-serif"; ctx.textAlign = "center";
+      ctx.fillText(`${first.name.toUpperCase()} WINS!`, W / 2, 268);
+    }
+    return;
+  }
+  const x = W / 2 - 430, y = 150, w = 860, h = 120 + fin.length * 62;
+  ctx.fillStyle = "rgba(12,3,3,.9)"; ctx.beginPath(); ctx.roundRect(x, y, w, h, 18); ctx.fill();
+  ctx.strokeStyle = "#ff5a1a"; ctx.lineWidth = 3; ctx.stroke();
+  ctx.fillStyle = "#ff8a3d"; ctx.font = "bold 54px Impact, sans-serif"; ctx.textAlign = "center"; ctx.fillText("RESULTS", W / 2, y + 70);
+  fin.forEach((r, i) => {
+    const yy = y + 120 + i * 62, last = i === fin.length - 1;
+    ctx.fillStyle = last ? "rgba(140,20,10,.6)" : i === 0 ? "rgba(255,150,40,.25)" : "rgba(255,255,255,.04)";
+    ctx.fillRect(x + 20, yy - 40, w - 40, 54);
+    ctx.fillStyle = r.colour; ctx.fillRect(x + 20, yy - 40, 8, 54);
+    ctx.fillStyle = "#fff"; ctx.font = "bold 36px Impact, sans-serif"; ctx.textAlign = "left";
+    ctx.fillText(`${i + 1}.  #${r.num}  ${r.name}`, x + 48, yy);
+    ctx.textAlign = "right"; ctx.fillStyle = last ? "#ff9a7a" : "#ccc";
+    const by = race.photo && race.photo.kind === "win" && i === 1 ? `by ${race.photo.label.toLowerCase()}` : `+${(r.T - first.T).toFixed(2)}s`;
+    ctx.fillText(i === 0 ? `WINNER · PAYS ×${r.pays}` : last ? "DEAD LAST" : by, x + w - 40, yy);
+  });
+}
+
+// ---- the loop --------------------------------------------------------------------------------------
+let last = performance.now();
+function frame(now) {
+  let dt = Math.min(.05, (now - last) / 1000); last = now;
+  if ($("slow").checked) dt *= .3;
+  dt *= FAST;
+  const R = race;
+  if (R.photo && R.photo.snapped && !R.photo.over) {           // the race holds while the photo is up
+    R.photo.age += dt;
+    drawPhoto(R.photo);
+    if (R.photo.age > 4.6) {
+      const P = R.photo; P.over = true;
+      if (P.kind === "win") { bubble(P.a, pick(LINES.photo_win), .2); bubble(P.b, pick(LINES.photo_lost), 1.2); tick("win", { a: P.a.name }); }
+      else { bubble(P.a, pick(LINES.photo_lost), .2); tick("last", { a: P.a.name }); }
+    }
+    requestAnimationFrame(frame);
+    return;
+  }
+  R.t += dt;
+  const t = R.t;
+  // where everyone is
+  for (const r of R.runners) {
+    const tt = Math.max(0, t);
+    const x = sample(r.xs, tt * r.w), xp = sample(r.xs, Math.max(0, tt - dt) * r.w);
+    r.lastX = r.x;
+    r.v = dt > 0 ? (x - xp) / dt : 0; r.x = x;
+    pose(r, t);
+    const prev = r.f;
+    if (!r.frozen && t > 0) r.phase += Math.abs(r.v) / r.A.stride * dt;
+    r.f = Math.floor((((r.phase % 1) + 1) % 1) * NF) % NF;
+    r.prevF = prev;
+    if (t >= r.T && !R.finished.includes(r)) {
+      R.finished.push(r);
+      const n = R.finished.length, all = R.runners.length;
+      if (n === all) recordForm(R);
+      if (n === 1) {
+        const gap = behind(r, R.order[1]);
+        if (gap < 120 && !R.photo) R.photo = { kind: "win", a: r, b: R.order[1], label: margin(gap), age: 0 };
+        else { bubble(r, pick(LINES.win), .3); tick("win", { a: r.name }); }
+      }
+      if (n === all - 1 && !R.photo) {     // the last one still out there: is dead last a photo finish too?
+        const gap = behind(r, R.order[all - 1]);
+        if (gap < 120) R.photo = { kind: "last", a: R.order[all - 1], b: r, label: margin(gap), age: 0 };
+      }
+      if (n === all && !(R.photo && R.photo.kind === "last")) { bubble(r, pick(LINES.last), .3); tick("last", { a: r.name }); }
+    }
+  }
+  for (const e of R.events) if (!R.announced.has(e) && t >= e.t) { R.announced.add(e); begin(e); }
+  if (t > 1 && t > R.nextLob && !R.finished.length) { lob(R, t); R.nextLob = t + rnd(1.0, 2.2); }
+  if (t > 3 && !R.finished.length) {          // someone just got passed?
+    for (const a of R.runners) for (const b of R.runners)
+      if (a !== b && a.lastX < b.lastX && a.x >= b.x) passed(a, b);
+  }
+  // the camera: on the leaders, a little behind the front, never past the finish
+  const sorted = R.runners.slice().sort((a, b) => b.x - a.x);
+  sorted.forEach((r, i) => r.now = i + 1);
+  const front = sorted[0].x, mean = R.runners.reduce((s, r) => s + r.x, 0) / R.runners.length;
+  const want = clamp(.6 * front + .4 * mean - 250, 0, D + 200);
+  const prevCam = R.cam;
+  R.cam += (want - R.cam) * Math.min(1, dt * 2.5);
+  R.camV = dt > 0 ? (R.cam - prevCam) / dt : 0;
+  // draw
+  ctx.setTransform(VIEW, 0, 0, VIEW, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  drawBackdrop(R.cam, t);
+  for (const z of R.hazards) if (z.kind !== "geyser" && z.kind !== "thrown") drawHazard(z, R.cam, t);
+  for (const j of R.junk) drawLob(j, R.cam, t, false);
+  R.junk = R.junk.filter(j => !j.gone);
+  const byRow = R.runners.slice().sort((a, b) => a.row - b.row);
+  for (const r of byRow) {
+    for (const z of R.hazards) if (z.kind === "geyser" && z.row === r.row) drawHazard(z, R.cam, t);
+    drawRunner(r, R.cam, t);
+    r.speed = R.camV * r.s;
+    if (t > 0 && !r.frozen) {
+      const downs = [];
+      for (let s = r.prevF; s !== r.f; s = (s + 1) % NF) {
+        const a = r.A.frames[s], b = r.A.frames[(s + 1) % NF];
+        for (const p of ["LH", "RH", "LF", "RF"]) if (!a[p][2] && b[p][2]) downs.push(r.pt(p));
+      }
+      for (const f of r.fx) { if (f.tick) f.tick(r, dt); if (f.step && downs.length) f.step(r, downs); }
+    }
+    // a scorched backside, a slimed coat
+    for (const e of R.events) if (e.actor === r && e.type === "scorch" && t > e.t && t < e.t + EV.scorch.dur * .95) {
+      const h = r.pt("tail_base");
+      for (let i = 0; i < 5; i++) flame(r, h[0] + rnd(-8, 8) * r.s, h[1] + rnd(-6, 10) * r.s, { size: 1.8, vx: -120 });
+      if (Math.random() < .5) smoke(r, h[0], h[1] - 10 * r.s, "60,45,40", { size: 2 });
+    }
+    drawFX(r, ctx, dt);
+  }
+  // the lava from the geysers, over everything on the track
+  R.lavaHost.speed = R.camV * ROWS[FIELD - 1].s; R.lavaHost.ground = TRACK_BOT; R.lavaHost.dx = 0;
+  drawNearPost(R.cam);
+  for (const z of R.hazards) if (z.kind === "thrown") drawHazard(z, R.cam, t);    // junk flies in front of everyone
+  for (const j of R.junk) drawLob(j, R.cam, t, true);
+  drawFX(R.lavaHost, ctx, dt);
+  if (R.photo && !R.photo.snapped) snapshot(R);
+  if (t >= -3.2) for (const r of byRow) if (!R.finished.includes(r) || t - r.T < 1.5) drawTag(r);
+  const placed = [];
+  for (const b of R.bubbles) drawBubble(b, placed, dt);
+  R.bubbles = R.bubbles.filter(b => t < b.t0 + b.life);
+  drawHud(t);
+  if (t < -3.2) drawLineup(t, dt);
+  drawResults();
+  if (R.finished.length === R.runners.length && t - R.finished[R.finished.length - 1].T > 9) start();
+  requestAnimationFrame(frame);
+}
+
+function recordForm(R) {
+  R.finished.forEach((r, i) => {
+    const f = formOf(r.id), was = f.streak;
+    f.races++; f.last.unshift(i + 1); f.last.length = Math.min(f.last.length, 10);
+    if (i === 0) {
+      f.wins++; f.streak = Math.max(0, f.streak) + 1;
+      if (was <= -4) tick("drought", { a: r.name, n: -was });
+      else if (f.streak >= 2) tick("streak", { a: r.name, n: f.streak });
+    } else {
+      if (was >= 2) tick("snapped", { a: r.name, n: was });
+      f.streak = Math.min(0, f.streak) - 1;
+    }
+  });
+  saveForm();
+}
+
+function start() {
+  newRace();
+  race.lava = [];
+  race.lavaHost = { parts: race.lava, hue: 0, size: 1, speed: 0, dx: 0, ground: TRACK_BOT };
+  for (const z of race.hazards) z.host = race.lavaHost;
+  tick("start", { all: race.runners.map(r => r.name).join(" · ") });
+}
+$("again").onclick = start;
+Promise.all(Object.values(IMG).flat().map(im => im.complete ? 1 : new Promise(res => { im.onload = im.onerror = res; }))).then(() => {
+  start(); requestAnimationFrame(frame);
+});
+</script>
+</body></html>

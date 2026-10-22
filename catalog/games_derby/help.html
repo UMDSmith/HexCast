@@ -1,0 +1,32 @@
+<section id="derby">
+<div class="card">
+  <h2>Hellhound Derby <span class="tag">/games#derby</span></h2>
+  <p class="hint">Hellhounds race on one track on the games overlay (<code>/games/overlay</code>, or
+    <code>?game=derby</code>), and chat bets on the <b>winner</b>. Each race starts with a lineup of up to 6 hounds,
+    each wearing a race <b>number</b>, with its odds and its form. A bet is a <code>number</code> and an
+    <code>amount</code>. If that hound wins, the bet pays its <b>multiplier</b>; any other result loses the stake. All
+    bets are against the bank (your bot), through the shared <b>ledger</b>. The odds come from the <b>form book</b>
+    (every hound's recent results), so a hound on a hot streak is the favourite and pays less. When the bets close,
+    the server draws the winner with exactly the chances shown (a cryptographic RNG). The tumbles, bites, slime,
+    flaming arses, thrown junk and trash talk are only dressing: they can't change the result. A very close finish
+    gets a photo finish. Placement, look, the title (your branding) and the hounds' language live in the Games
+    panel's Edit Mode. Details: <code>docs/derby.md</code>.</p>
+  <table class="api">
+    <tr><td>GET|POST /games/api/derby/start</td><td><code>{seconds, test}</code> — open a lineup (<code>seconds</code>: the bet window) → the field (number, hound, chance, multiplier); <code>test</code> writes nothing to the ledger or the form book; 409 while a race runs</td></tr>
+    <tr><td>GET|POST /games/api/derby/bet</td><td><code>{user, amount, number}</code> → <code>mult</code>, <code>pays</code>, <code>debits</code>, <code>player</code>; <code>number</code> may also be the hound's name; the same hound again adds; 409 <code>bets_closed</code> outside the lineup</td></tr>
+    <tr><td>GET|POST /games/api/derby/remove</td><td><code>{user, number?}</code> — take back what went down in this window (<code>refund</code>)</td></tr>
+    <tr><td>GET|POST /games/api/derby/next</td><td>end the current phase now (close the bets, finish the race)</td></tr>
+    <tr><td>GET /games/api/derby/table · user/{name} · ledger · history · bets · validate</td><td>the STATE · one player · this game's ledger events · finished races + stats · rules, the odds model, the field and the form book · dry-run a bet</td></tr>
+    <tr><td>GET /games/api/derby/form · POST /form/clear</td><td>the form book (races, wins, last places, streak) · reset it</td></tr>
+    <tr><td>GET|POST /games/api/derby/stop</td><td>end the game: a race already drawn counts (winners are paid), an open window is refunded</td></tr>
+    <tr><td>GET|POST /games/api/derby/preview</td><td><code>{overrides, seconds}</code> — Edit Mode's Test in OBS: the scene on screen for a few seconds with that look (<code>STATE.preview</code>); never touches the game · <code>/preview/clear</code></td></tr>
+  </table>
+  <pre>curl -X POST http://localhost:4747/games/api/derby/start -H "Content-Type: application/json" -d "{\"seconds\":22}"
+curl "http://localhost:4747/games/api/derby/bet?user=alice&amp;number=3&amp;amount=100"
+curl "http://localhost:4747/games/api/derby/bets"</pre>
+  <p class="hint">Art credits (CC BY 4.0): the hounds are rendered from <a href="https://sketchfab.com/3d-models/hell-hound-36f3f384fd9b41a9a8dae1aaf22349d3" target="_blank" rel="noopener">"Hell Hound"</a>
+    by Adam (shadow798), and Hungry Harry's skull is <a href="https://sketchfab.com/3d-models/5d8d86a270b64f05aab45c3d09f350a6" target="_blank" rel="noopener">"Dog (Canis familiaris) Dolichcephalic"</a>
+    by The University of Edinburgh (CT courtesy of Dr. Tobias Schwarz, prepared by Brian Mather). Both were posed, recoloured and rendered to sprites;
+    see <code>static/CREDITS.md</code> in the add-on.</p>
+</div>
+</section>

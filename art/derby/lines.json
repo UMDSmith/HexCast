@@ -1,0 +1,576 @@
+{
+  "_about": "Hellhound Derby dialogue. {t} = the hound being talked to, {a} / {b} = the hounds in an event, {o} = what the crowd threw. trash: said by a hound passing another; retort: the answer; at: aimed at one hound; by: a hound's own voice; react: what a hound says in an event; ticker: the commentary line for an event (several per event, one picked at random). The 'clean language' setting turns the swearing into #@$%. hot / cold: said by a hound on a winning streak / a long losing run ({n} = how many); at_hot / at_cold: said to one. Streak lines in the ticker use {n} too.",
+  "trash": [
+    "Fuck off, fleabag!",
+    "Eat my ass gas, {t}!",
+    "Move it, shit-for-brains!",
+    "Out of my way, you mangy fuck!",
+    "Sniff my ass on the way past, {t}!",
+    "Lick my exhaust, {t}!",
+    "{t}, you run like you shit yourself.",
+    "Get fucked, kibble-breath!",
+    "Choke on a chew toy, {t}!",
+    "I've taken shits faster than you!",
+    "Bite me, {t}!",
+    "Your mother was a chihuahua!",
+    "Eat dirt, dickhead!",
+    "Fetch THIS, asshole!",
+    "Piss off, {t}!",
+    "Nice ass, {t}. Shame it's in my way.",
+    "You smell like a wet sock full of farts.",
+    "Go chase your own tail, dumbass!",
+    "Who let you off the leash, {t}?",
+    "Keep up, you overgrown flea motel!",
+    "Kiss my hairy ass, {t}!",
+    "I'll piss on your grave, {t}!",
+    "Hey {t}! Your face looks like a chewed slipper!",
+    "See ya, wouldn't wanna be ya!",
+    "Bye, loser! Enjoy the view of my asshole!",
+    "You're slower than a three-legged pug, {t}!",
+    "I've seen roadkill with more hustle.",
+    "Go back to the pound, {t}!",
+    "Even my farts are faster than you!",
+    "Smell that, {t}? That's victory. And my ass.",
+    "Sit. Stay. LOSE.",
+    "Who's a bad boy? YOU are, {t}!",
+    "You couldn't catch a cold, {t}!",
+    "Get rekt, mutt!",
+    "Your whole bloodline is a mistake, {t}!",
+    "I'd tell you to eat my dust but you'd probably enjoy it.",
+    "Run home to your owner, {t}! Oh wait, he's in hell too.",
+    "Bet you lick your own balls, {t}. ...Yeah, me too, but still!",
+    "Somebody get this mutt a wheelchair!",
+    "I've had better races against a fire hydrant!",
+    "Is that your top speed, {t}? Embarrassing.",
+    "Eat shit and bark, {t}!",
+    "Hey {t}, your tail's on backwards!",
+    "Out of the way, walking hairball!",
+    "Pathetic. Absolutely pathetic.",
+    "You run like a goddamn ottoman, {t}.",
+    "Bark less, run more, dumbass!",
+    "I'll be at the finish line. Bring snacks, {t}.",
+    "You want a treat for that effort, {t}? Too bad!",
+    "Later, slowpoke!",
+    "Fuck you and the flea you rode in on!",
+    "Get out of my lane, you crusty-ass mutt!",
+    "Smell ya later, {t}! Literally.",
+    "Bad dog! BAD!",
+    "Somebody neuter this loser!",
+    "Hey {t}, I fucked your sister. She was a cat.",
+    "Go roll in something, {t}. Oh wait, you already did.",
+    "I've passed kidney stones faster than you!",
+    "You're the runt of hell, {t}!",
+    "Move, before I mark you as my territory!",
+    "Choke on my tail, {t}!",
+    "Your breath smells like a demon's taint!",
+    "Watch and learn, dipshit!",
+    "Behind you? No, AHEAD of you, bitch!",
+    "Keep crying, {t}!",
+    "Sucks to suck, {t}!",
+    "Lap you next time, fuckface!",
+    "I'm gonna hump your trophy, {t}!",
+    "Eat my dust, then eat my ass!",
+    "You're a disgrace to hellhounds everywhere!",
+    "Did you just give up, {t}? Respect.",
+    "Go fetch a clue, {t}!"
+  ],
+  "retort": [
+    "Fuck you!",
+    "I'll bite your ass off, {t}!",
+    "Enjoy it while it lasts, dickhead!",
+    "Your mom's a poodle, {t}!",
+    "I'm saving my energy, asshole!",
+    "Keep talking, I'll eat your tongue!",
+    "I'm letting you win, {t}. For now.",
+    "Shut the fuck up, {t}!",
+    "Oh, real mature, {t}.",
+    "I'll see you at the finish, bitch!",
+    "Say that again and I'll piss in your water bowl!",
+    "Yeah? Well... your face!",
+    "I hope you choke on a bone, {t}!",
+    "Watch your back, {t}. And your ass.",
+    "That's it, you're dead. Deader. Whatever.",
+    "Was that supposed to hurt, {t}?",
+    "Big talk from a little turd!",
+    "I'm coming for you, {t}!",
+    "I'm gonna shit in your bed tonight, {t}.",
+    "Hey {t}! Bite me! No, literally, bite me, I'm into it.",
+    "Bark bark, motherfucker!",
+    "Not for long, asshole!"
+  ],
+  "at": {
+    "cinder": [
+      "Stop setting the track on fire, asshole!",
+      "Cool your jets, hotfoot!",
+      "You smell like burnt hair, Cinder!",
+      "Nice fire prints, ya pyro freak!",
+      "Somebody throw a bucket on Cinder!",
+      "Go stand in a lake, Cinder!"
+    ],
+    "gnash": [
+      "Close your mouth, slime-gob!",
+      "You're drooling acid on me, asshole!",
+      "Ever heard of a breath mint, Gnash?",
+      "Gnash, your slime is in my fur!",
+      "Swallow, you disgusting fuck!",
+      "Nice teeth. Shame about the rest of you."
+    ],
+    "terry": [
+      "Three heads and not one fucking brain!",
+      "Which one of you dumbasses is steering?",
+      "Terry, all three of your faces suck!",
+      "Pick a head and fucking commit, Terry!",
+      "Three heads, zero wins!",
+      "Hey Terry, which head is the dumb one? Trick question!"
+    ],
+    "sparks": [
+      "Stay the fuck away from me, you walking taser!",
+      "Somebody unplug Sparks!",
+      "Sparks, you made my fur frizzy, asshole!",
+      "Go lick an outlet, Sparks!",
+      "You're one big static shock, dickhead!",
+      "Sparks, calm the fuck down!"
+    ],
+    "bubba": [
+      "Move your fat ass, Bubba!",
+      "Stop eating and RUN, you blob!",
+      "Bubba, you're drooling on my everything!",
+      "How are you even moving, Bubba?",
+      "Somebody put Bubba on a diet!",
+      "Bubba, that's not a snack, that's the track!"
+    ],
+    "ember": [
+      "Your ass is on fire, show-off!",
+      "Nice ass flames, drama queen!",
+      "Ember, nobody's impressed!",
+      "Get over yourself, Ember!",
+      "Your tail's a fire hazard, Ember!",
+      "Ember thinks she's hot shit. She's just shit."
+    ],
+    "brimstone": [
+      "Shut up, ankle-biter!",
+      "Nobody's scared of you, purse dog!",
+      "Brimstone, you smell like rotten eggs!",
+      "Go back to your handbag, Brimstone!",
+      "Lil' Brimstone, lil' brain!",
+      "Brimstone, I've stepped on bigger turds than you!"
+    ],
+    "mange": [
+      "Nice limp, flea motel!",
+      "Get your scabby ass away from me, Mange!",
+      "Mange, you're shedding on me!",
+      "When was your last bath, Mange? 1600?",
+      "Mange, your flies are lapping you!",
+      "Mange, you're one big rash with legs!"
+    ],
+    "harry": [
+      "Somebody bury this bag of bones!",
+      "Run faster, bonehead! Oh wait, you can't, you're DEAD.",
+      "Harry, you're missing a few pieces!",
+      "Nice ribs, Harry. Eat something!",
+      "Harry, I'm gonna use your femur as a chew toy!",
+      "Harry, you rattle when you run, it's fucking creepy!"
+    ]
+  },
+  "by": {
+    "cinder": [
+      "Feel the burn, {t}!",
+      "Smell that? That's your ass burning.",
+      "Too hot for you, {t}?",
+      "Fire in the hole! Your hole, {t}!"
+    ],
+    "gnash": [
+      "*SNAP* Next time it's your face, {t}!",
+      "I'll take a chunk out of you, {t}!",
+      "Taste my slime, {t}!",
+      "Nom nom, {t}. Your ass is next."
+    ],
+    "terry": [
+      "WE'RE PASSING! -- I KNOW! -- SHUT UP!",
+      "Three heads are better than your one, {t}!",
+      "Left head says fuck you, {t}! Right head agrees!",
+      "All three of us think you suck, {t}!"
+    ],
+    "sparks": [
+      "ZZZZAP! Later, {t}!",
+      "Shocking, isn't it, {t}?",
+      "Get charged up, {t}! Oh wait, you can't!",
+      "I'm wired, {t}! WIRED!"
+    ],
+    "bubba": [
+      "Mmm, {t}, you smell like bacon.",
+      "Coming through! Big boy coming through!",
+      "Out of the way, I'm hungry!",
+      "Is that a snack? No, it's just {t}."
+    ],
+    "ember": [
+      "Too hot to handle, {t}!",
+      "Try to keep up, peasant.",
+      "Bow to the queen, {t}!",
+      "Sorry {t}, was my tail in your face? Not sorry."
+    ],
+    "brimstone": [
+      "YAP YAP YAP! FIGHT ME, {t}!",
+      "I'm small but I'll bite your ankles off, {t}!",
+      "Come at me, {t}! COME AT ME!",
+      "Big dog, small balls, {t}!"
+    ],
+    "mange": [
+      "*scratch scratch* Later, {t}!",
+      "Catch you on the flea side, {t}!",
+      "My fleas say hi, {t}!",
+      "I may be gross, {t}, but I'm FAST gross!"
+    ],
+    "harry": [
+      "*rattle rattle* Bye, {t}!",
+      "I've got no flesh and I'm still beating you, {t}!",
+      "Bone-afide winner coming through!",
+      "Feel that chill, {t}? That's DEATH."
+    ]
+  },
+  "ouch": [
+    "FUCK!",
+    "MY ASS!",
+    "WHO PUT THAT THERE?!",
+    "I'M GONNA EAT YOUR FACE!",
+    "SON OF A BITCH!",
+    "OH COME ON!",
+    "REF! REF!!",
+    "MOTHERFUCKER!",
+    "GODDAMMIT!",
+    "OW OW OW OW!",
+    "THAT WAS ON PURPOSE!",
+    "MY FUCKING NOSE!",
+    "SHIT SHIT SHIT!",
+    "I MEANT TO DO THAT.",
+    "NOBODY SAW THAT.",
+    "WHY ALWAYS ME?!"
+  ],
+  "react": {
+    "slime": [
+      "WHOA WHOA WHOA",
+      "WHO THE FUCK LEFT SLIME HERE?!",
+      "SHIIIIT!",
+      "IT'S IN MY FUR! IT'S IN MY MOUTH!",
+      "WHEEEEE- FUCK!",
+      "GNASH, THIS IS YOUR SPIT, ISN'T IT?!"
+    ],
+    "scorch": [
+      "MY ASS IS ON FIRE!",
+      "HOT HOT HOT HOT!",
+      "OH GOD, MY ASSHOLE!",
+      "PUT IT OUT! PUT IT OUT!",
+      "MY BUTT! MY BEAUTIFUL BUTT!",
+      "I'M BEING COOKED FROM THE BACK!",
+      "SOMEBODY PISS ON ME! I MEAN IT!"
+    ],
+    "hand": [
+      "LET GO OF MY LEG, YOU CREEP!",
+      "GET OFF ME!",
+      "NOT THE LEG! ANYTHING BUT THE LEG!",
+      "BUY ME DINNER FIRST, ASSHOLE!",
+      "HANDS OFF, YOU UNDEAD PERVERT!"
+    ],
+    "bonk": [
+      "WHO THREW THAT?!",
+      "FUCK YOU, BUDDY!",
+      "I'LL EAT YOUR KIDS!",
+      "OW, MY FUCKING HEAD!",
+      "I SAW YOU, ASSHOLE! I SAW YOU!",
+      "WHO THROWS A {o}?!"
+    ],
+    "miss": [
+      "HA! MISSED!",
+      "NICE ARM, DIPSHIT!",
+      "THROW LIKE A DEMON, YOU PUSSY!",
+      "Swing and a miss, asshole!"
+    ],
+    "bitten": [
+      "YOU BIT MY ASS, YOU PRICK!",
+      "MY ASS!",
+      "FUCK! THAT'S MY ASS!",
+      "BITING IS CHEATING!",
+      "I'M TELLING!",
+      "THAT'S A FOUL!"
+    ],
+    "kicked": [
+      "MY EYES! YOU SHITHEAD!",
+      "FUCK! I'M BLIND!",
+      "GRIT IN MY EYES! GRIT IN MY EYES!",
+      "CHEAP SHOT, ASSHOLE!"
+    ],
+    "zapped": [
+      "FUUUCK!",
+      "MY FUR!",
+      "I CAN TASTE COLOURS!",
+      "WHY DO I SMELL TOAST?!"
+    ],
+    "flared": [
+      "MY FACE!",
+      "YOU ASSHOLE!",
+      "MY EYEBROWS! I HAD EYEBROWS!",
+      "I'M ON FIRE, YOU PRICK!"
+    ],
+    "snack": [
+      "*munch munch*",
+      "Worth it.",
+      "Mmm. Crunchy.",
+      "Don't judge me.",
+      "Five-second rule!",
+      "A little snack. As a treat.",
+      "Racing? What racing?"
+    ],
+    "femur": [
+      "WAIT! MY FEMUR!",
+      "I NEED THAT!",
+      "HOLD ON, THAT'S STRUCTURAL!",
+      "NOBODY TOUCH MY BONE!"
+    ],
+    "fleas": [
+      "Ugh, NOT NOW!",
+      "SCRATCH SCRATCH SCRATCH",
+      "THEY'RE UNIONIZING!",
+      "Hold on, it's a bad one."
+    ],
+    "argue": [
+      "LEFT!",
+      "RIGHT!",
+      "SHUT UP, BOTH OF YOU!",
+      "I'M DRIVING!",
+      "YOU'RE NOT DRIVING, ASSHOLE!",
+      "WHO FARTED?!",
+      "IT WAS HIM!",
+      "I HATE YOU BOTH!",
+      "STOP BITING MY EAR!",
+      "WE'RE LOSING, GENIUSES!"
+    ],
+    "yap": [
+      "YAP YAP YAP! FIGHT ME!",
+      "COME AT ME, BRO!",
+      "HOLD ME BACK! HOLD ME BACK!",
+      "I'LL TAKE ALL OF YOU!"
+    ],
+    "showoff": [
+      "Too hot to handle!",
+      "Try to keep up, peasants.",
+      "Are you watching? You should be watching.",
+      "Flawless."
+    ],
+    "leap": [
+      "PARKOUR!",
+      "Yoink!",
+      "Not today, lava!"
+    ],
+    "zap": [
+      "ZAP, BITCH!",
+      "Shocking, right?",
+      "Feel the power!"
+    ],
+    "flare": [
+      "Smell that? That's your face burning.",
+      "Toasty!",
+      "Medium rare!"
+    ],
+    "bite": [
+      "NOM.",
+      "CHOMP!",
+      "Tastes like ass.",
+      "Needs salt."
+    ]
+  },
+  "win": [
+    "SUCK IT, LOSERS!",
+    "EAT MY DUST!",
+    "GET REKT!",
+    "Who's a good boy? ME, BITCHES!",
+    "UNDEFEATED! ...today!",
+    "Bow down, mutts!",
+    "I'd like to thank my fleas.",
+    "Treats for everyone! Except you losers."
+  ],
+  "last": [
+    "I meant to do that.",
+    "This race was fucking rigged!",
+    "I wasn't even trying.",
+    "I'm saving myself for the next one.",
+    "Dead last? I'm a hellhound, everything's dead.",
+    "I demand a recount!",
+    "My paw hurt. Both of them. All four."
+  ],
+  "photo_win": [
+    "BY A NOSE, BITCHES!",
+    "PHOTO FINISH, BABY!",
+    "Did you see that? Did EVERYONE see that?"
+  ],
+  "photo_lost": [
+    "BULLSHIT!",
+    "MY NOSE WAS FIRST!",
+    "THAT CAMERA IS RIGGED!"
+  ],
+  "ticker": {
+    "trip": [
+      "{a} EATS DIRT!",
+      "{a} FACEPLANTS AT FULL SPEED!",
+      "{a} DOES A SOMERSAULT NOBODY ASKED FOR!",
+      "{a} TRIPS OVER ABSOLUTELY NOTHING!",
+      "{a} IS ROLLING. NOT IN A GOOD WAY."
+    ],
+    "slime": [
+      "{a} HITS THE SLIME. WIPEOUT!",
+      "{a} IS SLIP-N-SLIDING!",
+      "{a} JUST DISCOVERED SLIME. THE HARD WAY.",
+      "SLIME ON THE TRACK! {a} IS DOWN!"
+    ],
+    "leap": [
+      "{a} CLEARS THE LAVA GEYSER!",
+      "{a} HURDLES THE GEYSER LIKE A PRO!",
+      "{a} JUMPS THE LAVA! SHOW-OFF!"
+    ],
+    "scorch": [
+      "{a} GETS A LAVA ENEMA!",
+      "{a}'S ASS IS ON FIRE!",
+      "{a} IS NOW FUELLED BY BUTT FIRE!",
+      "THE GEYSER GOES RIGHT UP {a}!"
+    ],
+    "hand": [
+      "A DEMON HAND GRABS {a} BY THE LEG!",
+      "SOMETHING UNDER THE TRACK WANTS {a}!",
+      "{a} IS GETTING GROPED BY THE DAMNED!"
+    ],
+    "bite": [
+      "{a} BITES {b} RIGHT ON THE ASS!",
+      "{a} TAKES A BITE OUT OF {b}!",
+      "{a} GOES FOR {b}'S BUTT!"
+    ],
+    "kick": [
+      "{a} KICKS HOT GRIT IN {b}'S FACE!",
+      "{a} SANDBLASTS {b}!",
+      "DIRTY MOVE! {a} GRITS {b}!"
+    ],
+    "bonk": [
+      "THE CROWD BEANS {a} WITH A {o}!",
+      "A {o} TO {a}'S HEAD!",
+      "SOMEBODY IN THE STANDS NAILS {a} WITH A {o}!",
+      "{a} TAKES A {o} TO THE FACE!"
+    ],
+    "junk": [
+      "{a} TRIPS OVER A {o} SOMEBODY THREW!",
+      "A {o} ON THE TRACK TAKES OUT {a}!",
+      "{a} NEVER SAW THAT {o} COMING!"
+    ],
+    "junkfood": [
+      "SOMEBODY THREW A {o} AND {a} IS EATING IT.",
+      "{a} STOPS TO EAT A {o}. MID-RACE.",
+      "{a} FOUND A {o}. THE RACE IS IRRELEVANT NOW."
+    ],
+    "snack": [
+      "{a} STOPPED TO EAT A LOST SOUL. UNBELIEVABLE.",
+      "{a} IS HAVING A SNACK. DURING A RACE.",
+      "{a} SAW FOOD. {a} IS NO LONGER RACING."
+    ],
+    "femur": [
+      "{a} DROPPED A FEMUR AND WENT BACK FOR IT!",
+      "{a} IS FALLING APART! LITERALLY!",
+      "{a} LOST A BONE! HE NEEDS THAT!"
+    ],
+    "fleas": [
+      "{a} HAS TO SCRATCH. RIGHT NOW. APPARENTLY.",
+      "{a}'S FLEAS HAVE TAKEN CONTROL!",
+      "{a} STOPS FOR A FLEA EMERGENCY!"
+    ],
+    "argue": [
+      "{a}'S HEADS CAN'T AGREE WHICH WAY IS FORWARD!",
+      "{a} IS ARGUING WITH HIMSELF. ALL THREE OF HIM.",
+      "{a}'S HEADS ARE FIGHTING AGAIN!"
+    ],
+    "yap": [
+      "{a} IS PICKING FIGHTS AGAIN.",
+      "{a} WANTS TO FIGHT EVERYONE!",
+      "{a}: SMALL DOG, BIG MOUTH!"
+    ],
+    "zap": [
+      "{a} ZAPS {b}!",
+      "{a} ELECTROCUTES {b}! IS THAT LEGAL?",
+      "{b} JUST GOT TASED BY {a}!"
+    ],
+    "showoff": [
+      "{a} IS SHOWING OFF. ARROGANT.",
+      "{a} IS POSING FOR THE CROWD!",
+      "{a} THINKS THIS IS A FASHION SHOW!"
+    ],
+    "flare": [
+      "{a} SETS {b}'S FACE ON FIRE!",
+      "{a} TORCHES {b}!",
+      "{b} JUST GOT FLAMED BY {a}!"
+    ],
+    "snap": [
+      "{a} TAKES A CHUNK OUT OF {b}!",
+      "{a} SNAPS AT {b}!",
+      "{a} GOES FOR {b}'S THROAT! WELL, BUTT!"
+    ],
+    "start": [
+      "THEY'RE IN THE GATE: {all}",
+      "HERE THEY COME: {all}",
+      "TONIGHT'S DAMNED: {all}"
+    ],
+    "win": [
+      "{a} TAKES IT!",
+      "{a} WINS THE HELLHOUND DERBY!",
+      "{a} CROSSES FIRST!"
+    ],
+    "last": [
+      "{a} IS DEAD LAST.",
+      "{a} BRINGS UP THE REAR. AS USUAL.",
+      "DEAD LAST: {a}. HEARTBREAKING. HILARIOUS."
+    ],
+    "streak": [
+      "{a} IS ON A {n}-RACE WIN STREAK!",
+      "{a} HAS WON {n} IN A ROW!",
+      "{a} IS ON FIRE: {n} STRAIGHT WINS!"
+    ],
+    "snapped": [
+      "{a}'S WIN STREAK ENDS AT {n}!",
+      "THE STREAK IS OVER! {a} STOPS AT {n}!"
+    ],
+    "drought": [
+      "{a} FINALLY WINS AFTER {n} STRAIGHT LOSSES!",
+      "{a} BREAKS A {n}-RACE DROUGHT!"
+    ]
+  },
+  "hot": [
+    "I won last time, bitch, and I'll do it again!",
+    "{n} in a row, motherfuckers!",
+    "Get used to my ass, it's all you'll ever see!",
+    "Champion coming through! Move!",
+    "Back-to-back, baby! Who's next?",
+    "Bow to the streak, peasants!",
+    "I could win this one asleep. Watch me.",
+    "Another day, another win. Yawn.",
+    "Somebody make me a trophy shelf!",
+    "Undefeated in the last {n}! Undefeated!"
+  ],
+  "cold": [
+    "This is my race. I can feel it. ...Again.",
+    "Luck's gotta turn sometime, right? RIGHT?",
+    "I'm not losing, I'm building suspense.",
+    "{n} races without a win? I'm pacing myself.",
+    "Today's the day. For real this time.",
+    "Losing streak? It's called a comeback arc."
+  ],
+  "at_hot": [
+    "Enjoy it while it lasts, champ!",
+    "Your streak ends today, {t}!",
+    "{t} wins a couple and won't shut the fuck up about it!",
+    "Lucky streak, {t}. Luck runs out, asshole.",
+    "Hey {t}, I'm gonna piss all over your streak!",
+    "Somebody knock {t} off the throne!"
+  ],
+  "at_cold": [
+    "0 for {n} and still talking shit, {t}?",
+    "When's the last time you won, {t}? The Bronze Age?",
+    "{t}, you haven't won since you were alive!",
+    "{n} straight losses, {t}! Is that a record?",
+    "Hey {t}, want me to show you what winning looks like?",
+    "{t}, the only thing you've ever won is fleas!"
+  ]
+}

@@ -15,6 +15,7 @@
     trivia: { betting: 'taking bets', question: 'question open', votes: 'answers locked', reveal: 'revealing', over: 'game over' },
     hexfall: { betting: 'taking bets', dropping: 'dropping a hex', over: 'game over' },
     climb: { betting: 'taking bets', climbing: 'climbing', over: 'game over' },
+    derby: { betting: 'taking bets', racing: 'racing' },
     blackjack: { betting: 'taking bets', dealing: 'dealing', insurance: 'offering insurance', action: 'players acting', resolve: 'dealing out', dealer: 'dealer playing', settle: 'paying out', over: 'game over' } };
 
   function gameWord(key, state) {

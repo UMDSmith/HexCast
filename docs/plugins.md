@@ -2,7 +2,7 @@
 
 Hexcast is two things: the **soundboard** (the core, always there) and **plugins** - everything else. Twitch, Music, Avatars, Discord, Clips, Countdown, Games and Ticker are all plugins. A fresh install has one tab, **Soundboard**, and a **+** tab next to it. Click **+**, pick what you want, and it installs itself.
 
-Games goes one level further: the **Games** plugin gives you a Games tab, and each game (Roulette, Craps, Russian Roulette, Trivia, Hexfall, Soul Climb, Blackjack) is its own add-on, installed from the **+** inside the Games tab.
+Games goes one level further: the **Games** plugin gives you a Games tab, and each game (Roulette, Craps, Russian Roulette, Trivia, Hexfall, Soul Climb, Blackjack, Hellhound Derby) is its own add-on, installed from the **+** inside the Games tab.
 
 - [Using plugins](#using-plugins)
 - [Where things live](#where-things-live)
@@ -185,7 +185,7 @@ Set `"parent": "games"` and the plugin is an **add-on** of Games: its card shows
 
 ### A game for Games
 
-Roulette, Craps, Russian Roulette, Trivia, Hexfall, Soul Climb and Blackjack are each an add-on of Games. To write another one:
+Roulette, Craps, Russian Roulette, Trivia, Hexfall, Soul Climb, Blackjack and Hellhound Derby are each an add-on of Games. To write another one:
 
 ```
 games_bingo/

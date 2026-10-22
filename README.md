@@ -48,7 +48,7 @@ self-contained, with its own overlay and settings panel, and gets its own tab in
 the top bar once installed. Add as many or as few as you like; none of them
 changes how the soundboard behaves, and a plugin you never install costs you
 nothing — not even its Python packages. **Games** goes one level further: each
-game (Roulette, Craps, Russian Roulette, Trivia, Hexfall, Soul Climb, Blackjack) is its own add-on, installed from
+game (Roulette, Craps, Russian Roulette, Trivia, Hexfall, Soul Climb, Blackjack, Hellhound Derby) is its own add-on, installed from
 the **+** inside the Games tab. See [docs/plugins.md](docs/plugins.md).
 
 Everything runs on your own machine and streams to OBS over your LAN.
@@ -262,8 +262,12 @@ the Games panel and placed with the same **Edit Mode** as the soundboard:
   queue. Everyone acts at once in short action rounds; names, cards and chip
   stacks sit at each seat, and you keep your seat by ante-ing up each hand.
   See [docs/blackjack.md](docs/blackjack.md).
+- **Hellhound Derby** — hellhounds race on one track while chat bets on the
+  **winner** by its race number. The odds come from each hound's form (a hot
+  streak pays less), and the race is chaos: tumbles, bites, slime, flaming arses,
+  junk from the crowd, trash talk and photo finishes. See [docs/derby.md](docs/derby.md).
 
-All the round games (Russian Roulette, Trivia, Hexfall, Soul Climb, Blackjack) are placed and styled in the same **Edit Mode** editor as
+All the round games (Russian Roulette, Trivia, Hexfall, Soul Climb, Blackjack, Hellhound Derby) are placed and styled in the same **Edit Mode** editor as
 roulette and craps (sample game, ▶ Preview, **Test in OBS**), and carry your
 branding, not ours: the title (`title`: "Russian Roulette" / "TRIVIA") and
 trivia's name for your own questions (`lore_label`: "Channel Lore") are
@@ -282,7 +286,7 @@ response until it lands. **Launch/landing clips play on the base soundboard
 overlay (`/overlay`)** — keep both browser sources in your scene. See
 [docs/games.md](docs/games.md), [docs/craps.md](docs/craps.md),
 [docs/russian_roulette.md](docs/russian_roulette.md), [docs/trivia.md](docs/trivia.md),
-[docs/hexfall.md](docs/hexfall.md), [docs/climb.md](docs/climb.md) and [docs/blackjack.md](docs/blackjack.md).
+[docs/hexfall.md](docs/hexfall.md), [docs/climb.md](docs/climb.md), [docs/blackjack.md](docs/blackjack.md) and [docs/derby.md](docs/derby.md).
 Every bet in every game is against the bank (the bot), paid through the same
 ledger; Hexcast never reads chat — your bot turns chat commands into API calls,
 so any AI vtuber's bot can run them.
@@ -383,7 +387,7 @@ installs its own Python packages, so nothing is downloaded for a plugin you don'
 ```bash
 python hexcast.py plugins list
 python hexcast.py plugins install twitch music discord
-python hexcast.py plugins install games games_roulette games_craps games_russian games_trivia games_hexfall games_climb games_blackjack
+python hexcast.py plugins install games games_roulette games_craps games_russian games_trivia games_hexfall games_climb games_blackjack games_derby
 python hexcast.py plugins install --all
 ```
 
@@ -625,7 +629,7 @@ GET|POST /games/api/russian/stop               → end it: stakes refunded, surv
 GET|POST /games/api/russian/preview            → {overrides, seconds} → Test in OBS: that look on screen for a few seconds (never the game)
 ```
 
-**Games (Hexfall, Soul Climb, Blackjack)** — round games with the same shape as Russian Roulette's API above
+**Games (Hexfall, Soul Climb, Blackjack, Hellhound Derby)** — round games with the same shape as Russian Roulette's API above
 (`/start`, `/bet`, `/remove`, `/next`, `/stop`, `/preview`, `/table`, `/user/{name}`, `/ledger`, `/history`, `/bets`):
 
 ```
@@ -634,6 +638,8 @@ GET|POST /games/api/climb/bet                  → {user, amount, height} → de
 GET|POST /games/api/blackjack/bet              → {user, amount, seat?} → takes a seat (or the queue) and debits; also /rebet /leave
 GET|POST /games/api/blackjack/action           → {user, action: hit|stand|double|split|insurance|surrender} (also /hit /stand /double /split)
 GET  /games/api/blackjack/seats                → who sits where, their cards, chips and the queue
+GET|POST /games/api/derby/bet                  → {user, amount, number} → debits; paid the hound's multiplier if it wins
+GET  /games/api/derby/form                     → the form book the odds come from (races, wins, streaks) · POST /form/clear
 ```
 
 **Games (Trivia)** — bet before each question, answer, ride or cash out:
@@ -716,7 +722,7 @@ hexcast/
 ├── static/                    # the core's web files: control panel, top bar, the + store page, help
 ├── catalog/                   # every plugin that ships with Hexcast — what the + tab installs from
 │   ├── twitch/  music/  avatar/  discord/  clips/  countdown/  ticker/  ytdlp/
-│   └── games/  games_roulette/  games_craps/  games_russian/  games_trivia/  games_hexfall/  games_climb/  games_blackjack/
+│   └── games/  games_roulette/  games_craps/  games_russian/  games_trivia/  games_hexfall/  games_climb/  games_blackjack/  games_derby/
 │                              #   each: plugin.json, its Python, static/ (panel + overlay), help.html, requirements.txt
 ├── plugins/                   # the plugins you installed (a copy of their catalog folder; gitignored)
 ├── docs/                      # plugins.md + one doc per plugin: twitch, music, avatar, discord, clips, countdown, games, craps, ticker …
@@ -750,7 +756,7 @@ can hand-edit the JSON; the watcher ignores `.json` writes.
 
 - **Repository & downloads:** <https://github.com/UMDSmith/hexcast>
 - **Plugins:** [how plugins work & how to write one](docs/plugins.md)
-- **Plugin docs:** [Twitch](docs/twitch.md) · [Music](docs/music.md) · [Discord](docs/discord.md) · [Clips](docs/clips.md) · [Countdown](docs/countdown.md) · [Games & Roulette](docs/games.md) · [Craps](docs/craps.md) · [Russian Roulette](docs/russian_roulette.md) · [Trivia](docs/trivia.md) · [Hexfall](docs/hexfall.md) · [Soul Climb](docs/climb.md) · [Blackjack](docs/blackjack.md) · [Ticker](docs/ticker.md)
+- **Plugin docs:** [Twitch](docs/twitch.md) · [Music](docs/music.md) · [Discord](docs/discord.md) · [Clips](docs/clips.md) · [Countdown](docs/countdown.md) · [Games & Roulette](docs/games.md) · [Craps](docs/craps.md) · [Russian Roulette](docs/russian_roulette.md) · [Trivia](docs/trivia.md) · [Hexfall](docs/hexfall.md) · [Soul Climb](docs/climb.md) · [Blackjack](docs/blackjack.md) · [Hellhound Derby](docs/derby.md) · [Ticker](docs/ticker.md)
 - **License:** MIT — see [LICENSE](LICENSE)
 
 <p align="center">

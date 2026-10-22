@@ -1,0 +1,111 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Hellhound gallop preview</title>
+<style>
+  body { margin: 0; background: #0d0a0c; color: #d8c8c0; font: 14px system-ui, sans-serif; }
+  header { padding: 12px 16px; }
+  header b { color: #ff8a3d; }
+  .lane { position: relative; height: 150px; border-top: 1px solid #2a1712; overflow: hidden;
+          background: linear-gradient(#140d0e, #1d0f0c 70%, #2a120a); }
+  .ground { position: absolute; left: 0; right: 0; bottom: 0; height: 22px;
+            background: repeating-linear-gradient(90deg, #3a160b 0 60px, #5a1f0a 60px 64px, #2b1209 64px 140px, #ff5a10 140px 142px, #2b1209 142px 220px);
+            box-shadow: 0 -6px 18px rgba(255, 80, 10, .25) inset; }
+  .dog { position: absolute; top: 0; left: 0; width: 240px; height: 160px; }
+  canvas.fx { position: absolute; inset: 0; pointer-events: none; }
+  .tag { position: absolute; left: 10px; top: 8px; color: #ffb27a; text-shadow: 0 1px 3px #000; z-index: 2; }
+  .tag b { display: block; font-size: 15px; }
+  .tag span { font-size: 12px; color: #b89a8a; }
+  .tag select { margin-top: 4px; font-size: 11px; background: #1c1214; color: #ffb27a; border: 1px solid #4a2a1e; border-radius: 4px; }
+  .controls { padding: 8px 16px; }
+  .controls label { margin-right: 18px; }
+  .controls a { color: #ff9a5a; }
+</style></head>
+<body>
+<header><b>Hellhound Derby: gallop preview</b> · each hound's own rendered loop, played in place while the ground scrolls. The lava glow colour is a CSS hue shift; the effects are drawn live from points the renderer records on every frame (paws, tail tip, mouth, eye, back), so trails stay on the track.</header>
+<div class="controls">
+  <label>Strides per second <input id="sps" type="range" min="1" max="4" step="0.1" value="2.5"> <span id="spsv">2.5</span></label>
+  <label><input id="fxon" type="checkbox" checked> effects</label>
+  <label><input id="dots" type="checkbox"> show anchor points</label>
+  <label><input id="pause" type="checkbox"> pause</label>
+  <a href="race.html">race prototype →</a>
+</div>
+<div id="lanes"></div>
+<script>
+/*FX*/
+const CFG = /*ROSTER*/null;
+const N = CFG.frames, LANE_H = 150, IMG_W = 240, IMG_H = 160, GROUND = LANE_H - 12;
+const $ = id => document.getElementById(id);
+const { FX, drawFX } = HoundFX;
+
+const lanes = $("lanes");
+const all = CFG.hounds.map(h => {
+  const frames = [];
+  for (let i = 0; i < N; i++) { const im = new Image(); im.src = `${h.id}/gallop_${String(i).padStart(2, "0")}.png`; frames.push(im.src); }
+  const d = document.createElement("div"); d.className = "lane";
+  d.innerHTML = `<div class="ground"></div><img class="dog" alt=""><canvas class="fx"></canvas><div class="tag"><b></b><span></span><br><select></select></div>`;
+  d.querySelector(".tag b").textContent = h.name;
+  d.querySelector(".tag span").textContent = h.note;
+  const sel = d.querySelector("select");
+  const label = list => list.length ? list.join(" + ").replace(/_/g, " ") : "no effect";
+  for (const [value, text] of [["", `${label(h.fx || [])} (its own)`], ...Object.keys(FX).map(k => [k, label([k])]), ["-", "no effect"]]) {
+    const o = document.createElement("option"); o.value = value; o.textContent = text; sel.appendChild(o);
+  }
+  if (h.hue || h.sat != null) d.querySelector(".dog").style.filter = `hue-rotate(${h.hue || 0}deg) saturate(${h.sat ?? 1.2})`;
+  lanes.appendChild(d);
+  const A = h.anchors, k = IMG_W / A.w;
+  const L = { h, frames, cadence: h.cadence, hue: h.hue || 0, fx: (h.fx || []).map(n => FX[n]).filter(Boolean),
+    lane: d, img: d.querySelector(".dog"), canvas: d.querySelector("canvas"), ground: GROUND, groundEl: d.querySelector(".ground"),
+    off: Math.random(), x: 0, parts: [], f: 0, left: 0, top: GROUND - A.ground * k, speed: 0, dx: 0, size: 1, stride: A.stride * k };
+  L.pt = key => { const fr = A.frames[L.f], p = fr[key] || fr.tail; return [L.left + p[0] * k, L.top + p[1] * k, p[2]]; };
+  sel.onchange = () => {
+    const v = sel.value;
+    L.fx = (v === "" ? (h.fx || []) : v === "-" ? [] : [v]).map(n => FX[n]).filter(Boolean);
+    L.parts.length = 0; L.flies = null;
+  };
+  return L;
+});
+const sps = $("sps"), spsv = $("spsv"), pause = $("pause"), fxon = $("fxon"), dots = $("dots");
+sps.oninput = () => spsv.textContent = sps.value;
+let last = performance.now(), phase = 0;
+function tick(t) {
+  const dt = Math.min(.05, (t - last) / 1000); last = t;
+  const run = !pause.checked;
+  if (run) phase += dt * +sps.value;
+  const W = innerWidth;
+  for (const L of all) {
+    const cv = L.canvas;
+    if (cv.width !== L.lane.clientWidth) { cv.width = L.lane.clientWidth; cv.height = LANE_H; }
+    const ctx = cv.getContext("2d"); ctx.clearRect(0, 0, cv.width, cv.height);
+    const prev = L.f;
+    L.f = Math.floor(((phase * L.cadence + L.off) % 1) * N) % N;
+    L.speed = run ? +sps.value * L.cadence * L.stride : 0;      // the track moves as fast as a planted paw slides back
+    L.img.src = L.frames[L.f];
+    if (run) L.x = (L.x + dt * L.speed) % 220;
+    L.groundEl.style.backgroundPosition = `${-L.x}px 0`;
+    const left = (W - IMG_W) / 2 + Math.sin(t / 1700 + L.off * 6) * W * 0.18;
+    L.dx = left - L.left; L.left = left;
+    L.img.style.transform = `translate(${L.left}px, ${L.top}px)`;
+    if (fxon.checked && run) {
+      // paws that touched down since the last frame we showed
+      const downs = [];
+      for (let s = prev; s !== L.f; s = (s + 1) % N) {
+        const a = L.h.anchors.frames[s], b = L.h.anchors.frames[(s + 1) % N];
+        for (const p of ["LH", "RH", "LF", "RF"]) if (!a[p][2] && b[p][2]) downs.push(p);
+      }
+      const pts = downs.map(p => L.pt(p));
+      for (const fx of L.fx) { if (fx.tick) fx.tick(L, dt); if (fx.step && pts.length) fx.step(L, pts); }
+    }
+    if (fxon.checked) drawFX(L, ctx, run ? dt : 0); else L.parts.length = 0;
+    if (dots.checked) {
+      ctx.globalCompositeOperation = "source-over";
+      for (const [key, p] of Object.entries(L.h.anchors.frames[L.f])) {
+        const q = L.pt(key);
+        ctx.fillStyle = p.length > 2 ? (p[2] ? "#4f4" : "#f44") : "#4cf";
+        ctx.beginPath(); ctx.arc(q[0], q[1], 3, 0, 6.283); ctx.fill();
+      }
+    }
+  }
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+</script>
+</body></html>
