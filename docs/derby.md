@@ -144,6 +144,11 @@ a kick or yapping hardly any; a flaming arse ends up as a booster. The crowd als
 throws plenty that misses and lies around on the track (`show_crowd` hides those
 lobs; junk that hits a hound is part of the race and always shows).
 
+**The crowd.** Three tiers of monsters fill the stands behind the track. They
+cheer, pump their fists, jeer and clap, calmer during the lineup and wilder as
+the finish nears. Every piece of junk is thrown by someone in the front row: you
+see the throw, and the junk leaves that monster's hand.
+
 **Trash talk.** The hounds only talk when one passes another (with a cooldown),
 when something happens to them, and at the finish. It's hard language by
 default; streaks feed it ("2 in a row, motherfuckers!"). The **clean language**
@@ -335,5 +340,13 @@ Both models are **CC BY 4.0**:
 - "Dog (Canis familiaris) Dolichcephalic" by The University of Edinburgh (CT courtesy of
   Dr. Tobias Schwarz, prepared by Brian Mather), https://sketchfab.com/3d-models/5d8d86a270b64f05aab45c3d09f350a6
   (Hungry Harry's skull).
+
+The crowd is twelve **Mixamo** characters (Adobe, https://www.mixamo.com), each
+a sprite sheet (`static/crowd/<id>.webp`: idle, cheer, fist pump, jeer, clap and
+the throw, 8 frames each; `derby_crowd.json` says where the feet and the throwing
+hand are). Adobe lets Mixamo characters be used royalty free in commercial
+projects as long as the character files themselves aren't handed out, so only
+the rendered frames ship. The moves were posed for Hexcast, without Mixamo's
+animations.
 
 The credits ship with the add-on in `static/CREDITS.md` and its help page.

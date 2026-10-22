@@ -58,6 +58,40 @@ for h in roster:
     out.append(entry)
     print("SHEET", h["id"], n, "frames", os.path.getsize(path) // 1024, "KB")
 
+# the crowd (scripts/render_crowd.py renders it next to the gallops): one sheet per monster, a row per move
+CROWD = os.path.join(os.path.dirname(os.path.normpath(SRC)), "crowd")
+people, moves = [], None
+for cid in sorted(os.listdir(CROWD)) if os.path.isdir(CROWD) else []:
+    d = os.path.join(CROWD, cid)
+    if not os.path.isfile(os.path.join(d, "anchors.json")):
+        continue
+    an = json.load(open(os.path.join(d, "anchors.json"), encoding="utf-8"))
+    fw, fh, moves = an["w"], an["h"], an["anims"]
+    cols = max(n for _, n, _ in moves)
+    sheet = np.zeros((fh * len(moves), fw * cols, 4), dtype=np.float32)
+    for r, (name, n, _) in enumerate(moves):
+        for i in range(n):
+            im = bpy.data.images.load(os.path.join(d, f"{name}_{i}.png"))
+            im.colorspace_settings.name = "sRGB"
+            px = np.array(im.pixels[:], dtype=np.float32).reshape(fh, fw, 4)
+            y0 = fh * len(moves) - (r + 1) * fh
+            sheet[y0:y0 + fh, i * fw:(i + 1) * fw] = px
+            bpy.data.images.remove(im)
+    os.makedirs(os.path.join(DST, "crowd"), exist_ok=True)
+    img = bpy.data.images.new(f"crowd_{cid}", fw * cols, fh * len(moves), alpha=True)
+    img.colorspace_settings.name = "sRGB"
+    img.pixels[:] = sheet.ravel()
+    path = os.path.join(DST, "crowd", f"{cid}.webp")
+    img.save_render(path, scene=sc)
+    bpy.data.images.remove(img)
+    people.append({"id": cid, "file": f"crowd/{cid}.webp", "ground": an["ground"], "hips": an["hips"], "top": an["top"],
+                   "hand": an["hand"]})
+    print("CROWD", cid, os.path.getsize(path) // 1024, "KB")
+if people:
+    with open(os.path.join(DST, "derby_crowd.json"), "w", encoding="utf-8", newline="\n") as f:
+        json.dump({"_about": "Hellhound Derby crowd, written by art/derby/scripts/export_assets.py from art/derby/out/crowd",
+                   "w": fw, "h": fh, "release": an["release"], "moves": moves, "people": people}, f, separators=(",", ":"))
+
 with open(os.path.join(DST, "derby_hounds.json"), "w", encoding="utf-8", newline="\n") as f:
     json.dump({"_about": "Hellhound Derby roster, written by art/derby/scripts/export_assets.py - edit art/derby/hounds.json and re-export",
                "hounds": out}, f, separators=(",", ":"), ensure_ascii=False)

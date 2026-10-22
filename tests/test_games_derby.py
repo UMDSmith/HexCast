@@ -341,9 +341,14 @@ def test_the_addon_registers_like_the_other_games(w):
     assert g["overlay"]["script"].startswith("/plugins/games_derby/static/derby.js")
     assert g["overlay"]["stateful"] is True and g["overlay"]["appearance"] == list(w.derby.Derby.APPEARANCE)
     for url in (g["panel_js"], g["overlay"]["script"], "/plugins/games_derby/static/derby_hounds.json",
-                "/plugins/games_derby/static/derby_lines.json", "/plugins/games_derby/static/hounds/cinder.webp"):
+                "/plugins/games_derby/static/derby_lines.json", "/plugins/games_derby/static/hounds/cinder.webp",
+                "/plugins/games_derby/static/crowd/warrok.webp"):
         r = w.client.get(url)
         assert r.status_code == 200 and len(r.content) > 2000, url
+    crowd = w.client.get("/plugins/games_derby/static/derby_crowd.json").json()
+    assert len(crowd["people"]) >= 6 and [m[0] for m in crowd["moves"]][-1] == "throw"
+    for p in crowd["people"]:                                   # every sheet the crowd file names is there
+        assert w.client.get("/plugins/games_derby/static/" + p["file"]).status_code == 200, p["id"]
     api = w.client.get("/games/api").json()
     assert "derby" in api["games"] and "start" in api["derby"] and "bet" in api["derby"] and "form" in api["derby"]
     assert api["appearance_keys"]["derby"] == list(w.derby.Derby.APPEARANCE)
@@ -367,7 +372,7 @@ def test_manifest_help_docs_and_credits(w):
     assert "/games/api/derby/bet" in docs and "form" in docs.lower() and "photo finish" in docs.lower()
     # the models are CC-BY: the credits ship with the add-on
     for text in (help_html, (DERBY_DIR / "static" / "CREDITS.md").read_text(encoding="utf-8")):
-        assert "shadow798" in text and "University of Edinburgh" in text and "CC BY 4.0" in text
+        assert "shadow798" in text and "University of Edinburgh" in text and "CC BY 4.0" in text and "Mixamo" in text
     entry = w.world.host.catalog.entries()["games_derby"]
     assert entry.manifest.parent == "games" and "games" in entry.manifest.requires
 
@@ -424,6 +429,49 @@ def test_the_overlay_replays_exactly_the_servers_race(w):
     assert out.returncode == 0, out.stderr
     res = json.loads(out.stdout.strip().splitlines()[-1])
     assert res["checked"] == 12 * 6 * 4 and res["bad"] == [] and res["worst"] < 1e-6, res
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_the_crowd_throws_the_junk(w):
+    """Every piece of junk (the lobs and the scripted hits) is thrown by a monster in the front row: it plays its
+    throw with the release frame at the moment the junk leaves, and the junk starts at its hand, in the stands."""
+    d = w.derby
+    rng = random.Random(5)
+    scripts = [d.build_script(field(), rng.sample(range(6), 6), 45, rng.getrandbits(31)) for _ in range(6)]
+    runner = r"""
+      const API = require(process.argv[1]), fs = require('fs'), path = require('path');
+      const C = JSON.parse(fs.readFileSync(path.join(path.dirname(process.argv[1]), 'derby_crowd.json'), 'utf8'));
+      C.row = {}; C.moves.forEach((m, i) => { C.row[m[0]] = i; });
+      API.ASSETS.crowd = C;
+      const K = API.crowd, cfg = Object.assign({}, API.DEFAULTS), bad = [];
+      let n = 0;
+      for (const script of JSON.parse(fs.readFileSync(0, 'utf8'))) {
+        const R = API.buildRace({ id: 'crowd-test', field: [], script });
+        const junk = R.lobs.concat(R.hazards.filter(z => z.kind === 'thrown'));
+        for (const j of junk) {
+          n++;
+          const mv = K.folkMove(R, K.FRONT, j.th.m, j.t0 + 0.01, 'race', cfg);
+          if (mv[0] !== 'throw' || mv[1] !== C.release) bad.push(['move', script.seed, j.t0, mv]);
+          const early = K.folkMove(R, K.FRONT, j.th.m, j.t0 - 0.2, 'race', cfg);
+          if (early[0] !== 'throw' || early[1] >= C.release) bad.push(['windup', script.seed, j.t0, early]);
+          API.raceAt(R, j.t0);
+          const at = K.throwFrom(j.th, R.cam);
+          if (!(at[0] > -60 && at[0] < API.BASE_W + 60 && at[1] > 440 && at[1] < 600)) bad.push(['hand', script.seed, j.t0, at]);
+        }
+        cfg.show_crowd = false;     // lobs hidden: nobody mimes a throw for them (a scripted hit still is thrown)
+        for (const j of R.lobs) {
+          const mv = K.folkMove(R, K.FRONT, j.th.m, j.t0 + 0.01, 'race', cfg);
+          if (mv[0] === 'throw' && !(R.throws[j.th.m.i] || []).some(x => !x.lob && Math.abs(x.t0 - j.t0) < 0.6)) bad.push(['hidden', script.seed, j.t0]);
+        }
+        cfg.show_crowd = true;
+      }
+      console.log(JSON.stringify({ n, bad: bad.slice(0, 10) }));
+    """
+    out = subprocess.run([NODE, "-e", runner, str(DERBY_DIR / "static" / "derby.js")], input=json.dumps(scripts),
+                         capture_output=True, text=True, timeout=120)
+    assert out.returncode == 0, out.stderr
+    res = json.loads(out.stdout.strip().splitlines()[-1])
+    assert res["n"] > 30 and res["bad"] == [], res
 
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")

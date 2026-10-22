@@ -42,15 +42,18 @@
     inferno: { sky: ['#0b0204', '#2a0705', '#5a1406'], glow: ['rgba(255,110,30,.55)', 'rgba(200,40,10,.25)', 'rgba(80,0,0,0)'], peaks: '#170405',
       fall: [255, 115, 20], stands: '#1c0807', crowd: ['#2c0c0a', '#3a100c'], eyes: 'rgba(255,90,20,.8)', posts: '#3c1410',
       track: ['#3a170e', '#5a2412', '#6e2c14'], lines: 'rgba(255,120,60,.18)', marks: 'rgba(255,170,120,.55)', banner: '#7a0e08',
-      accent: '#ff8a3d', hot: '#ff5a1a', gold: '#ffd27a', ink: '#e8d6c8', dim: '#b8a49a', panel: 'rgba(20,6,4,.9)', dark: 'rgba(10,2,2,.7)' },
+      accent: '#ff8a3d', hot: '#ff5a1a', gold: '#ffd27a', ink: '#e8d6c8', dim: '#b8a49a', panel: 'rgba(20,6,4,.9)', dark: 'rgba(10,2,2,.7)',
+      shade: '28,8,7', tint: 'rgba(70,12,0,.18)' },
     abyss: { sky: ['#020409', '#06122a', '#0b2a52'], glow: ['rgba(70,160,255,.5)', 'rgba(20,60,200,.22)', 'rgba(0,10,60,0)'], peaks: '#050a18',
       fall: [70, 170, 255], stands: '#070c1c', crowd: ['#0b1430', '#0f1a3c'], eyes: 'rgba(110,210,255,.85)', posts: '#13203a',
       track: ['#121a2c', '#1a2640', '#22304e'], lines: 'rgba(110,180,255,.18)', marks: 'rgba(170,210,255,.55)', banner: '#0c3a7a',
-      accent: '#6ec3ff', hot: '#2a8aff', gold: '#bfe6ff', ink: '#d2deee', dim: '#93a6c0', panel: 'rgba(4,8,20,.9)', dark: 'rgba(2,4,12,.72)' },
+      accent: '#6ec3ff', hot: '#2a8aff', gold: '#bfe6ff', ink: '#d2deee', dim: '#93a6c0', panel: 'rgba(4,8,20,.9)', dark: 'rgba(2,4,12,.72)',
+      shade: '7,12,28', tint: 'rgba(20,60,150,.42)' },
     sulfur: { sky: ['#090802', '#2a2205', '#57440a'], glow: ['rgba(255,220,60,.5)', 'rgba(200,160,10,.22)', 'rgba(60,40,0,0)'], peaks: '#141003',
       fall: [255, 215, 40], stands: '#1c1806', crowd: ['#2c260a', '#3a320c'], eyes: 'rgba(255,230,60,.85)', posts: '#3a3210',
       track: ['#3a3210', '#544614', '#6a5818'], lines: 'rgba(255,230,90,.18)', marks: 'rgba(255,235,150,.55)', banner: '#6a5206',
-      accent: '#ffd84a', hot: '#e6b800', gold: '#fff0a0', ink: '#ece4c4', dim: '#bdb38f', panel: 'rgba(18,14,3,.9)', dark: 'rgba(10,8,2,.72)' }
+      accent: '#ffd84a', hot: '#e6b800', gold: '#fff0a0', ink: '#ece4c4', dim: '#bdb38f', panel: 'rgba(18,14,3,.9)', dark: 'rgba(10,8,2,.72)',
+      shade: '28,24,6', tint: 'rgba(110,90,0,.3)' }
   };
   var TH = THEMES.inferno;     // the theme being drawn (set per frame from the config)
 
@@ -86,7 +89,7 @@
     } catch (e) { /* not in a page */ }
     return '/plugins/games_derby/static/';
   })();
-  var ASSETS = { state: 'idle', roster: [], byId: {}, lines: {}, waiting: [] };
+  var ASSETS = { state: 'idle', roster: [], byId: {}, lines: {}, crowd: null, waiting: [] };
   function getJson(url, cb) {
     try {
       var x = new root.XMLHttpRequest();
@@ -101,16 +104,16 @@
     ASSETS.waiting.push(cb);
     if (ASSETS.state === 'loading' || !doc) return;
     ASSETS.state = 'loading';
-    var left = 2;
+    var left = 3;
     function done() {
       if (--left) return;
-      var imgs = ASSETS.roster.length, k;
+      var sheets = ASSETS.roster.concat(ASSETS.crowd ? ASSETS.crowd.people : []), imgs = sheets.length, k;
       function one() { if (--imgs <= 0) { ASSETS.state = 'ready'; var w = ASSETS.waiting; ASSETS.waiting = []; for (k = 0; k < w.length; k++) w[k](); } }
       if (!imgs) { imgs = 1; one(); return; }
-      ASSETS.roster.forEach(function (h) {
+      sheets.forEach(function (h) {
         var im = new root.Image();
         im.onload = im.onerror = one;
-        im.src = BASE_URL + h.sheet.file;
+        im.src = BASE_URL + (h.sheet ? h.sheet.file : h.file);
         h.img = im;
       });
     }
@@ -120,6 +123,13 @@
       done();
     });
     getJson(BASE_URL + 'derby_lines.json', function (d) { ASSETS.lines = d || {}; done(); });
+    getJson(BASE_URL + 'derby_crowd.json', function (d) {   // the monsters in the stands (optional: silhouettes without)
+      if (d && d.people && d.people.length) {
+        d.row = {}; d.moves.forEach(function (m, i) { d.row[m[0]] = i; });
+        ASSETS.crowd = d;
+      }
+      done();
+    });
   }
   function hound(id) { return ASSETS.byId[id] || null; }
   function lines(a, b) { var v = ASSETS.lines[a]; if (b != null) v = v && v[b]; return Array.isArray(v) ? v : []; }
@@ -180,6 +190,37 @@
   for (var pi = 0; pi < 40; pi++) PEAKS.push({ x: pi * 160, h: 60 + bg() * 160 });
   for (var ci = 0; ci < 120; ci++) CROWD.push({ x: ci * 55 + (bg() - 0.5) * 20, y: Math.floor(bg() * 3), k: 0.8 + bg() * 0.4, ph: bg() * 6, horn: bg() < 0.7 });
   var JUNK_NAMES = ['BONE', 'SKULL', 'FLAMING TRASH BAG', 'MUG OF BLOOD', 'TOILET', 'ROTTEN EYEBALL', 'SEVERED HAND'];
+  // the stands: three tiers of monsters (derby_crowd.json), back to front. Each stands behind a ledge that hides
+  // its legs (feet: where its feet are, ledge: the edge in front of it), smaller and slower (parallax) further back
+  var TIERS = [
+    { feet: 531, ledge: 503, s: 0.62, par: 0.30, gap: 31, shade: 0.42 },
+    { feet: 562, ledge: 530, s: 0.74, par: 0.33, gap: 36, shade: 0.26 },
+    { feet: 597, ledge: 557, s: 0.88, par: 0.36, gap: 42, shade: 0 }
+  ];
+  var FOLK_P = 6600, LAYER_Y = 420, LAYER_H = 190, FRONT = TIERS.length - 1;
+  TIERS.forEach(function (tr) {
+    var p = 0, x;
+    tr.folk = [];
+    for (x = bg() * tr.gap; x < FOLK_P - tr.gap; x += tr.gap * (0.75 + bg() * 0.5)) {
+      p += 1 + Math.floor(bg() * 5);     // which monster: never the same one twice in a row
+      tr.folk.push({ i: tr.folk.length, x: x, p: p, flip: bg() < 0.5, off: bg() * 30, fps: 0.85 + bg() * 0.3,
+        k: 0.94 + bg() * 0.12, dy: (bg() - 0.5) * 4, hot: bg() });
+    }
+  });
+  // what the crowd does: the odds of each move (idle, cheer, pump, jeer, clap) and how fast they play
+  var MOVES = ['idle', 'cheer', 'pump', 'jeer', 'clap'];
+  var MOODS = { calm: [5, 1, 1, 1, 3], race: [1, 3, 3, 3, 2], climax: [0, 5, 4, 2, 1], after: [1, 2, 2, 2, 3] };
+  var MOVE_FPS = { idle: 6, cheer: 11, pump: 11, jeer: 13, clap: 10, throw: 14 };
+  function folkX(tr, m, cam) {   // a monster's place on screen (the pattern repeats every FOLK_P px)
+    var x = m.x - cam * tr.par;
+    x = ((x % FOLK_P) + FOLK_P) % FOLK_P;
+    return x > BASE_W + 80 ? x - FOLK_P : x;
+  }
+  function hash3(a, b, c) {
+    var x = (Math.imul(a, 374761393) + Math.imul(b, 668265263) + Math.imul(c, 1442695041)) | 0;
+    x = Math.imul(x ^ (x >>> 13), 1274126177); x ^= x >>> 16;
+    return (x >>> 0) / 4294967296;
+  }
 
   /*FX:BEGIN*/
   // ---------------------------------------------------------------- effects (fire prints, slime, lightning, ...)
@@ -392,14 +433,24 @@
     var order = S.order || [], winT = order.length ? rr[order[0]].T : Math.max.apply(null, rr.map(function (r) { return r.T; }));
     var lastT = Math.max.apply(null, rr.map(function (r) { return r.T; }));
     R.winT = winT; R.lastT = lastT;
+    // who throws it: the monster in the front row nearest where the junk starts plays its throw, and the junk
+    // leaves from its hand. {m, shift}: its screen x at camera cam is m.x - cam * par + shift
+    R.throws = {};
+    function thrower(t0, x0, lob) {
+      var tr = TIERS[FRONT], cam0 = camAt(R, t0), want = clamp(sx(x0, S_FAR * 0.75, cam0), 90, BASE_W - 90), best = tr.folk[0], bd = 1e9;
+      tr.folk.forEach(function (m) { var d = Math.abs(folkX(tr, m, cam0) - want); if (d < bd) { bd = d; best = m; } });
+      (R.throws[best.i] = R.throws[best.i] || []).push({ t0: t0, lob: lob });
+      return { m: best, shift: folkX(tr, best, cam0) - (best.x - cam0 * tr.par) };
+    }
     // hazards and the scripted junk (the thrown arcs from the seed)
     R.events.forEach(function (e) {
       var a = rr[e.a];
       if (e.hazard) R.hazards.push({ kind: e.hazard, x: xAt(a, e.t) + e.at, row: a.row, t: e.t, dur: e.dur });
       if (e.thrown) {
         var Rw = ROWS[a.row % ROWS_N], fly = e.thrown === 'hit' ? 0.9 : 1.1, tl = e.thrown === 'hit' ? e.t : e.t - 0.7, t0 = tl - fly;
+        var x0 = xAt(a, t0) + (rng() * 1000 - 300);
         R.hazards.push({ kind: 'thrown', mode: e.thrown, obj: e.obj, t0: t0, tl: tl, t: e.t, dur: e.dur, row: a.row, eats: e.type === 'junkfood',
-          x0: xAt(a, t0) + (rng() * 1000 - 300), x1: e.thrown === 'hit' ? xAt(a, e.t) - 170 : xAt(a, e.t) + (e.at || 70),
+          x0: x0, x1: e.thrown === 'hit' ? xAt(a, e.t) - 170 : xAt(a, e.t) + (e.at || 70), th: thrower(t0, x0, false),
           y1: e.thrown === 'hit' ? Rw.y - 120 * Rw.s : Rw.y - 8 * Rw.s, spin: (6 + rng() * 8) * (rng() < 0.5 ? -1 : 1) });
       }
     });
@@ -407,8 +458,8 @@
     for (var lt = 1 + rng(); lt < winT - 1; lt += 1 + rng() * 1.2) {
       var live = rr.filter(function (r) { var x = xAt(r, lt); return x > 400 && x < D - 1500; });
       if (!live.length) continue;
-      var lr = live[Math.floor(rng() * live.length)], lfly = 0.9 + rng() * 0.4, lx = xAt(lr, lt);
-      R.lobs.push({ obj: pickR(rng, JUNK_NAMES), t0: lt, tl: lt + lfly, row: lr.row, x0: lx + rng() * 1000 - 300,
+      var lr = live[Math.floor(rng() * live.length)], lfly = 0.9 + rng() * 0.4, lx = xAt(lr, lt), lobj = pickR(rng, JUNK_NAMES), lx0 = lx + rng() * 1000 - 300;
+      R.lobs.push({ obj: lobj, t0: lt, tl: lt + lfly, row: lr.row, x0: lx0, th: thrower(lt, lx0, true),
         x1: xAt(lr, lt + lfly) + rng() * 800 - 380, spin: (6 + rng() * 8) * (rng() < 0.5 ? -1 : 1), near: lr, says: rng() < 0.25 ? pickR(rng, lines('react', 'miss').length ? lines('react', 'miss') : ['HA! MISSED!']) : null });
     }
     // who says what: the events' own lines (picked by the server), trash talk when one passes another, the
@@ -531,7 +582,72 @@
   }
 
   // ---------------------------------------------------------------- drawing: the scene
-  function drawBackdrop(c, R, cam, t) {
+  // ---------------------------------------------------------------- the crowd (the monsters in the stands)
+  var CL = null;   // the crowd's own layer: drawn tier by tier, the back tiers darker, then tinted to the theme
+  function moodAt(R, t) {
+    if (!R) return 'calm';
+    if (t < R.winT - 4) return 'race';
+    return t < R.winT + 4 ? 'climax' : 'after';
+  }
+  function folkPerson(m) { var ppl = ASSETS.crowd.people; return ppl[m.p % ppl.length]; }
+  function folkMove(R, ti, m, t, mood, cfg) {   // [move, frame] for one monster at time t
+    var CW = ASSETS.crowd, th = ti === FRONT && R && R.throws[m.i], k, f, i;
+    if (th) for (k = 0; k < th.length; k++) {      // a thrower: the junk leaves its hand at t0
+      if (th[k].lob && !cfg.show_crowd) continue;
+      f = Math.floor((t - th[k].t0) * MOVE_FPS.throw) + CW.release;
+      if (f >= 0 && f < CW.moves[CW.row.throw][1]) return ['throw', f];
+    }
+    // otherwise a move per stretch of 3.2 s, picked by the mood (the hot-headed ones jeer more)
+    var len = 3.2, seg = Math.floor((t + m.off) / len), w = MOODS[mood], ws = [], sum = 0, x;
+    for (i = 0; i < MOVES.length; i++) { ws.push(w[i] * (MOVES[i] === 'jeer' ? 0.5 + m.hot : MOVES[i] === 'cheer' ? 1.5 - m.hot : 1)); sum += ws[i]; }
+    x = hash3(ti + 1, m.i, seg) * sum;
+    for (i = 0; i < MOVES.length - 1 && (x -= ws[i]) > 0; i++) { /* the pick */ }
+    var mv = MOVES[i], fps = MOVE_FPS[mv] * m.fps * (mood === 'climax' ? 1.25 : 1);
+    return [mv, Math.floor((t + m.off - seg * len) * fps) % CW.moves[CW.row[mv]][1]];
+  }
+  function throwFrom(th, cam) {   // where thrown junk starts: the thrower's hand, on screen
+    var tr = TIERS[FRONT], m = th.m, x = m.x - cam * tr.par + th.shift, s = tr.s * m.k, CW = ASSETS.crowd, pe = CW && folkPerson(m);
+    if (!pe || !pe.hand) return [x, tr.feet - 75 * s];
+    return [x + (m.flip ? -1 : 1) * (pe.hand[0] - CW.w / 2) * s, tr.feet + m.dy - (pe.ground - pe.hand[1]) * s];
+  }
+  function drawCrowd(c, R, cam, t, cfg) {
+    var CW = ASSETS.crowd, mood = moodAt(R, t), w = CW.w, h = CW.h;
+    if (!CL) { CL = doc.createElement('canvas'); CL.width = BASE_W; CL.height = LAYER_H; }
+    var cc = CL.getContext('2d');
+    cc.setTransform(1, 0, 0, 1, 0, 0); cc.clearRect(0, 0, BASE_W, LAYER_H);
+    TIERS.forEach(function (tr, ti) {
+      tr.folk.forEach(function (m) {
+        var x = folkX(tr, m, cam), pe = folkPerson(m);
+        if (x < -60 || x > BASE_W + 60 || !pe.img || !pe.img.complete || !pe.img.naturalWidth) return;
+        var mv = folkMove(R, ti, m, t, mood, cfg), s = tr.s * m.k, fx = mv[1] * w, fy = CW.row[mv[0]] * h, top = tr.feet + m.dy - pe.ground * s - LAYER_Y;
+        if (m.flip) { cc.setTransform(-1, 0, 0, 1, x, 0); cc.drawImage(pe.img, fx, fy, w, h, -w / 2 * s, top, w * s, h * s); cc.setTransform(1, 0, 0, 1, 0, 0); }
+        else cc.drawImage(pe.img, fx, fy, w, h, x - w / 2 * s, top, w * s, h * s);
+      });
+      // the ledge in front of this tier hides its legs (the front one is the wall onto the track)
+      var ly = tr.ledge - LAYER_Y, x;
+      if (ti < FRONT) {
+        cc.fillStyle = 'rgb(' + TH.shade + ')'; cc.fillRect(0, ly, BASE_W, LAYER_H - ly);
+        cc.fillStyle = 'rgba(255,190,150,.07)'; cc.fillRect(0, ly, BASE_W, 2);
+      } else {
+        var wg = cc.createLinearGradient(0, ly, 0, LAYER_H);
+        wg.addColorStop(0, TH.posts); wg.addColorStop(1, 'rgb(' + TH.shade + ')');
+        cc.fillStyle = wg; cc.fillRect(0, ly, BASE_W, LAYER_H - ly);
+        cc.fillStyle = 'rgba(255,200,160,.16)'; cc.fillRect(0, ly, BASE_W, 3);
+        cc.fillStyle = 'rgba(0,0,0,.35)';
+        for (x = ((-cam * tr.par) % 150 + 150) % 150 - 150; x < BASE_W; x += 150) cc.fillRect(x, ly + 3, 3, LAYER_H - ly);
+      }
+      if (tr.shade) {   // further back is darker
+        cc.globalCompositeOperation = 'source-atop';
+        cc.fillStyle = 'rgba(' + TH.shade + ',' + tr.shade + ')'; cc.fillRect(0, 0, BASE_W, LAYER_H);
+        cc.globalCompositeOperation = 'source-over';
+      }
+    });
+    cc.globalCompositeOperation = 'source-atop'; cc.fillStyle = TH.tint; cc.fillRect(0, 0, BASE_W, LAYER_H);
+    cc.globalCompositeOperation = 'source-over';
+    c.drawImage(CL, 0, LAYER_Y);
+  }
+
+  function drawBackdrop(c, R, cam, t, cfg) {
     var D = R ? R.D : 31000, g = c.createLinearGradient(0, 0, 0, TRACK_TOP), i, rep, p, x, y, k, a, b, n, j;
     g.addColorStop(0, TH.sky[0]); g.addColorStop(0.55, TH.sky[1]); g.addColorStop(1, TH.sky[2]);
     c.fillStyle = g; c.fillRect(0, 0, BASE_W, TRACK_TOP + 2);
@@ -555,8 +671,13 @@
     }
     c.globalCompositeOperation = 'source-over';
     var so = -(cam * 0.35) % 6600;
-    c.fillStyle = TH.stands; c.fillRect(0, 490, BASE_W, 112);
-    for (rep = -1; rep < 2; rep++) for (i = 0; i < CROWD.length; i++) {
+    if (ASSETS.crowd && doc) {
+      c.fillStyle = TH.stands; c.fillRect(0, 478, BASE_W, TRACK_TOP + 2 - 478);
+      drawCrowd(c, R, cam, t, cfg || DEFAULTS);
+    } else {
+      c.fillStyle = TH.stands; c.fillRect(0, 490, BASE_W, 112);
+    }
+    if (!ASSETS.crowd) for (rep = -1; rep < 2; rep++) for (i = 0; i < CROWD.length; i++) {   // (no sprites: silhouettes)
       var cr = CROWD[i]; x = so + rep * 6600 + cr.x;
       if (x < -40 || x > BASE_W + 40) continue;
       y = 528 + cr.y * 22 + Math.sin(t * 6 + cr.ph) * 4; k = cr.k;
@@ -685,8 +806,8 @@
         if (t < z.t0) break;
         var X, Y, sc, rot = (t - z.t0) * z.spin;
         if (t < z.tl) {
-          k = (t - z.t0) / (z.tl - z.t0); var s0 = S_FAR * 0.75;
-          sc = s0 + (Rw.s - s0) * k; X = sx(z.x0 + (z.x1 - z.x0) * k, sc, cam); Y = 530 + (z.y1 - 530) * k - 340 * 4 * k * (1 - k);
+          k = (t - z.t0) / (z.tl - z.t0); var s0 = S_FAR * 0.75, from = throwFrom(z.th, cam);
+          sc = s0 + (Rw.s - s0) * k; X = from[0] + (sx(z.x1, Rw.s, cam) - from[0]) * k; Y = from[1] + (z.y1 - from[1]) * k - 340 * 4 * k * (1 - k);
         } else if (z.mode === 'hit') {
           if (t - z.tl > 1.6) break;
           k = Math.min(1, (t - z.tl) / 0.8);
@@ -724,8 +845,8 @@
     var Rw = ROWS[j.row % ROWS_N], k, X, Y, sc;
     if (t < j.tl) {
       if (!air) return;
-      k = (t - j.t0) / (j.tl - j.t0); var s0 = S_FAR * 0.75; sc = s0 + (Rw.s - s0) * k;
-      X = sx(j.x0 + (j.x1 - j.x0) * k, sc, cam); Y = 530 + (Rw.y - 8 * Rw.s - 530) * k - 340 * 4 * k * (1 - k);
+      k = (t - j.t0) / (j.tl - j.t0); var s0 = S_FAR * 0.75, from = throwFrom(j.th, cam); sc = s0 + (Rw.s - s0) * k;
+      X = from[0] + (sx(j.x1, Rw.s, cam) - from[0]) * k; Y = from[1] + (Rw.y - 8 * Rw.s - from[1]) * k - 340 * 4 * k * (1 - k);
       drawJunk(c, j.obj, X, Y, sc / SPRK, (t - j.t0) * j.spin);
       if (dt > 0 && j.obj === 'FLAMING TRASH BAG' && FXR() < 0.6) flame(R.lava, X, Y - 20 * sc, { size: 1.1 });
       return;
@@ -762,7 +883,7 @@
     var cam = R.cam, rr = R.runners, lastCam = R.lastCam == null ? cam : R.lastCam;
     var camV = dt > 0 ? (cam - lastCam) / dt : 0;
     R.lastCam = cam;
-    drawBackdrop(c, R, cam, t);
+    drawBackdrop(c, R, cam, t, cfg);
     R.hazards.forEach(function (z) { if (z.kind !== 'geyser' && z.kind !== 'thrown') drawHazard(c, R, z, cam, t, dt); });
     if (cfg.show_crowd) R.lobs.forEach(function (j) { drawLob(c, R, j, cam, t, false, dt); });
     rr.slice().sort(function (a, b) { return a.row - b.row; }).forEach(function (r) {
@@ -1194,12 +1315,12 @@
     if (g.phase === 'betting') {
       var left = Math.max(0, ((+g.ends_in_ms || 0) - (tNow - this.at)) / 1000), total = Math.max(1, (+g.phase_ms || 1) / 1000);
       if (left <= 5.5) for (var n = 5; n >= 1; n--) this._cue(g.id + ':tick' + n, total - n, total - left, 'tick');
-      drawBackdrop(c, null, -2600, e);
+      drawBackdrop(c, null, -2600, e, cfg);
       drawLineup(c, this, g, dt, cfg, left);
       return;
     }
     if (!R) {                     // a lineup that ended without a race (nobody bet, or the game was stopped)
-      if (g.phase === 'result') { drawBackdrop(c, null, -2600, e); drawResult(c, g, null, cfg); }
+      if (g.phase === 'result') { drawBackdrop(c, null, -2600, e, cfg); drawResult(c, g, null, cfg); }
       return;
     }
     var t, photo = R.photo, hold = -1;
@@ -1337,7 +1458,8 @@
     BASE_W: BASE_W, BASE_H: BASE_H, DEFAULTS: merge(DEFAULTS, null), APPEARANCE: APPEARANCE.slice(),
     create: function (container, config, opts) { return new DB(container, config, opts); },
     sampleState: sampleState, demoSteps: demoSteps, demoScript: demoScript,
-    simulate: simulate, replay: replay, sample: sample, curve: curve, buildRace: buildRace, raceAt: raceAt, ASSETS: ASSETS
+    simulate: simulate, replay: replay, sample: sample, curve: curve, buildRace: buildRace, raceAt: raceAt, ASSETS: ASSETS,
+    crowd: { TIERS: TIERS, FRONT: FRONT, folkMove: folkMove, throwFrom: throwFrom }
   };
   HG.derby = API;
   if (typeof module === 'object' && module && module.exports) module.exports = API;
