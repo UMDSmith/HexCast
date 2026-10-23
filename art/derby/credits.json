@@ -1,0 +1,30 @@
+{
+  "_about": "Who made the models the art is rendered from. scripts/export_assets.py adds the credit of every piece of junk it packs (props.json: credit) and writes the add-on's static/derby_credits.json (the Credits card at the bottom of the Derby tab) and static/CREDITS.md. licence_url is filled in for CC licences.",
+  "credits": [
+    {
+      "for": "The hounds",
+      "title": "Hell Hound",
+      "author": "Adam (shadow798)",
+      "url": "https://sketchfab.com/3d-models/hell-hound-36f3f384fd9b41a9a8dae1aaf22349d3",
+      "licence": "CC BY 4.0",
+      "changes": "Posed into a gallop, recoloured per hound and rendered to sprites. Three-Heads Terry's extra heads are copies of its head."
+    },
+    {
+      "for": "Hungry Harry's skull",
+      "title": "Dog (Canis familiaris) Dolichcephalic",
+      "author": "The University of Edinburgh (CT scan courtesy of Dr. Tobias Schwarz, prepared by Brian Mather)",
+      "url": "https://sketchfab.com/3d-models/5d8d86a270b64f05aab45c3d09f350a6",
+      "licence": "CC BY 4.0",
+      "changes": "Decimated, re-oriented and given a moving lower jaw. The rest of Harry's bones were made for Hexcast."
+    },
+    {
+      "for": "The crowd",
+      "title": "Mixamo characters: Warrok W Kurniawan, Maw J Laygo, Mutant, Goblin D Shareyko, Nightshade J Friedrich, Parasite L Starkie, Pumpkinhulk L Shaw, Vampire A Lusth, Warzombie F Pedroso, Yaku J Ignite, Ch25, Ch30",
+      "author": "Adobe Mixamo",
+      "url": "https://www.mixamo.com",
+      "licence": "Mixamo terms (royalty free)",
+      "licence_url": "https://helpx.adobe.com/creative-cloud/faq/mixamo-faq.html",
+      "changes": "Posed for Hexcast (idle, cheer, fist pump, jeer, clap, the throw) and rendered to sprites. Only the frames ship, never the character files."
+    }
+  ]
+}

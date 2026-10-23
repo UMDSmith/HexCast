@@ -215,22 +215,27 @@ Uploaded). About a hundred Google fonts are there to pick from.
   Hexcast, and listed under *Uploaded* by its file name (`My_Cool-Font.woff2`
   is picked as *My Cool Font*), so it works with no internet. Press *delete* on
   its row to remove it.
-- Chat names have a font of their own (**Names → Font**, default *same as the
-  message*), and so does an alert's label.
+- The chat username has a font of its own (**Username → Font**, default *same
+  as the message*), and so do an alert's label and the viewer's message on an
+  alert.
 
 A Google font is fetched by the overlay itself, so the machine running OBS
 needs internet for those; uploaded fonts do not.
 
 ### Text
 
-Size, weight, line height, letter spacing, capitals (as typed / UPPERCASE /
-lowercase / Capitalised) and colour for the message; names have their own size
-(a percentage of the message), weight, capitals and colour (the viewer's own
-colour, or one colour for everyone). Badge and emote sizes, timestamps and the
-channel tag. **Outline & shadow** gives the text an outline and a drop shadow
-whose colour, strength, blur and offset you set. On alerts the small **label**
-line, the **main** line and the viewer's **message** each have their own
-colour, weight and capitals, and the label its own font and letter spacing.
+A chat line is two parts, set apart in two groups. **Username**: font, size
+(px), weight, letter spacing, capitals (as typed / UPPERCASE / lowercase /
+Capitalised), colour (the viewer's own colour, or one colour for everyone) and
+whether it sits on the same line or above the message. **Message text**: font,
+size (px), weight, line height, letter spacing, capitals and colour. Badges,
+the time and the channel tag belong to the username part and scale with its
+size (badge size is a percentage of it); emotes have a size of their own.
+**Outline & shadow** gives the text an outline and a drop shadow whose colour,
+strength, blur and offset you set. On alerts the small **label** line, the
+**main** line and the viewer's **message** each have their own size and
+colour; the label and the message their own font, the label and main line
+their own weight and capitals, and the label its own letter spacing.
 
 ### Background
 
@@ -335,8 +340,8 @@ The last sub-tab takes your own CSS, added to the overlay after everything
 else (up to 20 000 characters), and it shows in the preview as you type. Chat:
 `#wrap` (the box), `#bgbox` (the panel behind it), `.msg` (a line; also
 `.msg.first` and `.role-mod`, `.role-vip`, `.role-sub`, `.role-broadcaster`),
-and inside a line `.name`, `.badge`, `.emote`, `.mention`, `.cheer`, `.time`,
-`.chan`, `.reply`. Alerts: `.alert` with `.kind-follow`, `.kind-subscribe`,
+and inside a line `.who` (the username part: `.chan`, `.time`, `.badge`,
+`.name`), `.text` (the message: `.emote`, `.mention`, `.cheer`) and `.reply`. Alerts: `.alert` with `.kind-follow`, `.kind-subscribe`,
 `.kind-cheer`, `.kind-raid`… for one kind, `#bgbox`, and inside `.title`,
 `.body`, `.note`, `.pic`. For example `.kind-raid .body{ font-size:64px }`.
 

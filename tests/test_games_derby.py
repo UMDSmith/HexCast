@@ -5,6 +5,7 @@ config validation, the HTTP API and the game flow."""
 import json
 import math
 import random
+import re
 import shutil
 import subprocess
 import sys
@@ -35,8 +36,9 @@ def w(real_world, tmp_path):
 
 
 def new_game(w, **config):
-    """A separate game object (own file, own ledger, own form book) so a test can look at everything it does."""
-    w.core.CONFIG["derby"].update(config)
+    """A separate game object (own file, own ledger, own form book) so a test can look at everything it does.
+    (No guest racers unless the test asks: one could take the place of a hound it looks for.)"""
+    w.core.CONFIG["derby"].update({"guest_chance": 0, **config})
     return w.derby.Derby(path=w.tmp / "games_derby.json", ledger=w.core.Ledger(w.tmp / "ledger.jsonl"),
                          form=w.derby.FormBook(w.tmp / "form.json"))
 
@@ -342,9 +344,10 @@ def test_the_addon_registers_like_the_other_games(w):
     assert g["overlay"]["stateful"] is True and g["overlay"]["appearance"] == list(w.derby.Derby.APPEARANCE)
     for url in (g["panel_js"], g["overlay"]["script"], "/plugins/games_derby/static/derby_hounds.json",
                 "/plugins/games_derby/static/derby_lines.json", "/plugins/games_derby/static/hounds/cinder.webp",
-                "/plugins/games_derby/static/crowd/warrok.webp"):
+                "/plugins/games_derby/static/crowd/warrok.webp", "/plugins/games_derby/static/guests/hamageddon.webp"):
         r = w.client.get(url)
         assert r.status_code == 200 and len(r.content) > 2000, url
+    assert w.client.get("/plugins/games_derby/static/derby_credits.json").json()["credits"]      # the Credits card's
     crowd = w.client.get("/plugins/games_derby/static/derby_crowd.json").json()
     assert len(crowd["people"]) >= 6 and [m[0] for m in crowd["moves"]][-1] == "throw"
     for p in crowd["people"]:                                   # every sheet the crowd file names is there
@@ -370,9 +373,17 @@ def test_manifest_help_docs_and_credits(w):
     assert 'id="derby"' in help_html and "/games/api/derby/bet" in help_html
     docs = (ROOT / "docs" / "derby.md").read_text(encoding="utf-8")
     assert "/games/api/derby/bet" in docs and "form" in docs.lower() and "photo finish" in docs.lower()
-    # the models are CC-BY: the credits ship with the add-on
-    for text in (help_html, (DERBY_DIR / "static" / "CREDITS.md").read_text(encoding="utf-8")):
+    # the models are CC-BY: the credits ship with the add-on (a file, and the Credits card at the bottom of the tab)
+    credits = json.loads((DERBY_DIR / "static" / "derby_credits.json").read_text(encoding="utf-8"))["credits"]
+    for text in (json.dumps(credits), (DERBY_DIR / "static" / "CREDITS.md").read_text(encoding="utf-8")):
         assert "shadow798" in text and "University of Edinburgh" in text and "CC BY 4.0" in text and "Mixamo" in text
+        assert "Lexington Dath" in text                          # the guest racer Hamageddon
+    shipped = json.loads((DERBY_DIR / "static" / "derby_guests.json").read_text(encoding="utf-8"))["guests"]
+    assert {"Guest racer: " + g["name"] for g in shipped} <= {c["for"] for c in credits}     # every guest racer's model
+    assert all(c["for"] and c["title"] and c["author"] and c["url"].startswith("https://") and c["licence"] for c in credits)
+    assert all(c.get("licence_url") for c in credits if c["licence"].startswith("CC"))
+    panel = (DERBY_DIR / "static" / "derby_panel.js").read_text(encoding="utf-8")
+    assert "footer: creditsCard" in panel and "derby_credits.json" in panel and "Credits" in help_html
     entry = w.world.host.catalog.entries()["games_derby"]
     assert entry.manifest.parent == "games" and "games" in entry.manifest.requires
 
@@ -472,6 +483,177 @@ def test_the_crowd_throws_the_junk(w):
     assert out.returncode == 0, out.stderr
     res = json.loads(out.stdout.strip().splitlines()[-1])
     assert res["n"] > 30 and res["bad"] == [], res
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_the_junk_has_sprites_lines_and_its_own_comments(w):
+    """Everything the crowd throws is junk the overlay knows, with a sprite, a credit and its own lines; the hound
+    it hits usually says something about what it was ("WHO THE HELL THROWS A SWORD?!"), and so do near misses."""
+    d = w.derby
+    js = (DERBY_DIR / "static" / "derby.js").read_text(encoding="utf-8")
+    assert re.findall(r"'([^']+)'", re.search(r"var JUNK_NAMES = \[(.*?)\];", js, re.S).group(1)) == list(d.JUNK)
+    props = {p["name"]: p for p in json.loads((DERBY_DIR / "static" / "derby_props.json").read_text(encoding="utf-8"))["props"]}
+    credits = {c["for"] for c in json.loads((DERBY_DIR / "static" / "derby_credits.json").read_text(encoding="utf-8"))["credits"]}
+    for name in d.JUNK:
+        assert name in props and (DERBY_DIR / "static" / props[name]["file"]).is_file(), name
+        assert "Junk: " + name.lower() in credits, name
+        assert d.LINES["thrown"][name] and d.LINES["eaten"][name], name
+    rng = random.Random(9)
+    scripts = [d.build_script(field(), rng.sample(range(6), 6), 45, rng.getrandbits(31)) for _ in range(40)]
+    said = [(e["obj"], e["line"]) for s in scripts for e in s["events"] if e.get("obj") and e.get("line")]
+    own = sum(line in d.LINES["thrown"][obj] for obj, line in said)
+    assert len(said) > 30 and 0.5 < own / len(said) < 0.9, (own, len(said))
+    runner = r"""
+      const API = require(process.argv[1]), fs = require('fs'), path = require('path');
+      API.ASSETS.lines = JSON.parse(fs.readFileSync(path.join(path.dirname(process.argv[1]), 'derby_lines.json'), 'utf8'));
+      const said = [];
+      for (const script of JSON.parse(fs.readFileSync(0, 'utf8'))) {
+        const R = API.buildRace({ id: 'junk-test', field: [], script });
+        R.lobs.forEach(j => { if (j.says) said.push([j.obj, j.says]); });
+      }
+      console.log(JSON.stringify(said));
+    """
+    out = subprocess.run([NODE, "-e", runner, str(DERBY_DIR / "static" / "derby.js")], input=json.dumps(scripts[:10]),
+                         capture_output=True, text=True, timeout=120)
+    assert out.returncode == 0, out.stderr
+    misses = json.loads(out.stdout.strip().splitlines()[-1])
+    own = sum(line in d.LINES["thrown"][obj] for obj, line in misses)
+    rest = [line for obj, line in misses if line not in d.LINES["thrown"][obj]]
+    assert len(misses) > 20 and own > len(misses) / 3 and set(rest) <= set(d.LINES["react"]["miss"]), (own, len(misses))
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_no_hound_talks_to_itself(w):
+    """A line that names a hound is said only while that hound races, and never by the hound itself: not in the
+    events (the server), not in the trash talk, retorts or near misses (the overlay). ("GNASH, THIS IS YOUR
+    SPIT, ISN'T IT?!" used to come out of Gnash.)"""
+    d = w.derby
+
+    def named(text):
+        return {h["id"] for h in d.ROSTER
+                if any(re.search(r"(?<!\w)" + re.escape(n) + r"(?!\w)", text, re.I) for n in {h["name"], h["short"]})}
+    rng = random.Random(11)
+    races, checked = [], 0
+    for _ in range(60):
+        f = [{"num": i + 1, "id": h["id"], "name": h["name"], "short": h["short"], "streak": rng.randint(-6, 4)}
+             for i, h in enumerate(rng.sample(d.ROSTER, 6))]
+        s = d.build_script(f, rng.sample(range(6), 6), 45, rng.getrandbits(31))
+        races.append({"field": f, "script": s})
+        for e in s["events"]:
+            by = f[e["b"] if e.get("by") == "b" else e["a"]]["id"]
+            for text in ([e["line"]] if e.get("line") else []) + (e.get("lines") or []):
+                checked += 1
+                assert by not in named(text) and named(text) <= {h["id"] for h in f} and "{t}" not in text, (by, text)
+    assert checked > 100
+    runner = r"""
+      const API = require(process.argv[1]), fs = require('fs'), path = require('path'), dir = path.dirname(process.argv[1]);
+      API.ASSETS.lines = JSON.parse(fs.readFileSync(path.join(dir, 'derby_lines.json'), 'utf8'));
+      API.ASSETS.byId = {};
+      JSON.parse(fs.readFileSync(path.join(dir, 'derby_hounds.json'), 'utf8')).hounds.forEach(h => { API.ASSETS.byId[h.id] = h; });
+      const said = [];
+      for (const race of JSON.parse(fs.readFileSync(0, 'utf8'))) {
+        const R = API.buildRace({ id: 'talk-test', field: race.field, script: race.script });
+        R.talk.forEach(b => said.push([b.r.id, b.text, race.field.map(f => f.id)]));
+      }
+      console.log(JSON.stringify(said));
+    """
+    out = subprocess.run([NODE, "-e", runner, str(DERBY_DIR / "static" / "derby.js")], input=json.dumps(races),
+                         capture_output=True, text=True, timeout=120)
+    assert out.returncode == 0, out.stderr
+    said = json.loads(out.stdout.strip().splitlines()[-1])
+    assert len(said) > 300
+    for by, text, ids in said:
+        assert by not in named(text) and named(text) <= set(ids) and "{t}" not in text, (by, text)
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_guest_racers_line_up_now_and_then(w, monkeypatch, tmp_path):
+    """Now and then a guest takes a hound's place: the add-on's own (Hamageddon and co.) or a local pack's
+    (config/games_derby_guests/: guests.json and its sheets, served by /guests/file/). A guest never bites, never
+    says the hounds' dog lines, talks in its own words first (passing, hurt, winning, losing) and runs its own way."""
+    d = w.derby
+    pack = tmp_path / "pack"
+    pack.mkdir()
+    shipped = json.loads((DERBY_DIR / "static" / "derby_guests.json").read_text(encoding="utf-8"))["guests"]
+    ham = next(g for g in shipped if g["id"] == "hamageddon")
+    (pack / "lola.webp").write_bytes((DERBY_DIR / "static" / ham["sheet"]["file"]).read_bytes())
+    lola = {"id": "lola", "name": "Lola Lightning", "short": "Lola", "wobble": 0.5, "anchors": ham["anchors"],
+            "sheet": {**ham["sheet"], "file": "lola.webp"},
+            "lines": {"by": ["Bye, {t}!"], "at": ["Slow down, {t}!"], "ouch": ["LOLA OUCH!", "LOLA OW!"], "back": ["Lola says no, {t}!"],
+                      "dodge": ["LOLA DODGES!"], "win": ["LOLA WINS!"], "lose": ["LOLA LOSES!"], "hello": ["Hi, I'm Lola!"],
+                      "ticker": ["{a} IS HERE!"], "nonsense": ["dropped"]}}
+    (pack / "guests.json").write_text(json.dumps({"guests": [lola, {"id": "cinder", "name": "Fake Cinder"},
+                                                             {"id": "../x", "name": "Bad"}]}), encoding="utf-8")
+    monkeypatch.setattr(d, "GUESTS_DIR", pack)
+    guests = {g["id"]: g for g in d.load_guests()}
+    assert len(shipped) >= 6 and set(guests) == {g["id"] for g in shipped} | {"lola"}   # (a hound's id or a bad one is skipped)
+    assert not guests["hamageddon"]["local"] and guests["lola"]["local"] and guests["lola"]["wobble"] == 0.5
+    view = {g["id"]: g for g in w.client.get("/games/api/derby/guests").json()["guests"]}
+    assert view["lola"]["sheet"]["file"] == "/games/api/derby/guests/file/lola.webp" and view["lola"]["lines"]["at"]
+    assert set(view["lola"]["lines"]) == set(d.GUEST_LINES)
+    assert w.client.get("/games/api/derby/guests/file/lola.webp").status_code == 200
+    for g in shipped:                                           # the add-on's own: every kind of line, a sheet that's there
+        assert all(view[g["id"]]["lines"][k] for k in d.GUEST_LINES), g["id"]
+        assert view[g["id"]]["sheet"]["file"] == f"guests/{g['id']}.webp" and view[g["id"]]["anchors"]["stride"] > 0
+        assert w.client.get("/plugins/games_derby/static/guests/" + g["id"] + ".webp").status_code == 200, g["id"]
+    for bad in ("guests.json", "nope.webp", "..%2Fguests.json"):
+        assert w.client.get("/games/api/derby/guests/file/" + bad).status_code == 404, bad
+    # how often: every race at 1 (two at most here), never at 0
+    g = new_game(w, guest_chance=1, guests_max=2)
+    counts = [sum(h["id"] in guests for h in g._new_field()) for _ in range(40)]
+    assert all(1 <= k <= 2 for k in counts) and 2 in counts
+    g = new_game(w, guest_chance=0)
+    assert not any(h["id"] in guests for _ in range(20) for h in g._new_field())
+    # the race: no biting, no dog lines (but its own), its own ouches, last words and wobble
+    rng, ouch, ends, races = random.Random(3), 0, 0, []
+    for _ in range(40):
+        f = [{"num": i + 1, "id": h["id"], "name": h["name"], "short": h["short"]} for i, h in enumerate(rng.sample(d.ROSTER, 4))]
+        f += [{"num": 5, "id": "lola", "name": "Lola Lightning", "short": "Lola", "guest": True, "wobble": 0.5},
+              {"num": 6, "id": "hamageddon", "name": "Hamageddon", "short": "Ham", "guest": True, "wobble": 1.6}]
+        s = d.build_script(f, rng.sample(range(6), 6), 45, rng.getrandbits(31))
+        races.append({"field": f, "script": s})
+        assert s["runners"][4]["wob"][0] <= 0.03 + 1e-9 and s["runners"][5]["wob"][0] >= 0.048 - 1e-9
+        for e in s["events"]:
+            assert not (e["type"] == "bite" and f[e["a"]].get("guest")), e
+            by = f[e["b"] if e.get("by") == "b" else e["a"]]
+            if by.get("guest") and e.get("line"):
+                mine = guests[by["id"]]["lines"]
+                assert not d._DOGGY.search(e["line"]) or e["line"] in mine["ouch"] + mine["dodge"], e["line"]
+                ouch += e["line"] in mine["ouch"]
+        first, last = f[s["order"][0]], f[s["order"][-1]]
+        loser = f[s["photo"]["b"]] if s["photo"] and s["photo"]["kind"] == "win" else last
+        for who, key, said in ((first, "win", "win"), (first, "win", "photo_win"), (last, "lose", "last"), (loser, "lose", "photo_lost")):
+            if who.get("guest"):
+                assert s["talk"][said] in guests[who["id"]]["lines"][key], (who["id"], said, s["talk"][said])
+                ends += 1
+    assert ouch >= 3 and ends >= 8
+    # the overlay plays a race with a guest in it, and the guest's pass talk is its own kind
+    runner = r"""
+      const API = require(process.argv[1]), fs = require('fs'), path = require('path'), dir = path.dirname(process.argv[1]);
+      const L = API.ASSETS.lines = JSON.parse(fs.readFileSync(path.join(dir, 'derby_lines.json'), 'utf8'));
+      API.ASSETS.byId = {};
+      JSON.parse(fs.readFileSync(path.join(dir, 'derby_hounds.json'), 'utf8')).hounds.forEach(h => { API.ASSETS.byId[h.id] = h; });
+      JSON.parse(fs.readFileSync(path.join(dir, 'derby_guests.json'), 'utf8')).guests.forEach(g => {
+        g.guest = true; API.ASSETS.byId[g.id] = g; L.by[g.id] = g.lines.by; L.at[g.id] = g.lines.at; });
+      const said = [];
+      for (const race of JSON.parse(fs.readFileSync(0, 'utf8'))) {
+        race.field[4].id = 'hamageddon';                       // (lola isn't in this overlay: two of Hamageddon)
+        race.script.runners[4].id = 'hamageddon';
+        const R = API.buildRace({ id: 'guest-test', field: race.field, script: race.script });
+        for (let t = 0; t < R.lastT; t += 0.25) API.raceAt(R, t);
+        R.talk.forEach(b => said.push([b.r.id, b.text]));
+      }
+      console.log(JSON.stringify(said));
+    """
+    out = subprocess.run([NODE, "-e", runner, str(DERBY_DIR / "static" / "derby.js")], input=json.dumps(races[:12]),
+                         capture_output=True, text=True, timeout=120)
+    assert out.returncode == 0, out.stderr
+    said = json.loads(out.stdout.strip().splitlines()[-1])
+    ham_said = [text for who, text in said if who == "hamageddon"]
+    own = [re.compile("^" + re.escape(x).replace(re.escape("{t}"), ".+") + "$") for k in d.GUEST_LINES for x in guests["hamageddon"]["lines"][k]]
+    mine = [t for t in ham_said if any(r.match(t) for r in own)]
+    assert ham_said and not any(d._DOGGY.search(t) for t in ham_said if t not in mine), ham_said
+    assert len(mine) >= 0.6 * len(ham_said), (len(mine), ham_said)                # (mostly its own)
 
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")

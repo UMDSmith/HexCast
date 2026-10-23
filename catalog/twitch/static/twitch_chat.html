@@ -58,10 +58,12 @@
     content:''; position:absolute; left:0; top:0; bottom:0; width:var(--bar-w,4px);
     background:var(--bar-color,#ff3b30); border-radius:var(--bg-radius,14px) 0 0 var(--bg-radius,14px);
   }
-  .msg.stacked .name{ display:block; margin-bottom:2px; }
+  /* A line is the username part (.who: channel tag, time, badges, name) and the message text (.text). Each
+     has its own size, font and letter spacing; "above the message" puts the whole username part on its own line. */
+  .who{ font-size:var(--name-size,28px); letter-spacing:var(--name-ls,0); }
+  .msg.stacked .who{ display:block; margin-bottom:2px; }
   .name{
     font-family:var(--name-font), 'Segoe UI', system-ui, sans-serif;
-    font-size:calc(1em * var(--name-scale,1));
     font-weight:var(--nameweight,800);
     text-transform:var(--nt,none);
   }
@@ -124,7 +126,8 @@ function applyConfig(cfg){
   if(c.name_font_family) loadFont(c.name_font_family);
   r.setProperty('--font', fontVar(c.font_family));
   r.setProperty('--name-font', fontVar(c.name_font_family || c.font_family));
-  r.setProperty('--name-scale', _num(c.name_scale, 100) / 100);
+  r.setProperty('--name-size', _num(c.name_size, c.font_size) + 'px');
+  r.setProperty('--name-ls', _num(c.name_letter_spacing, 0) + 'px');
   r.setProperty('--size', c.font_size + 'px');
   r.setProperty('--weight', c.font_weight);
   r.setProperty('--nameweight', c.name_weight);
@@ -224,6 +227,7 @@ function addMessage(msg, still){          // `still`: the preview redrawing a li
 
   var html = '';
   if(msg.reply) html += '<span class="reply">replying to ' + esc(msg.reply.user) + '</span>';
+  html += '<span class="who">';
   if(c.show_channel && (msg.channel_label || msg.channel)) html += '<span class="chan">' + esc(msg.channel_label || msg.channel) + '</span>';
   if(c.show_timestamps){
     var d = new Date(msg.ts * 1000);
@@ -235,8 +239,8 @@ function addMessage(msg, still){          // `still`: the preview redrawing a li
     });
   }
   html += '<span class="name" style="color:' + esc(nameColor(msg)) + '">' + esc(msg.user.name) + '</span>';
-  html += '<span class="colon">' + (c.layout === 'stacked' ? '' : ':') + '</span>';
-  html += renderFragments(msg.fragments);
+  html += '<span class="colon">' + (c.layout === 'stacked' ? '' : ':') + '</span></span>';
+  html += '<span class="text">' + renderFragments(msg.fragments) + '</span>';
   el.innerHTML = html;
 
   list.appendChild(el);

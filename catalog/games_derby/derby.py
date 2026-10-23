@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Request
+from fastapi.responses import FileResponse, JSONResponse
 
 from hexcast_plugins.games.core import (
     COMMANDS_TEXT_MAX,
@@ -101,12 +102,96 @@ def load_roster() -> list[dict]:
 ROSTER = load_roster()
 LINES = _load_json(STATIC / "derby_lines.json")
 
+# Guest racers: now and then something that isn't a hound lines up too. The add-on's own guests are in
+# static/derby_guests.json; your own (a local pack, never part of the add-on) go in
+# config/games_derby_guests/: guests.json and the sprite sheets it names, written the same way.
+GUESTS_DIR = CONFIG_DIR / "games_derby_guests"
+GUEST_FILE = re.compile(r"^[A-Za-z0-9_-]{1,60}\.(?:webp|png)$")
+_GUEST_ID = re.compile(r"^[a-z0-9_-]{1,40}$")
+_guests: list = [None, []]                      # [what the files looked like, the guests]
+# a guest's own lines ({t} = the other one): by (passing someone), at (said to it as it's passed), back (its answer
+# when passed), ouch (hurt), dodge (a near miss, a leap), win, lose (dead last, or beaten in a photo), hello (its
+# spotlight on the lineup), ticker (the commentary when it lines up, {a} = its name). Its own come first; the
+# hounds' only where it has none.
+GUEST_LINES = ("by", "at", "back", "ouch", "dodge", "win", "lose", "hello", "ticker")
+
+
+def load_guests() -> list[dict]:
+    """Every guest racer, the add-on's first, then the local pack's; read again whenever a file changes."""
+    files = (STATIC / "derby_guests.json", GUESTS_DIR / "guests.json")
+    key = tuple(p.stat().st_mtime_ns if p.is_file() else 0 for p in files)
+    if key == _guests[0]:
+        return _guests[1]
+    seen, out = {h["id"] for h in ROSTER}, []
+    for path, local in zip(files, (False, True)):
+        for g in _load_json(path).get("guests") or []:
+            if not (isinstance(g, dict) and isinstance(g.get("id"), str) and _GUEST_ID.match(g["id"])
+                    and isinstance(g.get("name"), str) and g["name"].strip() and g["id"] not in seen):
+                continue
+            seen.add(g["id"])
+            lines = g.get("lines") if isinstance(g.get("lines"), dict) else {}
+            wob = _as_float(g.get("wobble"))
+            out.append({"id": g["id"], "name": g["name"][:DB_NAME_MAX], "short": str(g.get("short") or g["name"])[:DB_NAME_MAX],
+                        "note": str(g.get("bio") or "")[:160], "guest": True, "local": local,
+                        "wobble": 1.0 if wob is None else min(3.0, max(0.0, wob)),
+                        "lines": {k: [s[:120] for s in (lines.get(k) or []) if isinstance(s, str)][:60] for k in GUEST_LINES},
+                        "art": {k: g[k] for k in ("sheet", "anchors", "cadence", "hue", "sat") if k in g}})
+    _guests[:] = [key, out]
+    return out
+
+
+def everyone() -> list[dict]:
+    """The hounds and the guests."""
+    return ROSTER + load_guests()
+
+
+def who(hid: str) -> dict:
+    return next((x for x in everyone() if x["id"] == hid), {"id": hid, "name": hid, "short": hid, "note": ""})
+
+
+def _own(gid: str, key: str) -> list[str]:
+    """A guest's own lines of one kind (GUEST_LINES); none for a hound."""
+    return next((g["lines"].get(key) or [] for g in load_guests() if g["id"] == gid), [])
+
+
+def guests_view(static_url: str = "/plugins/games_derby/static/") -> list[dict]:
+    """What the overlay needs to draw the guests: their sheets (an add-on guest's next to the hounds', a local
+    one's from /games/api/derby/guests/file/...), anchors and lines."""
+    out = []
+    for g in load_guests():
+        art = dict(g["art"])
+        sheet = art.get("sheet") if isinstance(art.get("sheet"), dict) else None
+        if not sheet or not isinstance(sheet.get("file"), str) or not isinstance(art.get("anchors"), dict):
+            continue
+        name = sheet["file"].rsplit("/", 1)[-1]
+        if g["local"]:
+            if not GUEST_FILE.match(name) or not (GUESTS_DIR / name).is_file():
+                continue
+            art["sheet"] = {**sheet, "file": "/games/api/derby/guests/file/" + name}
+        out.append({"id": g["id"], "name": g["name"], "short": g["short"], "bio": g["note"], "guest": True,
+                    "local": g["local"], "lines": g["lines"], **art})
+    return out
+
+
+_DOGGY = re.compile(r"hellhound|\bdog\b|labrador|\bfur\b|fleabag|kibble|my tail|\bpaws?\b", re.I)
+
 
 def _pool(*path: str) -> list[str]:
     v: Any = LINES
     for k in path:
         v = v.get(k) if isinstance(v, dict) else None
     return [s for s in v if isinstance(s, str)] if isinstance(v, list) else []
+
+
+def _names_ok(s: str, speaker: str, racing: set[str], own: bool = False) -> bool:
+    """A line that names a hound is said only while that hound races, and never by the hound itself (unless it's
+    its own line: a guest's own may say its own name)."""
+    for h in everyone():
+        if h["id"] in racing and (own or h["id"] != speaker):
+            continue
+        if any(re.search(r"(?<!\w)" + re.escape(n) + r"(?!\w)", s, re.I) for n in {h["name"], h["short"]} if n):
+            return False
+    return True
 
 
 def _fill(s: str, **o: Any) -> str:
@@ -183,8 +268,10 @@ class FormBook:
 
     def view(self) -> list[dict]:
         rows = []
-        for h in ROSTER:
+        for h in everyone():
             f = self.get(h["id"])
+            if h.get("guest") and not f["races"]:
+                continue
             rows.append({"id": h["id"], "name": h["name"], **f, "note": self.note(h["id"])})
         rows.sort(key=lambda r: (-r["wins"], r["races"], r["name"].lower()))
         return rows
@@ -282,7 +369,9 @@ EV: dict[str, dict] = {
 EV_WEIGHT = {"trip": 2.5, "slime": 2, "leap": 1.2, "scorch": 3.5, "hand": 1.5, "bite": 2, "kick": 1.5, "bonk": 3.5,
              "junk": 2.5, "junkfood": 2, "snack": 1.5, "femur": 2, "fleas": 1.5, "argue": 2, "yap": 1, "zap": 1.5,
              "showoff": 1, "flare": 1.5, "snap": 1.5}
-JUNK = ("BONE", "SKULL", "FLAMING TRASH BAG", "MUG OF BLOOD", "TOILET", "ROTTEN EYEBALL", "SEVERED HAND")
+PAINFUL = {"trip", "junk", "bonk", "hand", "slime", "scorch", "bite", "snap", "kick", "zap", "flare"}
+JUNK = ("BONE", "SKULL", "TRASH BAG", "MUG OF BLOOD", "TOILET", "ROTTEN EYEBALL", "SEVERED HAND",
+        "RED BARREL", "TV", "CHAIR", "WOOD AXE", "SWORD", "KATANA", "WAR HAMMER")   # (= JUNK_NAMES in derby.js)
 
 
 def simulate(wob: list[float], evs: list[tuple[float, float, list]], length: float, stop_after: float = 10.0) -> tuple[list[float], float]:
@@ -353,6 +442,10 @@ def build_script(field: list[dict], order: list[int], race_seconds: float, seed:
         T[i] = round(t, 4)                           # (what the script carries is exactly what is used)
     wob = [[round(rnd.uniform(*r), 6) for r in ((0.03, 0.06), (0.02, 0.04), (0.4, 0.8), (1.2, 2.0), (0, 6.3), (0, 6.3))]
            for _ in range(n)]
+    for i, h in enumerate(field):                    # a guest runs its own way: steadier, or all over the place
+        k = h.get("wobble", 1.0)
+        if k != 1.0:
+            wob[i][0], wob[i][1] = round(wob[i][0] * k, 6), round(wob[i][1] * k, 6)
     # a first run without events: roughly where everyone is when (to pick who bites whom)
     base = [simulate(wob[i], [], length) for i in range(n)]
     warp0 = [base[i][1] / T[i] for i in range(n)]
@@ -389,8 +482,17 @@ def build_script(field: list[dict], order: list[int], race_seconds: float, seed:
             photo = {"kind": "last", "a": last, "b": prev, "at": T[prev], "label": margin_word(gap)}
     for e in events:                                   # what is said
         _say(rnd, e, field)
-    talk = {"win": rnd.choice(_pool("win") or ["WINNER!"]), "last": rnd.choice(_pool("last") or ["..."]),
-            "photo_win": rnd.choice(_pool("photo_win") or ["BY A NOSE!"]), "photo_lost": rnd.choice(_pool("photo_lost") or ["NO!"])}
+    racing = {h["id"] for h in field}
+
+    def last_word(i: int, own: str, pool: str, none: str) -> str:   # (a guest's own, else the hounds' it can say)
+        sp, guest = field[i], bool(field[i].get("guest"))
+        ok = [s for s in (_own(sp["id"], own) if guest else []) if _names_ok(s, sp["id"], racing, True) and "{t}" not in s]
+        ok = ok or [s for s in _pool(pool) if _names_ok(s, sp["id"], racing) and not (guest and _DOGGY.search(s))]
+        return rnd.choice(ok or [none])
+    loser = photo["b"] if photo and photo["kind"] == "win" else order[-1]   # (who says photo_lost)
+    talk = {"win": last_word(order[0], "win", "win", "WINNER!"), "last": last_word(order[-1], "lose", "last", "..."),
+            "photo_win": last_word(order[0], "win", "photo_win", "BY A NOSE!"),
+            "photo_lost": last_word(loser, "lose", "photo_lost", "NO!")}
     finish = max(T)
     duration = DB_GATE_S + finish + (DB_PHOTO_S if photo else 0) + DB_TAIL_S
     return {"seed": seed, "length": round(length, 3), "v": DB_V, "dt": DB_DT, "gate_ms": round(DB_GATE_S * 1000),
@@ -418,6 +520,8 @@ def _plan_event(rnd: random.Random, field: list[dict], kinds: list[str], t: floa
         if kind + str(a) in used:
             continue
         if kind == "junk" and ids[a] == "bubba":       # Bubba doesn't trip over food: he eats it (junkfood)
+            continue
+        if kind == "bite" and field[a].get("guest"):   # biting is for the hounds
             continue
         b = None
         if spec["who"] == "pair" or spec.get("pair"):
@@ -453,15 +557,27 @@ def _say(rnd: random.Random, e: dict, field: list[dict]) -> None:
     tick = _pool("ticker", e["type"])
     if tick:
         e["ticker"] = _fill(rnd.choice(tick), a=a["name"], b=b and b["name"], o=e.get("obj")).upper()
+    sp = b if who == "b" and b else a
+    speaker, racing, guest = sp["id"], {h["id"] for h in field}, bool(sp.get("guest"))
+    other = a if who == "b" else b                     # who {t} is: never the speaker (no one, when it's alone)
+
+    def fit(v: list[str], own: bool = False) -> list[str]:   # (a guest doesn't say it's a hellhound, unless it's its own line)
+        return [s for s in v if _names_ok(s, speaker, racing, own) and (other or "{t}" not in s)
+                and not (guest and not own and _DOGGY.search(s))]
     if pool == "argue":
-        lines = _pool("react", "argue")
+        lines = fit(_pool("react", "argue"))
         e["lines"] = rnd.sample(lines, 3) if len(lines) >= 3 else lines
         return
-    lines = _pool("ouch") if pool == "ouch" else _pool("react", pool)
+    mine = fit(_own(speaker, "ouch" if e["type"] in PAINFUL else "dodge"), own=True) if guest else []
+    lines = fit(_pool("ouch") if pool == "ouch" else _pool("react", pool)) or mine
     if not lines or (e["type"] == "leap" and rnd.random() < 0.5):
         return
-    other = a if who == "b" else (b or a)
-    e["line"] = _fill(rnd.choice(lines), o=e.get("obj"), t=other["short"])
+    own = fit(_pool("eaten" if e["type"] == "junkfood" else "thrown", e["obj"])) if e.get("obj") else []
+    if mine and rnd.random() < 0.7:                    # a guest mostly in its own words
+        lines = mine
+    elif own and rnd.random() < 0.7:                   # mostly about what it was: "WHO THE HELL THROWS A SWORD?!"
+        lines = own
+    e["line"] = _fill(rnd.choice(lines), o=e.get("obj"), t=other and other["short"])
     e["by"] = who
 
 
@@ -499,7 +615,9 @@ class Derby(RoundGame):
         "hide_when_idle": True,
         "commands_text": "!derby <number> <coins>",   # your bot's bet command, shown on the lineup
         "field_size": 6,                # hounds in a race (from the roster)
-        "benched": "",                  # hound ids that don't race (comma separated)
+        "benched": "",                  # hound (or guest) ids that don't race (comma separated)
+        "guest_chance": 0.3,            # how often a race has a guest racer (0 = never, 1 = every race)
+        "guests_max": 1,                # guests in one race at most
         "bet_seconds": 22,              # the lineup: the betting window
         "race_seconds": 45,             # roughly how long the race runs
         "result_seconds": 12,           # the result card
@@ -519,6 +637,7 @@ class Derby(RoundGame):
         "show_talk": ("bool",), "clean_language": ("bool",), "show_crowd": ("bool",),
         "hide_when_idle": ("bool",), "commands_text": ("str", COMMANDS_TEXT_MAX),
         "field_size": ("int", DB_FIELD_RANGE[0], DB_FIELD_RANGE[1]), "benched": ("str", 200),
+        "guest_chance": ("num", 0, 1), "guests_max": ("int", 0, 3),
         "bet_seconds": ("num", 5, 300), "race_seconds": ("num", 25, 90), "result_seconds": ("num", 3, 60),
         "run_without_bets": ("bool",), "house_edge_pct": ("num", 0, 25), "form_weight": ("num", 0, 2), "luck": ("num", 0, 1),
         "currency": ("name", 24), "min_bet": ("int", 1, 1e9), "max_bet": ("int", 0, 1e12), "max_payout": ("int", 0, 1e12),
@@ -546,7 +665,7 @@ class Derby(RoundGame):
         g = _round_common(raw, self.PHASES)
         if g is None:
             return None
-        known = {h["id"] for h in ROSTER}
+        known = {h["id"] for h in everyone()}
         field = []
         for i, h in enumerate((raw.get("field") or [])[:DB_FIELD_RANGE[1]]):
             if isinstance(h, dict) and h.get("id") in known:
@@ -579,16 +698,28 @@ class Derby(RoundGame):
 
     # ---- the field --------------------------------------------------------------
 
+    def _benched(self) -> set[str]:
+        return {s.strip().lower() for s in str(self.cfg["benched"]).split(",") if s.strip()}
+
     def _roster(self) -> list[dict]:
-        benched = {s.strip().lower() for s in str(self.cfg["benched"]).split(",") if s.strip()}
+        benched = self._benched()
         live = [h for h in ROSTER if h["id"].lower() not in benched and h["name"].lower() not in benched]
         return live if len(live) >= DB_FIELD_RANGE[0] else list(ROSTER)
+
+    def _guests(self) -> list[dict]:
+        benched = self._benched()
+        return [g for g in load_guests() if g["id"].lower() not in benched and g["name"].lower() not in benched]
 
     def _new_field(self) -> list[dict]:
         cfg = self.cfg
         pool = self._roster()
         n = max(DB_FIELD_RANGE[0], min(cfg["field_size"], len(pool), DB_FIELD_RANGE[1]))
         picked = _RNG.sample(pool, n)
+        guests = self._guests()
+        if guests and cfg["guests_max"] and _RNG.random() < float(cfg["guest_chance"]):
+            k = _RNG.randint(1, min(int(cfg["guests_max"]), len(guests), n - 1))
+            for i, g in zip(_RNG.sample(range(n), k), _RNG.sample(guests, k)):
+                picked[i] = g                        # a guest takes that hound's place
         rows = list(range(DB_FIELD_RANGE[1]))
         _RNG.shuffle(rows)
         rows = sorted(rows[:n])
@@ -606,8 +737,8 @@ class Derby(RoundGame):
 
     def _hound(self, num: int) -> dict:
         h = self.g["field"][num - 1]
-        r = next((x for x in ROSTER if x["id"] == h["id"]), {"name": h["id"], "short": h["id"], "note": ""})
-        return {**h, "name": r["name"], "short": r["short"], "trait": r["note"]}
+        r = who(h["id"])
+        return {**h, "name": r["name"], "short": r["short"], "trait": r["note"], "guest": bool(r.get("guest"))}
 
     def _pick(self, params: dict) -> tuple[int | None, str | None]:
         g = self.g
@@ -792,7 +923,8 @@ class Derby(RoundGame):
             return
         field = g["field"]
         order = draw_order([h["chance"] for h in field])
-        named = [{**h, **{k: v for k, v in self._hound(h["num"]).items() if k in ("name", "short")}} for h in field]
+        named = [{**h, **{k: v for k, v in self._hound(h["num"]).items() if k in ("name", "short", "guest")},
+                  "wobble": who(h["id"]).get("wobble", 1.0)} for h in field]
         g["script"] = build_script(named, order, g["race_seconds"], secrets.randbits(31))
         g["resolved"], g["marks"] = False, self.markers()
         self._set_phase("racing", g["script"]["duration_ms"] / 1000.0)
@@ -913,7 +1045,7 @@ class Derby(RoundGame):
             f = self.form.get(h["id"])
             out.append({"num": h["num"], "id": h["id"], "name": r["name"], "short": r["short"], "trait": r["trait"],
                         "row": h["row"], "chance": h["chance"], "mult": h["cents"] / 100, "note": h["note"],
-                        "streak": f["streak"]})
+                        "streak": f["streak"], "guest": r["guest"]})
         return out
 
     def game_view(self, now: float) -> dict:
@@ -1042,6 +1174,21 @@ async def api_db_form():
     return {"ok": True, "form": DERBY.form.view()}
 
 
+@router.get("/api/derby/guests")
+async def api_db_guests():
+    """The guest racers the overlay can draw: the add-on's and your local pack's (sheets, anchors, lines)."""
+    return {"ok": True, "guests": guests_view()}
+
+
+@router.get("/api/derby/guests/file/{name}")
+async def api_db_guest_file(name: str):
+    """A local guest's sprite sheet, from config/games_derby_guests/."""
+    path = GUESTS_DIR / name
+    if not GUEST_FILE.match(name) or not path.is_file():
+        return JSONResponse({"ok": False, "error": "not_found"}, status_code=404)
+    return FileResponse(path, media_type="image/webp" if name.endswith(".webp") else "image/png")
+
+
 @router.api_route("/api/derby/form/clear", methods=["POST"])
 async def api_db_form_clear():
     DERBY.form.clear()
@@ -1065,6 +1212,8 @@ API_DOC = {
     "bets":     "GET /games/api/derby/bets   rules, the odds model, the current field and the form book",
     "validate": "GET /games/api/derby/validate?number=3&amount=100   dry-run a bet",
     "form":     "GET /games/api/derby/form   the form book; POST /games/api/derby/form/clear resets it",
+    "guests":   "GET /games/api/derby/guests   the guest racers (the add-on's and your local pack's in "
+                "config/games_derby_guests/): names, lines, sprite sheets; /guests/file/{name} serves a local sheet",
     "stop":     "GET|POST /games/api/derby/stop   end the game: a race already drawn counts, an open window is refunded",
     "preview":  "GET|POST /games/api/derby/preview   {overrides:{appearance}, seconds (2-60, default 8)}: the Edit Mode "
                 "editor's Test in OBS - on screen for `seconds` with that look (STATE.preview); /preview/clear ends it",

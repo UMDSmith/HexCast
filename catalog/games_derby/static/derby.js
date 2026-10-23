@@ -89,7 +89,11 @@
     } catch (e) { /* not in a page */ }
     return '/plugins/games_derby/static/';
   })();
-  var ASSETS = { state: 'idle', roster: [], byId: {}, lines: {}, crowd: null, waiting: [] };
+  var ASSETS = { state: 'idle', roster: [], byId: {}, lines: {}, crowd: null, props: null, guests: [], waiting: [] };
+  // the guest racers: /games/api/derby/guests (the add-on's own and your local pack), next to this script's folder
+  var GUESTS_URL = /\/plugins\/games_derby\/static\/$/.test(BASE_URL) ? BASE_URL.replace(/plugins\/games_derby\/static\/$/, 'games/api/derby/guests')
+    : '/games/api/derby/guests';
+  function sheetUrl(file) { return /^(\/|https?:)/.test(file) ? file : BASE_URL + file; }
   function getJson(url, cb) {
     try {
       var x = new root.XMLHttpRequest();
@@ -104,16 +108,20 @@
     ASSETS.waiting.push(cb);
     if (ASSETS.state === 'loading' || !doc) return;
     ASSETS.state = 'loading';
-    var left = 3;
+    var left = 5;
     function done() {
       if (--left) return;
-      var sheets = ASSETS.roster.concat(ASSETS.crowd ? ASSETS.crowd.people : []), imgs = sheets.length, k;
+      ASSETS.guests.forEach(function (g) {      // a guest is drawn like a hound and talks like one: its own at/by lines
+        ASSETS.byId[g.id] = g;
+        ['by', 'at'].forEach(function (k) { if (g.lines && g.lines[k] && g.lines[k].length) (ASSETS.lines[k] = ASSETS.lines[k] || {})[g.id] = g.lines[k]; });
+      });
+      var sheets = ASSETS.roster.concat(ASSETS.guests, ASSETS.crowd ? ASSETS.crowd.people : [], ASSETS.props ? ASSETS.props.props : []), imgs = sheets.length, k;
       function one() { if (--imgs <= 0) { ASSETS.state = 'ready'; var w = ASSETS.waiting; ASSETS.waiting = []; for (k = 0; k < w.length; k++) w[k](); } }
       if (!imgs) { imgs = 1; one(); return; }
       sheets.forEach(function (h) {
         var im = new root.Image();
         im.onload = im.onerror = one;
-        im.src = BASE_URL + (h.sheet ? h.sheet.file : h.file);
+        im.src = sheetUrl(h.sheet ? h.sheet.file : h.file);
         h.img = im;
       });
     }
@@ -123,6 +131,10 @@
       done();
     });
     getJson(BASE_URL + 'derby_lines.json', function (d) { ASSETS.lines = d || {}; done(); });
+    getJson(GUESTS_URL, function (d) {   // (optional: no guests without)
+      ASSETS.guests = ((d && d.guests) || []).filter(function (g) { return g && g.id && g.sheet && g.anchors && !ASSETS.byId[g.id]; });
+      done();
+    });
     getJson(BASE_URL + 'derby_crowd.json', function (d) {   // the monsters in the stands (optional: silhouettes without)
       if (d && d.people && d.people.length) {
         d.row = {}; d.moves.forEach(function (m, i) { d.row[m[0]] = i; });
@@ -130,9 +142,25 @@
       }
       done();
     });
+    getJson(BASE_URL + 'derby_props.json', function (d) {   // the junk the crowd throws (optional: drawn without)
+      if (d && d.props && d.props.length) {
+        d.byName = {}; d.props.forEach(function (p) { d.byName[p.name] = p; });
+        ASSETS.props = d;
+      }
+      done();
+    });
   }
   function hound(id) { return ASSETS.byId[id] || null; }
   function lines(a, b) { var v = ASSETS.lines[a]; if (b != null) v = v && v[b]; return Array.isArray(v) ? v : []; }
+  // a guest's own lines of one kind (derby.py's GUEST_LINES: by, at, back, ouch, dodge, win, lose, hello, ticker)
+  function ownLines(id, k) { var h = hound(id), v = h && h.guest && h.lines && h.lines[k]; return Array.isArray(v) ? v : []; }
+  // a near miss: a guest's own dodge, something about what it was ("WHO THE HELL THROWS A SWORD?!"), or the throw
+  function missLine(rng, obj, by, racing) {
+    var mine = namesOk(ownLines(by, 'dodge'), by, racing, true).filter(function (s) { return s.indexOf('{t}') < 0; });
+    if (mine.length && rng() < 0.7) return pickR(rng, mine);
+    var own = namesOk(lines('thrown', obj), by, racing), miss = namesOk(lines('react', 'miss'), by, racing);
+    return own.length && rng() < 0.6 ? pickR(rng, own) : pickR(rng, miss.length ? miss : ['HA! MISSED!']);
+  }
   var UI_COLOUR = { terry: '#d8301c', harry: '#e9dfc6', mange: '#9a7b55' };
   function colourOf(id) { var h = hound(id); return UI_COLOUR[id] || 'hsl(' + ((24 + ((h && h.hue) || 0)) % 360) + ' 95% 58%)'; }
 
@@ -189,7 +217,8 @@
   var PEAKS = [], CROWD = [];
   for (var pi = 0; pi < 40; pi++) PEAKS.push({ x: pi * 160, h: 60 + bg() * 160 });
   for (var ci = 0; ci < 120; ci++) CROWD.push({ x: ci * 55 + (bg() - 0.5) * 20, y: Math.floor(bg() * 3), k: 0.8 + bg() * 0.4, ph: bg() * 6, horn: bg() < 0.7 });
-  var JUNK_NAMES = ['BONE', 'SKULL', 'FLAMING TRASH BAG', 'MUG OF BLOOD', 'TOILET', 'ROTTEN EYEBALL', 'SEVERED HAND'];
+  var JUNK_NAMES = ['BONE', 'SKULL', 'TRASH BAG', 'MUG OF BLOOD', 'TOILET', 'ROTTEN EYEBALL', 'SEVERED HAND',
+    'RED BARREL', 'TV', 'CHAIR', 'WOOD AXE', 'SWORD', 'KATANA', 'WAR HAMMER'];   // (= JUNK in derby.py)
   // the stands: three tiers of monsters (derby_crowd.json), back to front. Each stands behind a ledge that hides
   // its legs (feet: where its feet are, ledge: the edge in front of it), smaller and slower (parallax) further back
   var TIERS = [
@@ -427,7 +456,8 @@
         parts: [], size: Rw.s / (240 / 360), speed: 0, dx: 0, ground: Rw.y, left: 0, top: 0, f: 0, prevF: 0, shown: false,
         x: 0, ox: 0, oy: 0, rot: 0, flip: false, frozen: false });
     });
-    var DT = S.dt || 1 / 60, rr = R.runners;
+    var DT = S.dt || 1 / 60, rr = R.runners, racing = {};
+    rr.forEach(function (r) { racing[r.id] = true; });
     function xAt(r, t) { return sample(r.xs, Math.max(0, t) * r.warp, DT); }
     R.xAt = xAt;
     var order = S.order || [], winT = order.length ? rr[order[0]].T : Math.max.apply(null, rr.map(function (r) { return r.T; }));
@@ -460,7 +490,7 @@
       if (!live.length) continue;
       var lr = live[Math.floor(rng() * live.length)], lfly = 0.9 + rng() * 0.4, lx = xAt(lr, lt), lobj = pickR(rng, JUNK_NAMES), lx0 = lx + rng() * 1000 - 300;
       R.lobs.push({ obj: lobj, t0: lt, tl: lt + lfly, row: lr.row, x0: lx0, th: thrower(lt, lx0, true),
-        x1: xAt(lr, lt + lfly) + rng() * 800 - 380, spin: (6 + rng() * 8) * (rng() < 0.5 ? -1 : 1), near: lr, says: rng() < 0.25 ? pickR(rng, lines('react', 'miss').length ? lines('react', 'miss') : ['HA! MISSED!']) : null });
+        x1: xAt(lr, lt + lfly) + rng() * 800 - 380, spin: (6 + rng() * 8) * (rng() < 0.5 ? -1 : 1), near: lr, says: rng() < 0.3 ? missLine(rng, lobj, lr.id, racing) : null });
     }
     // who says what: the events' own lines (picked by the server), trash talk when one passes another, the
     // finish; never more than three bubbles up at once
@@ -477,8 +507,10 @@
       for (var a1 = 0; a1 < rr.length && pt >= nextTalk; a1++) for (var b1 = 0; b1 < rr.length; b1++) {
         if (a1 === b1 || !(prev[a1] < prev[b1] && cur[a1] >= cur[b1])) continue;
         nextTalk = pt + 3.5 + rng() * 2.5;
-        talk.push({ t: pt, r: rr[a1], text: taunt(rng, rr[a1], rr[b1]), pass: true });
-        if (rng() < 0.35) talk.push({ t: pt + 1.6, r: rr[b1], text: fill(pickR(rng, lines('retort').length ? lines('retort') : ['Fuck you!']), { t: rr[a1].short }) });
+        talk.push({ t: pt, r: rr[a1], text: taunt(rng, rr[a1], rr[b1], racing), pass: true });
+        var back = namesOk(ownLines(rr[b1].id, 'back'), rr[b1].id, racing, true);   // (a guest answers in its own words)
+        if (!back.length) back = namesOk(lines('retort'), rr[b1].id, racing);
+        if (rng() < 0.35) talk.push({ t: pt + 1.6, r: rr[b1], text: fill(pickR(rng, back.length ? back : ['Fuck you!']), { t: rr[a1].short }) });
         break;
       }
       prev = cur;
@@ -495,6 +527,13 @@
     });
     var all = rr.slice().sort(function (x, y) { return x.num - y.num; }).map(function (r) { return r.name; }).join(' · ');
     R.ticker.push({ t: -R.gate, text: fill(pickR(rng, lines('ticker', 'start').length ? lines('ticker', 'start') : ['THEY\'RE IN THE GATE: {all}']), { all: all }).toUpperCase() });
+    var hello = lines('ticker', 'guest').slice(), k = 0;
+    field.forEach(function (f) {                   // a guest racer gets announced (a second each, never the same line):
+      if (!f.guest) return;                        // its own announcement, or one of the commentary's
+      var mine = ownLines(f.id, 'ticker');
+      var s = mine.length && rng() < 0.75 ? pickR(rng, mine) : hello.length ? hello.splice(Math.floor(rng() * hello.length), 1)[0] : 'SPECIAL GUEST: {a}!';
+      R.ticker.push({ t: -R.gate + 1.2 + k++ * 1.0, text: fill(s, { a: f.name }).toUpperCase() });
+    });
     if (order.length) {
       R.ticker.push({ t: winT, text: fill(pickR(rng, lines('ticker', 'win').length ? lines('ticker', 'win') : ['{a} WINS!']), { a: rr[order[0]].name }).toUpperCase() });
       R.ticker.push({ t: lastT, text: fill(pickR(rng, lines('ticker', 'last').length ? lines('ticker', 'last') : ['{a} IS DEAD LAST.']), { a: rr[order[order.length - 1]].name }).toUpperCase() });
@@ -503,15 +542,30 @@
     R.lava = { parts: [], hue: 0, size: 1, speed: 0, dx: 0, ground: TRACK_BOT, pt: function () { return [0, 0]; } };
     return R;
   }
-  function taunt(rng, a, b) {
-    var pools = [[lines('trash'), 6], [lines('at', b.id), 3], [lines('by', a.id), 2],
-      [a.streak >= 2 ? lines('hot') : [], 4], [b.streak >= 2 ? lines('at_hot') : [], 4], [b.streak <= -4 ? lines('at_cold') : [], 4]]
+  function taunt(rng, a, b, racing) {   // [lines, weight, {n}]: hot is a's own streak, the rest b's; a guest
+    var ga = !!(hound(a.id) || {}).guest, gb = !!(hound(b.id) || {}).guest;   // mostly says, and hears, its own
+    var pools = [[lines('trash'), ga || gb ? 1 : 6], [lines('at', b.id), gb ? 8 : 3], [lines('by', a.id), ga ? 10 : 2, null, ga],
+      [a.streak >= 2 ? lines('hot') : [], 4, a.streak], [b.streak >= 2 ? lines('at_hot') : [], 4], [b.streak <= -4 ? lines('at_cold') : [], 4]]
+      .map(function (p) { return [namesOk(p[0], a.id, racing, p[3]), p[1], p[2]]; })
       .filter(function (p) { return p[0].length; });
     if (!pools.length) return 'Move it!';
-    var x = rng() * pools.reduce(function (n, p) { return n + p[1]; }, 0), k, pool = pools[0][0];
-    for (k = 0; k < pools.length; k++) if ((x -= pools[k][1]) <= 0) { pool = pools[k][0]; break; }
-    var n = pool === lines('hot') ? a.streak : Math.abs(b.streak);
-    return fill(pickR(rng, pool), { t: b.short, n: n });
+    var x = rng() * pools.reduce(function (n, p) { return n + p[1]; }, 0), k, pool = pools[0];
+    for (k = 0; k < pools.length; k++) if ((x -= pools[k][1]) <= 0) { pool = pools[k]; break; }
+    return fill(pickR(rng, pool[0]), { t: b.short, n: pool[2] != null ? pool[2] : Math.abs(b.streak) });
+  }
+  // the lines of v a hound may say: one that names a hound only while that hound races, and never the
+  // speaker itself (as derby.py's _names_ok); a guest skips the dog lines (derby.py's _DOGGY). Its own lines (own)
+  // may say its own name and the dog words
+  var DOGGY = /hellhound|\bdog\b|labrador|\bfur\b|fleabag|kibble|my tail|\bpaws?\b/i;
+  function namesOk(v, by, racing, own) {
+    var res = (ASSETS.byId[by] || {}).guest && !own ? [DOGGY] : [];   // (and a guest doesn't say it's a hellhound)
+    for (var id in ASSETS.byId) {
+      if (racing[id] && (own || id !== by)) continue;
+      var h = ASSETS.byId[id];
+      res.push(h._nameRe || (h._nameRe = new RegExp('(^|[^\\w])(' + [h.name, h.short].filter(Boolean)
+        .map(function (n) { return n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }).join('|') + ')(?!\\w)', 'i')));
+    }
+    return v.filter(function (s) { return !res.some(function (re) { return re.test(s); }); });
   }
 
   // where everything is at race time t (seconds after the gate): positions, poses, frames
@@ -730,7 +784,16 @@
     c.strokeStyle = 'rgba(60,30,20,.5)'; c.lineWidth = 4; c.beginPath(); c.moveTo(b + 35, 340); c.lineTo(b + 35, BASE_H + 20); c.stroke();
     c.lineCap = 'butt';
   }
-  function drawJunk(c, name, x, y, s, rot) {
+  // a piece of junk at (x, y): its rendered sprite (derby_props.json) tumbling with rot, or lying still once it
+  // has landed; a drawn stand-in for anything without one
+  function drawJunk(c, name, x, y, s, rot, still) {
+    var PR = ASSETS.props, pr = PR && PR.byName[name];
+    if (pr && pr.img && pr.img.complete && pr.img.naturalWidth) {
+      var n = PR.frames, f = still ? n : Math.floor((((rot / 6.283) % 1) + 1) % 1 * n) % n, D = PR.base * s * pr.size;
+      c.drawImage(pr.img, (f % PR.cols) * PR.w, Math.floor(f / PR.cols) * PR.h, PR.w, PR.h,
+        x - D / 2, y - D / 2 - (still ? pr.rest_bottom / PR.h * D - 4 * s : 0), D, D);
+      return;
+    }
     c.save(); c.translate(x, y); c.rotate(rot); c.scale(s, s);
     c.lineWidth = 3; c.strokeStyle = '#1a0d08';
     var e, d, f;
@@ -745,7 +808,7 @@
         c.fillStyle = '#1a0d08'; c.beginPath(); c.arc(-8, -6, 6, 0, 6.283); c.arc(8, -6, 6, 0, 6.283); c.fill();
         c.fillRect(-7, 12, 3, 8); c.fillRect(-1, 12, 3, 8); c.fillRect(5, 12, 3, 8);
         break;
-      case 'FLAMING TRASH BAG':
+      case 'TRASH BAG':
         c.fillStyle = '#151515'; c.beginPath(); c.ellipse(0, 4, 24, 20, 0, 0, 6.283); c.fill(); c.stroke();
         c.beginPath(); c.moveTo(-6, -14); c.lineTo(0, -24); c.lineTo(6, -14); c.fill();
         break;
@@ -771,6 +834,8 @@
         for (f = 0; f < 4; f++) { c.beginPath(); c.roundRect(8, -10 + f * 6, 18, 5, 2); c.fill(); c.stroke(); }
         c.fillStyle = '#c01a10'; c.fillRect(-18, -8, 5, 18);
         break;
+      default:                                          // (junk this overlay has no drawing of: a lump)
+        c.fillStyle = '#5a4a40'; c.beginPath(); c.roundRect(-16, -12, 32, 24, 6); c.fill(); c.stroke();
     }
     c.restore();
   }
@@ -804,7 +869,7 @@
         break;
       case 'thrown': {
         if (t < z.t0) break;
-        var X, Y, sc, rot = (t - z.t0) * z.spin;
+        var X, Y, sc, rot = (t - z.t0) * z.spin, still = false;
         if (t < z.tl) {
           k = (t - z.t0) / (z.tl - z.t0); var s0 = S_FAR * 0.75, from = throwFrom(z.th, cam);
           sc = s0 + (Rw.s - s0) * k; X = from[0] + (sx(z.x1, Rw.s, cam) - from[0]) * k; Y = from[1] + (z.y1 - from[1]) * k - 340 * 4 * k * (1 - k);
@@ -812,15 +877,14 @@
           if (t - z.tl > 1.6) break;
           k = Math.min(1, (t - z.tl) / 0.8);
           sc = Rw.s; X = sx(z.x1 - 380 * k, sc, cam); Y = z.y1 + (Rw.y - 10 * Rw.s - z.y1) * k - 140 * Rw.s * Math.sin(Math.PI * k);
-          if (k >= 1) rot = 0;
+          if (k >= 1) { rot = 0; still = true; }
         } else {
           if (z.eats && u > 0.15) break;
           sc = Rw.s; rot = 0.5;
           if (u > 0.2) { k = Math.min(1, (u - 0.2) / 0.35); if (k >= 1) break; X = sx(z.x1 + 500 * k, sc, cam); Y = z.y1 - 180 * Rw.s * Math.sin(Math.PI * k); rot = 0.5 + k * 9; }
-          else { X = sx(z.x1, sc, cam); Y = z.y1; }
+          else { X = sx(z.x1, sc, cam); Y = z.y1; still = true; }
         }
-        drawJunk(c, z.obj, X, Y, sc / SPRK, rot);
-        if (dt > 0 && z.obj === 'FLAMING TRASH BAG' && FXR() < 0.7) flame(R.lava, X, Y - 20 * sc, { size: 1.2 });
+        drawJunk(c, z.obj, X, Y, sc / SPRK, rot, still);
         break;
       }
       case 'bone':
@@ -848,7 +912,6 @@
       k = (t - j.t0) / (j.tl - j.t0); var s0 = S_FAR * 0.75, from = throwFrom(j.th, cam); sc = s0 + (Rw.s - s0) * k;
       X = from[0] + (sx(j.x1, Rw.s, cam) - from[0]) * k; Y = from[1] + (Rw.y - 8 * Rw.s - from[1]) * k - 340 * 4 * k * (1 - k);
       drawJunk(c, j.obj, X, Y, sc / SPRK, (t - j.t0) * j.spin);
-      if (dt > 0 && j.obj === 'FLAMING TRASH BAG' && FXR() < 0.6) flame(R.lava, X, Y - 20 * sc, { size: 1.1 });
       return;
     }
     if (air) return;
@@ -856,20 +919,21 @@
     X = sx(j.x1 + 70 * b, Rw.s, cam);
     if (X < -250 || X > BASE_W + 250) return;
     Y = Rw.y - 8 * Rw.s - 46 * Rw.s * Math.sin(Math.PI * b) * (1 - b * 0.5);
-    drawJunk(c, j.obj, X, Y, Rw.s / SPRK, (j.tl - j.t0) * j.spin + b * 2.5);
-    if (dt > 0 && j.obj === 'FLAMING TRASH BAG' && FXR() < 0.35) flame(R.lava, X, Y - 16 * Rw.s, { size: 0.9 });
+    drawJunk(c, j.obj, X, Y, Rw.s / SPRK, (j.tl - j.t0) * j.spin + b * 2.5, b >= 1);
   }
+  function noseOf(r) { return (r.A && r.A.nose) || NOSE; }      // where its nose is in its frame (the finish line goes by it)
   function frameRect(h, f) { var sh = h.sheet; return [(f % sh.cols) * sh.w, Math.floor(f / sh.cols) * sh.h, sh.w, sh.h]; }
   function drawRunner(c, R, r, cam) {
-    var nose = sx(r.x, r.s, cam), left = nose - NOSE * r.s + r.ox, top = r.y - (r.A ? r.A.ground : 210) * r.s + r.oy;
+    var nose = sx(r.x, r.s, cam), left = nose - noseOf(r) * r.s + r.ox, top = r.y - (r.A ? r.A.ground : 210) * r.s + r.oy;
     r.dx = r.shown ? left - r.left : 0; r.left = left; r.top = top; r.shown = true;
     var h = r.h;
     if (!h.img || !h.sheet || !h.img.complete || !h.img.naturalWidth) return;
     var fr = frameRect(h, r.f), w = fr[2] * r.s, hh = fr[3] * r.s;
     c.save();
     if (r.hue || r.sat !== 1.2) c.filter = 'hue-rotate(' + r.hue + 'deg) saturate(' + r.sat + ')';
-    c.translate(left + BODY[0] * r.s, top + BODY[1] * r.s); c.rotate(r.rot); if (r.flip) c.scale(-1, 1);
-    c.drawImage(h.img, fr[0], fr[1], fr[2], fr[3], -BODY[0] * r.s, -BODY[1] * r.s, w, hh);
+    var B = (r.A && r.A.body) || BODY;
+    c.translate(left + B[0] * r.s, top + B[1] * r.s); c.rotate(r.rot); if (r.flip) c.scale(-1, 1);
+    c.drawImage(h.img, fr[0], fr[1], fr[2], fr[3], -B[0] * r.s, -B[1] * r.s, w, hh);
     c.restore();
   }
   function ptOf(r) {
@@ -895,7 +959,7 @@
         var downs = [], NF = r.h.sheet ? r.h.sheet.frames : 16, q;
         for (q = r.prevF; q !== r.f; q = (q + 1) % NF) {
           var a = r.A.frames[q], b = r.A.frames[(q + 1) % NF];
-          ['LH', 'RH', 'LF', 'RF'].forEach(function (p) { if (!a[p][2] && b[p][2]) downs.push(r.pt(p)); });
+          ['LH', 'RH', 'LF', 'RF'].forEach(function (p) { if (a[p] && b[p] && !a[p][2] && b[p][2]) downs.push(r.pt(p)); });
           if (downs.length > 8) break;
         }
         r.fx.forEach(function (f) { if (f.tick) f.tick(r, dt); if (f.step && downs.length) f.step(r, downs); });
@@ -1027,7 +1091,12 @@
       sp = inst.spot = { id: h.id, phase: 0, f: 0, line: '', parts: [], hue: Ah.hue || 0, size: 1.55, speed: 0, dx: 0, ground: 820,
         fx: (Ah.fx || []).map(function (n) { return FX[n]; }).filter(Boolean), h: Ah };
       var rng = mulberry(((inst.st && inst.st.game && inst.st.game.id) || 'x').length * 7919 + h.num), pool;
-      if (h.streak >= 2) pool = lines('hot'); else if (h.streak <= -4) pool = lines('cold'); else pool = lines('by', h.id);
+      var own = !!Ah.guest && (ownLines(h.id, 'hello').length > 0 || !(h.streak >= 2 || h.streak <= -4));   // (a guest's own lines)
+      if (ownLines(h.id, 'hello').length) pool = ownLines(h.id, 'hello');   // (a guest's own hello)
+      else if (h.streak >= 2) pool = lines('hot'); else if (h.streak <= -4) pool = lines('cold'); else pool = lines('by', h.id);
+      var racing = {};
+      ((inst.st && inst.st.game && inst.st.game.field) || []).forEach(function (f) { racing[f.id] = true; });
+      pool = namesOk(pool, h.id, racing, own);
       if (!pool.length) pool = lines('win');
       sp.line = pool.length ? fill(pickR(rng, pool), { t: 'losers', n: Math.abs(h.streak || 0) }) : '';
     }
@@ -1064,7 +1133,7 @@
       var downs = [];
       for (var q = prevF; q !== f; q = (q + 1) % NF) {
         var a = A.frames[q], b = A.frames[(q + 1) % NF];
-        ['LH', 'RH', 'LF', 'RF'].forEach(function (p) { if (!a[p][2] && b[p][2]) downs.push(sp.pt(p)); });
+        ['LH', 'RH', 'LF', 'RF'].forEach(function (p) { if (a[p] && b[p] && !a[p][2] && b[p][2]) downs.push(sp.pt(p)); });
         if (downs.length > 8) break;
       }
       sp.fx.forEach(function (fx) { if (fx.tick) fx.tick(sp, dt); if (fx.step && downs.length) fx.step(sp, downs); });
@@ -1074,6 +1143,7 @@
     c.fillStyle = col; c.beginPath(); c.roundRect(80, 240, 120, 120, 18); c.fill();
     c.fillStyle = '#000'; c.font = '900 96px Impact, sans-serif'; c.textAlign = 'center'; c.fillText(String(h.num), 140, 336);
     c.textAlign = 'left'; c.fillStyle = '#fff'; c.font = 'bold 76px Impact, sans-serif'; c.fillText(String(h.name).toUpperCase(), 222, 312, 920);
+    if (h.guest) { c.fillStyle = TH.gold; c.font = 'bold 30px Impact, sans-serif'; c.fillText('★ SPECIAL GUEST ★', 224, 236); }
     c.fillStyle = TH.dim; c.font = 'italic 28px system-ui, sans-serif'; c.fillText(h.trait || '', 224, 352, 900);
     c.fillStyle = TH.gold; c.font = 'bold 44px Impact, sans-serif'; c.fillText('PAYS ×' + (+h.mult).toFixed(2), 224, 410);
     c.fillStyle = TH.ink; c.font = '26px system-ui, sans-serif'; c.fillText(Math.round(h.chance * 100) + '% to win · ' + (h.note || ''), 520, 408, 600);
@@ -1386,7 +1456,7 @@
     // the line through the nose of the hound that is on it (the winner; for a dead-last photo the one just ahead),
     // parallel to the painted line: the track is in perspective and a nose is well above its own row's paint
     var on = R.runners[photo.kind === 'last' ? photo.b : photo.a], fr = on.A && on.A.frames[on.f], m = fr && (fr.mouth || fr.head);
-    var nx = on.left + NOSE * on.s, ny = m ? on.top + m[1] * on.s : on.y - 120 * on.s, slope = (lineAt(TRACK_BOT) - lineAt(TRACK_TOP)) / (TRACK_BOT - TRACK_TOP);
+    var nx = on.left + noseOf(on) * on.s, ny = m ? on.top + m[1] * on.s : on.y - 120 * on.s, slope = (lineAt(TRACK_BOT) - lineAt(TRACK_TOP)) / (TRACK_BOT - TRACK_TOP);
     R.snapLine = [[nx + slope * (TRACK_TOP - ny), TRACK_TOP], [nx + slope * (TRACK_BOT - ny), TRACK_BOT]];
     R.snapTags = [R.runners[photo.a], R.runners[photo.b]].map(function (r) { var p = r.pt('head'); return { x: p[0], y: p[1] - 60 * r.s, num: r.num, colour: r.colour }; });
     var ya = R.runners[photo.a].y, yb = R.runners[photo.b].y, top = Math.min(ya, yb) - 250 * S_NEAR, bot = Math.max(ya, yb) + 40;

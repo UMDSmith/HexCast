@@ -1,5 +1,5 @@
 {
- "_about": "Hellhound Derby dialogue. {t} = the hound being talked to, {a} / {b} = the hounds in an event, {o} = what the crowd threw. trash: said by a hound passing another; retort: the answer; at: aimed at one hound; by: a hound's own voice; react: what a hound says in an event; ticker: the commentary line for an event (several per event, one picked at random). The 'clean language' setting turns the swearing into #@$%. hot / cold: said by a hound on a winning streak / a long losing run ({n} = how many); at_hot / at_cold: said to one. Streak lines in the ticker use {n} too.",
+ "_about": "Hellhound Derby dialogue. {t} = the hound being talked to, {a} / {b} = the hounds in an event, {o} = what the crowd threw. trash: said by a hound passing another; retort: the answer; at: aimed at one hound; by: a hound's own voice; react: what a hound says in an event; ticker: the commentary line for an event (several per event, one picked at random). thrown: what a hound says about the junk that just hit it, tripped it or nearly did, one list per thing (the names in JUNK); eaten: what Bubba says when he eats it instead. The 'clean language' setting turns the swearing into #@$%. hot / cold: said by a hound on a winning streak / a long losing run ({n} = how many); at_hot / at_cold: said to one. Streak lines in the ticker use {n} too; ticker.guest announces a guest racer ({a}). A guest's own lines (by, at, ouch) live with the guest (guests.json).",
  "trash": [
   "Fuck off, fleabag!",
   "Eat my ass gas, {t}!",
@@ -378,6 +378,140 @@
    "Needs salt."
   ]
  },
+ "thrown": {
+  "BONE": [
+   "A BONE?! I'M A HELLHOUND, NOT A FUCKING LABRADOR!",
+   "WHOSE FEMUR IS THAT?!",
+   "STOP THROWING YOUR GRANDMA AT ME!",
+   "Ooh, a bone. NO. FOCUS."
+  ],
+  "SKULL": [
+   "WHO THE FUCK THROWS A SKULL?!",
+   "THAT'S SOMEBODY'S HEAD, YOU ANIMALS!",
+   "Alas, poor dipshit. I knew him.",
+   "IS THAT YOUR EX?!"
+  ],
+  "TRASH BAG": [
+   "A BAG OF TRASH?! WHAT AM I, THE DUMPSTER?!",
+   "IT BURST! IT'S IN MY MOUTH! WHY IS IT IN MY MOUTH?!",
+   "SMELLS LIKE YOUR MOM'S COOKING!",
+   "WHO TAKES THE TRASH OUT ONTO THE TRACK?!",
+   "GREAT, NOW I SMELL LIKE A DUMPSTER.",
+   "THERE'S A DIAPER IN HERE. A USED ONE."
+  ],
+  "MUG OF BLOOD": [
+   "THAT WAS A FULL MUG, YOU ANIMAL!",
+   "WHAT A WASTE OF GOOD BLOOD!",
+   "WHO THROWS THEIR DRINK?!",
+   "Mmm. Type O. STILL: FUCK YOU!"
+  ],
+  "TOILET": [
+   "WHO THE HELL THROWS A TOILET?!",
+   "IS THAT A FUCKING TOILET?!",
+   "YOU RIPPED THAT OUT OF THE WALL FOR ME?!",
+   "THE SEAT WAS UP. OF COURSE THE SEAT WAS UP.",
+   "THEY'RE THROWING SHITTERS NOW!"
+  ],
+  "ROTTEN EYEBALL": [
+   "IT'S LOOKING AT ME! WHY IS IT LOOKING AT ME?!",
+   "KEEP YOUR EYE ON THE RACE, ASSHOLE!",
+   "WHO THROWS AN EYEBALL?! WHO HAS A SPARE?!",
+   "THAT ONE WATCHED ME THE WHOLE WAY DOWN!"
+  ],
+  "SEVERED HAND": [
+   "A HAND?! WHO'S MISSING A HAND?!",
+   "IT FLIPPED ME OFF ON THE WAY DOWN!",
+   "GIVE HIM A HAND! NOT AT MY HEAD!",
+   "GET YOUR HANDS OFF ME! ...LITERALLY!"
+  ],
+  "RED BARREL": [
+   "IT'S A RED BARREL! THOSE FUCKING EXPLODE!",
+   "WHO THROWS AN EXPLOSIVE BARREL AT A DOG RACE?!",
+   "NOBODY SHOOT IT! NOBODY FUCKING SHOOT IT!",
+   "IF THAT BLOWS UP I'M SUING!"
+  ],
+  "TV": [
+   "WHO THROWS A FUCKING TV?!",
+   "THERE'S NOTHING GOOD ON ANYWAY!",
+   "WHO STILL OWNS A TUBE TV?!",
+   "STAY TUNED, ASSHOLE!",
+   "I'M ON TV, MA! ...I'M UNDER A TV, MA!"
+  ],
+  "CHAIR": [
+   "A CHAIR?! IS THIS WRESTLING NOW?!",
+   "WHO THROWS A CHAIR AT A DOG RACE?!",
+   "TAKE A SEAT? TAKE A FUCKING SEAT?!",
+   "OH, SO WE'RE DOING CHAIRS NOW."
+  ],
+  "WOOD AXE": [
+   "AN AXE?! THAT'S ATTEMPTED MURDER!",
+   "WHO BRINGS AN AXE TO A DOG RACE?!",
+   "NOW I'VE GOT AN AXE TO GRIND, BUDDY!",
+   "I'M A DOG, NOT A FUCKING TREE!"
+  ],
+  "SWORD": [
+   "WHO THE HELL THROWS A SWORD?!",
+   "THAT'S NOT HOW SWORDS WORK, DIPSHIT!",
+   "YOU SWING IT! YOU DON'T THROW IT!",
+   "EN GARDE, MOTHERFUCKER!"
+  ],
+  "KATANA": [
+   "A KATANA?! CALM DOWN, WEEB!",
+   "THAT'S FOLDED STEEL, YOU ANIMAL!",
+   "NOTHING PERSONNEL, HUH?!",
+   "YOU DISHONOR YOUR FAMILY. AND YOUR AIM."
+  ],
+  "WAR HAMMER": [
+   "WHO THROWS A WAR HAMMER?! THOR?!",
+   "STOP! HAMMER TIME! NO, SERIOUSLY, STOP!",
+   "THAT HAMMER IS A WAR CRIME!",
+   "IT'S HAMMER TIME, MOTHERFUCKER!"
+  ]
+ },
+ "eaten": {
+  "BONE": [
+   "*crunch* Marrow's still good."
+  ],
+  "SKULL": [
+   "Brain freeze. Literally."
+  ],
+  "TRASH BAG": [
+   "Three-day-old garbage. My favourite food group."
+  ],
+  "MUG OF BLOOD": [
+   "*slurp* Don't mind if I do."
+  ],
+  "TOILET": [
+   "Don't ask what it tastes like."
+  ],
+  "ROTTEN EYEBALL": [
+   "Pops like a grape."
+  ],
+  "SEVERED HAND": [
+   "Finger food!"
+  ],
+  "RED BARREL": [
+   "Tastes like... *hic* ...gasoline."
+  ],
+  "TV": [
+   "*crunch* ...static. Good static."
+  ],
+  "CHAIR": [
+   "Mmm. Plastic."
+  ],
+  "WOOD AXE": [
+   "Fibre AND iron. Balanced diet."
+  ],
+  "SWORD": [
+   "Swallowed a sword. I'm a circus act now."
+  ],
+  "KATANA": [
+   "Sushi knife. Where's the sushi?"
+  ],
+  "WAR HAMMER": [
+   "Heavy meal. Worth it."
+  ]
+ },
  "win": [
   "SUCK IT, LOSERS!",
   "EAT MY DUST!",
@@ -535,6 +669,12 @@
   "drought": [
    "{a} FINALLY WINS AFTER {n} STRAIGHT LOSSES!",
    "{a} BREAKS A {n}-RACE DROUGHT!"
+  ],
+  "guest": [
+   "WAIT, IS THAT {a}? WHO LET {a} IN?!",
+   "SPECIAL GUEST TONIGHT: {a}! NOBODY KNOWS WHY.",
+   "{a} SIGNED UP. THE HOUNDS ARE CONFUSED.",
+   "{a} IS IN THE GATE. SECURITY HAS BEEN NOTIFIED."
   ]
  },
  "hot": [

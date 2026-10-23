@@ -900,6 +900,36 @@ def test_a_config_from_before_the_new_look_settings_keeps_its_look_and_gains_the
     assert follow["duration"] == 3 and follow["bg_image_url"] == ""
 
 
+def test_a_config_from_before_the_username_had_its_own_size_keeps_its_look(tw):
+    # the name was a percentage of the message size and shared its letter spacing; an alert's viewer message
+    # used the label's size
+    tw.CONFIG_PATH.write_text(json.dumps({"chat": {"font_size": 20, "name_scale": 150, "letter_spacing": 1.5},
+                                          "events": {"sub_font_size": 30}}), encoding="utf-8")
+    cfg = tw.load_config()
+    chat, events = cfg["chat"], cfg["events"]
+    assert (chat["name_size"], chat["name_letter_spacing"], chat["letter_spacing"]) == (30, 1.5, 1.5)
+    assert "name_scale" not in chat and events["note_size"] == 30 and events["note_font_family"] == ""
+    # a config without the old settings gets the defaults, and one saved since keeps what it says
+    tw.CONFIG_PATH.write_text(json.dumps({"chat": {"font_size": 20}}), encoding="utf-8")
+    assert tw.load_config()["chat"]["name_size"] == 20
+    tw.CONFIG_PATH.write_text(json.dumps({"chat": {"font_size": 20, "name_size": 44, "name_letter_spacing": 0},
+                                          "events": {"note_size": 18}}), encoding="utf-8")
+    cfg = tw.load_config()
+    assert (cfg["chat"]["name_size"], cfg["chat"]["name_letter_spacing"], cfg["events"]["note_size"]) == (44, 0, 18)
+    tw.CONFIG_PATH.write_text("{}", encoding="utf-8")
+    cfg = tw.load_config()
+    assert cfg["chat"]["name_size"] == cfg["chat"]["font_size"] and cfg["events"]["note_size"] == cfg["events"]["sub_font_size"]
+
+
+def test_the_chat_line_splits_the_username_from_the_message(api):
+    page = api.get("/twitch/chat").text
+    for bit in ('class="who"', 'class="text"', "--name-size", "--name-ls", ".msg.stacked .who"):
+        assert bit in page, bit
+    assert "--name-scale" not in page
+    alerts = api.get("/twitch/events").text
+    assert "--note-size" in alerts and "--note-font" in alerts
+
+
 def test_the_overlays_share_their_styles_and_helpers_from_the_plugin(api):
     css = api.get("/twitch/overlay.css")
     assert css.status_code == 200 and css.headers["content-type"].startswith("text/css")

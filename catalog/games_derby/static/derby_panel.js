@@ -4,7 +4,8 @@
  * The Hellhound Derby tab of the Games panel (section#tab-derby): hellhounds race on one track and chat bets on
  * the WINNER by its race number. The panel itself (OBS card, live mirror, controls, play as, players, history,
  * ledger, settings, placement & look editor, API card) is round_common.js, shared with the other round games;
- * this file is the game: its defaults, settings, wording, API rows and the form book card. The editor's sample
+ * this file is the game: its defaults, settings, wording, API rows, the form book card and the credits card at the
+ * bottom. The editor's sample
  * lineup and demo race come from the renderer (derby.js: HexGames.derby.sampleState / demoSteps).
  *
  * Plain browser script. games_panel.html loads it after round_common.js and the derby.js renderer
@@ -20,6 +21,11 @@
   function toast(m, ms) { if (typeof GP.toast === 'function') GP.toast(m, ms); }
 
   function R() { return (window.HexGames && window.HexGames.derby) || null; }
+  // where this script (and the add-on's other static files) are served from
+  var BASE = (function () {
+    var s = document.currentScript;
+    return s && s.src ? s.src.replace(/\?.*$/, '').replace(/[^\/]*$/, '') : '/plugins/games_derby/static/';
+  })();
 
   // ======================================================================
   // the editor's sample lineup and demo race (built by the renderer: the same STATE the server sends)
@@ -69,6 +75,27 @@
   }
 
   // ======================================================================
+  // the credits card (at the bottom of the tab): the models the art is rendered from, read from
+  // derby_credits.json (written with the art by art/derby/scripts/export_assets.py)
+  // ======================================================================
+  function creditsCard(id) {
+    return '<div class="card"><h2>Credits</h2>' +
+      '<p class="hint">The hounds, the crowd and the junk are rendered from these models. Thank you to the people who made them.</p>' +
+      '<div class="tscroll"><table class="tb db-credits" id="' + id('credits') + '"></table></div></div>';
+  }
+  function link(url, text) {
+    return /^https?:\/\//.test(url || '') ? '<a href="' + esc(url) + '" target="_blank" rel="noopener">' + esc(text) + '</a>' : esc(text);
+  }
+  function renderCredits(tab, list) {
+    var tb = tab.$('credits');
+    if (!tb) return;
+    tb.innerHTML = list.length ? '<tr><th>Used for</th><th>Model</th><th>By</th><th>Licence</th></tr>' + list.map(function (c) {
+      return '<tr><td>' + esc(c.for) + '</td><td>' + link(c.url, c.title) + (c.changes ? '<div class="note">' + esc(c.changes) + '</div>' : '') +
+        '</td><td>' + esc(c.author) + '</td><td>' + link(c.licence_url, c.licence) + '</td></tr>';
+    }).join('') : '<tr><td class="note">The credits file is missing (static/derby_credits.json).</td></tr>';
+  }
+
+  // ======================================================================
   // the game
   // ======================================================================
   RC.register({
@@ -88,7 +115,9 @@
     // [key, label, kind, extra, title]
     settings: [
       ['field_size', 'Hounds per race', 'int', [3, 6], 'Drawn from the roster for every race; they wear the numbers 1 to this'],
-      ['benched', 'Benched hounds', 'text', 200, 'Hounds that never race, comma separated (ids or names): cinder, gnash, terry, sparks, bubba, ember, brimstone, mange, harry. At least 3 must be left'],
+      ['benched', 'Benched hounds', 'text', 200, 'Hounds (or guests) that never race, comma separated (ids or names): cinder, gnash, terry, sparks, bubba, ember, brimstone, mange, harry; guests hamageddon, skullduggery, cockfather, barrel, mootilator, lordhorny. At least 3 hounds must be left'],
+      ['guest_chance', 'Guest racer chance', 'num', [0, 1], 'How often a race has a guest racer instead of a hound: 0 = never, 0.3 = about one race in three, 1 = every race. Your own guests go in config/games_derby_guests/ (see the help)'],
+      ['guests_max', 'Guests per race (max)', 'int', [0, 3], 'At most this many guests in one race'],
       ['bet_seconds', 'Lineup / bet window (s)', 'num', [5, 300], 'The lineup with the odds board: chat bets while it shows'],
       ['race_seconds', 'Race length (s, about)', 'num', [25, 90], 'Roughly how long the winner takes; the rest of the field finishes after it'],
       ['result_seconds', 'Result card (s)', 'num', [3, 60]],
@@ -161,6 +190,8 @@
         'curl "' + h + '/ledger?since=0"'].join('\n');
     },
     extra: formCard,
+    footer: creditsCard,
+    css: '.db-credits a{color:var(--accent);text-decoration:none}.db-credits a:hover{text-decoration:underline}',
 
     // ---- wiring ----
     startBody: function (b, $$) {
@@ -185,8 +216,13 @@
         else toast(r.d.error || 'Could not clear the form book');
       };
     },
-    onFirstTab: function (tab) { tab.loadForm(); },
+    onFirstTab: function (tab) { tab.loadForm(); tab.loadCredits(); },
     methods: {
+      loadCredits: async function () {
+        var list = [];
+        try { var r = await fetch(BASE + 'derby_credits.json'); if (r.ok) list = (await r.json()).credits || []; } catch (e) { /* offline */ }
+        renderCredits(this, list);
+      },
       loadForm: async function () {
         var r = await this.req('GET', this.api + '/form');
         if (r.ok) renderForm(this, r.d.form || []);

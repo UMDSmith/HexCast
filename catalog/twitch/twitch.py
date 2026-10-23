@@ -221,14 +221,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "width_percent": 100,
         "highlight_first": True,
         "highlight_color": "#ff3b30",
-        # More type options. An empty name_font_family means "same as the message"; name_scale is a percentage
-        # of the message size; the shadow_* values draw the drop shadow when `shadow` is on.
+        # More type options. The username has its own font (empty = "same as the message"), size and letter
+        # spacing, apart from the message text; the shadow_* values draw the drop shadow when `shadow` is on.
         "name_font_family": "",
-        "name_scale": 100,
+        "name_size": 28,                    # px
+        "name_letter_spacing": 0,           # px
         "name_transform": "none",           # none | uppercase | lowercase | capitalize
         "text_transform": "none",
-        "letter_spacing": 0,                # px
-        "badge_scale": 100,                 # % of the line height
+        "letter_spacing": 0,                # px, the message text
+        "badge_scale": 100,                 # % of the name size
         "shadow_color": "#000000",
         "shadow_opacity": 0.85,
         "shadow_blur": 6,
@@ -303,6 +304,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "letter_spacing": 0,                # px
         "note_color": "",
         "note_italic": True,
+        "note_font_family": "",             # the viewer's message: empty = the alert's font
+        "note_size": 26,                    # px
         "outline_width": 2,
         "shadow": True,
         "shadow_color": "#000000",
@@ -392,6 +395,28 @@ def normalise_channels(cfg: dict) -> dict:
     return cfg
 
 
+def _upgrade_text(raw: dict) -> dict:
+    """A config saved before the username and the message text were sized apart: the name was a percentage
+    of the message size and shared its letter spacing, and an alert's viewer message used the label's size.
+    The new settings start at what those drew, so the overlays look the same."""
+    chat = raw.get("chat")
+    if isinstance(chat, dict) and "name_size" not in chat:
+        size = _number(chat.get("font_size"), DEFAULT_CONFIG["chat"]["font_size"])
+        chat["name_size"] = round(size * _number(chat.pop("name_scale", 100), 100) / 100)
+        chat.setdefault("name_letter_spacing", chat.get("letter_spacing", 0))
+    events = raw.get("events")
+    if isinstance(events, dict) and "note_size" not in events:
+        events["note_size"] = round(_number(events.get("sub_font_size"), DEFAULT_CONFIG["events"]["sub_font_size"]))
+    return raw
+
+
+def _number(value: Any, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def load_config() -> dict:
     raw = {}
     if CONFIG_PATH.exists():
@@ -399,7 +424,9 @@ def load_config() -> dict:
             raw = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
         except Exception:
             raw = {}
-    return normalise_channels(_deep_merge(DEFAULT_CONFIG, raw))
+    if not isinstance(raw, dict):
+        raw = {}
+    return normalise_channels(_deep_merge(DEFAULT_CONFIG, _upgrade_text(raw)))
 
 
 def save_config(cfg: dict) -> dict:

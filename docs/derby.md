@@ -137,8 +137,9 @@ own effect, and its own antic:
 
 **Everyone** can trip, slip in slime, get grabbed by a demon hand from the
 ground, leap a lava geyser (or not: the flaming arse), bite or kick a neighbour,
-and get hit by junk from the stands (a bone, a skull, a flaming trash bag, a mug
-of blood, a toilet...). The big ones (a tumble, the hand, a snack, Harry's femur)
+and get hit by junk from the stands (a bone, a skull, a trash bag, a mug
+of blood, a toilet, a red barrel, a TV, a chair, a wood axe, a sword, a katana, a
+war hammer...). The big ones (a tumble, the hand, a snack, Harry's femur)
 cost a lot of ground; slime, a bite, a zap or Terry's arguing cost some; a bonk,
 a kick or yapping hardly any; a flaming arse ends up as a booster. The crowd also
 throws plenty that misses and lies around on the track (`show_crowd` hides those
@@ -149,8 +150,35 @@ cheer, pump their fists, jeer and clap, calmer during the lineup and wilder as
 the finish nears. Every piece of junk is thrown by someone in the front row: you
 see the throw, and the junk leaves that monster's hand.
 
+**Guest racers.** Now and then something that isn't a hound lines up too (setting
+`guest_chance`, default 0.3: about one race in three; `guests_max`, default 1).
+A guest takes a hound's place for that race: its own number, odds and form like
+anyone else, a ★ SPECIAL GUEST ★ tag on the lineup, and the commentary wondering
+who let it in. Guests run their own way (a two-legged sprint, or a gallop for a
+centaur; `wobble` makes them steadier or all over the place) and never bite.
+They talk in their own words first: `hello` (their spotlight on the lineup),
+`ticker` (the commentary announcing them, `{a}` = their name), `by` (passing
+someone, `{t}` = them), `at` (what the hounds say passing them), `back` (their
+answer when passed), `ouch` (hurt), `dodge` (a near miss), `win` and `lose`
+(dead last, or beaten in a photo). Where a guest has none of a kind it borrows
+the hounds' lines, never their dog lines. The add-on brings six:
+**Hamageddon** (seven feet of angry pork), **Skullduggery** (a skeleton),
+**The Cockfather** (a ripped rooster with an axe), **Totally A Barrel** (a mimic
+that crawls), **Moo-tilator** (a minotaur) and **Lord Horny** (a horned demon).
+
+Your own guests are a **local pack**: put `guests.json` and the sprite sheets
+it names in `config/games_derby_guests/` and the next lineup can draw them (no
+restart; `GET /games/api/derby/guests` lists every guest the overlay can draw).
+A pack is a folder: copy it to another Hexcast's `config/` to race them there.
+It is never part of the add-on, so it can hold characters you couldn't ship.
+`art/derby/` (README) renders and packs one from any rigged humanoid or centaur
+model, or any model that comes with a run (or a crawl) of its own; `benched`
+takes guest ids too.
+
 **Trash talk.** The hounds only talk when one passes another (with a cooldown),
-when something happens to them, and at the finish. It's hard language by
+when something happens to them, and at the finish. Junk gets a comment on what
+it was ("WHO THE HELL THROWS A SWORD?!"), from the hound it hit or nearly hit,
+and Bubba has a word for everything he eats. It's hard language by
 default; streaks feed it ("2 in a row, motherfuckers!"). The **clean language**
 setting turns every swear into `#@$%&`. `show_talk` off hides the bubbles. The
 commentary line at the bottom names every event.
@@ -192,6 +220,7 @@ JSON body both work (the body wins). Actions return the game's fresh `state`.
 | `GET /games/api/derby/bets` | the rules, the odds model, the current field (with chances and multipliers) and the form book |
 | `GET /games/api/derby/validate?number=3&amount=100` | dry-run a bet: hound, chance, multiplier, payout |
 | `GET /games/api/derby/form` · `POST /games/api/derby/form/clear` | the form book · reset it |
+| `GET /games/api/derby/guests` · `GET /games/api/derby/guests/file/{name}` | the guest racers the overlay can draw (the add-on's and your local pack's: names, lines, sprite sheets) · a local pack's sheet |
 | `GET\|POST /games/api/derby/stop` | end the game now: a race already drawn counts (winners are paid), an open window is refunded |
 | `GET /games/api/derby/history · last` | finished races + stats (races, photo finishes, favourite / longshot wins, wins per hound) · the last one |
 | `GET\|POST /games/api/derby/show · hide` | keep the idle scene (the form book) on screen · hide it |
@@ -277,7 +306,9 @@ ledger, or right away from the `/bet` reply's `debits`, but never both. The
 | Key | Default | |
 | --- | --- | --- |
 | `field_size` | 6 | hounds per race (3–6) |
-| `benched` | "" | hounds that never race, comma separated (ids or names: `cinder, gnash, terry, sparks, bubba, ember, brimstone, mange, harry`); at least 3 must be left |
+| `benched` | "" | hounds (or guests) that never race, comma separated (ids or names: `cinder, gnash, terry, sparks, bubba, ember, brimstone, mange, harry, hamageddon, skullduggery, cockfather, barrel, mootilator, lordhorny`); at least 3 hounds must be left |
+| `guest_chance` | 0.3 | how often a race has a guest racer (0 = never, 1 = every race) |
+| `guests_max` | 1 | guests in one race at most (0–3) |
 | `bet_seconds` | 22 | the lineup / betting window (5–300) |
 | `race_seconds` | 45 | roughly how long the winner takes (25–90) |
 | `result_seconds` | 12 | the result card (3–60) |
@@ -349,4 +380,21 @@ projects as long as the character files themselves aren't handed out, so only
 the rendered frames ship. The moves were posed for Hexcast, without Mixamo's
 animations.
 
-The credits ship with the add-on in `static/CREDITS.md` and its help page.
+The guest racers are Sketchfab models, all **CC BY 4.0**, rendered to
+`static/guests/<id>.webp`:
+
+| Guest | Model | By |
+| --- | --- | --- |
+| Hamageddon | [Pig Demon](https://sketchfab.com/3d-models/pig-demon-bba636efaee04b3ea988b2ae4487cfc1) (given a run) | Lexington Dath |
+| Skullduggery | [Skull Character](https://sketchfab.com/3d-models/skull-character-40897a5169ca4fdcb826a5e388d49f2f) (its own run) | Oxixo |
+| The Cockfather | [Legendary Chicken Warrior](https://sketchfab.com/3d-models/legendary-chicken-warrior-animated-35-motions-4c7deda095d64f8cb0e4b8c5277d1f19) (its own run) | Jungle Jim |
+| Totally A Barrel | [Creature Mimic](https://sketchfab.com/3d-models/creature-mimic-f6821270b6b443789468090212a5c963) (its own walk) | Parado10 |
+| Moo-tilator | [Minotaur Berserker](https://sketchfab.com/3d-models/minotaur-berserker-free-game-ready-character-42da47ae59574ed5a6b86b49734294cc) (given a run) | Yury Misiyuk (Tim0) |
+| Lord Horny | [HellDemon Reborn](https://sketchfab.com/3d-models/helldemon-reborn-43e163c12f304a35b1f85476ca2549f6) (given a run) | ArtistForge16 |
+
+Only original characters under a licence that lets the sprites ship go in the
+add-on; anything else is a local pack.
+
+Every model's credit is on the **Credits** card at the bottom of the Derby tab, and in the add-on's
+`static/CREDITS.md`. Both are written by the art export from `art/derby/credits.json` and the junk's and guests'
+entries in `art/derby/props.json` and `art/derby/guests.json`, so a new model's credit goes in with its sprites.

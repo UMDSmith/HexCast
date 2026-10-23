@@ -832,7 +832,17 @@ function backgroundGroups(scope){
 var UI = {};
 UI.chat = [
   {id:'text', label:'Text', groups:[
-    {title:'Messages', fields:[
+    {title:'Username', fields:[
+      ['name_font_family','Font',{t:'font',same:'Same as the message'}],
+      ['name_size','Size',{t:'num',min:10,max:120,unit:'px'}],
+      ['name_weight','Weight',{t:'sel',opts:WEIGHTS}],
+      ['name_letter_spacing','Letter spacing',{t:'num',min:-2,max:12,step:0.5,unit:'px'}],
+      ['name_transform','Capitals',{t:'sel',opts:TRANSFORMS}],
+      ['name_color_mode','Colour',{t:'sel',opts:[['twitch','The viewer\'s own colour'],['custom','Always the same']]}],
+      ['name_color','Fixed colour',{t:'color',tip:'Also used for viewers who have not picked one.'}],
+      ['layout','Name placement',{t:'sel',opts:[['inline','Same line'],['stacked','Above the message']]}]
+    ]},
+    {title:'Message text', fields:[
       ['font_family','Font',{t:'font'}],
       ['font_size','Size',{t:'num',min:10,max:120,unit:'px'}],
       ['font_weight','Weight',{t:'sel',opts:WEIGHTS}],
@@ -841,18 +851,9 @@ UI.chat = [
       ['text_transform','Capitals',{t:'sel',opts:TRANSFORMS}],
       ['text_color','Colour',{t:'color'}]
     ]},
-    {title:'Names', fields:[
-      ['name_font_family','Font',{t:'font',same:'Same as the message'}],
-      ['name_scale','Size',{t:'num',min:50,max:200,unit:'%'}],
-      ['name_weight','Weight',{t:'sel',opts:WEIGHTS.slice(1)}],
-      ['name_transform','Capitals',{t:'sel',opts:TRANSFORMS}],
-      ['name_color_mode','Colour',{t:'sel',opts:[['twitch','The viewer\'s own colour'],['custom','Always the same']]}],
-      ['name_color','Fixed colour',{t:'color',tip:'Also used for viewers who have not picked one.'}],
-      ['layout','Name placement',{t:'sel',opts:[['inline','Same line'],['stacked','Above the message']]}]
-    ]},
     {title:'Badges, emotes & tags', fields:[
       ['show_badges','Show badges',{t:'bool'}],
-      ['badge_scale','Badge size',{t:'num',min:50,max:250,unit:'%',when:function(d){ return d.show_badges; }}],
+      ['badge_scale','Badge size',{t:'num',min:50,max:250,unit:'%',tip:'Of the username size.',when:function(d){ return d.show_badges; }}],
       ['emote_size','Emote size',{t:'num',min:12,max:120,unit:'px'}],
       ['show_timestamps','Show the time',{t:'bool'}],
       ['show_channel','Tag each line with its channel',{t:'bool'}]
@@ -904,7 +905,7 @@ UI.chat = [
   {id:'css', label:'Custom CSS', custom:'css', cssHelp:
     '<li><code>#wrap</code> the chat box, <code>#bgbox</code> the panel behind it, <code>#list</code> the column of lines</li>' +
     '<li><code>.msg</code> one line; also <code>.msg.first</code> (first-time chatter) and <code>.role-mod</code>, <code>.role-vip</code>, <code>.role-sub</code>, <code>.role-broadcaster</code></li>' +
-    '<li>inside a line: <code>.name</code>, <code>.badge</code>, <code>.emote</code>, <code>.mention</code>, <code>.cheer</code>, <code>.time</code>, <code>.chan</code>, <code>.reply</code></li>' +
+    '<li>inside a line: <code>.who</code> the username part (<code>.chan</code>, <code>.time</code>, <code>.badge</code>, <code>.name</code>), <code>.text</code> the message (<code>.emote</code>, <code>.mention</code>, <code>.cheer</code>), <code>.reply</code></li>' +
     '<li>example: <code>.msg{ border-bottom:1px solid #fff3 }</code></li>'}
 ];
 UI.events = [
@@ -932,6 +933,8 @@ UI.events = [
     ]},
     {title:'Viewer\'s message', fields:[
       ['show_user_message','Show it',{t:'bool'}],
+      ['note_font_family','Font',{t:'font',same:'Same as the rest',when:function(d){ return d.show_user_message; }}],
+      ['note_size','Size',{t:'num',min:8,max:100,unit:'px',when:function(d){ return d.show_user_message; }}],
       ['note_color','Colour',{t:'color',opt:'Use the text colour',when:function(d){ return d.show_user_message; }}],
       ['note_italic','Italic',{t:'bool',when:function(d){ return d.show_user_message; }}]
     ]},
@@ -1346,7 +1349,7 @@ var LOOKS = [
   {name:'Clean dark', v:{font_family:'Inter', text_color:'#f2f2f7', bg_style:'solid', bubble_color:'#0b0b10', bubble_opacity:0.72, bubble_radius:14, bg_shadow:0, bg_image_dim:0, bg_image_opacity:1, outline:true, outline_color:'#000000', outline_width:2, shadow:true, accent:'#ff3b30'}, chat:{bubble:true}},
   {name:'Frosted glass', v:{font_family:'Poppins', text_color:'#ffffff', bg_style:'glass', bubble_color:'#ffffff', bubble_opacity:0.14, bubble_radius:22, bg_blur:14, bg_shadow:18, outline:false, shadow:true, accent:'#7ad7ff'}, chat:{bubble:true}},
   {name:'Neon arcade', v:{font_family:'Orbitron', text_color:'#e8fbff', bg_style:'glow', bubble_color:'#07010f', bubble_opacity:0.88, bubble_radius:10, bg_border_color:'#00f0ff', bg_shadow:0, outline:false, shadow:false, accent:'#ff2bd6'}, chat:{bubble:true, name_color_mode:'custom', name_color:'#ff2bd6'}},
-  {name:'Retro terminal', v:{font_family:'VT323', text_color:'#39ff14', bg_style:'frame', bubble_color:'#020a02', bubble_opacity:0.92, bubble_radius:0, bg_border_color:'#39ff14', bg_border_width:2, bg_shadow:0, outline:false, shadow:false, accent:'#39ff14'}, chat:{bubble:true, name_color_mode:'custom', name_color:'#b6ff9e', font_size:34}, events:{font_size:48, sub_font_size:30}},
+  {name:'Retro terminal', v:{font_family:'VT323', text_color:'#39ff14', bg_style:'frame', bubble_color:'#020a02', bubble_opacity:0.92, bubble_radius:0, bg_border_color:'#39ff14', bg_border_width:2, bg_shadow:0, outline:false, shadow:false, accent:'#39ff14'}, chat:{bubble:true, name_color_mode:'custom', name_color:'#b6ff9e', font_size:34, name_size:34}, events:{font_size:48, sub_font_size:30, note_size:30}},
   {name:'Storybook', v:{font_family:'Playfair Display', text_color:'#3b2a1a', bg_style:'frame', bubble_color:'#f3e5c8', bubble_opacity:0.96, bubble_radius:10, bg_border_color:'#8a5a2b', bg_border_width:3, bg_shadow:12, outline:false, shadow:false, accent:'#8a3b12'}, chat:{bubble:true, name_color_mode:'custom', name_color:'#8a3b12'}},
   {name:'Candy pop', v:{font_family:'Fredoka', text_color:'#ffffff', bg_style:'gradient', bubble_color:'#ff7ac6', bg_color2:'#7a5cff', bg_gradient_angle:135, bubble_opacity:0.95, bubble_radius:28, bg_shadow:10, outline:true, outline_color:'#3a1a6e', outline_width:2, shadow:true, accent:'#ffe14d'}, chat:{bubble:true}},
   {name:'Midnight', v:{font_family:'Sora', text_color:'#eef0ff', bg_style:'animated', bubble_color:'#0d1b4c', bg_color2:'#5b2a86', bubble_opacity:0.9, bubble_radius:18, bg_shadow:0, outline:false, shadow:true, accent:'#9d8cff'}, chat:{bubble:true}},

@@ -58,7 +58,7 @@
     text-transform:var(--title-tt,uppercase); color:var(--title-color,var(--accent,#ff3b30)); margin-bottom:6px;
   }
   .body{ font-size:var(--size,40px); font-weight:var(--body-w,800); line-height:1.15; text-transform:var(--tt,none); color:var(--body-color,inherit); }
-  .note{ font-size:var(--sub,26px); font-weight:500; opacity:.82; margin-top:10px; font-style:var(--note-style,italic); color:var(--note-color,inherit); }
+  .note{ font-family:var(--note-font), 'Segoe UI', system-ui, sans-serif; font-size:var(--note-size,26px); font-weight:500; opacity:.82; margin-top:10px; font-style:var(--note-style,italic); color:var(--note-color,inherit); }
 
   @keyframes popIn{ 0%{opacity:0; transform:scale(.8) translateY(14px);} 60%{transform:scale(1.04);} 100%{opacity:1; transform:none;} }
   @keyframes slideIn{ from{opacity:0; transform:translateY(-30px);} to{opacity:1; transform:none;} }
@@ -107,10 +107,13 @@ function applyConfig(cfg){
   var e = cfg.events, r = document.documentElement.style;
   loadFont(e.font_family);
   if(e.title_font_family) loadFont(e.title_font_family);
+  if(e.note_font_family) loadFont(e.note_font_family);
   r.setProperty('--font', fontVar(e.font_family));
   r.setProperty('--title-font', fontVar(e.title_font_family || e.font_family));
   r.setProperty('--size', e.font_size + 'px');
   r.setProperty('--sub', e.sub_font_size + 'px');
+  r.setProperty('--note-font', fontVar(e.note_font_family || e.font_family));
+  r.setProperty('--note-size', _num(e.note_size, e.sub_font_size) + 'px');
   r.setProperty('--fg', e.text_color);
   r.setProperty('--accent', e.accent_color);
   optVar(r, '--title-color', e.title_color);

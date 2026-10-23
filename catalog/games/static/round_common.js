@@ -21,6 +21,7 @@
  *   4. Players                 everyone with coins in the game
  *   5. (extra cards)           whatever the game adds (definition.extra)
  *   6. History & stats · 7. Ledger (this game's events) · 8. Settings · 9. API
+ *   10. (footer cards)         whatever the game puts at the very bottom (definition.footer: credits)
  *
  * A definition (all of it the game's own, nothing here knows a game by name):
  *   key, title                 'russian', 'Russian Roulette'  (the tab is section#tab-KEY)
@@ -33,7 +34,8 @@
  *   reasons {reason: label}    ledger reasons of this game on top of the common ones
  *   textRows {key: [label, tooltip]}   the editor's text rows (keys of `appearance` that are in TEXT_MAX)
  *   hint, scene, ledgerNote, doc       card wording (scene: 'scene' / 'board'; doc: docs/<doc>.md)
- *   controls(id), play(id), extra(id)  markup of the game controls, the "play as" form, extra cards (id(name) = element id)
+ *   controls(id), play(id), extra(id), footer(id)   markup of the game controls, the "play as" form, extra cards,
+ *                              the cards under the API card (id(name) = element id)
  *   apiRows(a), examples(h)            the API card: [[endpoint, text]] and the curl lines
  *   starting                           what the output line says while a game starts (default: nothing)
  *   startBody(body, $$, field)         fills the /start request from the controls
@@ -234,6 +236,7 @@
     var controls = def.controls(id);
     var play = def.play(id);
     var lore = def.extra ? def.extra(id) : '';        // the game's extra cards, between Players and History
+    var foot = def.footer ? def.footer(id) : '';      // and its cards at the very bottom (credits)
 
     this.host.innerHTML =
       '<div class="card"><h2>OBS browser source</h2><p class="hint">The first URL shows every game in one source; the second only ' + esc(this.title) + '. It stays transparent between games unless <b>Hide between games</b> is off (or you press Show).</p>' +
@@ -268,7 +271,7 @@
       '<div class="grid" id="' + id('settings') + '"></div>' +
       '<div class="row"><button class="act" id="' + id('save') + '">Save settings</button><button class="sec" id="' + id('revert') + '">Revert</button></div></div>' +
       '<div class="card"><h2>API</h2><p class="hint">Hexcast never reads chat: your bot turns chat commands into these calls. Full reference: <code>docs/' + def.doc + '.md</code>.</p>' +
-      '<table class="api">' + this.apiRows() + '</table><h3>Examples</h3><pre>' + esc(this.examples()) + '</pre></div>';
+      '<table class="api">' + this.apiRows() + '</table><h3>Examples</h3><pre>' + esc(this.examples()) + '</pre></div>' + foot;
 
     this.wire();
     this.buildSettings();

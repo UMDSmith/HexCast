@@ -1,0 +1,33 @@
+{
+  "_about": "The crowd's junk: one entry per thing it throws. The model goes in source/props/<id>/ (any .glb, .gltf, .fbx, .obj, .stl or .blend); scripts/render_props.py renders it tumbling, scripts/export_assets.py packs it. name: what the overlay and the commentary call it (= JUNK in derby.py). size: how big it looks next to the others (1 = a toilet). rot: degrees (x, y, z) that lay it down the way it lies on the track after it lands. tint: multiplies its colours. grime: 0..1, dirt over it. blood: {axis: x|y|z|-x|-y|-z, after rot, with -x towards the camera and -y to the right, to: 0..1} reddens that end of it, up to that fraction of its length. liquid: a blood surface inside a mug, added before it is laid down ({level, radius, offset: [x, y]} as fractions of its height and width; offset moves it off the middle, e.g. away from a handle). lid: drops the loose pieces lying wholly above that fraction of its height (a tankard's lid). credit: the model's maker, title, link and licence (shown on the Credits card once it is exported; check it matches the file you downloaded).",
+  "props": [
+    { "id": "bone", "name": "BONE", "size": 0.85, "rot": [0, 0, 90],
+      "credit": { "title": "Femur Bone", "author": "Arkify 3D", "url": "https://sketchfab.com/3d-models/6e3e3882bd534e52867dd83b8dd7a827", "licence": "CC BY 4.0", "changes": "Rendered tumbling to sprites." } },
+    { "id": "skull", "name": "SKULL", "size": 0.55,
+      "credit": { "title": "Human Skull", "author": "Daniele De Filippis", "url": "https://sketchfab.com/3d-models/0f46e7f845a145208e4922e94cd0c1b6", "licence": "CC BY 4.0", "changes": "Rendered tumbling to sprites." } },
+    { "id": "trashbag", "name": "TRASH BAG", "size": 0.7,
+      "credit": { "title": "Trashbag", "author": "Benny Weimer (Poly Haven)", "url": "https://polyhaven.com/a/trashbag", "licence": "CC0", "changes": "Rendered tumbling to sprites." } },
+    { "id": "mug", "name": "MUG OF BLOOD", "size": 0.6, "lid": 0.805, "rot": [-28, 0, 90], "liquid": { "level": 0.92, "radius": 0.35, "offset": [-0.14, 0] },
+      "credit": { "title": "Medieval Tankard", "author": "Kigha", "url": "https://sketchfab.com/3d-models/d95203038a9841d1b6f87b28c2e347aa", "licence": "CC BY 4.0", "changes": "Filled with blood and rendered tumbling to sprites." } },
+    { "id": "toilet", "name": "TOILET", "size": 1.0, "grime": 0.45,
+      "credit": { "title": "Game Ready - Dirty Old Toilet", "author": "Allan-Jay Branscombe", "url": "https://sketchfab.com/3d-models/6ac515a1c4154db18b5b4bd0b46d6405", "licence": "CC BY 4.0", "changes": "Dirtied and rendered tumbling to sprites." } },
+    { "id": "eyeball", "name": "ROTTEN EYEBALL", "size": 0.38, "rot": [-20, 0, -65], "tint": [1.0, 0.92, 0.68],
+      "credit": { "title": "Eyeball - Photorealistic", "author": "TrentPierce", "url": "https://sketchfab.com/3d-models/5c4565daf20e488fad8e0e4335c5c60a", "licence": "CC BY 4.0", "changes": "Yellowed and rendered tumbling to sprites." } },
+    { "id": "hand", "name": "SEVERED HAND", "size": 0.55, "rot": [-90, 110, 0], "blood": { "axis": "-y", "to": 0.18 },
+      "credit": { "title": "Hand Captured With DIY Hand Scanner!", "author": "aduke", "url": "https://sketchfab.com/3d-models/a1893bc753ed4af4a18a3a5fedb20e43", "licence": "CC BY 4.0", "changes": "Given a bloody stump and rendered tumbling to sprites." } },
+    { "id": "barrel", "name": "RED BARREL", "size": 1.0, "rot": [90, 90, 0],
+      "credit": { "title": "Barrel 01", "author": "Jorge Camacho (Poly Haven)", "url": "https://polyhaven.com/a/Barrel_01", "licence": "CC0", "changes": "Rendered tumbling to sprites." } },
+    { "id": "tv", "name": "TV", "size": 0.8, "rot": [0, 0, -75],
+      "credit": { "title": "Television 01", "author": "Gabriel Radić (Poly Haven)", "url": "https://polyhaven.com/a/Television_01", "licence": "CC0", "changes": "Rendered tumbling to sprites." } },
+    { "id": "chair", "name": "CHAIR", "size": 1.0, "rot": [0, 0, 35],
+      "credit": { "title": "School Chair 01", "author": "Ethan Place (Poly Haven)", "url": "https://polyhaven.com/a/SchoolChair_01", "licence": "CC0", "changes": "Rendered tumbling to sprites." } },
+    { "id": "axe", "name": "WOOD AXE", "size": 0.95, "rot": [-90, 0, 0],
+      "credit": { "title": "Wooden Axe 03", "author": "Ulan Cabanilla (Poly Haven)", "url": "https://polyhaven.com/a/wooden_axe_03", "licence": "CC0", "changes": "Rendered tumbling to sprites." } },
+    { "id": "sword", "name": "SWORD", "size": 1.1, "rot": [-90, 0, 0],
+      "credit": { "title": "Wooden Handle Saber", "author": "Ulan Cabanilla (Poly Haven)", "url": "https://polyhaven.com/a/wooden_handle_saber", "licence": "CC0", "changes": "Rendered tumbling to sprites." } },
+    { "id": "katana", "name": "KATANA", "size": 1.2, "rot": [-90, 90, 0],
+      "credit": { "title": "Antique Katana 01", "author": "Tal Swicegood (Poly Haven)", "url": "https://polyhaven.com/a/antique_katana_01", "licence": "CC0", "changes": "Rendered tumbling to sprites." } },
+    { "id": "hammer", "name": "WAR HAMMER", "size": 1.1, "rot": [90, 90, 0],
+      "credit": { "title": "Ornate War Hammer", "author": "Ulan Cabanilla (model) and James Ray Cock (textures) (Poly Haven)", "url": "https://polyhaven.com/a/ornate_war_hammer", "licence": "CC0", "changes": "Rendered tumbling to sprites." } }
+  ]
+}
