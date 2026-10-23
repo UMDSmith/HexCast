@@ -232,10 +232,12 @@ size (px), weight, line height, letter spacing, capitals and colour. Badges,
 the time and the channel tag belong to the username part and scale with its
 size (badge size is a percentage of it); emotes have a size of their own.
 **Outline & shadow** gives the text an outline and a drop shadow whose colour,
-strength, blur and offset you set. On alerts the small **label** line, the
-**main** line and the viewer's **message** each have their own size and
-colour; the label and the message their own font, the label and main line
-their own weight and capitals, and the label its own letter spacing.
+strength, blur and offset you set. An alert has three lines, each with its
+own font, size and colour: the **alert label** on top, the **main line**
+(usually the username) and the viewer's **message** (a redeem prompt, a cheer
+or resub message). The label and main line also have their own weight and
+capitals, and the label its own letter spacing. Changing a message setting
+brings up a redeem in the preview, so the message is there to look at.
 
 ### Background
 

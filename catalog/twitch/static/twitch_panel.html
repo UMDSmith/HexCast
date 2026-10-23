@@ -733,6 +733,10 @@ function setDirty(scope, on){
 function touch(scope, key, val){
   DRAFT[scope][key] = val;
   setDirty(scope, true);
+  // the viewer's message is only on some alerts, so its settings bring up a redeem in the preview to show it on
+  if(scope === 'events' && /^(note_|show_user_message)/.test(key) && !(ALERT_SAMPLE[PVS.events.kind] || {}).message){
+    PVS.events.kind = 'redeem'; syncKindSelect();
+  }
   if(key === 'bg_style' || key === 'bg_image_url' || key === 'bg_fit') updateWidthLock(scope);
   if(key === 'box_enabled' || key === 'bg_full') reflectPlacement(scope);
   refreshVisibility(scope);
@@ -912,28 +916,28 @@ UI.events = [
   {id:'alerts', label:'Alerts', custom:'alerts'},
   {id:'text', label:'Text', groups:[
     {title:'Look', fields:[
-      ['font_family','Font',{t:'font'}],
       ['text_color','Text colour',{t:'color'}],
       ['accent_color','Accent colour',{t:'color',tip:'The label colour and the edge of an alert. Each alert can override it.'}],
       ['letter_spacing','Letter spacing',{t:'num',min:-2,max:12,step:0.5,unit:'px'}]
     ]},
-    {title:'Label (the small line above)', fields:[
-      ['title_font_family','Font',{t:'font',same:'Same as the rest'}],
+    {title:'Alert label (the top line)', fields:[
+      ['title_font_family','Font',{t:'font',same:'Same as the main line'}],
       ['sub_font_size','Size',{t:'num',min:8,max:100,unit:'px'}],
       ['title_weight','Weight',{t:'sel',opts:WEIGHTS}],
       ['title_transform','Capitals',{t:'sel',opts:TRANSFORMS}],
       ['title_spacing','Letter spacing',{t:'num',min:0,max:0.5,step:0.01,unit:'em'}],
       ['title_color','Colour',{t:'color',opt:'Use the accent'}]
     ]},
-    {title:'Main line', fields:[
+    {title:'Main line (usually the username)', fields:[
+      ['font_family','Font',{t:'font'}],
       ['font_size','Size',{t:'num',min:10,max:160,unit:'px'}],
       ['body_weight','Weight',{t:'sel',opts:WEIGHTS}],
       ['text_transform','Capitals',{t:'sel',opts:TRANSFORMS}],
       ['body_color','Colour',{t:'color',opt:'Use the text colour'}]
     ]},
-    {title:'Viewer\'s message', fields:[
+    {title:'Viewer\'s message (a redeem prompt, a cheer or resub message)', fields:[
       ['show_user_message','Show it',{t:'bool'}],
-      ['note_font_family','Font',{t:'font',same:'Same as the rest',when:function(d){ return d.show_user_message; }}],
+      ['note_font_family','Font',{t:'font',same:'Same as the main line',when:function(d){ return d.show_user_message; }}],
       ['note_size','Size',{t:'num',min:8,max:100,unit:'px',when:function(d){ return d.show_user_message; }}],
       ['note_color','Colour',{t:'color',opt:'Use the text colour',when:function(d){ return d.show_user_message; }}],
       ['note_italic','Italic',{t:'bool',when:function(d){ return d.show_user_message; }}]
@@ -1425,7 +1429,7 @@ var ALERT_SAMPLE = {
   follow:{user:'TestViewer'}, subscribe:{user:'TestViewer', tier:'1'},
   resub:{user:'TestViewer', tier:'1', months:'12', message:'Love the stream'}, subgift:{user:'TestViewer', amount:'5', tier:'1'},
   cheer:{user:'TestViewer', amount:'500', message:'Take my bits'}, raid:{user:'TestStreamer', amount:'42'},
-  redeem:{user:'TestViewer', reward:'Hex sing a song', message:'please'}, hypetrain:{amount:'3'}, online:{}, offline:{}
+  redeem:{user:'TestViewer', reward:'Hex sing a song', message:'a sea shanty about the cat who runs this stream'}, hypetrain:{amount:'3'}, online:{}, offline:{}
 };
 function sampleEvent(kind){
   var rule = DRAFT.alerts[kind] || {}, s = ALERT_SAMPLE[kind] || {};

@@ -2151,7 +2151,7 @@ async def api_test_event(request: Request):
         "subgift": dict(user="TestViewer", amount="5", tier="1"),
         "cheer": dict(user="TestViewer", amount="500", message="Take my bits"),
         "raid": dict(user="TestStreamer", amount="42"),
-        "redeem": dict(user="TestViewer", reward="Hex sing a song", message="please"),
+        "redeem": dict(user="TestViewer", reward="Hex sing a song", message="a sea shanty about the cat who runs this stream"),
         "hypetrain": dict(amount="3"),
         "online": dict(),
         "offline": dict(),
