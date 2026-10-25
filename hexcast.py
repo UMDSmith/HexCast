@@ -585,6 +585,7 @@ async def lifespan(app: FastAPI):
         await plugin_service.repair_pending()  # plugins whose Python packages went missing
     except Exception:
         log.exception("plugins: restoring missing packages failed")
+    plugin_host.serving()                      # plugins' ctx.when_serving() work (a connection opened at boot ...)
     # GitHub: newest Hexcast + module versions - a background thread, never blocks start-up
     plugin_host.upstream.kick([p for p, i in plugin_host.scan().items() if i.meta.get("source") in ("bundled", "upstream")])
     if plugin_host.catalog.remote_urls:        # configured plugin indexes: fetch in the background (never blocks start-up)
@@ -695,11 +696,12 @@ def _overlay_targets(payload: dict) -> tuple[list[tuple[WebSocket, dict]], bool 
     """Who gets what, and - for a clip that asks to be locked to an avatar - whether an Avatars overlay draws that avatar.
     `stop` goes to every overlay. A clip locked to an avatar goes to the Avatars overlays that draw that avatar, and to the
     Avatars tab's previews that do; when no overlay does, the clip also plays where the Soundboard puts it (the lock is
-    dropped from that copy). Everything else goes to the Soundboard's own overlay."""
+    dropped from that copy). Everything else goes to the Soundboard's own overlay; so does a stop for one clip (`url`: an
+    Avatars overlay takes any stop for "stop all", and it never loops a clip)."""
     t = payload.get("type")
-    if t == "stop":
-        return [(ws, payload) for ws in overlay_clients], None
     plain = [ws for ws in overlay_clients if not overlay_meta.get(ws, {}).get("role")]
+    if t == "stop":
+        return [(ws, payload) for ws in (plain if payload.get("url") else overlay_clients)], None
     if not payload.get("attach") or t != "video":
         payload = {k: v for k, v in payload.items() if k != "attach"}
         return [(ws, payload) for ws in plain], None
@@ -825,9 +827,12 @@ async def api_root():
         "play_by_name":  "GET|POST /api/play/{name}",
         "play_by_kind":  "GET|POST /api/play/{kind}/{name}    (kind = audio|video)",
         "stop_all":      "GET|POST /api/stop",
+        "stop_one":      "GET|POST /api/stop/{name}    (every playing copy of that clip, on the Soundboard overlay)",
         "position_override (video)":   "?x=50&y=50&scale=2",
         "volume_override (audio/video)": "?volume=0.5  (0.0-1.0)",
         "trim_override (all kinds)":     "?start=2&end=5  (seconds; static images ignore start)",
+        "loop (audio/video)":            "?loop=1  repeat it (its trim window) until /api/stop/{name} or /api/stop; on the Soundboard overlay "
+                                         "(a clip locked to an avatar plays once)",
         "lock_to_avatar (video)":        "?avatar=hex[&anchor=head_top][&dx=0&dy=-40][&ascale=1] - plays glued to that avatar (Avatars plugin); "
                                          "?avatar= (empty) plays it on the Soundboard overlay even if the clip is locked. "
                                          "A clip can also be locked for good: POST /attach {file, kind:'video', attach:{avatar, anchor, ...}}",
@@ -835,6 +840,8 @@ async def api_root():
             "curl http://host:4747/api/play/airhorn",
             "curl http://host:4747/api/play/video/wow",
             "curl 'http://host:4747/api/play/video/cheer?x=80&y=20&scale=2&volume=0.6&end=3'",
+            "curl 'http://host:4747/api/play/racemusic?loop=1'",
+            "curl http://host:4747/api/stop/racemusic",
             "curl http://host:4747/api/stop",
         ],
     }
@@ -862,7 +869,7 @@ def _attach_query(request: Request) -> dict | None:
 async def api_play_kind(kind: str, name: str, request: Request,
                         x: float | None = None, y: float | None = None,
                         scale: float | None = None, volume: float | None = None,
-                        start: float | None = None, end: float | None = None):
+                        start: float | None = None, end: float | None = None, loop: bool = False):
     if kind not in ("audio", "video"):
         raise HTTPException(400, "kind must be 'audio' or 'video'")
     found = find_media(name, kind=kind)
@@ -876,6 +883,7 @@ async def api_play_kind(kind: str, name: str, request: Request,
     if volume is not None: payload["volume"] = volume
     if start is not None:  payload["start"] = start
     if end is not None:    payload["end"] = end
+    if loop:               payload["loop"] = True
     aq = _attach_query(request)
     if aq is not None and kind == "video":
         payload["attach_query"] = aq
@@ -886,7 +894,7 @@ async def api_play_kind(kind: str, name: str, request: Request,
 async def api_play_fuzzy(name: str, request: Request,
                          x: float | None = None, y: float | None = None,
                          scale: float | None = None, volume: float | None = None,
-                         start: float | None = None, end: float | None = None):
+                         start: float | None = None, end: float | None = None, loop: bool = False):
     """Trigger by name across all kinds. Search order: audio, video. First match wins."""
     found = find_media(name)
     if not found:
@@ -899,6 +907,7 @@ async def api_play_fuzzy(name: str, request: Request,
     if volume is not None: payload["volume"] = volume
     if start is not None:  payload["start"] = start
     if end is not None:    payload["end"] = end
+    if loop:               payload["loop"] = True
     aq = _attach_query(request)
     if aq is not None and kind == "video":
         payload["attach_query"] = aq
@@ -1095,6 +1104,16 @@ async def rename_media(payload: dict):
 async def api_stop():
     """Clear all overlay visuals and stop all playing audio."""
     return await _broadcast_trigger({"type": "stop"})
+
+
+@app.api_route("/api/stop/{name}", methods=["GET", "POST"])
+async def api_stop_one(name: str):
+    """Stop one clip (found like /api/play/{name}): every copy of it playing on the Soundboard overlay - a looping one
+    (?loop=1) included. Nothing else stops."""
+    found = find_media(name)
+    if not found:
+        raise HTTPException(404, f"no media named '{name}'")
+    return await _broadcast_trigger({"type": "stop", "url": found[1]["url"]})
 
 
 @app.post("/upload")

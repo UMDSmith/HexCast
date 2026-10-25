@@ -1,0 +1,305 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>HexCast giveaway</title>
+<link rel="icon" href="data:,">
+<link id="fonts" rel="stylesheet" href="">
+<style>
+  html,body{margin:0;padding:0;background:transparent;overflow:hidden;height:100%;width:100%}
+  /* Fixed 1920x1080 design stage, scaled to fill the browser source. */
+  #stage{position:absolute;top:0;left:0;width:1920px;height:1080px;transform-origin:top left;
+         --accent:#ff3b30;--accent2:#a970ff;--ink:#ffffff;--title-font:'Bungee';--text-font:'Inter'}
+  #wrap{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:70px;box-sizing:border-box}
+  #wrap.pos-top{align-items:flex-start} #wrap.pos-bottom{align-items:flex-end}
+  #wrap.pos-left{justify-content:flex-start} #wrap.pos-right{justify-content:flex-end}
+
+  #card{position:relative;width:760px;padding:4px;border-radius:34px;opacity:0;
+        transform:scale(calc(var(--scale,1) * .86)) translateY(30px);
+        transition:opacity .45s ease,transform .55s cubic-bezier(.2,1.4,.4,1);will-change:transform,opacity}
+  #card.on{opacity:1;transform:scale(var(--scale,1))}
+  /* the border: a gradient that turns, and a glow under it */
+  #card::before{content:'';position:absolute;inset:0;border-radius:34px;padding:4px;
+        background:conic-gradient(from var(--spin,0deg),var(--accent),var(--accent2),#ffd166,var(--accent2),var(--accent));
+        -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;
+        animation:spin 4s linear infinite}
+  #card::after{content:'';position:absolute;inset:-26px;border-radius:52px;z-index:-1;opacity:.55;filter:blur(36px);
+        background:conic-gradient(from var(--spin,0deg),var(--accent),var(--accent2),var(--accent));animation:spin 4s linear infinite}
+  @property --spin{syntax:'<angle>';inherits:false;initial-value:0deg}
+  @keyframes spin{to{--spin:360deg}}
+  #inner{position:relative;border-radius:30px;overflow:hidden;padding:34px 40px 36px;text-align:center;color:var(--ink);
+         background:radial-gradient(120% 90% at 50% 0%,rgba(255,255,255,.10),rgba(255,255,255,0) 55%),
+                    linear-gradient(160deg,rgba(22,18,34,.96),rgba(8,8,14,.96));
+         font-family:var(--text-font),'Segoe UI',system-ui,sans-serif}
+  #inner::before{content:'';position:absolute;inset:0;pointer-events:none;opacity:.5;
+         background:radial-gradient(60% 40% at 10% 100%,var(--accent-a35),transparent),
+                    radial-gradient(60% 40% at 90% 100%,var(--accent2-a35),transparent)}
+
+  #title{position:relative;font-family:var(--title-font),'Segoe UI',sans-serif;font-size:44px;letter-spacing:.16em;
+         line-height:1.1;margin:0 0 22px;text-transform:uppercase;
+         background:linear-gradient(90deg,var(--accent),#ffd166,var(--accent2),var(--accent));background-size:300% 100%;
+         -webkit-background-clip:text;background-clip:text;color:transparent;animation:shimmer 5s linear infinite;
+         filter:drop-shadow(0 3px 12px rgba(0,0,0,.6))}
+  #title .spark{display:inline-block;color:#ffd166;-webkit-text-fill-color:#ffd166;animation:twinkle 1.6s ease-in-out infinite;margin:0 .3em}
+  #title .spark.b{animation-delay:.8s}
+  @keyframes shimmer{to{background-position:300% 0}}
+  @keyframes twinkle{0%,100%{transform:scale(.7) rotate(0);opacity:.6}50%{transform:scale(1.15) rotate(20deg);opacity:1}}
+
+  #pic{position:relative;width:300px;height:300px;margin:0 auto 22px;border-radius:24px;overflow:hidden;
+       box-shadow:0 18px 50px rgba(0,0,0,.6),0 0 0 2px rgba(255,255,255,.08);animation:float 5s ease-in-out infinite;
+       background:linear-gradient(135deg,var(--accent-dark),var(--accent2-dark))}
+  #pic img{width:100%;height:100%;object-fit:cover;display:block}
+  #pic .gift{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:150px}
+  #pic::after{content:'';position:absolute;inset:0;background:linear-gradient(115deg,transparent 30%,rgba(255,255,255,.28) 45%,transparent 60%);
+       background-size:250% 100%;animation:sheen 3.5s ease-in-out infinite}
+  @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
+  @keyframes sheen{0%{background-position:150% 0}60%,100%{background-position:-100% 0}}
+
+  #prize{position:relative;font-size:46px;font-weight:800;line-height:1.15;margin:0 0 8px;text-shadow:0 3px 14px rgba(0,0,0,.7)}
+  #desc{position:relative;font-size:24px;line-height:1.35;color:var(--ink-a72);margin:0 auto 4px;max-width:640px}
+  #foot{position:relative;margin-top:20px;font-size:22px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
+        color:var(--ink-a75)}
+
+  /* the draw: a reel of names that slows down and lands on the winner, and a countdown ring */
+  #drawrow{position:relative;display:none;align-items:center;gap:22px;margin-top:26px}
+  #card.drawing #drawrow,#card.revealed #drawrow{display:flex}
+  #reel{position:relative;flex:1;height:112px;border-radius:18px;overflow:hidden;
+        background:rgba(0,0,0,.45);box-shadow:inset 0 0 0 2px rgba(255,255,255,.08),inset 0 10px 30px rgba(0,0,0,.6)}
+  #reel::before,#reel::after{content:'';position:absolute;left:0;right:0;height:26px;z-index:2;pointer-events:none}
+  #reel::before{top:0;background:linear-gradient(rgba(0,0,0,.85),transparent)}
+  #reel::after{bottom:0;background:linear-gradient(transparent,rgba(0,0,0,.85))}
+  #strip{position:absolute;left:0;right:0;top:0;will-change:transform}
+  #strip div{height:112px;line-height:112px;font-size:54px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 22px}
+  .mark{position:absolute;top:50%;width:0;height:0;border:14px solid transparent;z-index:3;transform:translateY(-50%)}
+  .mark.l{left:-2px;border-left-color:var(--accent)} .mark.r{right:-2px;border-right-color:var(--accent)}
+  #ring{position:relative;flex:0 0 112px;height:112px}
+  #ring svg{position:absolute;inset:0;transform:rotate(-90deg)}
+  #ring circle{fill:none;stroke-width:9}
+  #ring .track{stroke:rgba(255,255,255,.12)}
+  #ring .arc{stroke:url(#grad);stroke-linecap:round;stroke-dasharray:314.16;transition:stroke-dashoffset .12s linear}
+  #num{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:var(--title-font),sans-serif;font-size:44px}
+  #num.pop{animation:pop .45s cubic-bezier(.2,1.6,.4,1)}
+  @keyframes pop{0%{transform:scale(1.6);color:#ffd166}100%{transform:scale(1)}}
+
+  /* the reveal */
+  #winlabel{position:absolute;left:50%;top:-22px;transform:translateX(-50%) scale(0);z-index:4;padding:6px 18px;border-radius:99px;
+            font-family:var(--title-font),sans-serif;font-size:24px;letter-spacing:.2em;color:#111;
+            background:linear-gradient(90deg,#ffd166,#fff3c4,#ffd166);box-shadow:0 6px 20px rgba(0,0,0,.5)}
+  #card.revealed #ring{display:none}
+  #card.drawing #winlabel{display:none}
+  #card.revealed #reel{box-shadow:inset 0 0 0 3px var(--accent),0 0 40px var(--accent-a70)}
+  #card.revealed #strip div:last-child{background:linear-gradient(90deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;
+            color:transparent;filter:drop-shadow(0 0 14px var(--accent2-a80));animation:glow 1.4s ease-in-out infinite}
+  #card.revealed #winlabel{transform:translateX(-50%) scale(1);transition:transform .5s cubic-bezier(.2,1.8,.4,1) .1s}
+  #card.boom{animation:boom .7s cubic-bezier(.2,1.6,.4,1)}
+  @keyframes boom{0%{transform:scale(var(--scale,1))}35%{transform:scale(calc(var(--scale,1) * 1.07))}100%{transform:scale(var(--scale,1))}}
+  @keyframes glow{0%,100%{filter:drop-shadow(0 0 10px var(--accent2-a70))}50%{filter:drop-shadow(0 0 22px var(--accent-a90))}}
+  #confetti{position:absolute;inset:0;pointer-events:none;z-index:10}
+</style></head>
+<body>
+<div id="stage">
+  <div id="wrap">
+    <div id="card">
+      <div id="inner">
+        <div id="title"><span class="spark">&#10022;</span><span id="title-text">GIVEAWAY</span><span class="spark b">&#10022;</span></div>
+        <div id="pic"></div>
+        <div id="prize"></div>
+        <div id="desc"></div>
+        <div id="drawrow">
+          <div id="winlabel">WINNER</div>
+          <div id="reel"><div id="strip"></div><span class="mark l"></span><span class="mark r"></span></div>
+          <div id="ring"><svg viewBox="0 0 112 112"><defs><linearGradient id="grad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#ff3b30" id="g1"/><stop offset="1" stop-color="#a970ff" id="g2"/></linearGradient></defs>
+            <circle class="track" cx="56" cy="56" r="50"/><circle class="arc" id="arc" cx="56" cy="56" r="50"/></svg>
+            <div id="num"></div></div>
+        </div>
+        <div id="foot"></div>
+      </div>
+    </div>
+  </div>
+  <canvas id="confetti" width="1920" height="1080"></canvas>
+</div>
+<script>
+var $ = function(id){ return document.getElementById(id); };
+var stage = $('stage'), card = $('card');
+var PREVIEW = /[?&]preview=1/.test(location.search);
+var LOOK = {}, CUR = null, GLOBAL = null, timers = [], raf = 0;
+var PARENT_LOOK = null;      // the tab's preview: the look being edited there wins over the saved one
+var ITEM = 112, CIRC = 314.16;
+
+function fitStage(){
+  var s = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
+  stage.style.transform = 'scale(' + s + ')';
+}
+window.addEventListener('resize', fitStage);
+fitStage();
+
+function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+function cleanFont(f){ return String(f || '').replace(/[^\w '\-]/g, '').trim(); }
+
+function rgb(hex){
+  var m = /^#?([0-9a-f]{6})$/i.exec(String(hex || '')), n = m ? parseInt(m[1], 16) : 0xffffff;
+  return [n >> 16 & 255, n >> 8 & 255, n & 255];
+}
+function rgba(hex, a){ var c = rgb(hex); return 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + a + ')'; }
+function darken(hex){ var c = rgb(hex); return 'rgb(' + c.map(function(x){ return Math.round(x * .4 + 17 * .6); }).join(',') + ')'; }
+
+function applyLook(look){
+  LOOK = look || {};
+  var st = stage.style;
+  st.setProperty('--accent', LOOK.accent || '#ff3b30');
+  st.setProperty('--accent2', LOOK.accent2 || '#a970ff');
+  st.setProperty('--ink', LOOK.text_color || '#ffffff');
+  st.setProperty('--scale', (LOOK.scale || 100) / 100);
+  var tf = cleanFont(LOOK.font_title) || 'Bungee', xf = cleanFont(LOOK.font_text) || 'Inter';
+  st.setProperty('--title-font', '"' + tf + '"');
+  st.setProperty('--text-font', '"' + xf + '"');
+  var href = 'https://fonts.googleapis.com/css2?family=' + encodeURIComponent(tf) + '&family=' + encodeURIComponent(xf) + ':wght@400;600;800&display=swap';
+  if($('fonts').getAttribute('href') !== href) $('fonts').setAttribute('href', href);
+  var a = LOOK.accent || '#ff3b30', b = LOOK.accent2 || '#a970ff', ink = LOOK.text_color || '#ffffff';
+  [['--accent-a35', rgba(a, .35)], ['--accent2-a35', rgba(b, .35)], ['--accent-a70', rgba(a, .7)], ['--accent-a90', rgba(a, .9)],
+   ['--accent2-a70', rgba(b, .7)], ['--accent2-a80', rgba(b, .8)], ['--ink-a72', rgba(ink, .72)], ['--ink-a75', rgba(ink, .75)],
+   ['--accent-dark', darken(a)], ['--accent2-dark', darken(b)]].forEach(function(v){ st.setProperty(v[0], v[1]); });
+  $('g1').setAttribute('stop-color', LOOK.accent || '#ff3b30');
+  $('g2').setAttribute('stop-color', LOOK.accent2 || '#a970ff');
+  $('title-text').textContent = LOOK.title || 'GIVEAWAY';
+  $('wrap').className = 'pos-' + (LOOK.position || 'center');
+  $('desc').style.display = LOOK.show_description === false ? 'none' : '';
+}
+
+function clearTimers(){ timers.forEach(clearTimeout); timers = []; cancelAnimationFrame(raf); }
+function later(fn, ms){ timers.push(setTimeout(fn, Math.max(0, ms))); }
+
+function fillPrize(p){
+  p = p || {};
+  $('pic').innerHTML = p.image ? '<img src="' + esc(p.image) + '" alt="">' : '<div class="gift">&#127873;</div>';
+  $('prize').textContent = p.name || 'A prize';
+  $('desc').textContent = p.description || '';
+}
+
+function hide(){
+  clearTimers();
+  card.className = '';
+  CUR = null;
+}
+
+// The strip: random names, the winner last - an ease-out from the top lands exactly on them.
+function buildStrip(show){
+  var names = (show.names && show.names.length) ? show.names : [show.winner.name];
+  var n = Math.max(24, Math.min(160, Math.round(show.countdown * 7))), out = [], last = '';
+  for(var i = 0; i < n - 1; i++){
+    var pick = names[(Math.random() * names.length) | 0];
+    if(names.length > 1 && pick === last) pick = names[(names.indexOf(pick) + 1) % names.length];
+    out.push(pick); last = pick;
+  }
+  out.push(show.winner.name);
+  $('strip').innerHTML = out.map(function(x){ return '<div>' + esc(x) + '</div>'; }).join('');
+  return out.length;
+}
+
+function ease(p){ return 1 - Math.pow(1 - p, 4); }
+
+function runReel(show, count){
+  var total = (count - 1) * ITEM, dur = show.countdown * 1000;
+  var t0 = performance.now() - Math.max(0, show.elapsed || 0) * 1000, lastNum = -1;
+  function frame(now){
+    var p = Math.min(1, (now - t0) / dur);
+    $('strip').style.transform = 'translateY(' + (-total * ease(p)) + 'px)';
+    var left = Math.max(0, dur - (now - t0)) / 1000, num = Math.ceil(left);
+    $('arc').style.strokeDashoffset = CIRC * (1 - left / show.countdown);
+    if(num !== lastNum){
+      lastNum = num; var el = $('num'); el.textContent = num;
+      el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop');
+    }
+    if(p < 1) raf = requestAnimationFrame(frame);
+  }
+  raf = requestAnimationFrame(frame);
+}
+
+function reveal(show, fresh){
+  cancelAnimationFrame(raf);
+  var strip = $('strip');
+  if(!strip.children.length) buildStrip(show);
+  strip.style.transform = 'translateY(' + (-(strip.children.length - 1) * ITEM) + 'px)';
+  card.className = 'on revealed' + (fresh ? ' boom' : '');
+  $('foot').textContent = '@' + (show.winner.name || show.winner.login) + ' wins!';
+  if(fresh && LOOK.confetti !== false){ confetti(); later(confetti, 650); }
+}
+
+function play(show, previewOnly){
+  var sameShow = CUR && CUR.id === show.id;
+  if(show.state === 'idle'){ hide(); return; }
+  if(sameShow && CUR.state === show.state) return;
+  if(sameShow && CUR.state === 'drawing' && show.state === 'revealed'){ CUR = show; reveal(show, false); return; }
+  clearTimers();
+  CUR = show;
+  fillPrize(show.prize);
+  if(show.state === 'showing'){
+    card.className = 'on showing';
+    $('foot').textContent = 'Up for grabs - stay in chat!';
+    return;
+  }
+  var countdown = show.countdown || 10, elapsed = show.elapsed || 0, hold = show.hold || 0;
+  var count = buildStrip(show);
+  var ends = previewOnly ? function(){ hide(); if(GLOBAL) play(GLOBAL, false); } : hide;
+  if(show.state === 'drawing' && elapsed < countdown){
+    card.className = 'on drawing';
+    $('foot').textContent = show.test ? 'A test draw' : 'Drawing a winner...';
+    runReel(show, count);
+    later(function(){ reveal(show, true); }, (countdown - elapsed) * 1000);
+  } else {
+    reveal(show, elapsed - countdown < 2);
+  }
+  if(hold > 0) later(ends, (countdown + hold - elapsed) * 1000);
+}
+
+/* ---- confetti ---- */
+var cv = $('confetti'), cx = cv.getContext('2d'), bits = [];
+function confetti(){
+  var r = card.getBoundingClientRect(), s = Math.min(window.innerWidth / 1920, window.innerHeight / 1080) || 1;
+  var ox = (r.left + r.width / 2) / s, oy = (r.top + r.height * 0.62) / s;
+  var colors = [LOOK.accent || '#ff3b30', LOOK.accent2 || '#a970ff', '#ffd166', '#ffffff', '#4ade80'];
+  for(var i = 0; i < 220; i++){
+    var a = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 1.3, v = 9 + Math.random() * 15;
+    bits.push({x: ox, y: oy, vx: Math.cos(a) * v, vy: Math.sin(a) * v, w: 8 + Math.random() * 10, h: 5 + Math.random() * 7,
+               r: Math.random() * 6.28, vr: (Math.random() - 0.5) * 0.4, c: colors[i % colors.length], life: 0});
+  }
+  if(!lastBurst) requestAnimationFrame(burst);
+}
+var lastBurst = 0;
+function burst(now){
+  var dt = lastBurst ? Math.min(3, (now - lastBurst) / 16.67) : 1;      // in 60 fps frames, whatever the screen does
+  lastBurst = now;
+  cx.clearRect(0, 0, 1920, 1080);
+  bits = bits.filter(function(b){ return b.y < 1150 && b.life < 300; });
+  bits.forEach(function(b){
+    b.life += dt; b.vy += 0.24 * dt; b.vx *= Math.pow(0.99, dt); b.vy *= Math.pow(0.995, dt);
+    b.x += b.vx * dt; b.y += b.vy * dt; b.r += b.vr * dt;
+    cx.save(); cx.translate(b.x, b.y); cx.rotate(b.r); cx.fillStyle = b.c;
+    cx.globalAlpha = Math.max(0, Math.min(1, (300 - b.life) / 60));
+    cx.fillRect(-b.w / 2, -b.h / 2, b.w, b.h * Math.abs(Math.cos(b.r * 2)) + 1); cx.restore();
+  });
+  if(bits.length) requestAnimationFrame(burst); else { lastBurst = 0; cx.clearRect(0, 0, 1920, 1080); }
+}
+
+/* ---- the socket ---- */
+function connect(){
+  var ws = new WebSocket((location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + '/giveaways/ws/overlay' + (PREVIEW ? '?preview=1' : ''));
+  ws.onmessage = function(e){
+    var m; try{ m = JSON.parse(e.data); }catch(err){ return; }
+    if(m.look) applyLook(PARENT_LOOK || m.look);
+    if(m.type === 'show' && m.show){
+      if(!m.preview_only) GLOBAL = m.show;
+      play(m.show, !!m.preview_only);
+    }
+  };
+  ws.onclose = function(){ setTimeout(connect, 1500); };
+  ws.onerror = function(){ try{ ws.close(); }catch(err){} };
+}
+// the tab's preview: unsaved look settings arrive from the page around it
+window.addEventListener('message', function(e){
+  if(e.origin !== location.origin || !e.data || e.data.hexcast !== 'giveaway-look') return;
+  PARENT_LOOK = e.data.look;
+  applyLook(PARENT_LOOK);
+});
+applyLook({});
+connect();
+</script>
+</body></html>

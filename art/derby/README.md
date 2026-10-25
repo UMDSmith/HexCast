@@ -22,10 +22,18 @@ art/derby/
     render_props.py      render every piece of junk tumbling (+ how it lies once it lands)
     guestlib.py          the guests: find any humanoid skeleton's joints, a run, a centaur's gallop, fix half-skinned models
     render_guest.py      render a guests file's racers running (+ feet, head, hips, nose)
+    probe_guest.py       look inside guest models: bones, the joints found and missing, clips, size
+    render_morph.py      a guest that changes shape partway through a race (a robot into its truck): the change,
+                         once, and the new shape running, from the file's own animation of it
+    import_sprite.py     a guest painted in 2D: a PNG run cycle cut out and measured into what render_guest.py
+                         writes (frames + anchors; plain Python + Pillow, numpy, scipy)
+    fetch_guests.py      download a guests file's models from Sketchfab (needs your API token; plain Python)
     build_preview.py     rebuild the preview pages only (after a colour/effect/race change)
     export_assets.py     pack the renders into the add-on: hounds/<id>.webp, crowd/<id>.webp, props/<id>.webp,
                          guests/<id>.webp, derby_hounds.json, derby_crowd.json, derby_props.json, derby_guests.json,
                          derby_lines.json, derby_credits.json; --local packs a local guest pack instead
+    make_ground.py       the track's dirt: a seamless ground texture (source/ground/) made into derby_ground.webp
+                         (grey, blotches evened out: the overlay lays it over each theme's colours; plain Python + Pillow)
     fx.js                the overlay effects (fire prints, slime, lightning prints...), shared by both pages
     preview_template.html  every hound on its own strip, with an effect picker
     race_template.html   the race prototype: one shared track, a scripted race with antics and trash talk
@@ -110,6 +118,21 @@ blender -b -Y -P art/derby/scripts/render_crowd.py -- <abs path>/art/derby/sourc
 (optional last argument: crowd ids). One 960×840 sheet per monster (a row per move, 8 frames of 120×140),
 about 1.2 MB for all twelve. `out/crowd/<id>/sheet.png` is a contact sheet to check the moves.
 
+## The track
+
+The ground is "Mud Cracked Dry 03" (Poly Haven, CC0: <https://polyhaven.com/a/mud_cracked_dry_03>, its 1k diffuse
+JPG in `source/ground/`), made into a 512 px grey tile (no Blender):
+
+```
+python -I art/derby/scripts/make_ground.py art/derby/source/ground/mud_cracked_dry_03_diff_1k.jpg <abs path>/catalog/games_derby/static/derby_ground.webp
+```
+
+The overlay bakes it once per theme (an overlay blend over the theme's track colours, each band of the track at its
+own scale and depth) and then only slides each band along as the camera moves: blending it every frame stalled the
+canvas when drawn in software (a frame in ten took 30 ms). `GROUND` in derby.js: how much world one tile spans, the
+camera's focal length (how steeply we look down), the band height, how strongly it shows. Other CC0 grounds tried:
+red_dirt_mud_01 (a fine red racing dirt), brown_mud_dry (trampled dirt): swap the source and run it again.
+
 ## The junk
 
 Every thing the crowd throws is a model in `source/props/<id>/` (any .glb, .gltf, .fbx, .obj, .stl or
@@ -137,7 +160,7 @@ A new piece of junk needs its name in `JUNK` (`derby.py`) and `JUNK_NAMES` (`der
 
 ## The guests
 
-A guest racer is a rigged model in `source/guests/<model>/` (a .glb, .gltf or .fbx), listed in a guests file:
+A guest racer is a rigged model in `source/guests/<model>/` (a .glb, .gltf, .fbx or .blend), listed in a guests file:
 `guests.json` for the ones that ship (original characters under CC BY / CC0 only), or a local pack's spec
 (`source/guests/local.json`, git-ignored) for anything that can't ship.
 
@@ -151,20 +174,40 @@ blender -b -P art/derby/scripts/export_assets.py -- <abs path>/art/derby/out/gal
 you see the rest pose (it bakes each skinned mesh as it stands and applies the pose as the rest: imported rigs
 often stand in something else, even at another scale), then finds the joints by name: Mixamo, Uma-style game rips
 (`Hip`, `Thigh_L`, `Ankle_offset_L`...), MMD (`Left leg`...) and 3ds Max Biped (`Bip001 L Thigh`...) are known,
-`joints` in the spec fills in the rest. The run is made, like the crowd's moves: 16 frames of one stride, the feet
+`joints` in the spec fills in the rest (a left joint's right one is its name mirrored: `Left`/`Right`, `_L`/`_R`, `.L`/`.R`, `left`/`right`
+or Biped's `Bip001 L Thigh`; a rig named any other way, `L_Knee_jnt` or `leg_upper_lf`, names its right joints too). A file with
+several characters in it (Among Us crewmates in every colour) keeps one: `keep`, a pattern for its materials (the
+others' skeletons go, with their meshes). The run is made, like the crowd's moves: 16 frames of one stride, the feet
 on a running path (two-bone IK, knees forward), the arms pumping against the legs (bent from the upper arm), a lean
 and a bounce (`run`: lean in the spine, hip (the pelvis tipping in too), stride, stance, lift, kick, bounce, drop,
-arm, elbow, arm_lean (how much of the lean the arms follow), nod). A sprinter leans: about 35 degrees all told
+arm, elbow, arm_lean (how much of the lean the arms follow), out (how wide the arms swing: 0.12, D'oh-mer's 0.5
+or his near arm sinks into his belly), nod, still (joints left as they stand, following their parent: Pyramid
+Scheme's knife arm)). A sprinter leans: about 35 degrees all told
 (lean + hip), or it looks like it's out for a stroll. A centaur (`gait: centaur`, `legs`, `hips`, `head`, `torso`,
 `arms`) gallops instead: four legs on a rotary gallop's footfalls, swinging from the shoulder and hip, the front
 knees and rear hocks folding in the swing, the body pitching, the rider half leaning in, its arms pumping (`gallop`:
 torso, lean for the head, arm). A long cloak hides the legs, so let the wind take it: its skirt bones go in `trail`
-like a tail.
+like a tail. A whole horse (`gait: horse`, Neigh Sayer) gallops from key poses instead (`guestlib.HORSE`, after
+Muybridge): a transverse gallop (far hind, near hind, far fore, near fore, then all four folded under it in the air),
+each leg four bones from the shoulder or hip to the pastern (`legs`; no `_end` bones: the hoof is found in its mesh,
+and so is the ground), every segment set to an angle from straight down, so a rest pose with a leg raised doesn't
+matter. The body rides as high as its planted hooves hold it up and pitches a little, each planted hoof is held on
+the ground (two-bone IK on its top two joints), and the stride is as far as a planted hoof slides back. Its neck
+(`neck`: bones) stretches out low and nods, lowest on the forelegs, and its head pushes its nose out (`gallop`: neck,
+nod, head degrees; pitch, hop, lead, stance, front, rear). The rear keys bend the stifle forward and the hock
+back: the centaur gallop has those two the wrong way round, under Centorrhea's cloak it never showed.
+A tail bone whose only child is an exporter's `_end` marker pointing away from the bone's own mesh streams toward
+the middle of that mesh instead: the marker's place is a guess (Neigh Sayer's pointed forward, and the wind bent her
+tail tip up in a hook; Mint's ribbon markers are fine and stay).
 Loose parts stream behind (`trail`: {bone-name pattern: [share, lift, wave]}): each bone of a tail, a ponytail or a
 ribbon turns `share` of the way toward the wind (behind, `lift` degrees above level) and the chain waves twice a
 stride. Without it, `guestlib.TRAIL` takes a game rip's swing bones: `Sp_Hi_Tail*` (the tail), `Sp_He_Hair1-9*`
 (the hair, not the bangs) and the jacket tails and ribbons. A model with no swing bones (most) keeps them still,
-and a part stuck rigidly to the head can't stream at all. A model that came half
+and a part stuck rigidly to the head can't stream at all. A part that must keep its shape (a wing: streamed bone
+by bone its membrane crumples) is turned whole instead (`bend`: {bone-name pattern: [about up, about its left]},
+degrees from how it rests; + about up swings a left part back, so its right one takes the minus, and + about its
+left sweeps what hangs below back): a dragon's wings, spread at rest, fold back at `[90, 65]` / `[-90, 65]` on
+their first wing bone, and what hangs from it follows. A model that came half
 skinned (a static body over a skinned one, every face expression as its own mesh) is fixed in the spec: `hide`
 parts, `attach` parts rigidly to a bone (attach things to what they hang on: a sword on a centaur's flank goes on
 its horse spine, not its rider), `skin` parts with automatic weights from the listed bones only (`upper`: above a
@@ -174,6 +217,67 @@ under a cloak sideways (`by`: a share, fading in over `z` and `y` so the rider i
 side nothing shows, and the bulges of a gallop (body and cloak are skinned differently) stay under the cloak.
 (Pushing it in along its normals folds it and pokes out somewhere else.) To find what pokes through, render each
 motion alone (zero the rest of `gallop`), and hide one part at a time.
+A model that came with no skeleton at all (a static mesh: Pyramid Scheme) gets one: `rig`, `{joint: [x, y, z]}`
+where each joint sits in the model as it came (world units; Hips, Spine..Spine2, Neck, Head, the left leg and arm,
+plus `HeadTop`, `LeftHandEnd`, `LeftToeEnd` for where those bones end; a right joint not given is the left one
+mirrored across x = 0). Each bone runs to the next joint down its chain, and the meshes are skinned with automatic
+weights (a vertex the heat weighting misses goes to its nearest bone). Parts named in `attach` stay unskinned and
+ride their bone (the helmet on the head), and `hold` (`{bone: [[x, y, z], [x, y, z]]}`) puts every loose piece
+whose middle is in that box on that bone alone (the knife in his right hand, which shares a mesh with his arms).
+To place the joints, slice the mesh by height (where the legs part, the elbows, the knees) and check a front and a
+side render. It then runs like any rigged guest; he walks (`stance` over 0.5: both feet down a while).
+A robot of hard parts wants `rigid: true` instead of automatic weights: each loose piece rides the bone nearest
+its middle alone (Optimus Grime's 93 plates). Put the feet joints near the soles (a made run plants the feet
+joints where they stand) and the knees high, so a long leg plate rides the shin rather than leave a gap when the knee bends. A file
+whose parts its own animation moves about, with no skeleton (Optimus Grime's: a robot standing beside a copy that
+turns into the truck), stands as at one frame of it (`frame`), and `crop` (`[[x, y, z], [x, y, z]]`, world, as it
+came) keeps only the parts whose middle is in that box: at frame 44 the truck has driven out of the robot's box.
+
+A Blender file (a `.blend`, as Blend Swap hands them out) brings its whole scene: what its first scene renders comes
+in, with whatever moves it (its skeleton, a hook's empty, even where the file hides them), and its cameras, lights
+and control shapes stay out (`guestlib.open_blend`; still no `-Y`, so its scripts never run). It stands at its rest
+pose with every constraint gone: a toy whose pieces hang on each other by constraints keeps them where they held it
+(Brick Johnson), and its IK goes too, so a control rig whose hands and feet hang on IK controls rather than on the arm
+and leg needs `parents` to hang them back on the chain (Kermit the Fraud's chest, head, hands and feet; Botty
+White's hands and feet). Its skeleton is the one that skins it (a face rig whose bones only slide a texture about
+doesn't count: Brick gets a made `rig`, `rigid`, with `hold` putting each whole leg on its thigh and each arm with
+its hand on the upper arm). Its ground and backdrop are meshes it renders: `hide` them (`hide` takes curves too:
+Kermit's puppet rods). An old file's texture may hang on a Blender Internal texture slot, which Blender no longer
+reads: `paint` (`{material: image in its folder}`) puts it back on by its UVs (Spider-Manspread). `hue`
+(`{material name start: degrees}`) turns every colour a material sets round the colour wheel: Kermit's felt is a
+yellow-lime that came out mustard under the hounds' warm lights, +30 makes him green.
+
+That same file's animation is the robot turning into the truck, so Optimus Grime does it in the race: `morph`
+makes a guest change shape partway (the overlay picks the moment in its `at` share of the track, `[0.3, 0.6]`, per
+race and the same on every overlay; it plays the change once over `dur` seconds, says one of its own `morph`
+lines, always heard, and runs on in its new shape). Whatever on the track slows it (junk, slime, the hand) changes
+it again, back (the change played backward) or into the new shape, never while it's still changing; partway only
+turns it into the new shape, if it isn't that already. Render the guest first, then `render_morph.py`: it takes the
+parts the file's animation moves over `frames` (`[0, 30]`: the copy, flipping into the truck; the robot standing by
+is hidden; a later frame first plays it backward: Sideswipe Right's file turns its Dodge into the robot, so
+`[266, 80]` folds the robot back into the Dodge; keep `n` at 16, the overlay counts a guest's footfalls on its first
+sheet's 16 frames), turns them bit by bit from facing the race's way to `heading` (the way the new shape faces at the end,
+`[x, y]` as it came: measured from its wheels, front axle minus rear) so the truck ends side on, sets them down
+from the first shape's ground to the last's, and pins their front at `front` (px across a `w` x `h` frame), easing
+from where the first shape's front is to its nose, so it doesn't wander off as it flips. Then the new shape:
+`then` (`w`, `h`, `front`, `stride`, `bob`: px it bounces), as the change leaves it. A file can leave it tipped
+(Optimus's truck ended 3 degrees nose down and rolled 10 toward us, the back wheels in the air): `then.level` stands
+it flat on its wheels, levelling it bit by bit as it changes. The wheels are found, not named: the parts low down that
+are round from the side, each with the roundest big one (its tyre; a mudguard can be nearly as big, not as round)
+whose middle and axle it shares (rim, hub), and the ground is the plane under their middles. `then.roll` turns them,
+that many times a cycle, and the stride becomes as far as that rolls it. Pick it for the rim: a whole number of turns
+(the loop closes), and a step a frame that moves the rim's pattern forward less than half way to the next hole, or
+it strobes backward (Optimus's ten holes: 2 turns = 45 degrees a frame, a quarter of the way on; 3 would step
+back). Wheels skinned to a skeleton instead (Sideswipe's Dodge: one mesh, a bone a wheel) are found as a hover's
+are (`hover.roll` below) and turn with them; his five spokes take 1 (22.5 degrees a frame; 2 would step back). `grow` makes the new shape
+bigger than the file has it, growing as it changes (2: Optimus's truck, twice the size; give the change's frame
+the room: it flings parts high mid-flip). Both come out at the first
+shape's px a metre (render_guest.py writes `ppm` into its anchors) as `out/guests/<id>__morph` and `<id>__then`,
+and the export packs them next to its sheet (`morph`: `{at, dur, into, then}`, each a sheet and anchors):
+
+```
+blender -b -P art/derby/scripts/render_morph.py -- <abs path>/art/derby/source/guests/local.json <abs path>/art/derby/source/guests <abs path>/art/derby/out/guests [ids]
+```
 
 A model that comes with a run of its own plays it instead (`anim`: `{"action": its name, "frames": [from, to]}`,
 one stride: both feet once; check the action's length, some hold two). It keeps its rest as it came, up is the
@@ -182,20 +286,93 @@ or else as far back as a planted foot slides. `joints` then only needs the hips,
 moves on two "feet" will do (Totally A Barrel's are its hands). Its lowest point over the stride is the ground. A
 walk works too, but the overlay steps the frames by the distance run, so a walk's short stride plays far too fast
 at race speed (Totally A Barrel's 63 px: 11 strides a second, a flicker): give it a longer `stride` (px; 170 plays
-about 4 a second) and it skates a little instead. Two import traps: a rig whose moves
+about 4 a second) and it skates a little instead. A run whose feet never plant (a flier, a sprint on stubby legs:
+the stride comes out near 0) needs a `stride` too. Two import traps: a rig whose moves
 come out torn into spikes (or whose rest stands in pieces) wants `import: {"guess_original_bind_pose": false}`
-(the importer's options); a flat rig (every deform bone on the root, moved by controls the export dropped) needs
+(the importer's options). It's the first thing to try on a game rip from Sketchfab: a head floating off in front
+of the neck, a skeleton lying on its back, a body skinned 100 times too big or flying off out of frame were all
+this; a flat rig (every deform bone on the root, moved by controls the export dropped) needs
 its chain back before it can be given a run: `parents` (`{bone: parent}`, the bone may be a pattern:
 `"DEF-ARM\\.(L|R)": "DEF-SHOULDER.\\1"`), including any control bone something hangs on (Lord Horny's jaw and
 claws). `lights` turns the hounds' lights up for a dark model (`{"key": 2, "fill": 3}`: key, rim, lava, fill), and
-`x` is where the hips sit across the frame (0.5; a long tail behind wants more). The face anchor (`mouth`, which
+`x` is where the hips sit across the frame (0.5; a long tail behind wants more). `matte` turns off metal: a rip
+whose packed map reads as metallic renders its cloth black (there's no world to reflect). `dither` draws its blended
+materials dithered: EEVEE doesn't sort a blended mesh's faces against each other, so a body set to blend (the glTF
+importer does it for any texture with alpha, even an opaque one) showed its own far side through in dark blotches
+(Neigh Sayer came out a leopard). `turn` (degrees about
+up) turns the side view for a clip that runs another way than the rest faces (we'd see its back: Jackass's
+`turn: 90`; Honk Hogan's 62, else he's seen 3/4 from behind and crab walks: measure the head's way in the clip
+against the rig's forward). `mirror` (a guest with its own run only) views it from its other side and mirrors
+the frames, left and right swapping: a skater stands side-on to his board, so from the board's right we'd see
+Buzzkill Lightyear's back; mirrored we see his chest and he pushes with his right foot. The face anchor (`mouth`, which
 also gives the `nose` the finish line goes by) is the frontmost point of the mesh the head moves: a beak's or a
 snout's tip.
 
-The frames are `w` x `h` px with the guest `height` px tall standing, lit like the hounds and seen the way they are
+Two-legged things that aren't people: `run.knee: -1` bends the knees backward (a walker like an AT-ST, a bird),
+and `arms: false` lets a rig with no arms run (nothing to pump). Anything that floats, rolls or drives instead
+(`gait: hover`: a podracer, a train, a car, a flying egg) needs no skeleton at all: it bobs and pitches about its
+middle (`hover`: bob, a share of its height; pitch, degrees, nose up as it rises; waves, bobs a stride; lift, how
+high above the ground it floats, a share of its height) and its feet never touch down (no footfalls). It has no
+joints to tell which way it faces: `forward` is the axis it faces as it came (`-y`, the glTF way, unless told
+`+x`, `-x` or `+y`). A rigged one can still play a clip of its own while it bobs (`anim`: a train's rods, a car's
+wheels; `frames` [to, from] plays it backward, for a part that spins the wrong way), and `stride` is how far one bob carries it (px; twice its length if not given).
+A rigged car whose clip leaves its wheels still (McQueef's driving idle only wobbles them) gets `hover.roll`: its
+wheels turn that many times a bob, and the stride becomes as far as that rolls it. The wheels are found, not named:
+the bones whose own mesh is a disc on edge with its bottom at the ground (McQueef's tyre bones; the mudguards that
+ride the axle aren't round), turned about its left through their middles, the clip's own keys on them muted (a
+render plays the clip again, over the turn). Pick it for the rim as for a morph's `then.roll` (McQueef: 2, the
+LIGHTYEAR lettering and the ten rim holes both step forward). Its `height` is how tall
+it is in the frame (px). A file whose parts were placed by object animation comes in pieces (the import keeps
+whichever clip it ran first): `move` puts them back (`{object: [x, y, z]}`, world units as it came; Pennydumb's
+body and balloon). It works for a rigged guest too, and comes first: a made `rig`'s joints are where the parts
+stand after it (Pennydumb's 29 clips only move whole parts: he got a made rig, the balloon `attach`ed to his
+near hand and that arm `still`).
+
+A guest someone painted instead of modelled (a PNG of run frames in a grid on a plain background, facing right:
+Lil' Chuppy) skips Blender: `sprite` (`{file: the PNG in its folder, cols, rows}`, the grid found from the gaps
+between the frames when left out) and `import_sprite.py` writes the same frames and anchors render_guest.py would.
+The background (the colour round each frame's edge, and any pocket of it the body closes in) goes, the edge keeps a
+soft matte with the grey taken back out of it (no halo on the dark track). Painted frames never sit quite where the
+last one did, so each is moved to put its body (the top of it: legs swing) on one spot and its row's lowest paw on
+the ground line. The anchors are measured from the pixels: the nose (frontmost up high), the mouth and head just
+behind it, the tail (backmost up high), the paws (the lowest points of the bottom band, down within 4 px of the
+ground). It needs `height` (px it stands, spikes and ears included) and `stride` (a painted cycle has no feet to
+measure it by: set it so the paws don't skate). Frames painted out of order twitch from pose to pose instead of
+running: `sprite.order` runs them in another order (their indices, left to right, top to bottom). Find it by
+trying every loop and keeping the one whose silhouettes change least from frame to frame, then run it the way that
+lands after the leap (Lil' Chuppy's `[0, 3, 5, 7, 1, 2, 4, 6]`: in the air, landing, gathering, crouched, leaping;
+31% less change a frame than as painted):
+
+```
+python -I art/derby/scripts/import_sprite.py <abs path>/art/derby/source/guests/local.json <abs path>/art/derby/source/guests <abs path>/art/derby/out/guests [ids]
+```
+
+A guest with `"mute": true` (a pet) says nothing at all: no lines of its own and none of the hounds'. Give it `at`
+(what the others say to it) and `ticker` (the commentary) only; when it passes someone, they mostly answer it.
+
+Before writing a guest's spec, look inside the model: `probe_guest.py` lists every bone (with its parent), the
+joint family it matches and the joints it can't find, and every clip (name, frames; a run's name is flagged).
+`fetch_guests.py` downloads the models of a guests file from Sketchfab (each guest's `credit.url`), skipping any
+folder that already has one. Sketchfab only lets an account download, so it needs your API token (sketchfab.com,
+Settings, Password & API) in `~/.sketchfab_token` or `SKETCHFAB_TOKEN` (or download each model's glb by hand,
+signed in, into its folder). Read the clip lengths before trusting them: a 40-frame walk can hold two steps of a
+200-frame clip, and an "in place" run's feet barely slide. Render, then look at the sheet: a guest's mistakes are
+obvious there and nowhere else:
+
+```
+python art/derby/scripts/fetch_guests.py <abs path>/art/derby/source/guests/local.json <abs path>/art/derby/source/guests [ids]
+blender -b -P art/derby/scripts/probe_guest.py -- <abs path>/art/derby/source/guests <abs path>/art/derby/out/probe [folders]
+```
+
+The frames are `w` x `h` px with the guest `height` px tall standing (from its feet joints up: a size set before
+the soles went on the ground keeps it), lit like the hounds and seen the way they are
 (running to the right). The anchors give the overlay what a hound's do: the ground, the stride (how far one cycle
 carries it, so the feet don't skate), the nose (the finish line goes by it), the head and mouth (its name tag, the
-photo finish), the hips and backside (a flaming arse) and the feet (down or up). The export packs the add-on's into
+photo finish), the hips and backside (a flaming arse) and the feet (down or up). The export adds `sole`, where the
+feet land (px from the frame's top: the median lowest solid row of the frames with a foot down, measured from the
+pixels; the shadow goes there, since `ground` is the soles' level standing or the lowest point over the stride, a
+wingtip or one dipping toe, and can be 20 px off), and `hover` for a floater (its shadow stays on the ground). The hounds get
+`sole` too. The export packs the add-on's into
 `static/guests/` + `derby_guests.json` (their credits go on the Credits card) and, with `--local`, a local pack's
 into a folder: `guests.json` and the sheets, ready for any Hexcast's `config/games_derby_guests/`.
 

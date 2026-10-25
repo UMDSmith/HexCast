@@ -1,0 +1,280 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="/static/hexcast.png">
+<link rel="stylesheet" href="/static/hexbar.css?v=2">
+<title>HexCast - Chat Timers</title>
+<style>
+  :root{
+    --bg:var(--hb-bg); --panel:var(--hb-panel); --line:var(--hb-line); --ink:var(--hb-ink);
+    --dim:var(--hb-dim); --accent:var(--hb-accent); --good:var(--hb-good); --warn:var(--hb-warn);
+    --mono:var(--hb-mono);
+  }
+  *{box-sizing:border-box}
+  [hidden]{display:none !important}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.5 'Segoe UI',system-ui,-apple-system,sans-serif;}
+  main{padding:18px 22px 90px;max-width:1080px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
+  .card h2{margin:0 0 4px;font-size:14px;letter-spacing:.14em;text-transform:uppercase}
+  .card p.hint,p.hint{margin:0 0 14px;color:var(--dim);font-size:13px}
+  .card code{color:var(--good);font:12.5px var(--mono)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px}
+  label.f{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--dim);
+          letter-spacing:.06em;text-transform:uppercase;font-weight:600}
+  input,select,textarea{background:#08080c;border:1px solid var(--line);color:var(--ink);
+        border-radius:8px;padding:9px 10px;font:14px/1.3 inherit;width:100%}
+  textarea{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;resize:vertical;min-height:64px;font-size:15px;line-height:1.45}
+  input:focus,select:focus,textarea:focus,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px;border-color:var(--accent)}
+  label.sw{display:flex;flex-direction:row;align-items:center;gap:8px;font-size:14px;color:var(--ink);cursor:pointer}
+  label.sw input{width:auto}
+  button.act{background:var(--accent);color:#fff;border:0;border-radius:9px;padding:10px 16px;
+             font:700 14px inherit;cursor:pointer}
+  button.act:hover{filter:brightness(1.12)}
+  button.sec{background:#1c1c25;color:var(--ink);border:1px solid var(--line);border-radius:9px;
+             padding:9px 14px;font:600 13px inherit;cursor:pointer}
+  button.sec:hover{border-color:var(--accent)}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  .row{display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin-top:14px}
+  .head{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  .head h2{margin:0}
+  .sp{flex:1}
+
+  .tm{position:relative;border-left:3px solid var(--line)}
+  .tm.is-on{border-left-color:var(--accent)}
+  .tm-head{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+  .tm-head .t-name{max-width:260px;font-weight:600}
+  .tm-count{font:12px var(--mono);color:var(--dim);text-align:right;margin:4px 0 10px}
+  .tm-count.over{color:var(--warn)}
+  .tm-opts{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px;align-items:end}
+  .tm-opts label.sw{padding-bottom:9px}
+  .tm-st{margin-top:12px;font:12.5px/1.8 var(--mono);color:var(--dim)}
+  .tm-st .due{color:var(--good)} .tm-st .bad{color:var(--warn)}
+  .tm-x{padding:9px 12px}
+  #list:empty::after{content:'No messages yet - add one below.';display:block;color:var(--dim);font-size:14px;margin:0 0 16px}
+
+  .savebar{position:fixed;left:0;right:0;bottom:0;display:flex;gap:10px;align-items:center;justify-content:flex-end;
+           padding:12px 22px;background:rgba(10,10,14,.94);border-top:1px solid var(--line);z-index:30}
+  .savebar .dirty{color:var(--warn);font:600 12px var(--mono);letter-spacing:.06em;margin-right:auto}
+  #toast{position:fixed;left:50%;bottom:76px;transform:translate(-50%,80px);background:var(--accent);
+         color:#fff;padding:11px 20px;border-radius:99px;font-weight:700;font-size:14px;opacity:0;
+         transition:transform .25s ease,opacity .25s ease;z-index:80;pointer-events:none}
+  #toast.up{transform:translate(-50%,0);opacity:1}
+</style></head>
+<body>
+<div id="hexbar" data-section="Chat Timers" data-key="chat_timers"></div>
+
+<main>
+  <div id="twitch-conn"></div>
+
+  <div class="card">
+    <div class="head"><h2>Chat timers</h2><span class="sp"></span>
+      <label class="sw"><input type="checkbox" id="on"> Timers on</label></div>
+    <p class="hint" style="margin-top:8px">Each message is posted in your chat by the account Hexcast acts as there (the Twitch connection above). A message waits for its interval <b>and</b> for that many chat lines since it last posted, so a quiet chat is not filled with timers - lines from Hexcast itself do not count. With several messages due at once the one that waited longest goes first. <code>{channel}</code> and <code>{uptime}</code> in a message are filled in.</p>
+    <div class="grid">
+      <label class="f">Seconds between two timer messages (at least)
+        <input type="number" id="gap" min="0" max="3600" step="5"></label>
+    </div>
+  </div>
+
+  <div id="list"></div>
+  <div class="row" style="margin:0 0 16px"><button class="sec" id="add">+ Add a message</button></div>
+</main>
+
+<div class="savebar"><span class="dirty" id="dirty"></span>
+  <button class="sec" id="revert">Revert</button><button class="act" id="save">Save timers</button></div>
+<div id="toast"></div>
+
+<script src="/plugins/twitch_core/static/twitch_connect.js"></script>
+<script>
+var $ = function(id){ return document.getElementById(id); };
+function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+var toastT = null;
+function toast(msg){
+  var t = $('toast'); t.textContent = msg; t.classList.add('up');
+  clearTimeout(toastT); toastT = setTimeout(function(){ t.classList.remove('up'); }, 2600);
+}
+var LIMIT = 500;
+var SAVED = null;          // the config as saved
+var DRAFT = null;          // what the tab shows (edits not saved yet)
+var STATUS = null, STATUS_AT = 0;
+
+function clone(o){ return JSON.parse(JSON.stringify(o)); }
+function isDirty(){ return SAVED && DRAFT && JSON.stringify(SAVED) !== JSON.stringify(DRAFT); }
+function markDirty(){ $('dirty').textContent = isDirty() ? 'Not saved yet' : ''; }
+
+function channelOptions(sel){
+  var chans = (STATUS && STATUS.channels) || [];
+  var opts = [['primary', 'the primary channel'], ['all', 'every channel']];
+  chans.forEach(function(c){ opts.push([c.login, '#' + c.login + (c.label ? ' (' + c.label + ')' : '')]); });
+  if(sel && !opts.some(function(o){ return o[0] === sel; })) opts.push([sel, '#' + sel + ' (not watched)']);
+  return opts.map(function(o){ return '<option value="' + esc(o[0]) + '"' + (o[0] === sel ? ' selected' : '') + '>' + esc(o[1]) + '</option>'; }).join('');
+}
+
+function render(){
+  $('on').checked = !!DRAFT.on;
+  $('gap').value = DRAFT.gap;
+  $('list').innerHTML = DRAFT.timers.map(function(t, i){
+    return '<div class="card tm' + (t.on ? ' is-on' : '') + '" data-i="' + i + '" data-id="' + esc(t.id || '') + '">'
+      + '<div class="tm-head">'
+      +   '<label class="sw"><input type="checkbox" class="t-on"' + (t.on ? ' checked' : '') + '> on</label>'
+      +   '<input class="t-name" value="' + esc(t.name) + '" placeholder="name (optional) - e.g. Discord" maxlength="40">'
+      +   '<span class="sp"></span>'
+      +   '<button class="sec t-send" title="Post it in chat now">Send now</button>'
+      +   '<button class="sec tm-x t-del" title="Delete this message">&times;</button>'
+      + '</div>'
+      + '<textarea class="t-text" rows="2" placeholder="Join the community on Discord: https://discord.gg/yourcode">' + esc(t.text) + '</textarea>'
+      + '<div class="tm-count"></div>'
+      + '<div class="tm-opts">'
+      +   '<label class="f">Every (minutes)<input type="number" class="t-every" min="1" max="1440" value="' + esc(t.every) + '"></label>'
+      +   '<label class="f">After at least (chat lines)<input type="number" class="t-lines" min="0" max="1000" value="' + esc(t.lines) + '"></label>'
+      +   '<label class="f">Post in<select class="t-channel">' + channelOptions(t.channel) + '</select></label>'
+      +   '<label class="sw"><input type="checkbox" class="t-live"' + (t.live_only ? ' checked' : '') + '> Only while live</label>'
+      + '</div>'
+      + '<div class="tm-st"></div>'
+      + '</div>';
+  }).join('');
+  document.querySelectorAll('.tm').forEach(function(card){ count(card); });
+  paintStatus();
+  markDirty();
+}
+
+function count(card){
+  var n = card.querySelector('.t-text').value.length, c = card.querySelector('.tm-count');
+  c.textContent = n + ' / ' + LIMIT; c.className = 'tm-count' + (n > LIMIT ? ' over' : '');
+}
+
+function readCard(card){
+  var t = DRAFT.timers[+card.dataset.i];
+  t.on = card.querySelector('.t-on').checked;
+  t.name = card.querySelector('.t-name').value;
+  t.text = card.querySelector('.t-text').value;
+  t.every = +card.querySelector('.t-every').value || 1;
+  t.lines = Math.max(0, +card.querySelector('.t-lines').value || 0);
+  t.channel = card.querySelector('.t-channel').value;
+  t.live_only = card.querySelector('.t-live').checked;
+  card.classList.toggle('is-on', t.on);
+}
+
+function clock(s){
+  s = Math.max(0, Math.round(s));
+  var h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
+  return (h ? h + ':' + (m < 10 ? '0' : '') : '') + m + ':' + (sec < 10 ? '0' : '') + sec;
+}
+
+function lineFor(t, w){
+  var since = (Date.now() - STATUS_AT) / 1000, parts = [], cls = '';
+  var multi = ((STATUS && STATUS.channels) || []).length > 1;
+  var where = multi ? '#' + w.channel + ': ' : '';
+  if(w.waiting_for === 'off') parts.push('off');
+  else if(w.waiting_for === 'interval'){
+    var left = w.next_in - since;
+    if(left > 0) parts.push('next in ' + clock(left) + (w.lines_needed ? ', then ' + w.lines_needed + ' more chat line' + (w.lines_needed === 1 ? '' : 's') : ''));
+    else parts.push('due');
+  }
+  else if(w.waiting_for === 'chat') parts.push('waiting for ' + w.lines_needed + ' more chat line' + (w.lines_needed === 1 ? '' : 's'));
+  else if(w.waiting_for === 'live') parts.push('waiting for the stream to go live');
+  else if(w.waiting_for === 'gap') parts.push('due - right after another timer message');
+  else { parts.push('due now'); cls = 'due'; }
+  if(w.sent) parts.push('sent ' + w.sent + ' time' + (w.sent === 1 ? '' : 's'));
+  var html = '<div class="' + cls + '">' + esc(where + parts.join(' · ')) + '</div>';
+  if(w.last_error) html += '<div class="bad">' + esc(where + 'last try: ' + w.last_error) + '</div>';
+  return html;
+}
+
+function paintStatus(){
+  if(!STATUS || !DRAFT) return;
+  var byId = {};
+  (STATUS.timers || []).forEach(function(t){ byId[t.id] = t; });
+  document.querySelectorAll('.tm').forEach(function(card){
+    var st = card.querySelector('.tm-st'), t = byId[card.dataset.id], d = DRAFT.timers[+card.dataset.i];
+    if(!card.dataset.id || !t){ st.innerHTML = '<div>not saved yet</div>'; return; }
+    var html = (t.targets || []).map(function(w){ return lineFor(t, w); }).join('');
+    if(!(t.targets || []).length) html = '<div class="bad">no channel to post in - check "Post in" and the Twitch connection</div>';
+    if(JSON.stringify(d) !== JSON.stringify(SAVED.timers.filter(function(x){ return x.id === d.id; })[0] || null)) html += '<div>(changed - save to use it)</div>';
+    st.innerHTML = html;
+  });
+}
+
+function load(){
+  return fetch('/chat_timers/api/config').then(function(r){ return r.json(); }).then(function(cfg){
+    SAVED = cfg; DRAFT = clone(cfg); render();
+  });
+}
+
+function save(){
+  document.querySelectorAll('.tm').forEach(readCard);
+  DRAFT.on = $('on').checked; DRAFT.gap = +$('gap').value || 0;
+  var empty = DRAFT.timers.filter(function(t){ return !t.text.trim(); }).length;
+  return fetch('/chat_timers/api/config', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(DRAFT)})
+    .then(function(r){ return r.json().then(function(d){ return {ok: r.ok, d: d}; }); })
+    .then(function(res){
+      if(!res.ok){ toast(res.d.error || 'Not saved'); return false; }
+      SAVED = res.d.config; DRAFT = clone(SAVED); render();
+      toast(empty ? 'Saved - a message with no text never posts' : 'Timers saved');
+      return true;
+    });
+}
+
+document.addEventListener('input', function(e){
+  var card = e.target.closest('.tm');
+  if(card){ readCard(card); if(e.target.classList.contains('t-text')) count(card); paintStatus(); }
+  if(e.target.id === 'gap') DRAFT.gap = +e.target.value || 0;
+  markDirty();
+});
+document.addEventListener('change', function(e){
+  var card = e.target.closest('.tm');
+  if(card){ readCard(card); paintStatus(); }
+  if(e.target.id === 'on') DRAFT.on = e.target.checked;
+  markDirty();
+});
+document.addEventListener('click', function(e){
+  var b = e.target.closest('button'); if(!b) return;
+  var card = b.closest('.tm');
+  if(b.classList.contains('t-del') && card){
+    DRAFT.timers.splice(+card.dataset.i, 1); render(); toast('Removed - press Save to make it stick');
+  }
+  if(b.classList.contains('t-send') && card){
+    var t = DRAFT.timers[+card.dataset.i], saved = SAVED.timers.filter(function(x){ return x.id === t.id; })[0];
+    if(!saved || JSON.stringify(saved) !== JSON.stringify(t)){ toast('Save first - Send now posts the saved message'); return; }
+    b.disabled = true;
+    fetch('/chat_timers/api/timers/' + encodeURIComponent(t.id) + '/send', {method:'POST'})
+      .then(function(r){ return r.json(); })
+      .then(function(d){ toast(d.ok ? 'Posted in #' + (d.sent || []).join(', #') : (d.error || 'Not posted')); })
+      .finally(function(){ b.disabled = false; });
+  }
+});
+$('add').onclick = function(){
+  if(DRAFT.timers.length >= 50){ toast('At most 50 messages'); return; }
+  DRAFT.timers.push({id: '', name: '', text: '', every: 15, lines: 5, live_only: true, channel: 'primary', on: true});
+  render();
+  var areas = document.querySelectorAll('.t-text'); if(areas.length) areas[areas.length - 1].focus();
+};
+$('save').onclick = save;
+$('revert').onclick = function(){ DRAFT = clone(SAVED); render(); toast('Back to what is saved'); };
+window.addEventListener('beforeunload', function(e){ if(isDirty()){ e.preventDefault(); e.returnValue = ''; } });
+
+function connect(){
+  var ws = new WebSocket((location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + '/chat_timers/ws');
+  ws.onmessage = function(e){
+    var m; try{ m = JSON.parse(e.data); }catch(err){ return; }
+    if(m.type === 'status'){
+      var chans = JSON.stringify(((STATUS && STATUS.channels) || []).map(function(c){ return c.login; }));
+      STATUS = m.status; STATUS_AT = Date.now();
+      if(DRAFT && chans !== JSON.stringify((STATUS.channels || []).map(function(c){ return c.login; }))){
+        document.querySelectorAll('.tm').forEach(function(card){
+          var t = DRAFT.timers[+card.dataset.i]; card.querySelector('.t-channel').innerHTML = channelOptions(t.channel);
+        });
+      }
+      paintStatus();
+    }
+  };
+  ws.onclose = function(){ setTimeout(connect, 1500); };
+  ws.onerror = function(){ try{ ws.close(); }catch(err){} };
+}
+
+TwitchConnect.mount($('twitch-conn'), {back: '/chat_timers', label: 'Chat Timers', compact: true, needs: ['user:write:chat']});
+load().then(connect);
+setInterval(paintStatus, 1000);         // the countdowns
+</script>
+<script src="/static/hexbar.js?v=2"></script>
+</body></html>

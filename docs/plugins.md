@@ -1,6 +1,6 @@
 # Plugins
 
-Hexcast is two things: the **soundboard** (the core, always there) and **plugins** - everything else. Twitch, Music, Avatars, Discord, Clips, Countdown, Games and Ticker are all plugins. A fresh install has one tab, **Soundboard**, and a **+** tab next to it. Click **+**, pick what you want, and it installs itself.
+Hexcast is two things: the **soundboard** (the core, always there) and **plugins** - everything else. Twitch, Chat Timers, Giveaways, Music, Avatars, Discord, Clips, Countdown, Games and Ticker are all plugins. A fresh install has one tab, **Soundboard**, and a **+** tab next to it. Click **+**, pick what you want, and it installs itself.
 
 Games goes one level further: the **Games** plugin gives you a Games tab, and each game (Roulette, Craps, Russian Roulette, Trivia, Hexfall, Soul Climb, Blackjack, Hellhound Derby) is its own add-on, installed from the **+** inside the Games tab.
 
@@ -167,6 +167,7 @@ A plugin that fails to start (bad import, exception in `setup`) is reported on i
 | `ctx.plugin(id)` | the entry module of another *running* plugin, or `None` (for optional friends) |
 | `ctx.require(id)` | the same, but raises if it is not running |
 | `ctx.on_shutdown(fn)` | run `fn` (plain or `async`) when the plugin stops |
+| `ctx.when_serving(fn)` | run `fn` (plain or `async`) once Hexcast is serving - right away when it already is (installed or updated from the + tab), else as soon as it starts. `setup` runs before the event loop at boot, so this is where a plugin starts background work that must not wait for the first request (a connection, a scheduler). Hexcast 2.2+: use `getattr(ctx, "when_serving", None)` to stay loadable on an older core |
 | `ctx.changed()` | tell open pages that what you contribute changed |
 
 Plugins are imported as `hexcast_plugins.<id>`, so a plugin can import its own modules relatively (`from . import mymodule`) and another plugin it `requires` by name (`from hexcast_plugins.ytdlp import lib`). What your entry module exposes is your plugin's Python API for others.
@@ -276,6 +277,8 @@ For **Hexcast itself** the top bar reads `Hexcast Version: 2.0` with an **Update
 An update is offered only when the version is **semver-greater** than the installed one (`1.10.0` beats `1.9.0`; `1.2.0-beta` is older than `1.2.0`); never a downgrade.
 
 **Applying an upstream update.** Hexcast downloads the repository archive from GitHub (`https`, size-capped, streamed to a temporary file), unpacks **only** `catalog/<plugin id>/` from it (no `..`, no absolute paths, no links; nothing else in the archive is touched), and then it goes through the ordinary update path described above.
+
+**A new requirement.** When the new version `requires` a plugin you do not have yet, that one is installed first - from the local `catalog/`, or, when the catalog has no copy (a ZIP install that only updates from GitHub), from the repository as well (Hexcast 2.2+; with **Check GitHub for updates** off, such an update fails and the old version keeps running). Twitch 1.3 requiring the shared `twitch_core` connection is one.
 
 ### The Settings page and the `upstream` setting
 

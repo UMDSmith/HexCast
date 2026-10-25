@@ -1,0 +1,27 @@
+<section id="twitch_connection">
+<div class="card">
+  <h2>Twitch connection <span class="tag">shared</span></h2>
+  <p class="hint">The sign-in, the channels and the live connection to Twitch that every Twitch module uses -
+    Twitch (chat and alert overlays), Chat Timers and Giveaways. It has no tab of its own: it is installed with
+    whichever of them comes first, and each of their tabs shows the same <b>Twitch connection</b> box, so you set
+    it up once. Your Twitch app, the accounts you signed in with and the channels are the same everywhere.</p>
+  <table class="api">
+    <tr><td>GET /twitch/api/connection</td><td>the channels (connected how, as whom, live or not), the accounts signed in and the scopes each still lacks, the log - never a secret or a token</td></tr>
+    <tr><td>POST /twitch/api/connection</td><td><code>{"channels": [{"login": "name", "label": "beta", "enabled": true}]}</code> — the channels to watch (up to 5, the first is the primary); only the channels that changed reconnect</td></tr>
+    <tr><td>POST /twitch/api/chat/send</td><td><code>{"text": "...", "channel": "name"}</code> — a chat line as the account Hexcast acts as in that channel (the primary when <code>channel</code> is left out). <code>400</code> with <code>error</code> when Twitch would not take it</td></tr>
+    <tr><td>POST /twitch/api/credentials</td><td><code>{"client_id": "...", "client_secret": "..."}</code> — your Twitch app</td></tr>
+    <tr><td>POST /twitch/auth/logout</td><td><code>{"login": "name"}</code> signs that account out; no body signs out all</td></tr>
+    <tr><td>POST /twitch/api/reconnect</td><td>reconnect every channel</td></tr>
+  </table>
+  <h3>Accounts and channels</h3>
+  <p class="hint">A channel uses the account with its own name if you signed in as it (all its alerts, chat as the
+    broadcaster, its subscriber list), else your default account (the primary channel's own, else the first one
+    signed in) - which then needs to be a moderator there for anything beyond reading chat. With nobody signed in,
+    chat is read anonymously. Channels are independent: editing one, or signing an account in or out, reconnects
+    only the channels it concerns.</p>
+  <h3>Scopes</h3>
+  <p class="hint">Hexcast asks Twitch for everything its modules use when you sign in. An account signed in before
+    a module needed something new (<code>moderator:read:chatters</code> for Giveaways, say) is listed with what it
+    lacks: press <b>Connect a Twitch account</b> again as that user to allow it.</p>
+</div>
+</section>

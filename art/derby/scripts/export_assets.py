@@ -12,7 +12,8 @@ Writes, under the add-on's static/ folder:
   derby_crowd.json      the crowd: the moves, each monster's feet, hips and throwing hand
   props/<id>.webp       a piece of junk: its tumble, then how it lies (out/props, scripts/render_props.py)
   derby_props.json      the junk: names (= JUNK in derby.py), sizes, sheets
-  guests/<id>.webp      a guest racer running (out/guests, scripts/render_guest.py)
+  guests/<id>.webp      a guest racer running (out/guests, scripts/render_guest.py; one that changes shape
+                        partway also has <id>__morph.webp and <id>__then.webp, scripts/render_morph.py)
   derby_guests.json     the guests: names, lines, how they run (art/derby/guests.json), sheets and anchors
   derby_credits.json    who made the models (art/derby/credits.json + each packed prop's credit): the Credits
                         card at the bottom of the Derby tab
@@ -46,8 +47,9 @@ sc.view_settings.view_transform = "Standard"      # the frames are already finis
 sc.view_settings.look = "None"
 
 
-def pack(rows, fw, fh, cols, path):
-    """rows: a list of rows of frame files; one sheet, frame (r, c) at column c of row r. Returns its KB."""
+def pack(rows, fw, fh, cols, path, bottoms=None):
+    """rows: a list of rows of frame files; one sheet, frame (r, c) at column c of row r. Returns its KB. bottoms: a
+    list that gets each frame's lowest solid row (px from its top: where its soles are)."""
     sheet = np.zeros((fh * len(rows), fw * cols, 4), dtype=np.float32)
     for r, files in enumerate(rows):
         for c, fp in enumerate(files):
@@ -56,6 +58,9 @@ def pack(rows, fw, fh, cols, path):
             px = np.array(im.pixels[:], dtype=np.float32).reshape(fh, fw, 4)
             y0 = fh * len(rows) - (r + 1) * fh                  # Blender images are stored bottom row first
             sheet[y0:y0 + fh, c * fw:(c + 1) * fw] = px
+            if bottoms is not None:
+                solid = np.nonzero((px[:, :, 3] > 0.5).any(axis=1))[0]
+                bottoms.append(float(fh - solid[0]) if len(solid) else None)
             bpy.data.images.remove(im)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     img = bpy.data.images.new("sheet", fw * cols, fh * len(rows), alpha=True)
@@ -68,6 +73,15 @@ def pack(rows, fw, fh, cols, path):
 
 def grid(files, cols):
     return [files[i:i + cols] for i in range(0, len(files), cols)]
+
+
+def sole(bottoms, anchors):
+    """where its feet land (px from the frame's top): the median of the lowest solid rows of the frames it has a foot
+    down in (all its frames if none). The anchors' ground is its soles' level standing or its lowest point over the
+    stride (a wingtip, a toe dipping once), which can sit well off where its feet land: the overlay lays the shadow here."""
+    down = [any(f.get(k) and f[k][2] for k in ("LF", "RF", "LH", "RH")) for f in anchors["frames"]]
+    b = sorted(x for x, d in zip(bottoms, down) if d and x is not None) or sorted(x for x in bottoms if x is not None)
+    return round(b[len(b) // 2], 1) if b else anchors["ground"]
 
 
 def write(name, data, **kw):
@@ -85,10 +99,12 @@ for h in roster:
         continue
     anchors = json.load(open(os.path.join(d, "anchors.json"), encoding="utf-8"))
     fw, fh, n = anchors["w"], anchors["h"], len(files)
-    kb = pack(grid(files, COLS), fw, fh, COLS, os.path.join(DST, "hounds", f"{h['id']}.webp"))
+    bottoms = []
+    kb = pack(grid(files, COLS), fw, fh, COLS, os.path.join(DST, "hounds", f"{h['id']}.webp"), bottoms)
     entry = {k: h.get(k) for k in ("id", "name", "short", "note", "bio", "hue", "sat", "cadence", "fx") if h.get(k) is not None}
     entry["sheet"] = {"file": f"hounds/{h['id']}.webp", "cols": COLS, "rows": (n + COLS - 1) // COLS, "w": fw, "h": fh, "frames": n}
-    entry["anchors"] = {"ground": anchors["ground"], "stride": anchors["stride"], "frames": anchors["frames"]}
+    entry["anchors"] = {"ground": anchors["ground"], "sole": sole(bottoms, anchors), "stride": anchors["stride"],
+                        "frames": anchors["frames"]}
     out.append(entry)
     print("SHEET", h["id"], n, "frames", kb, "KB")
 
@@ -134,21 +150,39 @@ GUESTS = os.path.join(OUT, "guests")
 def guests(spec_path, dst, prefix):
     """pack the rendered guests of a spec into dst; returns their entries (and adds an add-on guest's credit)."""
     out = []
-    for g in json.load(open(spec_path, encoding="utf-8"))["guests"]:
-        d = os.path.join(GUESTS, g["id"])
+
+    def shape(name):                                     # one sheet of it: {sheet, anchors} (None: not rendered)
+        d = os.path.join(GUESTS, name)
         if not os.path.isfile(os.path.join(d, "anchors.json")):
-            print("SKIP (not rendered)", g["id"]); continue
+            return None, 0
         an = json.load(open(os.path.join(d, "anchors.json"), encoding="utf-8"))
         files = sorted(glob.glob(os.path.join(d, "run_[0-9][0-9].png")))
-        kb = pack(grid(files, COLS), an["w"], an["h"], COLS, os.path.join(dst, f"{prefix}{g['id']}.webp"))
-        entry = {k: g[k] for k in ("id", "name", "short", "bio", "wobble", "lines", "hue", "sat", "cadence") if k in g}
-        entry["sheet"] = {"file": f"{prefix}{g['id']}.webp", "cols": COLS, "rows": (len(files) + COLS - 1) // COLS,
-                          "w": an["w"], "h": an["h"], "frames": len(files)}
-        entry["anchors"] = {k: an[k] for k in ("ground", "stride", "nose", "body", "frames")}
+        bottoms = []
+        kb = pack(grid(files, COLS), an["w"], an["h"], COLS, os.path.join(dst, f"{prefix}{name}.webp"), bottoms)
+        hover = an.get("family") == "hover"              # (it floats: its shadow stays on the ground)
+        return {"sheet": {"file": f"{prefix}{name}.webp", "cols": COLS, "rows": (len(files) + COLS - 1) // COLS,
+                          "w": an["w"], "h": an["h"], "frames": len(files)},
+                "anchors": {**{k: an[k] for k in ("ground", "stride", "nose", "body", "frames")},
+                            "sole": an["ground"] if hover else sole(bottoms, an), **({"hover": True} if hover else {})}}, kb
+
+    for g in json.load(open(spec_path, encoding="utf-8"))["guests"]:
+        first, kb = shape(g["id"])
+        if not first:
+            print("SKIP (not rendered)", g["id"]); continue
+        entry = {k: g[k] for k in ("id", "name", "short", "bio", "wobble", "mute", "lines", "hue", "sat", "cadence") if k in g}
+        entry.update(first)
+        if g.get("morph"):                               # (it changes shape partway: the change, then the new shape)
+            into, k1 = shape(g["id"] + "__morph")
+            then, k2 = shape(g["id"] + "__then")
+            if into and then:
+                entry["morph"] = {"at": g["morph"].get("at", [0.3, 0.6]), "dur": g["morph"].get("dur", 1.4), "into": into, "then": then}
+                kb += k1 + k2
+            else:
+                print("MORPH not rendered (render_morph.py)", g["id"])
         out.append(entry)
         if g.get("credit") and prefix:
             credits.append(dict(g["credit"], **{"for": "Guest racer: " + g["name"]}))
-        print("GUEST", g["id"], len(files), "frames", kb, "KB")
+        print("GUEST", g["id"], entry["sheet"]["frames"], "frames", kb, "KB", "+ morph" if "morph" in entry else "")
     return out
 
 

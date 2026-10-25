@@ -306,6 +306,47 @@ def test_updating_installs_a_new_requirement_first(world):
     assert (world.plugins / "newdep").exists()
 
 
+WHEN_SERVING = """
+RAN = []
+
+async def start():
+    RAN.append("started")
+
+def setup(ctx):
+    ctx.when_serving(start)
+"""
+
+
+def test_work_for_when_hexcast_is_serving_waits_for_it_at_boot(world):
+    """Plugins load before the event loop runs: what they want started waits for serving()."""
+    write_plugin(world.catalog, "alpha", setup_body=WHEN_SERVING)
+    write_plugin(world.catalog, "beta", setup_body=WHEN_SERVING)
+    world.installer.install("alpha")
+    world.installer.install("beta")
+    world.host.load_all()                                       # no loop yet, like hexcast.py at import
+    alpha, beta = world.host.module("alpha"), world.host.module("beta")
+    assert alpha.RAN == [] and beta.RAN == []
+    asyncio.run(world.host.unload("beta"))                      # stopped before Hexcast got to serving
+
+    async def boot():
+        world.host.serving()
+        await asyncio.sleep(0.05)
+    asyncio.run(boot())
+    assert alpha.RAN == ["started"] and beta.RAN == []          # a stopped plugin's work is skipped
+
+
+def test_work_for_when_hexcast_is_serving_runs_at_once_when_it_already_is(world):
+    """Installed (or updated) from the + tab: the loop is running, so it starts right away."""
+    write_plugin(world.catalog, "alpha", setup_body=WHEN_SERVING)
+    world.installer.install("alpha")
+
+    async def live_install():
+        world.host.load("alpha")
+        await asyncio.sleep(0.05)
+        return world.host.module("alpha").RAN
+    assert asyncio.run(live_install()) == ["started"]
+
+
 def test_corrupt_settings_file_is_kept_aside_and_not_migrated_over(world):
     path = world.config / "plugins.json"
     path.write_text('{"disabled": ["ticker"], "migrated": true, "catalogs": [],}')       # a trailing comma

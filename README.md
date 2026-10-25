@@ -43,7 +43,7 @@ set of OBS browser-source overlays from a web control panel. **That is all you
 get on a fresh download** — one tab, **Soundboard**, and a **+** next to it.
 
 Everything else is a **plugin** you add with one click from that **+** tab:
-Twitch, Music, Avatars, Discord, Clips, Countdown, Games and Ticker. Each is
+Twitch, Chat Timers, Giveaways, Music, Avatars, Discord, Clips, Countdown, Games and Ticker. Each is
 self-contained, with its own overlay and settings panel, and gets its own tab in
 the top bar once installed. Add as many or as few as you like; none of them
 changes how the soundboard behaves, and a plugin you never install costs you
@@ -99,6 +99,27 @@ overlay — all in one.
 Twitch EventSub and renders the overlays. It can also POST every event to a
 forward URL if you want your own bot or a model reacting to chat.
 See [docs/twitch.md](docs/twitch.md).
+
+The sign-in, the channels and the connection are the shared **Twitch connection**
+(no tab of its own): Twitch, Chat Timers and Giveaways each install it, and each
+tab shows the same box, so you set Twitch up once.
+
+### ⏲️ Chat Timers *(plugin)*
+
+**What it does.** Posts messages in your Twitch chat on a timer, as your account -
+your Discord, schedule or socials - like StreamElements timers. Each message has its
+own interval, waits for some chat in between so a quiet chat is not spammed, and
+by default only runs while you are live. No overlay; it works without the Twitch
+plugin. See [docs/chat_timers.md](docs/chat_timers.md).
+
+### 🎁 Giveaways *(plugin)*
+
+**What it does.** Prizes with a picture, a description, a quantity and private
+keys/codes; a draw from everyone in your chat right now, or followers (for at least
+a set time) and/or subscribers; an OBS overlay that counts down while the names
+jumble, lands on the winner with confetti, then a chat message for them. Rerolls,
+a winners list, a live preview in the tab, and every action for bots over REST and
+a socket. See [docs/giveaways.md](docs/giveaways.md).
 
 ### 🎵 Music *(plugin)*
 
@@ -495,7 +516,9 @@ GET|POST /api/play/{kind}/{name}   → explicit: kind = audio | video
      ?volume=                      → optional volume override 0.0–1.0
      ?start=&end=                  → optional trim window in seconds
      ?avatar=&anchor=&dx=&dy=      → video: play it glued to an avatar (Avatars plugin); ?avatar= alone (empty) plays it here
+     ?loop=1                       → repeat it (its trim window) until it is stopped (background music)
 GET|POST /api/stop                 → clear all visuals + stop all audio (panic)
+GET|POST /api/stop/{name}          → stop just that clip (every copy playing, a looping one too)
 POST /rename                       → {file, kind, new_stem} → rename media + sidecar + poster
 POST /attach                       → {file, kind: "video", attach: {avatar, anchor, ...} | null} → lock a clip to an avatar
 ```
@@ -511,6 +534,8 @@ adds `"attached": true`; when no open overlay shows that avatar it plays here as
 ```bash
 curl http://localhost:4747/api/play/airhorn
 curl "http://localhost:4747/api/play/video/cheer?x=80&y=20&scale=2&volume=0.6&end=3"
+curl "http://localhost:4747/api/play/racemusic?loop=1"
+curl http://localhost:4747/api/stop/racemusic
 curl http://localhost:4747/api/stop
 ```
 
@@ -721,7 +746,7 @@ hexcast/
 ├── hexcast_core/              # the plugin system (manifest, installer, store API)
 ├── static/                    # the core's web files: control panel, top bar, the + store page, help
 ├── catalog/                   # every plugin that ships with Hexcast — what the + tab installs from
-│   ├── twitch/  music/  avatar/  discord/  clips/  countdown/  ticker/  ytdlp/
+│   ├── twitch/  twitch_core/  chat_timers/  giveaways/  music/  avatar/  discord/  clips/  countdown/  ticker/  ytdlp/
 │   └── games/  games_roulette/  games_craps/  games_russian/  games_trivia/  games_hexfall/  games_climb/  games_blackjack/  games_derby/
 │                              #   each: plugin.json, its Python, static/ (panel + overlay), help.html, requirements.txt
 ├── plugins/                   # the plugins you installed (a copy of their catalog folder; gitignored)
@@ -756,7 +781,7 @@ can hand-edit the JSON; the watcher ignores `.json` writes.
 
 - **Repository & downloads:** <https://github.com/UMDSmith/hexcast>
 - **Plugins:** [how plugins work & how to write one](docs/plugins.md)
-- **Plugin docs:** [Twitch](docs/twitch.md) · [Music](docs/music.md) · [Discord](docs/discord.md) · [Clips](docs/clips.md) · [Countdown](docs/countdown.md) · [Games & Roulette](docs/games.md) · [Craps](docs/craps.md) · [Russian Roulette](docs/russian_roulette.md) · [Trivia](docs/trivia.md) · [Hexfall](docs/hexfall.md) · [Soul Climb](docs/climb.md) · [Blackjack](docs/blackjack.md) · [Hellhound Derby](docs/derby.md) · [Ticker](docs/ticker.md)
+- **Plugin docs:** [Twitch](docs/twitch.md) · [Chat Timers](docs/chat_timers.md) · [Giveaways](docs/giveaways.md) · [Music](docs/music.md) · [Discord](docs/discord.md) · [Clips](docs/clips.md) · [Countdown](docs/countdown.md) · [Games & Roulette](docs/games.md) · [Craps](docs/craps.md) · [Russian Roulette](docs/russian_roulette.md) · [Trivia](docs/trivia.md) · [Hexfall](docs/hexfall.md) · [Soul Climb](docs/climb.md) · [Blackjack](docs/blackjack.md) · [Hellhound Derby](docs/derby.md) · [Ticker](docs/ticker.md)
 - **License:** MIT — see [LICENSE](LICENSE)
 
 <p align="center">

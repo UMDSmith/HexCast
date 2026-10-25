@@ -25,6 +25,14 @@
       "licence": "Mixamo terms (royalty free)",
       "licence_url": "https://helpx.adobe.com/creative-cloud/faq/mixamo-faq.html",
       "changes": "Posed for Hexcast (idle, cheer, fist pump, jeer, clap, the throw) and rendered to sprites. Only the frames ship, never the character files."
+    },
+    {
+      "for": "The track",
+      "title": "Mud Cracked Dry 03",
+      "author": "Dario Barresi, Dimitrios Savva (Poly Haven)",
+      "url": "https://polyhaven.com/a/mud_cracked_dry_03",
+      "licence": "CC0",
+      "changes": "Made grey and evened out (scripts/make_ground.py), then laid over each theme's track colours in perspective."
     }
   ]
 }

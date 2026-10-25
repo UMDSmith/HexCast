@@ -1,7 +1,9 @@
-"""Twitch: watching several channels - config, accounts, tagging, routing, shoutouts, the supervisor.
+"""Twitch: the chat and alert overlays on the shared connection - tagging, routing, the alert queue, shoutouts,
+status and the config API as bots know them, the overlay looks. (The connection itself - channels, accounts, the
+supervisor - is tested in test_twitch_core.py.)
 
-Nothing here talks to Twitch: the connection functions and Helix are replaced, and the runner's own
-start-up is switched off so a request to a page or an overlay socket opens no connection."""
+Nothing here talks to Twitch: Helix is replaced, and the connection's own start-up is switched off so a request
+to a page or an overlay socket opens no connection."""
 
 import asyncio
 import importlib
@@ -28,11 +30,11 @@ BETA = {"login": "hexacoreai", "label": "beta"}
 def world(real_world):
     real_world.installer.install("twitch")
     real_world.host.load_all()
-    assert "twitch" in real_world.host.loaded, real_world.host.errors
+    assert {"twitch", "twitch_core"} <= set(real_world.host.loaded), real_world.host.errors
     yield real_world
     # these are the module's legacy configs: left in the shared test config folder they would make a later
     # test's Hexcast (test_core_app's "fresh download") install Twitch on its own
-    for name in ("twitch.json", "twitch_secrets.json", "twitch_queue.json"):
+    for name in ("twitch.json", "twitch_core.json", "twitch_secrets.json", "twitch_queue.json"):
         (real_world.config / name).unlink(missing_ok=True)
 
 
@@ -43,7 +45,7 @@ def tw(world):
 
 @pytest.fixture
 def quiet(tw, monkeypatch):
-    """The runner neither starts nor connects: its restarts (the Reconnect button) and its syncs (a change that
+    """Nothing starts or connects: the connection's restarts (the Reconnect button) and its syncs (a change that
     only reconnects the channels it concerns) are counted instead."""
     calls = {"restart": 0, "sync": 0}
 
@@ -56,9 +58,10 @@ def quiet(tw, monkeypatch):
     async def ensure_started():
         pass
 
-    monkeypatch.setattr(tw.RUNNER, "restart", restart)
-    monkeypatch.setattr(tw.RUNNER, "sync", sync)
-    monkeypatch.setattr(tw.RUNNER, "ensure_started", ensure_started)
+    monkeypatch.setattr(tw.tc.RUNNER, "restart", restart)
+    monkeypatch.setattr(tw.tc.RUNNER, "sync", sync)
+    monkeypatch.setattr(tw.tc.RUNNER, "ensure_started", ensure_started)
+    monkeypatch.setattr(tw.LOOPS, "ensure_started", ensure_started)
     return calls
 
 
@@ -68,15 +71,15 @@ def api(world, quiet):
 
 
 def acct(tw, login, uid, scopes=SCOPES, token=None):
-    return tw.Account({"access_token": token or f"tok-{login}", "refresh_token": f"ref-{login}",
-                       "user_id": uid, "user_login": login, "scopes": list(scopes)})
+    return tw.tc.Account({"access_token": token or f"tok-{login}", "refresh_token": f"ref-{login}",
+                          "user_id": uid, "user_login": login, "scopes": list(scopes)})
 
 
 def setup(tw, channels, accounts=()):
     """Watch these channels (a list of {login, label}), signed in as these accounts."""
-    tw.CONFIG.update(tw.normalise_channels({**tw.CONFIG, "channels": channels}))
-    tw.SECRETS.accounts = {a.user_id: a for a in accounts}
-    tw.STATE.sync_channels()
+    tw.tc.CONFIG["channels"] = tw.tc.normalise_channels(channels)
+    tw.tc.SECRETS.accounts = {a.user_id: a for a in accounts}
+    tw.tc.STATE.sync_channels()
 
 
 class FakeWS:
@@ -93,33 +96,6 @@ def run(coro):
 
 # ---------------------------------------------------------------- config
 
-def test_a_config_with_only_the_old_channel_gets_a_list(tw):
-    cfg = tw.normalise_channels({"channel": "#Hexacore_AI"})
-    assert cfg["channels"] == [{"login": "hexacore_ai", "label": "", "enabled": True}]
-    assert cfg["channel"] == "hexacore_ai" and cfg["overlay_channels"] == "primary"
-    assert tw.normalise_channels({})["channels"] == [] and tw.normalise_channels({})["channel"] == ""
-
-
-def test_channels_are_cleaned_and_the_first_is_the_primary(tw):
-    rows = [{"login": " #Hexacoreai ", "label": "  beta  ", "enabled": False}, "HEXACORE_AI", {"login": "hexacoreai"},
-            {"login": "no way"}, {"login": ""}, 7, {"login": "x" * 40}, {"login": "ok_name", "label": "L" * 60}]
-    cfg = tw.normalise_channels({"channels": rows, "channel": "ignored_when_there_is_a_list", "overlay_channels": "?"})
-    assert cfg["channels"] == [{"login": "hexacoreai", "label": "beta", "enabled": False},
-                               {"login": "hexacore_ai", "label": "", "enabled": True},
-                               {"login": "ok_name", "label": "L" * 24, "enabled": True}]
-    assert cfg["channel"] == "hexacoreai" and cfg["overlay_channels"] == "primary"
-    many = [{"login": f"channel{i}"} for i in range(9)]
-    assert len(tw.normalise_channels({"channels": many})["channels"]) == tw.MAX_CHANNELS
-
-
-def test_an_old_config_file_is_read_as_one_channel_and_saved_with_both(tw):
-    tw.CONFIG_PATH.write_text(json.dumps({"channel": "hexacore_ai", "forward_url": "http://bot"}), encoding="utf-8")
-    cfg = tw.load_config()
-    assert cfg["channels"] == [{"login": "hexacore_ai", "label": "", "enabled": True}] and cfg["forward_url"] == "http://bot"
-    saved = json.loads(tw.CONFIG_PATH.read_text(encoding="utf-8")) if tw.save_config(cfg) else {}
-    assert saved["channel"] == "hexacore_ai" and saved["channels"][0]["login"] == "hexacore_ai"
-
-
 def test_the_config_api_takes_channels_and_restarts_only_when_they_change(api, tw, quiet):
     r = api.post("/twitch/api/config", json={"channels": [{**PRIMARY, "login": "Hexacore_AI"}, BETA]})
     cfg = r.json()["config"]
@@ -131,14 +107,6 @@ def test_the_config_api_takes_channels_and_restarts_only_when_they_change(api, t
     api.post("/twitch/api/config", json={"channels": [PRIMARY, {**BETA, "label": "test"}]})   # a label counts
     api.post("/twitch/api/config", json={"channels": [PRIMARY, {**BETA, "label": "test", "enabled": False}]})
     assert quiet["sync"] == 3
-
-
-def test_only_the_reconnect_button_reconnects_everything(api, tw, quiet):
-    api.post("/twitch/api/config", json={"channels": [PRIMARY, BETA]})
-    api.post("/twitch/auth/logout", json={"login": "nobody"})
-    assert quiet["restart"] == 0 and quiet["sync"] == 2                      # a settings save and a sign-out: a sync each
-    assert api.post("/twitch/api/reconnect").json() == {"ok": True}
-    assert quiet["restart"] == 1 and quiet["sync"] == 2
 
 
 def test_the_old_channel_setting_still_changes_the_primary(api, tw, quiet):
@@ -162,102 +130,6 @@ def test_a_channel_that_is_not_one_is_refused_and_nothing_changes(api, tw, quiet
     assert api.get("/twitch/api/config").json() == before and quiet["sync"] == 1
 
 
-# ---------------------------------------------------------------- accounts
-
-def test_a_one_login_secrets_file_becomes_the_first_account(tw):
-    tw.SECRETS_PATH.write_text(json.dumps({
-        "client_id": "cid", "client_secret": "sec", "access_token": "a", "refresh_token": "r", "expires_at": 1,
-        "user_id": "11", "user_login": "hexacore_ai", "scopes": ["user:read:chat"]}), encoding="utf-8")
-    tw.SECRETS.load()
-    (a,) = tw.SECRETS.authed()
-    assert (a.user_id, a.user_login, a.access_token, a.scopes) == ("11", "hexacore_ai", "a", ["user:read:chat"])
-    assert tw.SECRETS.client_id == "cid" and tw.SECRETS.client_secret == "sec"
-    tw.SECRETS.save()
-    saved = json.loads(tw.SECRETS_PATH.read_text(encoding="utf-8"))
-    assert "access_token" not in saved and saved["accounts"]["11"]["user_login"] == "hexacore_ai"
-    tw.SECRETS.load()                                                       # and it reads back the same
-    assert [x.user_login for x in tw.SECRETS.authed()] == ["hexacore_ai"]
-
-
-def test_a_channel_uses_its_own_account_else_the_default_one(tw):
-    a1, a2, bot = acct(tw, "hexacore_ai", "11"), acct(tw, "hexacoreai", "22"), acct(tw, "somebot", "33")
-    setup(tw, [PRIMARY, BETA, {"login": "gamma_ch"}], [bot, a2, a1])
-    assert tw.account_for("hexacore_ai") is a1 and tw.account_for("HexaCoreAI") is a2        # their own logins
-    assert tw.account_for("gamma_ch") is a1 and tw.default_account() is a1                    # the primary's is the default
-    setup(tw, [PRIMARY, BETA], [bot, a2])                                                     # primary not signed in
-    assert tw.account_for("hexacore_ai") is bot and tw.account_for("hexacoreai") is a2        # first one signed in
-    setup(tw, [PRIMARY, BETA], [bot])                                                         # one login, any channel
-    assert tw.account_for("hexacore_ai") is bot and tw.account_for("hexacoreai") is bot
-    setup(tw, [PRIMARY, BETA], [])
-    assert tw.account_for("hexacoreai") is None and tw.default_account() is None
-
-
-def test_a_hexcast_with_no_channel_set_watches_the_signed_in_users_own(tw):
-    setup(tw, [], [acct(tw, "hexacore_ai", "11")])
-    assert [r["login"] for r in tw.configured_channels()] == ["hexacore_ai"] and tw.primary_login() == "hexacore_ai"
-    setup(tw, [], [])
-    assert tw.configured_channels() == [] and tw.primary_login() == ""
-
-
-def test_signing_out_one_account_leaves_the_others(api, tw, quiet):
-    setup(tw, [PRIMARY, BETA], [acct(tw, "hexacore_ai", "11"), acct(tw, "hexacoreai", "22")])
-    assert api.post("/twitch/auth/logout", json={"login": "HexaCoreAI"}).json() == {"ok": True}
-    assert [a.user_login for a in tw.SECRETS.authed()] == ["hexacore_ai"] and quiet["sync"] == 1
-    api.post("/twitch/auth/logout")                                                           # no body: everyone
-    assert tw.SECRETS.authed() == [] and quiet["sync"] == 2
-
-
-def test_a_second_sign_in_of_the_same_user_replaces_the_first(tw):
-    setup(tw, [PRIMARY], [acct(tw, "hexacore_ai", "11", token="old")])
-    kept = tw.SECRETS.adopt(acct(tw, "hexacore_ai", "11", token="new"))
-    assert len(tw.SECRETS.accounts) == 1 and kept.access_token == "new"
-    assert tw.SECRETS.adopt(acct(tw, "hexacoreai", "22")).user_login == "hexacoreai" and len(tw.SECRETS.accounts) == 2
-
-
-def test_channels_that_share_a_login_refresh_its_token_once(tw, monkeypatch):
-    a = acct(tw, "hexacore_ai", "11", token="old")
-    setup(tw, [PRIMARY, BETA], [a])
-    seen = {"refresh": 0, "requests": []}
-
-    class Resp:
-        def __init__(self, code, body):
-            self.status_code, self._body = code, body
-
-        def json(self):
-            return self._body
-
-    class Client:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *exc):
-            return False
-
-        async def request(self, method, url, headers=None, params=None, json=None):
-            token = headers["Authorization"].split()[-1]
-            seen["requests"].append(token)
-            await asyncio.sleep(0.01)                                       # the other channel's call is in flight too
-            return Resp(401 if token == "old" else 200, {"data": []})
-
-        async def post(self, url, data=None):
-            seen["refresh"] += 1
-            await asyncio.sleep(0.02)
-            return Resp(200, {"access_token": "new", "refresh_token": "ref2", "expires_in": 3600})
-
-    monkeypatch.setattr(tw.httpx, "AsyncClient", Client)
-
-    async def both():
-        return await asyncio.gather(tw.helix("GET", "/users", acct=a), tw.helix("GET", "/users", acct=a))
-
-    r1, r2 = run(both())
-    assert (r1.status_code, r2.status_code) == (200, 200)
-    assert seen["refresh"] == 1 and a.access_token == "new" and a.refresh_token == "ref2"   # one refresh, not a race
-    assert seen["requests"].count("new") == 2
-
-
 # ---------------------------------------------------------------- what a channel's lines look like
 
 EV = {"chatter_user_login": "viewer", "chatter_user_name": "Viewer", "color": "#00ff00", "message_id": "m1",
@@ -268,9 +140,9 @@ IRC = "@badges=moderator/1;display-name=Viewer;id=abc;mod=1 :viewer!viewer@viewe
 
 def test_chat_lines_carry_their_channel_and_use_its_emotes(tw):
     setup(tw, [PRIMARY, BETA])
-    primary, beta = tw.STATE.channel("hexacore_ai"), tw.STATE.channel("hexacoreai")
-    beta.assets.emotes = {"KEKW": "https://cdn.example/kekw.png"}                 # only the beta channel has this emote
-    beta.assets.badges = {"moderator/1": {"url": "https://cdn.example/mod.png", "title": "Moderator"}}
+    primary, beta = tw.tc.STATE.channel("hexacore_ai"), tw.tc.STATE.channel("hexacoreai")
+    tw.assets_for(beta).emotes = {"KEKW": "https://cdn.example/kekw.png"}         # only the beta channel has this emote
+    tw.assets_for(beta).badges = {"moderator/1": {"url": "https://cdn.example/mod.png", "title": "Moderator"}}
     for make in (lambda c: tw.normalise_eventsub_chat(EV, c), lambda c: tw.normalise_irc_chat(IRC, c)):
         m = make(beta)
         assert (m["channel"], m["channel_label"]) == ("hexacoreai", "beta")
@@ -283,20 +155,20 @@ def test_chat_lines_carry_their_channel_and_use_its_emotes(tw):
 
 def test_a_channel_without_a_label_is_tagged_with_its_login(tw):
     setup(tw, [{"login": "hexacoreai"}])
-    assert tw.normalise_irc_chat(IRC, tw.STATE.primary())["channel_label"] == "hexacoreai"
+    assert tw.normalise_irc_chat(IRC, tw.tc.STATE.primary())["channel_label"] == "hexacoreai"
 
 
 def test_alerts_carry_their_channel_and_can_name_it(tw):
     setup(tw, [PRIMARY, BETA])
     tw.CONFIG["alerts"]["follow"]["body"] = "{user} followed {channel}"
-    a = tw.build_alert("follow", user="Viewer", ch=tw.STATE.channel("hexacoreai"))
+    a = tw.build_alert("follow", user="Viewer", ch=tw.tc.STATE.channel("hexacoreai"))
     assert (a["channel"], a["channel_label"], a["body"]) == ("hexacoreai", "beta", "Viewer followed beta")
     assert tw.build_alert("follow", user="Viewer")["channel"] == ""              # no channel: still a working alert
 
 
 def test_notifications_are_routed_to_the_channel_they_came_from(tw, monkeypatch):
     setup(tw, [PRIMARY, BETA])
-    beta = tw.STATE.channel("hexacoreai")
+    beta = tw.tc.STATE.channel("hexacoreai")
     alerts, chats, commands = [], [], []
 
     async def enqueue(alert, msg_id=None):
@@ -385,7 +257,7 @@ def _play_alert(tw, channel, overlays):
     state (still playing?) half a second later, and whether the queue was done by `done_within` seconds."""
     setup(tw, [PRIMARY, BETA])
     tw.HUB.events.update(overlays)
-    alert = tw.build_alert("follow", user="Viewer", ch=tw.STATE.channel(channel))
+    alert = tw.build_alert("follow", user="Viewer", ch=tw.tc.STATE.channel(channel))
 
     async def go():
         await tw.ALERT_QUEUE.enqueue(alert)
@@ -441,7 +313,7 @@ def _helix_recorder(tw, monkeypatch):
             return Resp(200, {"data": [{"id": "900", "display_name": "SomeStreamer"}]})
         return Resp(204 if path == "/chat/shoutouts" else 200)
 
-    monkeypatch.setattr(tw, "helix", helix)
+    monkeypatch.setattr(tw.tc, "helix", helix)
     tw.CONFIG["shoutout"]["clip"] = False
     return calls
 
@@ -450,9 +322,9 @@ def test_a_shoutout_is_made_in_the_channel_it_was_typed_in_by_that_channels_acco
     calls = _helix_recorder(tw, monkeypatch)
     setup(tw, [PRIMARY, BETA, {"login": "gamma_ch"}], [acct(tw, "hexacore_ai", "11"), acct(tw, "hexacoreai", "22")])
     for login, cid in (("hexacore_ai", "111"), ("hexacoreai", "222"), ("gamma_ch", "333")):
-        tw.STATE.channel(login).id = cid
+        tw.tc.STATE.channel(login).id = cid
 
-    run(tw._do_shoutout("somestreamer", tw.STATE.channel("hexacoreai")))
+    run(tw._do_shoutout("somestreamer", tw.tc.STATE.channel("hexacoreai")))
     assert [(m, p, who) for m, p, who, *_ in calls] == [("GET", "/users", "hexacoreai"), ("POST", "/chat/shoutouts", "hexacoreai"),
                                                         ("POST", "/chat/messages", "hexacoreai")]
     assert calls[1][3] == {"from_broadcaster_id": "222", "to_broadcaster_id": "900", "moderator_id": "22"}
@@ -460,7 +332,7 @@ def test_a_shoutout_is_made_in_the_channel_it_was_typed_in_by_that_channels_acco
     assert "SomeStreamer" in calls[2][4]["message"] and "twitch.tv/somestreamer" in calls[2][4]["message"]
 
     calls.clear()                                                                   # a channel with no login of its own
-    run(tw._do_shoutout("somestreamer", tw.STATE.channel("gamma_ch")))             # is shouted out as the default account
+    run(tw._do_shoutout("somestreamer", tw.tc.STATE.channel("gamma_ch")))             # is shouted out as the default account
     assert {who for _, _, who, *_ in calls} == {"hexacore_ai"}
     assert calls[1][3]["from_broadcaster_id"] == "333" and calls[1][3]["moderator_id"] == "11"
     assert calls[2][4]["broadcaster_id"] == "333" and calls[2][4]["sender_id"] == "11"
@@ -469,10 +341,10 @@ def test_a_shoutout_is_made_in_the_channel_it_was_typed_in_by_that_channels_acco
 def test_a_shoutout_says_when_the_account_lacks_a_scope(tw, monkeypatch):
     calls = _helix_recorder(tw, monkeypatch)
     setup(tw, [PRIMARY, BETA], [acct(tw, "hexacore_ai", "11", scopes=["user:read:chat"]), acct(tw, "hexacoreai", "22")])
-    tw.STATE.channel("hexacore_ai").id = "111"
-    run(tw._do_shoutout("somestreamer", tw.STATE.channel("hexacore_ai")))
+    tw.tc.STATE.channel("hexacore_ai").id = "111"
+    run(tw._do_shoutout("somestreamer", tw.tc.STATE.channel("hexacore_ai")))
     assert [p for _, p, *_ in calls] == ["/users"]                                  # neither the banner nor the line
-    log = "\n".join(tw.STATE.log)
+    log = "\n".join(tw.tc.STATE.log)
     assert "[primary]" in log and "moderator:manage:shoutouts" in log and "user:write:chat" in log
 
 
@@ -486,252 +358,50 @@ def test_a_command_is_handled_for_the_channel_it_was_typed_in(tw, monkeypatch):
     monkeypatch.setattr(tw, "_do_shoutout", shoutout)
 
     async def go():
-        await tw.handle_command("mod", "!so @SomeStreamer", False, True, tw.STATE.channel("hexacoreai"))
-        await tw.handle_command("viewer", "!so other_one", False, False, tw.STATE.channel("hexacoreai"))   # not a mod
-        await tw.handle_command("boss", "!so third_one", True, False, tw.STATE.channel("hexacore_ai"))
+        await tw.handle_command("mod", "!so @SomeStreamer", False, True, tw.tc.STATE.channel("hexacoreai"))
+        await tw.handle_command("viewer", "!so other_one", False, False, tw.tc.STATE.channel("hexacoreai"))   # not a mod
+        await tw.handle_command("boss", "!so third_one", True, False, tw.tc.STATE.channel("hexacore_ai"))
         await asyncio.sleep(0)
 
     run(go())
     assert seen == [("somestreamer", "hexacoreai"), ("third_one", "hexacore_ai")]
 
 
-# ---------------------------------------------------------------- the supervisor: the primary must always work
+def test_channels_already_up_get_their_emotes_when_twitch_starts_after_the_connection(tw, monkeypatch):
+    """Twitch updated (or enabled) on its own: the shared connection kept running, so the channels came up before
+    Twitch listened - their emotes and badges load when it starts."""
+    setup(tw, [PRIMARY, BETA], [acct(tw, "hexacore_ai", "11")])
+    p, b = tw.tc.STATE.channel("hexacore_ai"), tw.tc.STATE.channel("hexacoreai")
+    p.connected, p.source, p.id = True, "eventsub", "111"
+    b.connected, b.source = True, "irc"
+    loaded = []
 
-class Wire:
-    """The connection functions replaced. A channel's 'connection' just stays up until it is torn down, and
-    what happened is recorded: who connected as whom, and whose connection was cancelled."""
+    async def load(self, channel_id, acct=None, name=""):
+        loaded.append((channel_id, acct.user_login if acct else None))
+        self.emotes = {"KEKW": "x"}
 
-    def __init__(self, tw, monkeypatch):
-        self.started, self.cancelled, self.validated = [], [], []
-        self.hang = set()                  # channels whose lookup never answers
-        self.fail = {}                     # channel -> how many more lookups raise (the network is down)
-        self.validate_raises = set()       # accounts whose login check raises
+    async def nothing():
+        pass
 
-        async def validate(a):
-            self.validated.append(a.user_login)
-            if a.user_login in self.validate_raises:
-                raise RuntimeError("validate exploded")
-            return True
-
-        async def resolve(login, a):
-            if login in self.hang:
-                await asyncio.Event().wait()
-            if self.fail.get(login):
-                self.fail[login] -= 1
-                raise ConnectionError("network down")
-            return f"id-{login}"
-
-        async def stays_up(ch, who):
-            self.started.append((ch.login, who))
-            try:
-                await asyncio.Event().wait()
-            except asyncio.CancelledError:
-                self.cancelled.append(ch.login)
-                raise
-
-        async def eventsub(ch, a, stop):
-            await stays_up(ch, a.user_login)
-
-        async def irc(ch, stop):
-            await stays_up(ch, "anonymous")
-
-        async def noop(*a, **k):
-            pass
-
-        monkeypatch.setattr(tw, "validate_token", validate)
-        monkeypatch.setattr(tw, "resolve_channel_id", resolve)
-        monkeypatch.setattr(tw, "eventsub_loop", eventsub)
-        monkeypatch.setattr(tw, "irc_loop", irc)
-        monkeypatch.setattr(tw.Assets, "load", noop)
-        monkeypatch.setattr(tw.HUB, "broadcast_status", noop)
-        monkeypatch.setattr(tw, "RETRY_MIN", 0.01)
-        monkeypatch.setattr(tw, "RETRY_MAX", 0.02)
-
-
-async def settle():
-    await asyncio.sleep(0.15)
-
-
-def watch(tw, channels):
-    """Change the channel list the way saving the config does."""
-    tw.CONFIG.update(tw.normalise_channels({**tw.CONFIG, "channels": channels}))
-
-
-def test_every_enabled_channel_runs_as_the_account_that_fits_it(tw, monkeypatch):
-    setup(tw, [PRIMARY, BETA, {"login": "gamma_ch"}, {"login": "off_ch", "enabled": False}],
-          [acct(tw, "hexacore_ai", "11"), acct(tw, "hexacoreai", "22")])
-    w = Wire(tw, monkeypatch)
+    monkeypatch.setattr(tw.Assets, "load", load)
+    monkeypatch.setattr(tw.tc.RUNNER, "ensure_started", nothing)
 
     async def go():
-        await tw.RUNNER.restart()
-        await settle()
-        with_logins = sorted(w.started)
-        await tw.RUNNER._stop()
-        tw.SECRETS.accounts = {}                                                      # nobody signed in: anonymous chat for all
-        w.started.clear()
-        await tw.RUNNER.restart()
-        await settle()
-        anonymous = sorted(w.started)
-        await tw.RUNNER._stop()
-        return with_logins, anonymous
-
-    with_logins, anonymous = run(go())
-    assert with_logins == [("gamma_ch", "hexacore_ai"), ("hexacore_ai", "hexacore_ai"), ("hexacoreai", "hexacoreai")]
-    assert tw.STATE.channel("off_ch").enabled is False and tw.STATE.channel("off_ch").source == "none"   # never ran
-    assert anonymous == [("gamma_ch", "anonymous"), ("hexacore_ai", "anonymous"), ("hexacoreai", "anonymous")]
-
-
-def test_a_channel_that_cannot_start_keeps_trying_and_the_others_run(tw, monkeypatch):
-    setup(tw, [PRIMARY, BETA], [acct(tw, "hexacore_ai", "11"), acct(tw, "hexacoreai", "22")])
-    w = Wire(tw, monkeypatch)
-    w.fail["hexacore_ai"] = 3                                          # no network when the primary first tries
-
-    async def go():
-        await tw.RUNNER.restart()
-        await settle()
-        await settle()
-        await tw.RUNNER._stop()
+        await tw.LOOPS.ensure_started()
+        await asyncio.sleep(0.05)
+        await tw.LOOPS.ensure_started()                                             # already running: nothing again
+        await asyncio.sleep(0.05)
+        await tw.LOOPS.shutdown()
 
     run(go())
-    assert w.started.count(("hexacore_ai", "hexacore_ai")) == 1 and w.started.count(("hexacoreai", "hexacoreai")) == 1
-    log = "\n".join(tw.STATE.log)
-    assert log.count("hexacore_ai could not start: network down") == 3 and "trying again" in log
-
-
-def test_a_slow_or_broken_beta_does_not_hold_up_the_primary(tw, monkeypatch):
-    setup(tw, [PRIMARY, BETA], [acct(tw, "hexacore_ai", "11"), acct(tw, "hexacoreai", "22")])
-    w = Wire(tw, monkeypatch)
-    w.hang.add("hexacoreai")                                           # beta's lookup never answers ...
-    w.validate_raises.add("hexacoreai")                                # ... and checking its login raises
-
-    async def go():
-        await tw.RUNNER.restart()                                      # (returns at once, it only starts the tasks)
-        await settle()
-        up = list(w.started)
-        beta_task = tw.RUNNER.tasks["hexacoreai"][1]
-        await tw.RUNNER._stop()                                        # a hung channel is torn down cleanly too
-        return up, beta_task
-
-    up, beta_task = run(go())
-    assert up == [("hexacore_ai", "hexacore_ai")]                      # the primary is up; beta is still waiting
-    assert beta_task.done() and "could not check the login of hexacoreai" in "\n".join(tw.STATE.log)
-
-
-def test_editing_beta_never_reconnects_the_primary(tw, monkeypatch):
-    setup(tw, [PRIMARY, BETA], [acct(tw, "hexacore_ai", "11"), acct(tw, "hexacoreai", "22")])
-    w = Wire(tw, monkeypatch)
-
-    async def go():
-        await tw.RUNNER.restart()
-        await settle()
-        primary_task = tw.RUNNER.tasks["hexacore_ai"][1]
-        steps = {}
-
-        async def change(name, channels):
-            watch(tw, channels)
-            await tw.RUNNER.sync()
-            await settle()
-            steps[name] = (list(w.started), list(w.cancelled))
-
-        await change("label", [PRIMARY, {**BETA, "label": "test"}])
-        await change("off", [PRIMARY, {**BETA, "label": "test", "enabled": False}])
-        await change("on", [PRIMARY, {**BETA, "label": "test"}])
-        await change("another", [PRIMARY, {**BETA, "label": "test"}, {"login": "gamma_ch"}])
-        await change("beta first", [{**BETA, "label": "test"}, PRIMARY, {"login": "gamma_ch"}])      # make beta the primary
-        await change("beta gone", [PRIMARY])
-        same_task = tw.RUNNER.tasks["hexacore_ai"][1] is primary_task
-        await tw.RUNNER._stop()
-        return steps, same_task
-
-    steps, same_task = run(go())
-    primary = ("hexacore_ai", "hexacore_ai")
-    assert same_task and all("hexacore_ai" not in cancelled for _, cancelled in steps.values())      # never torn down
-    assert all(started.count(primary) == 1 for started, _ in steps.values())                          # never reconnected
-    assert steps["label"][1] == [] and len(steps["label"][0]) == 2                                    # a label needs no reconnect ...
-    assert steps["off"][1] == ["hexacoreai"]                                                          # ... switching beta off ends beta only
-    assert steps["on"][0].count(("hexacoreai", "hexacoreai")) == 2                                    # ... on starts it again
-    assert steps["another"][0][-1] == ("gamma_ch", "hexacore_ai") and steps["another"][1] == ["hexacoreai"]
-    assert sorted(steps["beta gone"][1][-2:]) == ["gamma_ch", "hexacoreai"]                           # beta and gamma removed
-
-
-def test_a_label_change_shows_in_the_tags_without_a_reconnect(tw, monkeypatch):
-    setup(tw, [PRIMARY, BETA], [acct(tw, "hexacore_ai", "11")])
-    Wire(tw, monkeypatch)
-
-    async def go():
-        await tw.RUNNER.restart()
-        await settle()
-        before = tw.normalise_irc_chat(IRC, tw.STATE.channel("hexacoreai"))["channel_label"]
-        watch(tw, [PRIMARY, {**BETA, "label": "renamed"}])
-        await tw.RUNNER.sync()
-        after = tw.normalise_irc_chat(IRC, tw.STATE.channel("hexacoreai"))["channel_label"]
-        await tw.RUNNER._stop()
-        return before, after
-
-    assert run(go()) == ("beta", "renamed")
-
-
-def test_signing_in_or_out_reconnects_only_the_channels_that_run_as_that_account(tw, monkeypatch):
-    a1 = acct(tw, "hexacore_ai", "11")
-    setup(tw, [PRIMARY, BETA], [a1])                                   # both run as the primary's account
-    w = Wire(tw, monkeypatch)
-
-    async def go():
-        await tw.RUNNER.restart()
-        await settle()
-        out = {"start": list(w.started)}
-        tw.SECRETS.accounts["22"] = acct(tw, "hexacoreai", "22")       # sign in as beta's own account
-        await tw.RUNNER.sync()
-        await settle()
-        out["beta signed in"] = (list(w.started), list(w.cancelled))
-        w.cancelled.clear()
-        tw.SECRETS.adopt(acct(tw, "hexacore_ai", "11", token="newer"))  # sign in again as the primary's account
-        await tw.RUNNER.sync()
-        await settle()
-        out["primary again"] = (list(w.started), list(w.cancelled))
-        w.cancelled.clear()
-        tw.SECRETS.clear_tokens("hexacoreai")                          # sign beta's account out again
-        await tw.RUNNER.sync()
-        await settle()
-        out["beta out"] = (list(w.started), list(w.cancelled))
-        await tw.RUNNER._stop()
-        return out
-
-    out = run(go())
-    assert out["start"] == [("hexacore_ai", "hexacore_ai"), ("hexacoreai", "hexacore_ai")]
-    started, cancelled = out["beta signed in"]
-    assert cancelled == ["hexacoreai"] and started[-1] == ("hexacoreai", "hexacoreai")              # only beta, now as itself
-    started, cancelled = out["primary again"]
-    assert cancelled == ["hexacore_ai"] and started[-1] == ("hexacore_ai", "hexacore_ai")           # beta runs as its own: untouched
-    started, cancelled = out["beta out"]
-    assert cancelled == ["hexacoreai"] and started[-1] == ("hexacoreai", "hexacore_ai")             # beta back on the default; the primary untouched
-
-
-def test_reconnect_restarts_everything_and_stopping_leaves_nothing_running(tw, monkeypatch):
-    setup(tw, [PRIMARY, BETA], [acct(tw, "hexacore_ai", "11"), acct(tw, "hexacoreai", "22")])
-    w = Wire(tw, monkeypatch)
-
-    async def go():
-        await tw.RUNNER.restart()
-        await settle()
-        tasks = [t for _, t in tw.RUNNER.tasks.values()] + [tw.RUNNER.task_queue]
-        await tw.RUNNER.restart()                                      # the Reconnect button
-        await settle()
-        cancelled_by_reconnect = sorted(w.cancelled)
-        await tw.RUNNER._stop()
-        return tasks, cancelled_by_reconnect, [t for _, t in tw.RUNNER.tasks.values()], tw.RUNNER.task_queue
-
-    tasks, cancelled, left, queue = run(go())
-    assert cancelled[:2] == ["hexacore_ai", "hexacoreai"] and all(t.done() for t in tasks)            # all of it, on purpose
-    assert left == [] and queue is None
-    assert not tw.STATE.channel("hexacore_ai").connected and tw.STATE.channel("hexacore_ai").source == "none"
+    assert sorted(loaded, key=str) == [("", None), ("111", "hexacore_ai")]
 
 
 # ---------------------------------------------------------------- status and the test endpoints
 
 def test_the_status_keeps_its_top_level_keys_and_lists_every_channel(api, tw):
     setup(tw, [PRIMARY, BETA, {"login": "gamma_ch", "enabled": False}], [acct(tw, "hexacore_ai", "11"), acct(tw, "hexacoreai", "22")])
-    p, b = tw.STATE.channel("hexacore_ai"), tw.STATE.channel("hexacoreai")
+    p, b = tw.tc.STATE.channel("hexacore_ai"), tw.tc.STATE.channel("hexacoreai")
     p.id, p.source, p.connected, p.subs_ok = "111", "eventsub", True, ["channel.follow"]
     b.source, b.connected, b.last_error = "irc", False, "boom"
     s = api.get("/twitch/api/status").json()
@@ -751,7 +421,7 @@ def test_the_status_keeps_its_top_level_keys_and_lists_every_channel(api, tw):
 
 
 def test_the_status_before_anything_has_started_still_lists_the_configured_channels(api, tw):
-    tw.CONFIG.update(tw.normalise_channels({**tw.CONFIG, "channels": [PRIMARY, BETA]}))
+    tw.tc.CONFIG["channels"] = tw.tc.normalise_channels([PRIMARY, BETA])
     s = api.get("/twitch/api/status").json()
     assert [c["login"] for c in s["channels"]] == ["hexacore_ai", "hexacoreai"] and s["connected"] is False
     assert s["channel_login"] == "hexacore_ai" and s["authed"] is False and s["accounts"] == []

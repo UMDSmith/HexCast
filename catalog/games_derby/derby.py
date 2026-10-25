@@ -26,6 +26,7 @@ The script reaches the overlay when the race starts; bets are closed by then.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import random
@@ -34,6 +35,7 @@ import secrets
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -49,6 +51,7 @@ from hexcast_plugins.games.core import (
     _as_float,
     _atomic_write_text,
     _clean_user,
+    _client,
     _debits,
     _ev,
     _flag,
@@ -111,9 +114,13 @@ _GUEST_ID = re.compile(r"^[a-z0-9_-]{1,40}$")
 _guests: list = [None, []]                      # [what the files looked like, the guests]
 # a guest's own lines ({t} = the other one): by (passing someone), at (said to it as it's passed), back (its answer
 # when passed), ouch (hurt), dodge (a near miss, a leap), win, lose (dead last, or beaten in a photo), hello (its
-# spotlight on the lineup), ticker (the commentary when it lines up, {a} = its name). Its own come first; the
-# hounds' only where it has none.
-GUEST_LINES = ("by", "at", "back", "ouch", "dodge", "win", "lose", "hello", "ticker")
+# spotlight on the lineup), ticker (the commentary when it lines up, {a} = its name), say (what it is, where it's
+# from: said passing anyone), env (about the place: the lava, the crowd, the junk). Its own come first; the hounds'
+# only where it has none. And to: {racer id: [lines]}, said to that one by name (passing it, or answering it).
+# A mute guest ("mute": true: a pet) says nothing at all, not even the hounds' lines; the others still talk to it.
+# morph: what one that changes shape partway (its "morph": a robot into a truck) says as it does.
+GUEST_LINES = ("by", "at", "back", "ouch", "dodge", "win", "lose", "hello", "ticker", "say", "env", "morph")
+GUEST_TO = (60, 12)                             # to: at most this many racers, and lines for each
 
 
 def load_guests() -> list[dict]:
@@ -130,12 +137,16 @@ def load_guests() -> list[dict]:
                 continue
             seen.add(g["id"])
             lines = g.get("lines") if isinstance(g.get("lines"), dict) else {}
+            to = lines.get("to") if isinstance(lines.get("to"), dict) else {}
             wob = _as_float(g.get("wobble"))
             out.append({"id": g["id"], "name": g["name"][:DB_NAME_MAX], "short": str(g.get("short") or g["name"])[:DB_NAME_MAX],
-                        "note": str(g.get("bio") or "")[:160], "guest": True, "local": local,
+                        "note": str(g.get("bio") or "")[:160], "guest": True, "local": local, "mute": g.get("mute") is True,
                         "wobble": 1.0 if wob is None else min(3.0, max(0.0, wob)),
-                        "lines": {k: [s[:120] for s in (lines.get(k) or []) if isinstance(s, str)][:60] for k in GUEST_LINES},
-                        "art": {k: g[k] for k in ("sheet", "anchors", "cadence", "hue", "sat") if k in g}})
+                        "lines": {**{k: [s[:120] for s in (lines.get(k) or []) if isinstance(s, str)][:60] for k in GUEST_LINES},
+                                  "to": {t: [s[:120] for s in v if isinstance(s, str)][:GUEST_TO[1]]
+                                         for t, v in list(to.items())[:GUEST_TO[0]]
+                                         if isinstance(t, str) and _GUEST_ID.match(t) and t != g["id"] and isinstance(v, list)}},
+                        "art": {k: g[k] for k in ("sheet", "anchors", "cadence", "hue", "sat", "morph") if k in g}})
     _guests[:] = [key, out]
     return out
 
@@ -154,6 +165,16 @@ def _own(gid: str, key: str) -> list[str]:
     return next((g["lines"].get(key) or [] for g in load_guests() if g["id"] == gid), [])
 
 
+def _local_sheet(sheet: dict) -> dict | None:
+    """a local pack's sheet, served from /games/api/derby/guests/file/... (None: no such file). Its address carries
+    when the file was written (?v=), so an overlay never draws one it cached before the pack was exported again."""
+    name = str(sheet.get("file") or "").rsplit("/", 1)[-1]
+    path = GUESTS_DIR / name
+    if not GUEST_FILE.match(name) or not path.is_file():
+        return None
+    return {**sheet, "file": f"/games/api/derby/guests/file/{name}?v={path.stat().st_mtime_ns // 1_000_000}"}
+
+
 def guests_view(static_url: str = "/plugins/games_derby/static/") -> list[dict]:
     """What the overlay needs to draw the guests: their sheets (an add-on guest's next to the hounds', a local
     one's from /games/api/derby/guests/file/...), anchors and lines."""
@@ -163,13 +184,20 @@ def guests_view(static_url: str = "/plugins/games_derby/static/") -> list[dict]:
         sheet = art.get("sheet") if isinstance(art.get("sheet"), dict) else None
         if not sheet or not isinstance(sheet.get("file"), str) or not isinstance(art.get("anchors"), dict):
             continue
-        name = sheet["file"].rsplit("/", 1)[-1]
         if g["local"]:
-            if not GUEST_FILE.match(name) or not (GUESTS_DIR / name).is_file():
+            art["sheet"] = _local_sheet(sheet)
+            if not art["sheet"]:
                 continue
-            art["sheet"] = {**sheet, "file": "/games/api/derby/guests/file/" + name}
+        m = art.pop("morph", None)                     # (it changes shape partway: the change, then its new shape)
+        if isinstance(m, dict) and all(isinstance(m.get(k), dict) and isinstance(m[k].get("sheet"), dict)
+                                       and isinstance(m[k].get("anchors"), dict) for k in ("into", "then")):
+            into, then = ({**m[k], "sheet": _local_sheet(m[k]["sheet"]) if g["local"] else m[k]["sheet"]} for k in ("into", "then"))
+            at = m.get("at") if isinstance(m.get("at"), list) and len(m["at"]) == 2 else [0.3, 0.6]
+            if into["sheet"] and then["sheet"]:
+                art["morph"] = {"at": [min(0.9, max(0.05, _as_float(x) or 0.4)) for x in at],
+                                "dur": min(4.0, max(0.3, _as_float(m.get("dur")) or 1.4)), "into": into, "then": then}
         out.append({"id": g["id"], "name": g["name"], "short": g["short"], "bio": g["note"], "guest": True,
-                    "local": g["local"], "lines": g["lines"], **art})
+                    "local": g["local"], "mute": g["mute"], "lines": g["lines"], **art})
     return out
 
 
@@ -486,6 +514,8 @@ def build_script(field: list[dict], order: list[int], race_seconds: float, seed:
 
     def last_word(i: int, own: str, pool: str, none: str) -> str:   # (a guest's own, else the hounds' it can say)
         sp, guest = field[i], bool(field[i].get("guest"))
+        if sp.get("mute"):
+            return ""
         ok = [s for s in (_own(sp["id"], own) if guest else []) if _names_ok(s, sp["id"], racing, True) and "{t}" not in s]
         ok = ok or [s for s in _pool(pool) if _names_ok(s, sp["id"], racing) and not (guest and _DOGGY.search(s))]
         return rnd.choice(ok or [none])
@@ -559,6 +589,8 @@ def _say(rnd: random.Random, e: dict, field: list[dict]) -> None:
         e["ticker"] = _fill(rnd.choice(tick), a=a["name"], b=b and b["name"], o=e.get("obj")).upper()
     sp = b if who == "b" and b else a
     speaker, racing, guest = sp["id"], {h["id"] for h in field}, bool(sp.get("guest"))
+    if sp.get("mute"):                                 # (a mute guest: the commentary only)
+        return
     other = a if who == "b" else b                     # who {t} is: never the speaker (no one, when it's alone)
 
     def fit(v: list[str], own: bool = False) -> list[str]:   # (a guest doesn't say it's a hellhound, unless it's its own line)
@@ -589,6 +621,36 @@ def _say(rnd: random.Random, e: dict, field: list[dict]) -> None:
 # losing stake is just gone), taking a bet back (/remove) or stopping a game in its window is a refund.
 # The result is drawn when the window closes; a game stopped (or interrupted by a restart) during the
 # race counts: it is settled.
+
+_SOUNDS: set = set()                                # the soundboard calls on their way (see _sound)
+
+
+def _sound(path: str, why: str, after: asyncio.Task | None = None) -> asyncio.Task | None:
+    """Call the soundboard (/api/play/..., /api/stop/...) in the background, once `after` (an earlier call) is done.
+    No event loop (a unit test's commit): nothing happens. Returns the call's task."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return None
+
+    async def call() -> None:
+        if after is not None and not after.done() and after.get_loop() is loop:
+            await asyncio.wait([after], timeout=10)
+        client = _client()
+        if client is None:
+            print(f"[games cue] skip {path}: attach_games() never ran", flush=True)
+            return
+        try:
+            async with client as c:
+                r = await c.get(path)
+                print(f"[games cue] {why} {path} -> {r.status_code} {r.text[:200]}", flush=True)
+        except Exception as exc:
+            print(f"[games cue] {why} {path} failed: {exc}", flush=True)
+    task = loop.create_task(call())
+    _SOUNDS.add(task)
+    task.add_done_callback(_SOUNDS.discard)
+    return task
+
 
 _DB_NUM_WORDS = re.compile(r"^(?:#|no\.?\s*|number\s*|n)?\s*(\d{1,2})$", re.I)
 
@@ -629,6 +691,7 @@ class Derby(RoundGame):
         "min_bet": 1, "max_bet": 100000,  # per player per race (all their bets together); 0 = no max
         "max_payout": 0,                # one winning bet pays at most this; 0 = no cap
         "start_clip": "", "finish_clip": "",
+        "music_clip": "", "music_loop": True,   # soundboard clip from the gates opening until the result card is gone
     }
     SCHEMA: dict[str, tuple] = {
         "x": ("num", 0, 100), "y": ("num", 0, 100), "scale": ("num", 0.2, 5),
@@ -637,17 +700,18 @@ class Derby(RoundGame):
         "show_talk": ("bool",), "clean_language": ("bool",), "show_crowd": ("bool",),
         "hide_when_idle": ("bool",), "commands_text": ("str", COMMANDS_TEXT_MAX),
         "field_size": ("int", DB_FIELD_RANGE[0], DB_FIELD_RANGE[1]), "benched": ("str", 200),
-        "guest_chance": ("num", 0, 1), "guests_max": ("int", 0, 3),
+        "guest_chance": ("num", 0, 1), "guests_max": ("int", 0, 4),
         "bet_seconds": ("num", 5, 300), "race_seconds": ("num", 25, 90), "result_seconds": ("num", 3, 60),
         "run_without_bets": ("bool",), "house_edge_pct": ("num", 0, 25), "form_weight": ("num", 0, 2), "luck": ("num", 0, 1),
         "currency": ("name", 24), "min_bet": ("int", 1, 1e9), "max_bet": ("int", 0, 1e12), "max_payout": ("int", 0, 1e12),
-        "start_clip": ("str", 200), "finish_clip": ("str", 200),
+        "start_clip": ("str", 200), "finish_clip": ("str", 200), "music_clip": ("str", 200), "music_loop": ("bool",),
     }
     APPEARANCE = ("x", "y", "scale", "theme", "title", "show_rules", "show_players", "players_max", "sfx", "sfx_volume",
                   "show_talk", "clean_language", "show_crowd")
 
     def __init__(self, path: Path | None = None, ledger=None, form: FormBook | None = None) -> None:
         self.form = form if form is not None else FormBook()
+        self._music_task: asyncio.Task | None = None
         super().__init__(path, ledger)
 
     def default_path(self) -> Path:
@@ -693,7 +757,8 @@ class Derby(RoundGame):
         g.update({"field": field, "bets": _round_players(raw.get("bets"), bets), "script": script,
                   "edge_pct": _as_float(raw.get("edge_pct")) or 0.0, "race_seconds": _as_float(raw.get("race_seconds")) or 45.0,
                   "max_payout": max(0, _strict_int(raw.get("max_payout")) or 0), "resolved": bool(raw.get("resolved")),
-                  "marks": [m for m in raw.get("marks") or [] if isinstance(m, dict)][:DB_FIELD_RANGE[1]]})
+                  "marks": [m for m in raw.get("marks") or [] if isinstance(m, dict)][:DB_FIELD_RANGE[1]],
+                  "music": str(raw.get("music") or "")[:200] or None})
         return g
 
     # ---- the field --------------------------------------------------------------
@@ -924,12 +989,36 @@ class Derby(RoundGame):
         field = g["field"]
         order = draw_order([h["chance"] for h in field])
         named = [{**h, **{k: v for k, v in self._hound(h["num"]).items() if k in ("name", "short", "guest")},
-                  "wobble": who(h["id"]).get("wobble", 1.0)} for h in field]
+                  "wobble": who(h["id"]).get("wobble", 1.0), "mute": bool(who(h["id"]).get("mute"))} for h in field]
         g["script"] = build_script(named, order, g["race_seconds"], secrets.randbits(31))
         g["resolved"], g["marks"] = False, self.markers()
         self._set_phase("racing", g["script"]["duration_ms"] / 1000.0)
         self._clip("start_clip")
+        self._music_on()
         self.save()
+
+    # ---- the race music: a soundboard clip from the gates to the end of the result card -------------------------
+
+    def _music_on(self) -> None:
+        g, name = self.g, str(self.cfg.get("music_clip") or "").strip()
+        if not name or g.get("test"):
+            return
+        g["music"] = name                             # (the one to stop, whatever the settings say by then)
+        self._music_task = _sound(f"/api/play/{quote(name, safe='')}" + ("?loop=1" if self.cfg.get("music_loop", True) else ""),
+                                  "derby music_clip")
+
+    def _music_off(self) -> None:
+        name = self.g and self.g.pop("music", None)
+        if name:                                      # (after the play call: a quick /next must not stop it first)
+            _sound(f"/api/stop/{quote(name, safe='')}", "derby music stop", self._music_task)
+
+    def _to_idle(self) -> None:
+        self._music_off()
+        super()._to_idle()
+
+    def _abort(self, reason: str) -> None:
+        self._music_off()
+        super()._abort(reason)
 
     def _resolve(self) -> list[dict]:
         """Settle the race (once): bets on the winner are paid, the rest is lost."""

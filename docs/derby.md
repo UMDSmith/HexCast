@@ -145,6 +145,12 @@ a kick or yapping hardly any; a flaming arse ends up as a booster. The crowd als
 throws plenty that misses and lies around on the track (`show_crowd` hides those
 lobs; junk that hits a hound is part of the race and always shows).
 
+**The track** is cracked, scorched earth in each theme's colours, laid in
+perspective (it scrolls slower further back), and every runner casts a soft
+shadow where its feet land. A shadow stays on the ground when its runner is
+thrown up (it shrinks and fades), and something that floats keeps its shadow on
+the ground below it.
+
 **The crowd.** Three tiers of monsters fill the stands behind the track. They
 cheer, pump their fists, jeer and clap, calmer during the lineup and wilder as
 the finish nears. Every piece of junk is thrown by someone in the front row: you
@@ -160,8 +166,22 @@ They talk in their own words first: `hello` (their spotlight on the lineup),
 `ticker` (the commentary announcing them, `{a}` = their name), `by` (passing
 someone, `{t}` = them), `at` (what the hounds say passing them), `back` (their
 answer when passed), `ouch` (hurt), `dodge` (a near miss), `win` and `lose`
-(dead last, or beaten in a photo). Where a guest has none of a kind it borrows
-the hounds' lines, never their dog lines. The add-on brings six:
+(dead last, or beaten in a photo), `say` (what it is and where it's from, said
+passing anyone) and `env` (what it makes of the place: the lava, the crowd, the
+junk). `to` is what it says to one racer by name: `{"<racer id>": [lines]}`,
+a hound's or another guest's. Passing that one it mostly says one of those, and
+when that one passes it, it mostly answers with one, so two guests with lines
+for each other trade insults by name. A line that names a racer is only ever said
+while that racer races. Where a guest has none of a kind it borrows
+the hounds' lines, never their dog lines. A guest with `"mute": true` (a pet)
+says nothing at all, not even the hounds' lines: the others still talk to it,
+and when it passes one, that one mostly has something to say about it. A guest
+with a `morph` changes shape partway through a race (a robot that turns into its
+truck): somewhere in its `at` share of the track (picked per race, the same on
+every overlay) it plays the change once and runs on in its new shape, saying
+one of its `morph` lines as it goes. Whatever on the track slows it (thrown
+junk, slime, the demon hand) changes it again: back into its first shape, or
+into the new one. The add-on brings six:
 **Hamageddon** (seven feet of angry pork), **Skullduggery** (a skeleton),
 **The Cockfather** (a ripped rooster with an axe), **Totally A Barrel** (a mimic
 that crawls), **Moo-tilator** (a minotaur) and **Lord Horny** (a horned demon).
@@ -172,8 +192,9 @@ restart; `GET /games/api/derby/guests` lists every guest the overlay can draw).
 A pack is a folder: copy it to another Hexcast's `config/` to race them there.
 It is never part of the add-on, so it can hold characters you couldn't ship.
 `art/derby/` (README) renders and packs one from any rigged humanoid or centaur
-model, or any model that comes with a run (or a crawl) of its own; `benched`
-takes guest ids too.
+model, or any model that comes with a run (or a crawl) of its own, or from a
+painted run cycle (a PNG of frames on a plain background); `benched` takes guest
+ids too.
 
 **Trash talk.** The hounds only talk when one passes another (with a cooldown),
 when something happens to them, and at the finish. Junk gets a comment on what
@@ -308,7 +329,7 @@ ledger, or right away from the `/bet` reply's `debits`, but never both. The
 | `field_size` | 6 | hounds per race (3–6) |
 | `benched` | "" | hounds (or guests) that never race, comma separated (ids or names: `cinder, gnash, terry, sparks, bubba, ember, brimstone, mange, harry, hamageddon, skullduggery, cockfather, barrel, mootilator, lordhorny`); at least 3 hounds must be left |
 | `guest_chance` | 0.3 | how often a race has a guest racer (0 = never, 1 = every race) |
-| `guests_max` | 1 | guests in one race at most (0–3) |
+| `guests_max` | 1 | guests in one race at most (0–4) |
 | `bet_seconds` | 22 | the lineup / betting window (5–300) |
 | `race_seconds` | 45 | roughly how long the winner takes (25–90) |
 | `result_seconds` | 12 | the result card (3–60) |
@@ -319,6 +340,7 @@ ledger, or right away from the `/bet` reply's `debits`, but never both. The
 | `currency` | coins | the name after amounts, ≤ 24 characters |
 | `commands_text` | `!derby <number> <coins>` | your bot's bet command, shown on the lineup |
 | `start_clip` · `finish_clip` | "" | soundboard clips (play on the base `/overlay`): the gates open · the race is over |
+| `music_clip` · `music_loop` | "" · on | race music, a soundboard clip: starts when the gates open, stops when the result card is gone (or the game is stopped) · on = it repeats until then, off = it plays once (still cut off at the end). Not in test races |
 | `title` | "Hellhound Derby" | the header's name: your branding (≤ 32 characters) ✓ |
 | `x` · `y` · `scale` · `theme` | 50 · 50 · 1 · inferno | placement (0–100 % · 0–100 % · 0.2–5 × the 1920×1080 scene) · `inferno`, `abyss`, `sulfur` ✓ |
 | `show_rules` · `show_players` · `players_max` | on · on · 8 | the how-to-bet line · the backers board and the result card's players · how many ✓ |
@@ -394,6 +416,10 @@ The guest racers are Sketchfab models, all **CC BY 4.0**, rendered to
 
 Only original characters under a licence that lets the sprites ship go in the
 add-on; anything else is a local pack.
+
+The track's ground (`static/derby_ground.webp`) is made from "Mud Cracked Dry 03"
+by Dario Barresi and Dimitrios Savva, https://polyhaven.com/a/mud_cracked_dry_03
+(Poly Haven, **CC0**), made grey and evened out so each theme can colour it.
 
 Every model's credit is on the **Credits** card at the bottom of the Derby tab, and in the add-on's
 `static/CREDITS.md`. Both are written by the art export from `art/derby/credits.json` and the junk's and guests'

@@ -3,27 +3,21 @@ HexCast - Twitch module
 =======================
 
 A Hexcast plugin (see plugin.py): install it from the + tab and it adds:
-    http://localhost:4747/twitch          -> control panel (login + settings)
+    http://localhost:4747/twitch          -> control panel (connection + overlay settings)
     http://localhost:4747/twitch/chat     -> chat overlay (OBS browser source)
     http://localhost:4747/twitch/events   -> alert/event overlay (OBS browser source)
 
 Everything lives under /twitch/* so it cannot collide with existing routes.
 
-Data sources:
-    * EventSub over WebSocket (needs OAuth) - chat + follows/subs/raids/bits/redeems
-    * Anonymous Twitch IRC (needs nothing)  - chat only, used as fallback so you
-      can see chat on screen before doing the OAuth dance.
-
-Security note: this file stores your Twitch client secret and user tokens in
-config/twitch_secrets.json. HexCast has no auth, so treat that box as trusted.
-The API never returns the secret or the tokens.
+The connection to Twitch - the sign-in, the channels, EventSub and the anonymous chat fallback - is the
+shared twitch_core library (Chat Timers and Giveaways use it too). This module listens on it: chat lines go
+to the chat overlay (and the !so command), events become alerts in a queue the alert overlay plays.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-import os
 import re
 import secrets
 import time
@@ -32,11 +26,11 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-import websockets
 from fastapi import APIRouter, File, Request, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from hexcast_core import paths, running_plugin
+from hexcast_plugins.twitch_core import core as tc
 
 # --------------------------------------------------------------------------
 # paths
@@ -60,7 +54,6 @@ def _read_static(name: str) -> str:
     return path.read_text(encoding="utf-8")
 
 CONFIG_PATH = CONFIG_DIR / "twitch.json"
-SECRETS_PATH = CONFIG_DIR / "twitch_secrets.json"
 
 # Uploaded chat/alert background images live here and are served by hexcast's
 # existing /media StaticFiles mount, so the overlays can reach them by URL.
@@ -111,24 +104,6 @@ def _list_fonts() -> list[dict]:
                             "url": f"/media/overlays/fonts/{p.name}"})
     return out
 
-HELIX = "https://api.twitch.tv/helix"
-TWITCH_ID = "https://id.twitch.tv/oauth2"
-EVENTSUB_WS = "wss://eventsub.wss.twitch.tv/ws?keepalive_timeout_seconds=30"
-IRC_WS = "wss://irc-ws.chat.twitch.tv:443"
-
-SCOPES = [
-    "user:read:chat",
-    "channel:read:subscriptions",
-    "moderator:read:followers",
-    "bits:read",
-    "channel:read:redemptions",
-    "channel:read:hype_train",
-    # The !so shoutout command. Added later than the rest - if these are
-    # missing from an existing login, reconnect in the panel to grant them.
-    "moderator:manage:shoutouts",   # the official /shoutout banner
-    "user:write:chat",              # posting the shoutout line in chat
-]
-
 # --------------------------------------------------------------------------
 # config
 # --------------------------------------------------------------------------
@@ -143,10 +118,6 @@ def _alert(on: bool, duration: int, title: str, body: str, **extra: Any) -> dict
 
 
 DEFAULT_CONFIG: dict[str, Any] = {
-    # The channels to watch: [{"login": "mychannel", "label": "", "enabled": true}, ...], the first one the
-    # primary. `channel` always mirrors the primary's login (older panels and bots read and write that).
-    "channel": "",
-    "channels": [],
     # What a chat / alert source shows when its URL has no ?channel=...: just the primary, or every channel.
     "overlay_channels": "primary",
     "hexcast_url": "http://localhost:4747",
@@ -358,38 +329,8 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return out
 
 
-MAX_CHANNELS = 5
-CHANNEL_LOGIN = re.compile(r"^[a-z0-9_]{3,25}$")
-
-
-def clean_login(value: Any) -> str:
-    return str(value or "").strip().lstrip("#").lower()
-
-
-def normalise_channels(cfg: dict) -> dict:
-    """`channels` is the truth and `channel` mirrors its first entry. A config that only has the old
-    `channel` string (every Hexcast before multi-channel) gets a one-entry list."""
-    rows = cfg.get("channels") if isinstance(cfg.get("channels"), list) else []
-    out: list[dict] = []
-    seen: set[str] = set()
-    for row in rows:
-        if isinstance(row, str):
-            row = {"login": row}
-        if not isinstance(row, dict):
-            continue
-        login = clean_login(row.get("login"))
-        if not CHANNEL_LOGIN.match(login) or login in seen:
-            continue
-        seen.add(login)
-        out.append({"login": login, "label": str(row.get("label") or "").strip()[:24],
-                    "enabled": row.get("enabled") is not False})
-        if len(out) >= MAX_CHANNELS:
-            break
-    legacy = clean_login(cfg.get("channel"))
-    if not out and CHANNEL_LOGIN.match(legacy):
-        out.append({"login": legacy, "label": "", "enabled": True})
-    cfg["channels"] = out
-    cfg["channel"] = out[0]["login"] if out else ""
+def _overlay_setting(cfg: dict) -> dict:
+    """What a chat / alert source with no ?channel= in its URL shows: the primary channel, or every channel."""
     if cfg.get("overlay_channels") not in ("primary", "all"):
         cfg["overlay_channels"] = "primary"
     return cfg
@@ -426,11 +367,15 @@ def load_config() -> dict:
             raw = {}
     if not isinstance(raw, dict):
         raw = {}
-    return normalise_channels(_deep_merge(DEFAULT_CONFIG, _upgrade_text(raw)))
+    for key in ("channel", "channels"):             # the channels live in the shared connection now (twitch_core)
+        raw.pop(key, None)
+    return _overlay_setting(_deep_merge(DEFAULT_CONFIG, _upgrade_text(raw)))
 
 
 def save_config(cfg: dict) -> dict:
-    merged = normalise_channels(_deep_merge(DEFAULT_CONFIG, cfg))
+    merged = _overlay_setting(_deep_merge(DEFAULT_CONFIG, cfg))
+    for key in ("channel", "channels"):
+        merged.pop(key, None)
     CONFIG_PATH.write_text(json.dumps(merged, indent=2), encoding="utf-8")
     return merged
 
@@ -438,326 +383,38 @@ def save_config(cfg: dict) -> dict:
 CONFIG = load_config()
 
 
-def configured_channels() -> list[dict]:
-    """The channels to watch, primary first. A Hexcast with none set watches the signed-in user's own channel."""
-    rows = [dict(r) for r in CONFIG.get("channels") or []]
-    if not rows:
-        own = next(iter(SECRETS.authed()), None)
-        if own:
-            rows = [{"login": own.user_login.lower(), "label": "", "enabled": True}]
-    return rows
+def public_config() -> dict:
+    """The settings as the API shows them, with the channels (the shared connection's): `channels` is the list,
+    `channel` the primary's login - what older panels and bots read and write."""
+    rows = [dict(r) for r in tc.CONFIG.get("channels") or []]
+    return {**CONFIG, "channel": rows[0]["login"] if rows else "", "channels": rows}
 
 
-def primary_login() -> str:
-    rows = configured_channels()
-    return rows[0]["login"] if rows else ""
-
-
-# --------------------------------------------------------------------------
-# secrets / tokens
-# --------------------------------------------------------------------------
-
-TOKEN_KEYS = ("access_token", "refresh_token", "expires_at", "user_id", "user_login", "scopes")
-
-
-class Account:
-    """One signed-in Twitch user: a view of its record in the secrets file."""
-
-    def __init__(self, rec: dict) -> None:
-        self.rec = rec
-        self.lock = asyncio.Lock()          # one token refresh at a time: Twitch rotates the refresh token
-        self.gen = 0                        # bumped when the user signs in again: a new token, maybe new scopes
-
-    @property
-    def access_token(self) -> str:
-        return self.rec.get("access_token", "")
-
-    @property
-    def refresh_token(self) -> str:
-        return self.rec.get("refresh_token", "")
-
-    @property
-    def user_id(self) -> str:
-        return self.rec.get("user_id", "")
-
-    @property
-    def user_login(self) -> str:
-        return self.rec.get("user_login", "")
-
-    @property
-    def scopes(self) -> list:
-        return self.rec.get("scopes", [])
-
-    def is_authed(self) -> bool:
-        return bool(self.access_token and self.user_id)
-
-
-class Secrets:
-    """The Twitch app's client id / secret, and every account signed in (a Hexcast can be signed in as
-    several users: the channel's own account gives the full alert set, another user is a chat reader)."""
-
-    def __init__(self) -> None:
-        self.data: dict[str, Any] = {}
-        self.accounts: dict[str, Account] = {}      # user id -> account, in the order they signed in
-        self.load()
-
-    def load(self) -> None:
-        if SECRETS_PATH.exists():
-            try:
-                self.data = json.loads(SECRETS_PATH.read_text(encoding="utf-8"))
-            except Exception:
-                self.data = {}
-        # env vars win if set and nothing stored yet
-        self.data.setdefault("client_id", os.environ.get("TWITCH_CLIENT_ID", ""))
-        self.data.setdefault("client_secret", os.environ.get("TWITCH_CLIENT_SECRET", ""))
-        recs = self.data.get("accounts")
-        recs = {str(k): v for k, v in recs.items() if isinstance(v, dict)} if isinstance(recs, dict) else {}
-        legacy = {k: self.data.pop(k) for k in TOKEN_KEYS if k in self.data}
-        if legacy.get("access_token") and not recs:         # the secrets file of a one-login Hexcast
-            recs = {str(legacy.get("user_id") or "legacy"): legacy}
-        self.data["accounts"] = recs                        # (written in this shape the next time anything saves)
-        self.accounts = {uid: Account(rec) for uid, rec in recs.items()}
-
-    def save(self) -> None:
-        self.data["accounts"] = {uid: a.rec for uid, a in self.accounts.items()}
-        SECRETS_PATH.write_text(json.dumps(self.data, indent=2), encoding="utf-8")
-        try:
-            os.chmod(SECRETS_PATH, 0o600)
-        except Exception:
-            pass
-
-    @property
-    def client_id(self) -> str:
-        return self.data.get("client_id", "")
-
-    @property
-    def client_secret(self) -> str:
-        return self.data.get("client_secret", "")
-
-    def authed(self) -> list[Account]:
-        return [a for a in self.accounts.values() if a.is_authed()]
-
-    def adopt(self, acct: Account) -> Account:
-        """Keep a freshly signed-in account (a second sign-in of the same user replaces the first)."""
-        have = self.accounts.get(acct.user_id)
-        if have:
-            have.rec.clear()
-            have.rec.update(acct.rec)
-            have.gen += 1
-            acct = have
-        else:
-            self.accounts[acct.user_id] = acct
-        self.save()
-        return acct
-
-    def clear_tokens(self, login: str = "") -> None:
-        """Sign one user out (by login), or everyone."""
-        login = login.strip().lower()
-        for uid, a in list(self.accounts.items()):
-            if not login or a.user_login.lower() == login:
-                del self.accounts[uid]
-        self.save()
-
-
-SECRETS = Secrets()
-
-
-def default_account() -> Account | None:
-    """The login used for a channel that has none of its own: the primary channel's own login if it is
-    signed in, else the first one that is."""
-    authed = SECRETS.authed()
-    primary = primary_login()
-    return next((a for a in authed if a.user_login.lower() == primary), authed[0] if authed else None)
-
-
-def account_for(channel: str) -> Account | None:
-    """Who Hexcast acts as in a channel: the channel's own account (full alerts, shoutouts as the
-    broadcaster), else the default one (its chat, and what a moderator may read there)."""
-    channel = channel.lower()
-    own = next((a for a in SECRETS.authed() if a.user_login.lower() == channel), None)
-    return own or default_account()
-
-
-async def exchange_code(code: str, redirect_uri: str) -> Account:
-    async with httpx.AsyncClient(timeout=15) as c:
-        r = await c.post(
-            f"{TWITCH_ID}/token",
-            data={
-                "client_id": SECRETS.client_id,
-                "client_secret": SECRETS.client_secret,
-                "code": code,
-                "grant_type": "authorization_code",
-                "redirect_uri": redirect_uri,
-            },
-        )
-        r.raise_for_status()
-        tok = r.json()
-    acct = Account({"access_token": tok["access_token"], "refresh_token": tok.get("refresh_token", ""),
-                    "expires_at": time.time() + tok.get("expires_in", 3600)})
-    if not await validate_token(acct):
-        raise RuntimeError("Twitch did not accept the new token")
-    return SECRETS.adopt(acct)
-
-
-async def refresh_token(acct: Account, stale: str = "") -> bool:
-    """Refresh an account's token. `stale` is the token the caller was refused with: if another task has
-    refreshed the account since (channels can share one), there is nothing left to do."""
-    if not acct.refresh_token:
-        return False
-    async with acct.lock:
-        if stale and acct.access_token != stale:
-            return True
-        async with httpx.AsyncClient(timeout=15) as c:
-            r = await c.post(
-                f"{TWITCH_ID}/token",
-                data={
-                    "client_id": SECRETS.client_id,
-                    "client_secret": SECRETS.client_secret,
-                    "grant_type": "refresh_token",
-                    "refresh_token": acct.refresh_token,
-                },
-            )
-        if r.status_code != 200:
-            STATE.note(f"token refresh failed for {acct.user_login or 'an account'} ({r.status_code}) - "
-                       f"reconnect Twitch in the panel")
-            return False
-        tok = r.json()
-        acct.rec["access_token"] = tok["access_token"]
-        acct.rec["refresh_token"] = tok.get("refresh_token", acct.refresh_token)
-        acct.rec["expires_at"] = time.time() + tok.get("expires_in", 3600)
-        SECRETS.save()
-        return True
-
-
-async def validate_token(acct: Account) -> bool:
-    if not acct.access_token:
-        return False
-    async with httpx.AsyncClient(timeout=15) as c:
-        r = await c.get(f"{TWITCH_ID}/validate", headers={"Authorization": f"OAuth {acct.access_token}"})
-    if r.status_code != 200:
-        return False
-    d = r.json()
-    acct.rec["user_id"] = d.get("user_id", "")
-    acct.rec["user_login"] = d.get("login", "")
-    acct.rec["scopes"] = d.get("scopes", [])
-    if acct in SECRETS.accounts.values():
-        SECRETS.save()
-    return True
-
-
-async def helix(method: str, path: str, *, acct: Account, params=None, json_body=None, retry=True) -> httpx.Response:
-    stale = acct.access_token
-    headers = {
-        "Client-Id": SECRETS.client_id,
-        "Authorization": f"Bearer {stale}",
+def status() -> dict:
+    """The connection as this module always reported it: the primary channel at the top level (what Hexcast
+    showed before it could watch several - the top-bar dot and bots read these), then every channel, the
+    accounts signed in and the log."""
+    conn = tc.STATE.snapshot()
+    rows = conn["channels"]
+    p = rows[0] if rows else {}
+    dflt = tc.default_account()
+    return {
+        "source": p.get("source", "none"),
+        "connected": bool(p.get("connected")),
+        "channel_id": p.get("id", ""),
+        "channel_login": p.get("login", ""),
+        "authed": dflt is not None,
+        "has_credentials": conn["has_credentials"],
+        "bot_login": dflt.user_login if dflt else "",
+        "scopes": dflt.scopes if dflt else [],
+        "subs_ok": p.get("subs_ok", []),
+        "subs_failed": p.get("subs_failed", []),
+        "last_error": p.get("last_error", ""),
+        "channels": rows,
+        "accounts": [{"login": a["login"], "scopes": a["scopes"]} for a in conn["accounts"]],
+        "overlay_channels": CONFIG.get("overlay_channels", "primary"),
+        "log": conn["log"],
     }
-    async with httpx.AsyncClient(timeout=20) as c:
-        r = await c.request(method, f"{HELIX}{path}", headers=headers, params=params, json=json_body)
-    if r.status_code == 401 and retry:
-        if await refresh_token(acct, stale):
-            return await helix(method, path, acct=acct, params=params, json_body=json_body, retry=False)
-    return r
-
-
-# --------------------------------------------------------------------------
-# runtime state
-# --------------------------------------------------------------------------
-
-class ChannelRT:
-    """A watched channel's live connection, and what it has reported."""
-
-    def __init__(self, login: str, label: str = "", enabled: bool = True) -> None:
-        self.login = login
-        self.label = label
-        self.enabled = enabled
-        self.id = ""
-        self.source = "none"          # none | eventsub | irc
-        self.connected = False
-        self.account_login = ""       # who Hexcast acts as here: the channel's own account, or the default one
-        self.subs_ok: list[str] = []
-        self.subs_failed: list[str] = []
-        self.last_error = ""
-        self.assets = Assets()        # this channel's third-party emotes and badges
-
-    @property
-    def name(self) -> str:
-        """What a line from this channel is tagged with."""
-        return self.label or self.login
-
-    def snapshot(self, primary: bool = False) -> dict:
-        acct = account_for(self.login)
-        return {
-            "login": self.login, "label": self.label, "name": self.name, "enabled": self.enabled,
-            "primary": primary, "id": self.id, "source": self.source, "connected": self.connected,
-            "account": acct.user_login if acct else "",
-            "own_account": bool(acct and acct.user_login.lower() == self.login),
-            "subs_ok": self.subs_ok, "subs_failed": self.subs_failed, "last_error": self.last_error,
-        }
-
-
-class State:
-    def __init__(self) -> None:
-        self.channels: dict[str, ChannelRT] = {}      # login -> runtime, in config order: the first is the primary
-        self.log: list[str] = []
-
-    def sync_channels(self, keep: set[str] | frozenset = frozenset()) -> None:
-        """A runtime for every configured channel, in config order. The channels in `keep` (their connection
-        is running and stays up) keep theirs, with the label and switch refreshed; the rest get a fresh one."""
-        new: dict[str, ChannelRT] = {}
-        for r in configured_channels():
-            rt = self.channels.get(r["login"]) if r["login"] in keep else None
-            if rt is None:
-                rt = ChannelRT(r["login"], r.get("label", ""), r.get("enabled", True))
-            else:
-                rt.label, rt.enabled = r.get("label", ""), r.get("enabled", True)
-            new[r["login"]] = rt
-        self.channels = new
-
-    def primary(self) -> ChannelRT | None:
-        return next(iter(self.channels.values()), None)
-
-    def channel(self, login: str = "") -> ChannelRT | None:
-        """A watched channel by login (the primary when none is named)."""
-        login = clean_login(login)
-        return self.channels.get(login) if login else self.primary()
-
-    def note(self, msg: str) -> None:
-        stamp = time.strftime("%H:%M:%S")
-        line = f"[{stamp}] {msg}"
-        self.log.append(line)
-        del self.log[:-60]
-        print(f"[twitch] {msg}", flush=True)
-
-    def snapshot(self) -> dict:
-        dflt = default_account()
-        rows = []
-        for i, r in enumerate(configured_channels()):
-            rt = self.channels.get(r["login"]) or ChannelRT(r["login"], r.get("label", ""), r.get("enabled", True))
-            rows.append(rt.snapshot(primary=i == 0))
-        p = rows[0] if rows else {}
-        return {
-            # the primary channel at the top level: what Hexcast reported before it could watch several
-            # (the top-bar dot and bots read these)
-            "source": p.get("source", "none"),
-            "connected": bool(p.get("connected")),
-            "channel_id": p.get("id", ""),
-            "channel_login": p.get("login", ""),
-            "authed": dflt is not None,
-            "has_credentials": bool(SECRETS.client_id and SECRETS.client_secret),
-            "bot_login": dflt.user_login if dflt else "",
-            "scopes": dflt.scopes if dflt else [],
-            "subs_ok": p.get("subs_ok", []),
-            "subs_failed": p.get("subs_failed", []),
-            "last_error": p.get("last_error", ""),
-            # every channel, and every login Hexcast holds
-            "channels": rows,
-            "accounts": [{"login": a.user_login, "scopes": a.scopes} for a in SECRETS.authed()],
-            "overlay_channels": CONFIG.get("overlay_channels", "primary"),
-            "log": self.log[-25:],
-        }
-
-
-STATE = State()
 
 
 # --------------------------------------------------------------------------
@@ -849,7 +506,7 @@ class Hub:
         if want == "all":
             return True
         if want == "primary":
-            want = primary_login()
+            want = tc.primary_login()
         return want == channel.lower()
 
     async def _send(self, group: set[WebSocket], payload: dict) -> None:
@@ -895,7 +552,7 @@ class Hub:
         await self.to_events({"type": "config", "config": CONFIG})
 
     async def broadcast_status(self) -> None:
-        await self.to_panel({"type": "status", "status": STATE.snapshot()})
+        await self.to_panel({"type": "status", "status": status()})
 
 
 HUB = Hub()
@@ -913,7 +570,7 @@ class Assets:
         self.badges: dict[str, dict] = {}     # "set_id/version" -> {url, title}
         self.loaded_for = ""
 
-    async def load(self, channel_id: str, acct: Account | None = None, name: str = "") -> None:
+    async def load(self, channel_id: str, acct: tc.Account | None = None, name: str = "") -> None:
         self.emotes = {}
         self.badges = {}
         await asyncio.gather(
@@ -924,7 +581,7 @@ class Assets:
             return_exceptions=True,
         )
         self.loaded_for = channel_id
-        STATE.note(f"assets loaded{' for ' + name if name else ''}: "
+        tc.note(f"assets loaded{' for ' + name if name else ''}: "
                    f"{len(self.emotes)} 3rd-party emotes, {len(self.badges)} badges")
 
     async def _get(self, client: httpx.AsyncClient, url: str):
@@ -980,14 +637,14 @@ class Assets:
                             url = "https:" + url
                         self.emotes[e["name"]] = url
 
-    async def _badges(self, channel_id: str, acct: Account | None) -> None:
+    async def _badges(self, channel_id: str, acct: tc.Account | None) -> None:
         if acct is None or not acct.is_authed():
             return
         for path, params in (
             ("/chat/badges/global", None),
             ("/chat/badges", {"broadcaster_id": channel_id}),
         ):
-            r = await helix("GET", path, acct=acct, params=params)
+            r = await tc.helix("GET", path, acct=acct, params=params)
             if r.status_code != 200:
                 continue
             for s in r.json().get("data", []):
@@ -997,6 +654,19 @@ class Assets:
                         "url": v.get("image_url_2x") or v.get("image_url_1x"),
                         "title": v.get("title") or s["set_id"],
                     }
+
+
+ASSETS: dict[str, Assets] = {}          # channel login -> its emotes and badges
+
+
+def assets_for(ch: tc.ChannelRT) -> Assets:
+    return ASSETS.setdefault(ch.login, Assets())
+
+
+async def on_channel(ch: tc.ChannelRT, acct: tc.Account | None) -> None:
+    """A channel connected: load its emotes and badges. Without a login only the global 7TV/BTTV/FFZ sets load
+    (the channel's own need its numeric id); they arrive after sign-in."""
+    await assets_for(ch).load(ch.id or "", acct, ch.name if len(tc.STATE.channels) > 1 else "")
 
 
 def apply_third_party(fragments: list[dict], assets: Assets) -> list[dict]:
@@ -1034,13 +704,8 @@ def badge_list(badges: list[dict], assets: Assets) -> list[dict]:
 
 
 # --------------------------------------------------------------------------
-# message normalisation
+# chat lines on the overlay
 # --------------------------------------------------------------------------
-
-def twitch_emote_url(emote_id: str, animated: bool = False) -> str:
-    fmt = "animated" if animated else "default"
-    return f"https://static-cdn.jtvnw.net/emoticons/v2/{emote_id}/{fmt}/dark/2.0"
-
 
 def _should_hide(login: str, text: str) -> bool:
     cc = CONFIG["chat"]
@@ -1052,144 +717,40 @@ def _should_hide(login: str, text: str) -> bool:
     return False
 
 
-def normalise_eventsub_chat(ev: dict, ch: ChannelRT) -> dict | None:
-    msg = ev.get("message", {}) or {}
-    text = msg.get("text", "")
-    login = ev.get("chatter_user_login", "")
-    if _should_hide(login, text):
+def overlay_line(msg: dict, ch: tc.ChannelRT) -> dict | None:
+    """A chat line (as twitch_core hands it over) the way the chat overlay draws it and the Forward URL gets it:
+    hidden users and commands left out, badges as pictures, the channel's 3rd-party emotes swapped in."""
+    user = msg.get("user") or {}
+    if _should_hide(user.get("login", ""), msg.get("text", "")):
         return None
-
-    frags: list[dict] = []
-    for f in msg.get("fragments", []) or []:
-        ftype = f.get("type")
-        if ftype == "emote" and f.get("emote"):
-            emote = f["emote"]
-            animated = "animated" in (emote.get("format") or [])
-            frags.append({"t": "emote", "url": twitch_emote_url(emote["id"], animated), "name": f.get("text", "")})
-        elif ftype == "cheermote" and f.get("cheermote"):
-            frags.append({"t": "cheer", "v": f.get("text", "")})
-        elif ftype == "mention":
-            frags.append({"t": "mention", "v": f.get("text", "")})
-        else:
-            frags.append({"t": "text", "v": f.get("text", "")})
-
-    badges = ev.get("badges") or []
-    sets = {b.get("set_id") for b in badges}
-    reply = None
-    if ev.get("reply"):
-        reply = {
-            "user": ev["reply"].get("parent_user_name", ""),
-            "text": ev["reply"].get("parent_message_body", ""),
-        }
-
+    assets = assets_for(ch)
     return {
         "type": "chat",
-        "channel": ch.login,
-        "channel_label": ch.name,
-        "id": ev.get("message_id") or secrets.token_hex(8),
-        "ts": time.time(),
+        "channel": msg.get("channel", ch.login),
+        "channel_label": msg.get("channel_label", ch.name),
+        "id": msg.get("id") or secrets.token_hex(8),
+        "ts": msg.get("ts") or time.time(),
         "user": {
-            "login": login,
-            "name": ev.get("chatter_user_name") or login,
-            "color": ev.get("color") or "",
-            "badges": badge_list(badges, ch.assets),
+            "login": user.get("login", ""),
+            "name": user.get("name") or user.get("login", ""),
+            "color": user.get("color", ""),
+            "badges": badge_list(msg.get("badges") or [], assets),
         },
-        "flags": {
-            "broadcaster": "broadcaster" in sets,
-            "mod": "moderator" in sets,
-            "vip": "vip" in sets,
-            "sub": "subscriber" in sets,
-            "first": ev.get("message_type") == "user_intro",
-        },
-        "bits": (ev.get("cheer") or {}).get("bits", 0),
-        "reply": reply,
-        "text": text,
-        "fragments": apply_third_party(frags, ch.assets),
+        "flags": msg.get("flags") or {},
+        "bits": msg.get("bits", 0),
+        "reply": msg.get("reply"),
+        "text": msg.get("text", ""),
+        "fragments": apply_third_party(msg.get("fragments") or [], assets),
     }
 
 
-IRC_LINE = re.compile(r"^(?:@(?P<tags>[^ ]+) )?:(?P<nick>[^!]+)![^ ]+ PRIVMSG #[^ ]+ :(?P<text>.*)$")
+def normalise_eventsub_chat(ev: dict, ch: tc.ChannelRT) -> dict | None:
+    return overlay_line(tc.chat_from_eventsub(ev, ch), ch)
 
 
-def parse_irc_tags(raw: str) -> dict[str, str]:
-    out = {}
-    for part in (raw or "").split(";"):
-        if "=" in part:
-            k, v = part.split("=", 1)
-            out[k] = v.replace(r"\s", " ").replace(r"\:", ";").replace(r"\\", "\\")
-    return out
-
-
-def normalise_irc_chat(line: str, ch: ChannelRT) -> dict | None:
-    m = IRC_LINE.match(line)
-    if not m:
-        return None
-    tags = parse_irc_tags(m.group("tags") or "")
-    text = m.group("text")
-    login = m.group("nick")
-    if _should_hide(login, text):
-        return None
-
-    # twitch emotes come as "id:start-end,start-end/id:start-end", codepoint indexed
-    chars = list(text)
-    spans: list[tuple[int, int, str]] = []
-    for chunk in (tags.get("emotes") or "").split("/"):
-        if ":" not in chunk:
-            continue
-        eid, ranges = chunk.split(":", 1)
-        for rng in ranges.split(","):
-            if "-" in rng:
-                a, b = rng.split("-", 1)
-                try:
-                    spans.append((int(a), int(b), eid))
-                except ValueError:
-                    pass
-    spans.sort()
-
-    frags: list[dict] = []
-    cursor = 0
-    for start, end, eid in spans:
-        if start > cursor:
-            frags.append({"t": "text", "v": "".join(chars[cursor:start])})
-        name = "".join(chars[start:end + 1])
-        frags.append({"t": "emote", "url": twitch_emote_url(eid), "name": name})
-        cursor = end + 1
-    if cursor < len(chars):
-        frags.append({"t": "text", "v": "".join(chars[cursor:])})
-    if not frags:
-        frags = [{"t": "text", "v": text}]
-
-    badge_pairs = []
-    for b in (tags.get("badges") or "").split(","):
-        if "/" in b:
-            sid, ver = b.split("/", 1)
-            badge_pairs.append({"set_id": sid, "id": ver})
-    sets = {b["set_id"] for b in badge_pairs}
-
-    return {
-        "type": "chat",
-        "channel": ch.login,
-        "channel_label": ch.name,
-        "id": tags.get("id") or secrets.token_hex(8),
-        "ts": time.time(),
-        "user": {
-            "login": login,
-            "name": tags.get("display-name") or login,
-            "color": tags.get("color") or "",
-            "badges": badge_list(badge_pairs, ch.assets),
-        },
-        "flags": {
-            "broadcaster": "broadcaster" in sets,
-            "mod": tags.get("mod") == "1" or "moderator" in sets,
-            "vip": "vip" in sets,
-            "sub": tags.get("subscriber") == "1",
-            "first": tags.get("first-msg") == "1",
-        },
-        "bits": int(tags.get("bits") or 0),
-        "reply": None,
-        "text": text,
-        "fragments": apply_third_party(frags, ch.assets),
-    }
+def normalise_irc_chat(line: str, ch: tc.ChannelRT) -> dict | None:
+    msg = tc.chat_from_irc(line, ch)
+    return overlay_line(msg, ch) if msg else None
 
 
 # --------------------------------------------------------------------------
@@ -1197,7 +758,7 @@ def normalise_irc_chat(line: str, ch: ChannelRT) -> dict | None:
 # --------------------------------------------------------------------------
 
 def build_alert(kind: str, *, user="", amount="", tier="", months="", reward="", message="",
-                ch: ChannelRT | None = None) -> dict | None:
+                ch: tc.ChannelRT | None = None) -> dict | None:
     rule = CONFIG["alerts"].get(kind)
     if not rule or not rule.get("on"):
         return None
@@ -1266,20 +827,11 @@ async def forward_chat(msg: dict) -> None:
 SHOUTOUT_TARGET = re.compile(r"^[A-Za-z0-9_]{2,25}$")
 
 
-def _where(ch: ChannelRT) -> str:
-    """' [beta]' in a log line when Hexcast watches more than one channel, else nothing."""
-    return f" [{ch.name}]" if len(STATE.channels) > 1 else ""
+def _where(ch: tc.ChannelRT) -> str:
+    return tc.where(ch)
 
 
-async def lookup_user(login: str, acct: Account) -> dict | None:
-    r = await helix("GET", "/users", acct=acct, params={"login": login})
-    if r.status_code != 200:
-        return None
-    data = r.json().get("data", [])
-    return data[0] if data else None
-
-
-async def handle_command(login: str, text: str, is_broadcaster: bool, is_mod: bool, ch: ChannelRT) -> None:
+async def handle_command(login: str, text: str, is_broadcaster: bool, is_mod: bool, ch: tc.ChannelRT) -> None:
     """Called for every raw chat line (both sources), even ones the overlay hides as commands, with the
     channel it was typed in. Cheap parse; the real work runs as a task."""
     so = CONFIG.get("shoutout") or {}
@@ -1293,21 +845,21 @@ async def handle_command(login: str, text: str, is_broadcaster: bool, is_mod: bo
     target = parts[1].strip().lstrip("@").rstrip(",").lower()
     if not SHOUTOUT_TARGET.match(target):
         return
-    STATE.note(f"shoutout{_where(ch)}: {login} -> {target}")
+    tc.note(f"shoutout{_where(ch)}: {login} -> {target}")
     asyncio.create_task(_do_shoutout(target, ch))
 
 
-async def _do_shoutout(target: str, ch: ChannelRT) -> None:
+async def _do_shoutout(target: str, ch: tc.ChannelRT) -> None:
     """A shoutout typed in `ch`: the banner and the chat line go to that channel, from the account Hexcast
     acts as there (the channel's own, or the default one - which then has to moderate it)."""
     so = CONFIG.get("shoutout") or {}
-    acct = account_for(ch.login)
+    acct = tc.account_for(ch.login)
     scopes = acct.scopes if acct else []
     where = _where(ch)
     display, target_id = target, ""
 
     if acct:
-        user = await lookup_user(target, acct)
+        user = await tc.lookup_user(target, acct)
         if user:
             target_id = user.get("id", "")
             display = user.get("display_name") or target
@@ -1315,43 +867,43 @@ async def _do_shoutout(target: str, ch: ChannelRT) -> None:
     # 1) the official shoutout banner (needs the channel to be live)
     if so.get("native", True) and acct:
         if "moderator:manage:shoutouts" not in scopes:
-            STATE.note(f"shoutout{where}: token lacks moderator:manage:shoutouts - reconnect Twitch in the panel to grant it")
+            tc.note(f"shoutout{where}: token lacks moderator:manage:shoutouts - reconnect Twitch in the panel to grant it")
         elif target_id and ch.id:
-            r = await helix("POST", "/chat/shoutouts", acct=acct, params={
+            r = await tc.helix("POST", "/chat/shoutouts", acct=acct, params={
                 "from_broadcaster_id": ch.id,
                 "to_broadcaster_id": target_id,
                 "moderator_id": acct.user_id,
             })
             if r.status_code == 204:
-                STATE.note(f"shoutout{where}: official /shoutout sent for {display}")
+                tc.note(f"shoutout{where}: official /shoutout sent for {display}")
             else:
                 reason = ""
                 try:
                     reason = r.json().get("message", "")
                 except Exception:
                     pass
-                STATE.note(f"shoutout{where}: official /shoutout failed ({r.status_code} {reason}) - usually means the stream is offline")
+                tc.note(f"shoutout{where}: official /shoutout failed ({r.status_code} {reason}) - usually means the stream is offline")
 
     # 2) a plain chat line, so there's something visible even without the banner
     template = (so.get("message") or "").strip()
     if template and acct and ch.id:
         if "user:write:chat" not in scopes:
-            STATE.note(f"shoutout{where}: token lacks user:write:chat - reconnect Twitch in the panel to grant it")
+            tc.note(f"shoutout{where}: token lacks user:write:chat - reconnect Twitch in the panel to grant it")
         else:
             try:
                 text = template.format(name=display, login=target,
                                        url=f"https://twitch.tv/{target}")
             except Exception:
                 text = template
-            r = await helix("POST", "/chat/messages", acct=acct, json_body={
+            r = await tc.helix("POST", "/chat/messages", acct=acct, json_body={
                 "broadcaster_id": ch.id,
                 "sender_id": acct.user_id,
                 "message": text,
             })
             if r.status_code not in (200, 204):
-                STATE.note(f"shoutout{where}: chat message failed ({r.status_code})")
+                tc.note(f"shoutout{where}: chat message failed ({r.status_code})")
     elif template and not acct:
-        STATE.note(f"shoutout{where}: not signed in, skipping the chat message (clip still plays)")
+        tc.note(f"shoutout{where}: not signed in, skipping the chat message (clip still plays)")
 
     # 3) a random clip of theirs on the Clips overlay - ephemeral, not queued.
     # Called in-process (both plugins live in the same app), so it works even
@@ -1361,98 +913,37 @@ async def _do_shoutout(target: str, ch: ChannelRT) -> None:
         clips = running_plugin("clips")
         play_shoutout = getattr(clips, "play_shoutout", None)
         if play_shoutout is None:
-            STATE.note(f"shoutout{where}: Clips plugin not installed - no clip to play")
+            tc.note(f"shoutout{where}: Clips plugin not installed - no clip to play")
             return
         try:
             d = await play_shoutout(target, int(so.get("clip_count") or 2))
             if d.get("ok"):
-                STATE.note(f"shoutout{where}: playing {len(d.get('clips') or [1])} random {display} clip(s)")
+                tc.note(f"shoutout{where}: playing {len(d.get('clips') or [1])} random {display} clip(s)")
             else:
-                STATE.note(f"shoutout{where}: clip playback skipped ({d.get('error')})")
+                tc.note(f"shoutout{where}: clip playback skipped ({d.get('error')})")
         except Exception as exc:
-            STATE.note(f"shoutout{where}: clip playback failed: {exc}")
+            tc.note(f"shoutout{where}: clip playback failed: {exc}")
 
 
 # --------------------------------------------------------------------------
-# EventSub client
+# what the connection reports
 # --------------------------------------------------------------------------
 
-SUB_PLAN = [
-    ("channel.chat.message", "1", "chat"),
-    ("channel.chat.clear", "1", "chat"),
-    ("channel.chat.message_delete", "1", "chat"),
-    ("channel.follow", "2", "mod"),
-    ("channel.subscribe", "1", "bc"),
-    ("channel.subscription.message", "1", "bc"),
-    ("channel.subscription.gift", "1", "bc"),
-    ("channel.cheer", "1", "bc"),
-    ("channel.raid", "1", "raid"),
-    ("channel.channel_points_custom_reward_redemption.add", "1", "bc"),
-    ("channel.hype_train.begin", "2", "bc"),
-    ("stream.online", "1", "bc"),
-    ("stream.offline", "1", "bc"),
-]
+async def on_chat(msg: dict, ch: tc.ChannelRT) -> None:
+    """Every chat line of every watched channel. Commands are looked for on the raw line, before the overlay
+    drops "!" lines (when it hides commands)."""
+    flags = msg.get("flags") or {}
+    await handle_command((msg.get("user") or {}).get("login", ""), msg.get("text", ""),
+                         bool(flags.get("broadcaster")), bool(flags.get("mod")), ch)
+    line = overlay_line(msg, ch)
+    if line:
+        await HUB.to_chat(line)
+        await HUB.to_panel({"type": "chat_preview", "message": line})
+        await forward_chat(line)
 
 
-def _condition(shape: str, channel_id: str, user_id: str) -> dict:
-    if shape == "chat":
-        return {"broadcaster_user_id": channel_id, "user_id": user_id}
-    if shape == "mod":
-        return {"broadcaster_user_id": channel_id, "moderator_user_id": user_id}
-    if shape == "raid":
-        return {"to_broadcaster_user_id": channel_id}
-    return {"broadcaster_user_id": channel_id}
-
-
-async def resolve_channel_id(login: str, acct: Account) -> str:
-    if not login:
-        return ""
-    r = await helix("GET", "/users", acct=acct, params={"login": login})
-    if r.status_code != 200:
-        STATE.note(f"could not look up channel '{login}' ({r.status_code})")
-        return ""
-    data = r.json().get("data", [])
-    return data[0]["id"] if data else ""
-
-
-async def subscribe_all(session_id: str, ch: ChannelRT, acct: Account) -> None:
-    ch.subs_ok, ch.subs_failed = [], []
-    for stype, version, shape in SUB_PLAN:
-        body = {
-            "type": stype,
-            "version": version,
-            "condition": _condition(shape, ch.id, acct.user_id),
-            "transport": {"method": "websocket", "session_id": session_id},
-        }
-        r = await helix("POST", "/eventsub/subscriptions", acct=acct, json_body=body)
-        if r.status_code in (200, 202):
-            ch.subs_ok.append(stype)
-        else:
-            reason = ""
-            try:
-                reason = r.json().get("message", "")
-            except Exception:
-                pass
-            ch.subs_failed.append(f"{stype} ({r.status_code} {reason})".strip())
-    STATE.note(f"eventsub{_where(ch)}: {len(ch.subs_ok)} ok, {len(ch.subs_failed)} failed")
-    await HUB.broadcast_status()
-
-
-async def handle_notification(stype: str, ev: dict, msg_id: str | None, ch: ChannelRT) -> None:
-    if stype == "channel.chat.message":
-        # Command detection runs on the raw event: normalisation returns None
-        # for "!" messages when the overlay hides commands.
-        sets = {b.get("set_id") for b in (ev.get("badges") or [])}
-        await handle_command(ev.get("chatter_user_login", ""),
-                             (ev.get("message") or {}).get("text", ""),
-                             "broadcaster" in sets, "moderator" in sets, ch)
-        msg = normalise_eventsub_chat(ev, ch)
-        if msg:
-            await HUB.to_chat(msg)
-            await HUB.to_panel({"type": "chat_preview", "message": msg})
-            await forward_chat(msg)
-        return
-
+async def on_event(stype: str, ev: dict, msg_id: str | None, ch: tc.ChannelRT) -> None:
+    """Every other notification: chat clears and deletes for the overlay, the rest become alerts."""
     if stype == "channel.chat.clear":
         await HUB.to_chat({"type": "clear", "channel": ch.login})
         return
@@ -1524,6 +1015,13 @@ async def handle_notification(stype: str, ev: dict, msg_id: str | None, ch: Chan
         await dispatch_alert(build_alert("offline", ch=ch), msg_id)
 
 
+async def handle_notification(stype: str, ev: dict, msg_id: str | None, ch: tc.ChannelRT) -> None:
+    """An EventSub notification as Twitch sends it, the way twitch_core passes it on."""
+    if stype == "channel.chat.message":
+        await on_chat(tc.chat_from_eventsub(ev, ch), ch)
+    else:
+        await on_event(stype, ev, msg_id, ch)
+
 
 async def queue_loop(stop: asyncio.Event) -> None:
     while not stop.is_set():
@@ -1551,7 +1049,7 @@ async def queue_loop(stop: asyncio.Event) -> None:
                 async with httpx.AsyncClient(timeout=6) as c:
                     await c.get(f"{base}/api/play/{urllib.parse.quote(clip)}")
             except Exception as exc:
-                STATE.note(f"clip trigger failed for '{clip}': {exc}")
+                tc.note(f"clip trigger failed for '{clip}': {exc}")
 
         fwd = (CONFIG.get("forward_url") or "").strip()
         if fwd:
@@ -1575,247 +1073,53 @@ async def queue_loop(stop: asyncio.Event) -> None:
         await HUB.to_panel({"type": "queue", "queue": ALERT_QUEUE.snapshot()})
 
 
-async def eventsub_loop(ch: ChannelRT, acct: Account, stop: asyncio.Event) -> None:
-    """One EventSub connection for one channel, as `acct` (Twitch allows three per login)."""
-    url = EVENTSUB_WS
-    backoff = 2
-    while not stop.is_set():
-        try:
-            async with websockets.connect(url, max_size=2 ** 22) as ws:
-                backoff = 2
-                async for raw in ws:
-                    if stop.is_set():
-                        break
-                    data = json.loads(raw)
-                    meta = data.get("metadata", {})
-                    payload = data.get("payload", {})
-                    mtype = meta.get("message_type")
-
-                    if mtype == "session_welcome":
-                        session_id = payload["session"]["id"]
-                        ch.source = "eventsub"
-                        ch.connected = True
-                        ch.last_error = ""
-                        STATE.note(f"eventsub connected{_where(ch)}")
-                        await subscribe_all(session_id, ch, acct)
-                        await HUB.broadcast_status()
-
-                    elif mtype == "notification":
-                        stype = meta.get("subscription_type") or payload.get("subscription", {}).get("type", "")
-                        await handle_notification(stype, payload.get("event", {}) or {}, meta.get("message_id"), ch)
-
-                    elif mtype == "session_reconnect":
-                        url = payload["session"]["reconnect_url"]
-                        STATE.note(f"eventsub reconnect requested{_where(ch)}")
-                        break
-
-                    elif mtype == "revocation":
-                        sub = payload.get("subscription", {})
-                        STATE.note(f"subscription revoked{_where(ch)}: {sub.get('type')} ({sub.get('status')})")
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            ch.connected = False
-            ch.last_error = str(exc)
-            STATE.note(f"eventsub dropped{_where(ch)}: {exc}")
-            await HUB.broadcast_status()
-            url = EVENTSUB_WS
-            await asyncio.sleep(backoff)
-            backoff = min(backoff * 2, 60)
-
 
 # --------------------------------------------------------------------------
-# anonymous IRC fallback (chat only, no auth needed)
+# start / stop
 # --------------------------------------------------------------------------
 
-async def irc_loop(ch: ChannelRT, stop: asyncio.Event) -> None:
-    backoff = 2
-    while not stop.is_set():
-        try:
-            async with websockets.connect(IRC_WS) as ws:
-                await ws.send("CAP REQ :twitch.tv/tags twitch.tv/commands")
-                await ws.send(f"NICK justinfan{secrets.randbelow(90000) + 10000}")
-                await ws.send(f"JOIN #{ch.login.lower()}")
-                ch.source = "irc"
-                ch.connected = True
-                ch.last_error = ""
-                STATE.note(f"anonymous chat connected to #{ch.login}")
-                await HUB.broadcast_status()
-                backoff = 2
-
-                async for raw in ws:
-                    if stop.is_set():
-                        break
-                    for line in str(raw).split("\r\n"):
-                        if not line:
-                            continue
-                        if line.startswith("PING"):
-                            await ws.send("PONG :tmi.twitch.tv")
-                            continue
-                        if "PRIVMSG" in line:
-                            mm = IRC_LINE.match(line)
-                            if mm:
-                                irc_tags = parse_irc_tags(mm.group("tags") or "")
-                                irc_sets = {b.split("/", 1)[0]
-                                            for b in (irc_tags.get("badges") or "").split(",") if b}
-                                await handle_command(
-                                    mm.group("nick"), mm.group("text"),
-                                    "broadcaster" in irc_sets,
-                                    irc_tags.get("mod") == "1" or "moderator" in irc_sets, ch)
-                            msg = normalise_irc_chat(line, ch)
-                            if msg:
-                                await HUB.to_chat(msg)
-                                await HUB.to_panel({"type": "chat_preview", "message": msg})
-                                await forward_chat(msg)
-                        elif "CLEARCHAT" in line:
-                            await HUB.to_chat({"type": "clear", "channel": ch.login})
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            ch.connected = False
-            ch.last_error = str(exc)
-            STATE.note(f"anonymous chat dropped (#{ch.login}): {exc}")
-            await HUB.broadcast_status()
-            await asyncio.sleep(backoff)
-            backoff = min(backoff * 2, 60)
-
-
-# --------------------------------------------------------------------------
-# supervisor
-# --------------------------------------------------------------------------
-
-RETRY_MIN, RETRY_MAX = 2, 60        # seconds a channel waits before trying again when it could not even start
-
-
-class Runner:
-    """One connection task per enabled channel. A channel is only (re)started when something that concerns
-    it changed, so editing the beta channel - or signing in as its account - never reconnects the primary.
-    restart() is the big hammer: the Reconnect button, and the first start."""
+class Loops:
+    """The alert queue's player. (The connection itself is twitch_core's.)"""
 
     def __init__(self) -> None:
-        self.tasks: dict[str, tuple[tuple, asyncio.Task]] = {}     # login -> (what it was started with, its task)
-        self.task_queue: asyncio.Task | None = None
+        self.queue: asyncio.Task | None = None
         self.stop = asyncio.Event()
-        self.lock = asyncio.Lock()
-        self.started = False
-
-    @staticmethod
-    def _wanted() -> dict[str, tuple]:
-        """login -> what a running channel depends on, for every enabled channel: the account it runs as and
-        that account's sign-in generation (a new sign-in is a new token, maybe with new scopes)."""
-        out: dict[str, tuple] = {}
-        for r in configured_channels():
-            if r.get("enabled", True):
-                a = account_for(r["login"])
-                out[r["login"]] = (a.user_id, a.gen) if a else ("", 0)
-        return out
-
-    @staticmethod
-    async def _cancel(*tasks: asyncio.Task) -> None:
-        for t in tasks:
-            t.cancel()
-        for t in tasks:
-            try:
-                await t
-            except (asyncio.CancelledError, Exception):
-                pass
-
-    async def restart(self) -> None:
-        async with self.lock:
-            await self._stop()
-            self.stop = asyncio.Event()
-            await self._sync()
-
-    async def sync(self) -> None:
-        """Bring the connections in line with the config and the signed-in accounts, touching only the
-        channels that changed."""
-        async with self.lock:
-            await self._sync()
-
-    async def _sync(self) -> None:
-        wanted = self._wanted()
-        gone = [login for login, (sig, task) in self.tasks.items() if wanted.get(login) != sig or task.done()]
-        await self._cancel(*(self.tasks.pop(login)[1] for login in gone))
-        STATE.sync_channels(keep=set(self.tasks))
-        if self.task_queue is None or self.task_queue.done():
-            self.task_queue = asyncio.create_task(queue_loop(self.stop))
-        for login, sig in wanted.items():
-            if login not in self.tasks:
-                self.tasks[login] = (sig, asyncio.create_task(self._watch(STATE.channels[login], self.stop)))
-        self.started = True
-        if not wanted:
-            STATE.note("no channel set - open the Twitch panel and enter your channel name")
-        await HUB.broadcast_status()
-
-    async def _stop(self) -> None:
-        self.stop.set()
-        await self._cancel(*(task for _, task in self.tasks.values()))
-        self.tasks.clear()
-        if self.task_queue:
-            await self._cancel(self.task_queue)
-            self.task_queue = None
-        for ch in STATE.channels.values():
-            ch.connected = False
-            ch.source = "none"
-
-    async def _check(self, acct: Account) -> None:
-        """Make sure an account's token is good before a channel connects with it (a stale one is refreshed).
-        Trouble here is logged and the channel carries on with what it has - it must not stop anything."""
-        stale = acct.access_token
-        try:
-            if not await validate_token(acct):
-                await refresh_token(acct, stale)
-                await validate_token(acct)
-        except Exception as exc:
-            STATE.note(f"could not check the login of {acct.user_login or 'an account'}: {exc}")
-
-    async def _watch(self, ch: ChannelRT, stop: asyncio.Event) -> None:
-        """One channel, for as long as it runs. If it cannot even start (no network at boot, say) it tries
-        again with a growing pause; it never gives up, and nothing it does reaches another channel."""
-        wait = RETRY_MIN
-        while not stop.is_set():
-            try:
-                await self._connect(ch, stop)
-                return
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                ch.connected = False
-                ch.last_error = str(exc)
-                STATE.note(f"{ch.login} could not start: {exc} - trying again in {wait} s")
-                await HUB.broadcast_status()
-                await asyncio.sleep(wait)
-                wait = min(wait * 2, RETRY_MAX)
-
-    async def _connect(self, ch: ChannelRT, stop: asyncio.Event) -> None:
-        """EventSub when there is a login for the channel, else anonymous chat. Runs until `stop`."""
-        name = ch.name if len(STATE.channels) > 1 else ""
-        acct = account_for(ch.login)
-        ch.account_login = acct.user_login if acct else ""
-        if acct:
-            await self._check(acct)
-            cid = await resolve_channel_id(ch.login, acct)
-            if cid:
-                ch.id = cid
-                await ch.assets.load(cid, acct, name)
-                await HUB.broadcast_status()
-                await eventsub_loop(ch, acct, stop)
-                return
-            STATE.note(f"channel lookup failed for {ch.login}, falling back to anonymous chat")
-
-        # no login (or the lookup failed): chat-only via anonymous IRC.
-        # Channel-specific emote/badge lookups need a numeric id, so only the
-        # global 7TV/BTTV/FFZ sets load here. Channel emotes arrive after sign-in.
-        await ch.assets.load(ch.id or "", None, name)
-        await HUB.broadcast_status()
-        await irc_loop(ch, stop)
+        self.assets: set[asyncio.Task] = set()
 
     async def ensure_started(self) -> None:
-        if not self.started:
-            await self.restart()
+        await tc.ensure_started()
+        if self.queue is None or self.queue.done():
+            self.stop = asyncio.Event()
+            self.queue = asyncio.create_task(queue_loop(self.stop))
+            # channels the connection had up before this module started (it was updated or enabled on its own)
+            # came up unheard: load their emotes and badges now
+            for ch in list(tc.STATE.channels.values()):
+                have = ASSETS.get(ch.login)
+                if ch.connected and not (have and (have.emotes or have.badges)):
+                    acct = tc.account_for(ch.login) if ch.source == "eventsub" else None
+                    task = asyncio.create_task(on_channel(ch, acct))
+                    self.assets.add(task)
+                    task.add_done_callback(self.assets.discard)
+
+    async def shutdown(self) -> None:
+        self.stop.set()
+        for task in list(self.assets):
+            task.cancel()
+        if self.queue is not None:
+            self.queue.cancel()
+            try:
+                await self.queue
+            except (asyncio.CancelledError, Exception):
+                pass
+            self.queue = None
 
 
-RUNNER = Runner()
+LOOPS = Loops()
+
+
+async def ensure_started() -> None:
+    """Connect (if nothing has yet) and run the alert queue."""
+    await LOOPS.ensure_started()
 
 
 # --------------------------------------------------------------------------
@@ -1823,16 +1127,7 @@ RUNNER = Runner()
 # --------------------------------------------------------------------------
 
 router = APIRouter(prefix="/twitch", tags=["twitch"])
-_oauth_states: dict[str, float] = {}
-
-
-def _redirect_uri(request: Request) -> str:
-    base = str(request.base_url).rstrip("/")
-    # Twitch only allows plain http for the literal host "localhost" — the
-    # loopback IP gets rejected, so normalise it before handing it over.
-    for loopback in ("://127.0.0.1", "://[::1]"):
-        base = base.replace(loopback, "://localhost")
-    return base + "/twitch/auth/callback"
+# (the sign-in pages, /twitch/api/credentials and /twitch/api/reconnect are twitch_core's: the same paths as ever)
 
 
 # The panel and overlays are read from disk on every request, so edits go live
@@ -1844,20 +1139,19 @@ _NOCACHE = {"Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "n
 @router.get("", response_class=HTMLResponse)
 @router.get("/", response_class=HTMLResponse)
 async def panel(request: Request):
-    await RUNNER.ensure_started()
-    return HTMLResponse(_read_static("twitch_panel.html").replace("__REDIRECT_URI__", _redirect_uri(request)),
-                        headers=_NOCACHE)
+    await ensure_started()
+    return HTMLResponse(_read_static("twitch_panel.html"), headers=_NOCACHE)
 
 
 @router.get("/chat", response_class=HTMLResponse)
 async def chat_overlay():
-    await RUNNER.ensure_started()
+    await ensure_started()
     return HTMLResponse(_read_static("twitch_chat.html"), headers=_NOCACHE)
 
 
 @router.get("/events", response_class=HTMLResponse)
 async def events_overlay():
-    await RUNNER.ensure_started()
+    await ensure_started()
     return HTMLResponse(_read_static("twitch_events.html"), headers=_NOCACHE)
 
 
@@ -1900,17 +1194,17 @@ async def api_clear_queue():
 
 @router.get("/api/status")
 async def api_status():
-    return STATE.snapshot()
+    return status()
 
 
 @router.get("/api/config")
 async def api_get_config():
-    return CONFIG
+    return public_config()
 
 
 def _with_primary(rows: list[dict], login: Any) -> list[dict]:
     """The channel list with its first entry's login replaced (the old `channel` setting); empty drops it."""
-    login = clean_login(login)
+    login = tc.clean_login(login)
     rows = [dict(r) for r in rows]
     if not login:
         return rows[1:]
@@ -1919,22 +1213,6 @@ def _with_primary(rows: list[dict], login: Any) -> list[dict]:
     else:
         rows = [{"login": login}]
     return rows
-
-
-def _channel_problem(incoming: dict) -> str:
-    """Why a config update cannot be taken (a channel name that is not one, too many channels), or ''."""
-    rows = incoming.get("channels")
-    if rows is None:
-        return ""
-    if not isinstance(rows, list):
-        return "channels is a list of {login, label, enabled}"
-    if len(rows) > MAX_CHANNELS:
-        return f"at most {MAX_CHANNELS} channels"
-    for row in rows:
-        login = clean_login(row.get("login") if isinstance(row, dict) else row)
-        if not CHANNEL_LOGIN.match(login):
-            return f"'{login or row}' is not a Twitch channel name (3-25 letters, digits or _)"
-    return ""
 
 
 def _style_problem(incoming: dict) -> str:
@@ -1952,21 +1230,25 @@ def _style_problem(incoming: dict) -> str:
 
 @router.post("/api/config")
 async def api_set_config(request: Request):
+    """The overlay settings; `channels` (or the old `channel`) goes on to the shared connection."""
     global CONFIG
     incoming = await request.json()
+    if not isinstance(incoming, dict):
+        return JSONResponse({"error": "send a JSON object"}, status_code=400)
     if "channel" in incoming and "channels" not in incoming:
         # the old single-channel way of asking: it changes the primary
-        incoming = {**incoming, "channels": _with_primary(CONFIG["channels"], incoming["channel"])}
-    problem = _channel_problem(incoming) or _style_problem(incoming)
+        incoming = {**incoming, "channels": _with_primary(tc.CONFIG["channels"], incoming["channel"])}
+    rows = incoming.pop("channels", None)
+    incoming.pop("channel", None)
+    problem = (tc.channel_problem(rows) if rows is not None else "") or _style_problem(incoming)
     if problem:
         return JSONResponse({"error": problem}, status_code=400)
-    old =[(r["login"], r["label"], r["enabled"]) for r in CONFIG["channels"]]
     CONFIG = save_config(_deep_merge(CONFIG, incoming))
     await HUB.broadcast_config()
-    if [(r["login"], r["label"], r["enabled"]) for r in CONFIG["channels"]] != old:
-        await RUNNER.sync()                          # only the channels that changed reconnect
+    if rows is not None:
+        await tc.set_channels(rows)                  # only the channels that changed reconnect
     await HUB.broadcast_status()
-    return {"ok": True, "config": CONFIG}
+    return {"ok": True, "config": public_config()}
 
 
 @router.get("/api/backgrounds")
@@ -2036,77 +1318,12 @@ async def api_fonts_delete(request: Request):
     return {"ok": True, "fonts": _list_fonts()}
 
 
-@router.post("/api/credentials")
-async def api_credentials(request: Request):
-    body = await request.json()
-    cid = (body.get("client_id") or "").strip()
-    csec = (body.get("client_secret") or "").strip()
-    if cid:
-        SECRETS.data["client_id"] = cid
-    if csec:
-        SECRETS.data["client_secret"] = csec
-    SECRETS.save()
-    return {"ok": True, "has_credentials": bool(SECRETS.client_id and SECRETS.client_secret)}
-
-
-@router.get("/auth/login")
-async def auth_login(request: Request):
-    if not (SECRETS.client_id and SECRETS.client_secret):
-        return JSONResponse({"error": "Add your Twitch client ID and secret first."}, status_code=400)
-    state = secrets.token_urlsafe(24)
-    _oauth_states[state] = time.time()
-    params = {
-        "client_id": SECRETS.client_id,
-        "redirect_uri": _redirect_uri(request),
-        "response_type": "code",
-        "scope": " ".join(SCOPES),
-        "state": state,
-        "force_verify": "true",
-    }
-    return RedirectResponse(f"{TWITCH_ID}/authorize?{urllib.parse.urlencode(params)}")
-
-
-@router.get("/auth/callback", response_class=HTMLResponse)
-async def auth_callback(request: Request, code: str = "", state: str = "", error: str = "", error_description: str = ""):
-    global CONFIG
-    if error:
-        return HTMLResponse(f"<body style='font:16px system-ui;padding:40px'>Twitch returned an error: {error} - {error_description}<br><a href='/twitch'>Back to the panel</a></body>")
-    if state not in _oauth_states:
-        return HTMLResponse("<body style='font:16px system-ui;padding:40px'>That login link expired. <a href='/twitch'>Start again</a></body>")
-    _oauth_states.pop(state, None)
-    try:
-        acct = await exchange_code(code, _redirect_uri(request))
-    except Exception as exc:
-        return HTMLResponse(f"<body style='font:16px system-ui;padding:40px'>Token exchange failed: {exc}<br><a href='/twitch'>Back to the panel</a></body>")
-
-    if not CONFIG.get("channels"):                       # the first sign-in sets the channel to watch
-        CONFIG = save_config({**CONFIG, "channels": [{"login": acct.user_login.lower()}]})
-    STATE.note(f"signed in as {acct.user_login}")
-    await RUNNER.sync()                              # only the channels that now run as this account reconnect
-    return HTMLResponse("<body style='font:16px system-ui;padding:40px;background:#0b0b10;color:#eee'>Connected. <a style='color:#ff3b30' href='/twitch'>Back to the panel</a><script>setTimeout(()=>location.href='/twitch',900)</script></body>")
-
-
-@router.post("/auth/logout")
-async def auth_logout(request: Request):
-    """Sign one account out (body {"login": "name"}), or all of them (no body)."""
-    body = await request.json() if await request.body() else {}
-    SECRETS.clear_tokens(str((body or {}).get("login") or ""))
-    await RUNNER.sync()
-    return {"ok": True}
-
-
-@router.post("/api/reconnect")
-async def api_reconnect():
-    await RUNNER.restart()
-    return {"ok": True}
-
-
-def _test_channel(login: Any) -> ChannelRT | None:
+def _test_channel(login: Any) -> tc.ChannelRT | None:
     """The channel a test message or alert is for: a watched one by login, else the primary. Before any
     channel is set up the tests still work, as a channel of their own. None: that login is not watched."""
-    if clean_login(login):
-        return STATE.channel(login)
-    return STATE.primary() or ChannelRT(primary_login() or "hexcast")
+    if tc.clean_login(login):
+        return tc.STATE.channel(login)
+    return tc.STATE.primary() or tc.ChannelRT(tc.primary_login() or "hexcast")
 
 
 @router.post("/api/test/chat")
@@ -2130,7 +1347,7 @@ async def api_test_chat(request: Request):
         "bits": 0,
         "reply": None,
         "text": text,
-        "fragments": apply_third_party([{"t": "text", "v": text}], ch.assets),
+        "fragments": apply_third_party([{"t": "text", "v": text}], assets_for(ch)),
     }
     await HUB.to_chat(msg)
     await HUB.to_panel({"type": "chat_preview", "message": msg})
@@ -2168,8 +1385,8 @@ async def ws_chat(ws: WebSocket, channel: str = ""):
     """The chat overlay's socket. ?channel=login shows one channel, ?channel=all every channel; without
     it the panel's "overlays show" setting decides."""
     await ws.accept()
-    HUB.chat[ws] = clean_login(channel)[:25]
-    await RUNNER.ensure_started()
+    HUB.chat[ws] = tc.clean_login(channel)[:25]
+    await ensure_started()
     try:
         await ws.send_text(json.dumps({"type": "config", "config": CONFIG}))
         while True:
@@ -2184,8 +1401,8 @@ async def ws_chat(ws: WebSocket, channel: str = ""):
 async def ws_events(ws: WebSocket, channel: str = ""):
     """The alert overlay's socket; ?channel= works as on the chat overlay's."""
     await ws.accept()
-    HUB.events[ws] = clean_login(channel)[:25]
-    await RUNNER.ensure_started()
+    HUB.events[ws] = tc.clean_login(channel)[:25]
+    await ensure_started()
     try:
         await ws.send_text(json.dumps({"type": "config", "config": CONFIG}))
         while True:
@@ -2208,9 +1425,9 @@ async def ws_events(ws: WebSocket, channel: str = ""):
 async def ws_panel(ws: WebSocket):
     await ws.accept()
     HUB.panel.add(ws)
-    await RUNNER.ensure_started()
+    await ensure_started()
     try:
-        await ws.send_text(json.dumps({"type": "status", "status": STATE.snapshot()}))
+        await ws.send_text(json.dumps({"type": "status", "status": status()}))
         while True:
             await ws.receive_text()
     except (WebSocketDisconnect, Exception):
@@ -2224,23 +1441,17 @@ async def ws_panel(ws: WebSocket):
 # --------------------------------------------------------------------------
 
 async def start_twitch() -> None:
-    """Call from inside hexcast's lifespan startup."""
-    await RUNNER.ensure_started()
+    """Connect and run the alert queue (plugin.py runs this once Hexcast is serving)."""
+    await ensure_started()
 
 
 async def stop_twitch() -> None:
-    """Call from inside hexcast's lifespan shutdown."""
-    await RUNNER._stop()
+    """Stop the alert queue. (The connection is twitch_core's: it stops with that plugin.)"""
+    await LOOPS.shutdown()
 
 
 def attach_twitch(app, port: int = 4747) -> None:
-    """Mount the Twitch routes onto an existing FastAPI app.
-
-    Note: hexcast.py builds its app with FastAPI(lifespan=...), which makes
-    Starlette ignore add_event_handler("startup"). The connection therefore
-    starts lazily on the first panel or overlay request. To connect at boot
-    instead, call start_twitch()/stop_twitch() from inside that lifespan.
-    """
+    """Mount the Twitch routes onto an existing FastAPI app."""
     app.include_router(router)
     print(f"  Twitch panel:        http://localhost:{port}/twitch", flush=True)
     print(f"  Twitch chat source:  http://localhost:{port}/twitch/chat", flush=True)

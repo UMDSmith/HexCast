@@ -1,0 +1,579 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="/static/hexcast.png">
+<link rel="stylesheet" href="/static/hexbar.css?v=2">
+<title>HexCast - Giveaways</title>
+<style>
+  :root{
+    --bg:var(--hb-bg); --panel:var(--hb-panel); --line:var(--hb-line); --ink:var(--hb-ink);
+    --dim:var(--hb-dim); --accent:var(--hb-accent); --good:var(--hb-good); --warn:var(--hb-warn);
+    --mono:var(--hb-mono);
+  }
+  *{box-sizing:border-box}
+  [hidden]{display:none !important}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.5 'Segoe UI',system-ui,-apple-system,sans-serif;}
+  main{padding:18px 22px 90px}
+  .cols{display:grid;grid-template-columns:minmax(0,1fr) min(560px,42vw);gap:20px;align-items:start;max-width:1800px}
+  .side{position:sticky;top:12px}
+  @media (max-width:1100px){ .cols{grid-template-columns:1fr} .side{position:static;order:-1} }
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
+  .card h2{margin:0 0 4px;font-size:14px;letter-spacing:.14em;text-transform:uppercase}
+  .card p.hint,p.hint{margin:0 0 14px;color:var(--dim);font-size:13px}
+  .card code{color:var(--good);font:12.5px var(--mono)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px}
+  label.f{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--dim);
+          letter-spacing:.06em;text-transform:uppercase;font-weight:600;min-width:0}
+  input,select,textarea{background:#08080c;border:1px solid var(--line);color:var(--ink);
+        border-radius:8px;padding:9px 10px;font:14px/1.3 inherit;width:100%}
+  textarea{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;resize:vertical;line-height:1.45}
+  input:focus,select:focus,textarea:focus,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px;border-color:var(--accent)}
+  input[type=color]{padding:3px;height:38px;cursor:pointer}
+  label.sw{display:flex;flex-direction:row;align-items:center;gap:8px;font-size:14px;color:var(--ink);cursor:pointer;
+           text-transform:none;letter-spacing:0;font-weight:400}
+  label.sw input{width:auto}
+  button.act{background:var(--accent);color:#fff;border:0;border-radius:9px;padding:10px 16px;
+             font:700 14px inherit;cursor:pointer}
+  button.act:hover{filter:brightness(1.12)}
+  button.big{font-size:16px;padding:13px 20px}
+  button.sec{background:#1c1c25;color:var(--ink);border:1px solid var(--line);border-radius:9px;
+             padding:9px 14px;font:600 13px inherit;cursor:pointer}
+  button.sec:hover{border-color:var(--accent)}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  .row{display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin-top:14px}
+  .sp{flex:1}
+  .url{display:flex;gap:8px;align-items:center;margin:8px 0}
+  .url a{flex:1;background:#08080c;border:1px solid var(--line);border-radius:8px;padding:9px 11px;font:13px var(--mono);
+         color:var(--good);overflow:auto;white-space:nowrap;text-decoration:none}
+
+  /* prizes */
+  .prize{display:grid;grid-template-columns:120px minmax(0,1fr);gap:16px;padding:14px;border:1px solid var(--line);
+         border-radius:12px;background:#0c0c11;margin-bottom:12px}
+  .thumb{width:120px;height:120px;border-radius:12px;border:1px dashed var(--line);background:#08080c center/cover no-repeat;
+         cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:12px;text-align:center;padding:6px}
+  .thumb.has{border-style:solid;color:transparent}
+  .thumb:hover{border-color:var(--accent)}
+  .pfields{display:flex;flex-direction:column;gap:10px;min-width:0}
+  .ptop{display:grid;grid-template-columns:minmax(0,1fr) 110px;gap:10px}
+  .pname{font-size:16px;font-weight:700}
+  details.codes summary{cursor:pointer;color:var(--dim);font-size:13px}
+  details.codes textarea{margin-top:8px;font:13px var(--mono);min-height:80px}
+  .pact{display:flex;gap:8px;flex-wrap:wrap}
+  .pleft{font:12px var(--mono);color:var(--dim)} .pleft.none{color:var(--warn)}
+  #prizes:empty::after{content:'No prizes yet - add one below.';display:block;color:var(--dim);font-size:14px;margin-bottom:12px}
+
+  /* who can win */
+  .groups{display:flex;flex-direction:column;gap:10px}
+  .grp{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#0c0c11}
+  .grp.off{opacity:.45}
+  .grp .follow-for{display:flex;gap:6px;align-items:center;color:var(--dim);font-size:13px}
+  .grp .follow-for input{width:80px} .grp .follow-for select{width:auto}
+
+  /* live */
+  .pv{position:relative;width:100%;aspect-ratio:16/9;border-radius:10px;overflow:hidden;border:1px solid var(--line);
+      background:repeating-conic-gradient(#15151d 0 25%,#0e0e14 0 50%) 0 0/24px 24px}
+  .pv iframe{position:absolute;inset:0;width:100%;height:100%;border:0;pointer-events:none}
+  .now{margin:14px 0 4px;padding:12px 14px;border-radius:10px;background:#0c0c11;border:1px solid var(--line);font-size:14px;min-height:48px}
+  .now b{color:var(--accent)} .now .win{font-size:22px;font-weight:800;color:var(--good)}
+  .now .code{display:inline-flex;gap:8px;align-items:center;margin-top:8px;font:13px var(--mono)}
+  .now .code code{background:#08080c;border:1px solid var(--line);border-radius:6px;padding:4px 8px;color:var(--good)}
+  #pool-line{font:12.5px var(--mono);color:var(--dim);margin-top:8px}
+  #pool-line.bad{color:var(--warn)}
+
+  /* winners */
+  table.win{width:100%;border-collapse:collapse;font-size:13.5px}
+  table.win th{font:600 11px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--dim);text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}
+  table.win td{padding:7px 8px;border-bottom:1px solid #1a1a24;vertical-align:middle}
+  table.win tr.rerolled td{opacity:.45;text-decoration:line-through}
+  table.win code{font:12px var(--mono);color:var(--good)}
+  .muted{color:var(--dim)}
+
+  /* picture picker */
+  #pick{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:60}
+  #pick.open{display:flex}
+  #pick .box{width:min(720px,92vw);max-height:84vh;overflow:auto;background:#0e0e14;border:1px solid var(--line);border-radius:14px;padding:18px}
+  #pick .imgs{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px;margin:12px 0}
+  #pick .img{position:relative;aspect-ratio:1;border-radius:10px;background:#08080c center/cover no-repeat;border:2px solid transparent;cursor:pointer}
+  #pick .img:hover{border-color:var(--accent)}
+  #pick .img .x{position:absolute;top:4px;right:4px;background:rgba(0,0,0,.7);color:#fff;border:0;border-radius:6px;padding:2px 7px;cursor:pointer}
+
+  .savebar{position:fixed;left:0;right:0;bottom:0;display:flex;gap:10px;align-items:center;justify-content:flex-end;
+           padding:12px 22px;background:rgba(10,10,14,.94);border-top:1px solid var(--line);z-index:30}
+  .savebar .dirty{color:var(--warn);font:600 12px var(--mono);letter-spacing:.06em;margin-right:auto}
+  #toast{position:fixed;left:50%;bottom:76px;transform:translate(-50%,80px);background:var(--accent);
+         color:#fff;padding:11px 20px;border-radius:99px;font-weight:700;font-size:14px;opacity:0;
+         transition:transform .25s ease,opacity .25s ease;z-index:80;pointer-events:none;max-width:90vw;text-align:center}
+  #toast.up{transform:translate(-50%,0);opacity:1}
+</style></head>
+<body>
+<div id="hexbar" data-section="Giveaways" data-key="giveaways"></div>
+
+<main>
+<div class="cols">
+  <div>
+    <div id="twitch-conn"></div>
+
+    <div class="card">
+      <h2>Prizes</h2>
+      <p class="hint">What you give away: a picture, a name and a description show on the overlay. <b>How many</b> goes down by one with every winner. Keys or codes stay private - one goes to each winner, shown to you in the winners list to send them.</p>
+      <div id="prizes"></div>
+      <div class="row" style="margin-top:4px"><button class="sec" id="add-prize">+ Add a prize</button></div>
+    </div>
+
+    <div class="card">
+      <h2>Who can win</h2>
+      <p class="hint">The winner comes from Twitch's list of who is connected to your chat right now - lurkers too, but not people watching with chat closed, and it can lag a minute or two. Every viewer who qualifies has the same chance. Tick the groups that may win (any of them counts):</p>
+      <div class="groups">
+        <div class="grp"><label class="sw"><input type="checkbox" data-k="eligible.everyone"> <b>Everyone in chat</b></label></div>
+        <div class="grp" data-g="followers"><label class="sw"><input type="checkbox" data-k="eligible.followers"> <b>Followers</b></label>
+          <span class="follow-for">who followed at least
+            <input type="number" id="follow-n" min="0" step="1"> <select id="follow-unit">
+              <option value="60">minutes</option><option value="3600">hours</option><option value="86400">days</option></select> ago</span></div>
+        <div class="grp" data-g="subs"><label class="sw"><input type="checkbox" data-k="eligible.subs"> <b>Subscribers</b></label>
+          <span class="muted" style="font-size:13px">(Twitch shows them only to your channel's own account)</span></div>
+      </div>
+      <div class="grid" style="margin-top:16px">
+        <label class="f">From the chat of<select data-k="channel" id="channel"></select></label>
+      </div>
+      <label class="f" style="margin-top:14px">Never win (bots - names separated by commas)
+        <textarea data-k="exclude" rows="2"></textarea></label>
+      <label class="sw" style="margin-top:12px"><input type="checkbox" data-k="exclude_winners"> Someone in the winners list cannot win again (until you clear the list)</label>
+      <p class="hint" style="margin:10px 0 0">You and Hexcast's own accounts never win.</p>
+    </div>
+
+    <div class="card">
+      <h2>The draw</h2>
+      <div class="grid">
+        <label class="f">Countdown (seconds of names)<input type="number" data-k="countdown" min="3" max="60"></label>
+        <label class="f">Winner stays on screen (seconds, 0 = until Hide)<input type="number" data-k="hold" min="0" max="600"></label>
+        <label class="f">Sound when the draw starts<input data-k="sound_start" list="clip-list" placeholder="soundboard clip (optional)" autocomplete="off"></label>
+        <label class="f">Sound when the winner shows<input data-k="sound_win" list="clip-list" placeholder="soundboard clip (optional)" autocomplete="off"></label>
+      </div>
+      <label class="sw" style="margin-top:16px"><input type="checkbox" data-k="announce"> Congratulate the winner in chat</label>
+      <div class="grid" style="margin-top:10px;grid-template-columns:minmax(0,3fr) minmax(160px,1fr)">
+        <label class="f">Chat message<input data-k="message" maxlength="500"></label>
+        <label class="f">After (seconds - about your stream delay)<input type="number" data-k="announce_delay" min="0" max="60"></label>
+      </div>
+      <p class="hint" style="margin:10px 0 0"><code>{winner}</code> <code>{login}</code> <code>{prize}</code> <code>{channel}</code> are filled in. The message waits that long after the reveal on the overlay, so chat does not spoil it for viewers watching a few seconds behind.</p>
+    </div>
+
+    <div class="card">
+      <h2>Look</h2>
+      <div class="grid">
+        <label class="f">Title<input data-k="look.title" maxlength="40"></label>
+        <label class="f">Colour<input type="color" data-k="look.accent"></label>
+        <label class="f">Second colour<input type="color" data-k="look.accent2"></label>
+        <label class="f">Text colour<input type="color" data-k="look.text_color"></label>
+        <label class="f">Title font (Google Fonts)<input data-k="look.font_title" maxlength="40" placeholder="Bungee"></label>
+        <label class="f">Text font (Google Fonts)<input data-k="look.font_text" maxlength="40" placeholder="Inter"></label>
+        <label class="f">Where<select data-k="look.position">
+          <option value="center">centre</option><option value="top">top</option><option value="bottom">bottom</option>
+          <option value="left">left</option><option value="right">right</option></select></label>
+        <label class="f">Size (%)<input type="number" data-k="look.scale" min="40" max="200" step="5"></label>
+      </div>
+      <div class="row">
+        <label class="sw"><input type="checkbox" data-k="look.confetti"> Confetti when the winner shows</label>
+        <label class="sw"><input type="checkbox" data-k="look.show_description"> Show the description</label>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row" style="margin-top:0"><h2 style="margin:0">Winners</h2><span class="sp"></span>
+        <button class="sec" id="clear-history">Clear the list</button></div>
+      <div id="winners" style="margin-top:10px"></div>
+    </div>
+  </div>
+
+  <aside class="side">
+    <div class="card">
+      <h2>On stream</h2>
+      <p class="hint">Add this as a Browser source in OBS (1920×1080), over everything else:</p>
+      <div class="url"><a id="u-overlay" target="_blank" rel="noopener"></a><button class="sec" id="copy-overlay">Copy</button></div>
+      <div class="pv"><iframe id="pv" src="/giveaways/overlay?preview=1" title="Giveaway preview" tabindex="-1"></iframe></div>
+      <div class="now" id="now">Nothing on the overlay.</div>
+      <div class="grid" style="grid-template-columns:minmax(0,1fr);margin-top:10px">
+        <label class="f">Prize<select id="live-prize"></select></label>
+      </div>
+      <div class="row">
+        <button class="act big" id="draw">Draw a winner</button>
+        <button class="sec" id="reroll" title="Draw again for the last prize, without that winner">Reroll</button>
+        <button class="sec" id="cancel">Cancel</button>
+        <button class="sec" id="hide">Hide</button>
+      </div>
+      <div class="row">
+        <button class="sec" id="show">Show the prize</button>
+        <button class="sec" id="check-pool">Who can win right now?</button>
+      </div>
+      <div id="pool-line"></div>
+      <div class="row">
+        <button class="sec" id="test-preview">Test in the preview</button>
+        <button class="sec" id="test-stream">Test on stream</button>
+      </div>
+      <p class="hint" style="margin:10px 0 0">A test plays the whole show with made-up names: nothing is drawn, recorded or posted in chat.</p>
+    </div>
+  </aside>
+</div>
+</main>
+
+<div class="savebar"><span class="dirty" id="dirty"></span>
+  <button class="sec" id="revert">Revert</button><button class="act" id="save">Save giveaway settings</button></div>
+
+<div id="pick" role="dialog" aria-label="Choose a picture"><div class="box">
+  <div class="row" style="margin-top:0"><h2 style="margin:0">Prize picture</h2><span class="sp"></span><button class="sec" id="pick-close">Close</button></div>
+  <div class="imgs" id="pick-imgs"></div>
+  <div class="row">
+    <button class="act" id="pick-upload">Upload a picture</button>
+    <button class="sec" id="pick-none">No picture</button>
+  </div>
+  <div class="row"><input id="pick-url" placeholder="or paste a link: https://..."><button class="sec" id="pick-url-use">Use</button></div>
+  <input type="file" id="pick-file" accept="image/png,image/jpeg,image/gif,image/webp,image/apng" hidden>
+</div></div>
+
+<datalist id="clip-list"></datalist>
+<div id="toast"></div>
+
+<script src="/plugins/twitch_core/static/twitch_connect.js"></script>
+<script>
+var $ = function(id){ return document.getElementById(id); };
+function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+var toastT = null;
+function toast(msg){
+  var t = $('toast'); t.textContent = msg; t.classList.add('up');
+  clearTimeout(toastT); toastT = setTimeout(function(){ t.classList.remove('up'); }, 3200);
+}
+function copyText(str){
+  if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(str).then(function(){ toast('Copied'); }, fallback); }
+  else fallback();
+  function fallback(){
+    var ta = document.createElement('textarea'); ta.value = str; ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    var ok = false; try{ ok = document.execCommand('copy'); }catch(e){}
+    document.body.removeChild(ta); toast(ok ? 'Copied' : 'Copy failed - select it and copy by hand');
+  }
+}
+function api(method, path, body){
+  var o = {method: method, headers: {}};
+  if(body !== undefined){ o.headers['Content-Type'] = 'application/json'; o.body = JSON.stringify(body); }
+  return fetch(path, o).then(function(r){
+    return r.json().catch(function(){ return {}; }).then(function(d){ if(!r.ok) throw new Error(d.error || ('HTTP ' + r.status)); return d; });
+  });
+}
+
+var SAVED = null, DRAFT = null, STATUS = null, IMAGES = [], PICK_FOR = -1;
+function clone(o){ return JSON.parse(JSON.stringify(o)); }
+function settings(c){ var o = clone(c); delete o.history; return o; }
+function isDirty(){ return SAVED && DRAFT && JSON.stringify(settings(SAVED)) !== JSON.stringify(settings(DRAFT)); }
+function markDirty(){ $('dirty').textContent = isDirty() ? 'Not saved yet' : ''; }
+
+function getPath(o, path){ return path.split('.').reduce(function(a, k){ return a == null ? a : a[k]; }, o); }
+function setPath(o, path, v){ var ks = path.split('.'), last = ks.pop(); ks.reduce(function(a, k){ return a[k]; }, o)[last] = v; }
+
+/* ---------- settings fields ---------- */
+function fillFields(){
+  document.querySelectorAll('[data-k]').forEach(function(el){
+    var v = getPath(DRAFT, el.dataset.k);
+    if(el.type === 'checkbox') el.checked = !!v; else el.value = v == null ? '' : v;
+  });
+  var s = DRAFT.eligible.follow_seconds || 0, unit = s && s % 86400 === 0 ? 86400 : s && s % 3600 === 0 ? 3600 : 60;
+  $('follow-unit').value = String(unit); $('follow-n').value = s ? s / unit : 0;
+  paintGroups();
+  fillChannels();
+}
+function readField(el){
+  var k = el.dataset.k, v;
+  if(el.type === 'checkbox') v = el.checked;
+  else if(el.type === 'number') v = el.value === '' ? 0 : +el.value;
+  else v = el.value;
+  setPath(DRAFT, k, v);
+  if(k.indexOf('look.') === 0) pushLook();
+  if(k.indexOf('eligible.') === 0) paintGroups();
+}
+function paintGroups(){
+  var all = DRAFT.eligible.everyone;
+  document.querySelectorAll('.grp[data-g]').forEach(function(g){ g.classList.toggle('off', all); });
+}
+function fillChannels(){
+  var sel = $('channel'), chans = (STATUS && STATUS.channels) || [], cur = DRAFT.channel || 'primary';
+  var opts = [['primary', 'the primary channel']].concat(chans.map(function(c){ return [c, '#' + c]; }));
+  if(!opts.some(function(o){ return o[0] === cur; })) opts.push([cur, '#' + cur + ' (not watched)']);
+  sel.innerHTML = opts.map(function(o){ return '<option value="' + esc(o[0]) + '"' + (o[0] === cur ? ' selected' : '') + '>' + esc(o[1]) + '</option>'; }).join('');
+}
+function readFollow(){
+  DRAFT.eligible.follow_seconds = Math.max(0, Math.round((+$('follow-n').value || 0) * +$('follow-unit').value));
+}
+function pushLook(){
+  try{ $('pv').contentWindow.postMessage({hexcast: 'giveaway-look', look: DRAFT.look}, location.origin); }catch(e){}
+}
+
+/* ---------- prizes ---------- */
+function renderPrizes(){
+  $('prizes').innerHTML = DRAFT.prizes.map(function(p, i){
+    var left = p.quantity > 0 ? p.quantity + ' left' : 'none left';
+    return '<div class="prize" data-i="' + i + '" data-id="' + esc(p.id || '') + '">'
+      + '<div class="thumb' + (p.image ? ' has' : '') + '" data-pick="' + i + '" style="' + (p.image ? 'background-image:url(&quot;' + esc(p.image) + '&quot;)' : '') + '">' + (p.image ? '' : 'click to add a picture') + '</div>'
+      + '<div class="pfields">'
+      +   '<div class="ptop"><input class="pname p-name" value="' + esc(p.name) + '" placeholder="Prize name - e.g. Steam key: Hades" maxlength="80">'
+      +   '<label class="f" style="gap:2px">How many<input type="number" class="p-qty" min="0" max="9999" value="' + esc(p.quantity) + '"></label></div>'
+      +   '<textarea class="p-desc" rows="2" maxlength="400" placeholder="Description (optional)">' + esc(p.description) + '</textarea>'
+      +   '<details class="codes"' + ((p.codes || []).length ? '' : '') + '><summary>Keys / codes, one per line (private) - ' + (p.codes || []).length + ' left</summary>'
+      +     '<textarea class="p-codes" rows="3" placeholder="XXXXX-XXXXX-XXXXX">' + esc((p.codes || []).join('\n')) + '</textarea></details>'
+      +   '<div class="pact"><span class="pleft' + (p.quantity > 0 ? '' : ' none') + '">' + left + '</span><span class="sp"></span>'
+      +     '<button class="sec" data-pact="show">Show on stream</button>'
+      +     '<button class="act" data-pact="draw">Draw a winner</button>'
+      +     '<button class="sec" data-pact="del" title="Delete this prize">&times;</button></div>'
+      + '</div></div>';
+  }).join('');
+  fillLivePrizes();
+}
+function readPrize(card){
+  var p = DRAFT.prizes[+card.dataset.i];
+  p.name = card.querySelector('.p-name').value;
+  p.quantity = Math.max(0, +card.querySelector('.p-qty').value || 0);
+  p.description = card.querySelector('.p-desc').value;
+  p.codes = card.querySelector('.p-codes').value.split('\n').map(function(s){ return s.trim(); }).filter(Boolean);
+}
+function fillLivePrizes(){
+  var sel = $('live-prize'), keep = sel.value;
+  var saved = (SAVED && SAVED.prizes) || [];
+  sel.innerHTML = saved.length ? saved.map(function(p){
+    return '<option value="' + esc(p.id) + '">' + esc(p.name || '(no name)') + ' - ' + (p.quantity > 0 ? p.quantity + ' left' : 'none left') + '</option>';
+  }).join('') : '<option value="">add a prize and save first</option>';
+  if(saved.some(function(p){ return p.id === keep; })) sel.value = keep;
+}
+function savedPrize(id){ return ((SAVED && SAVED.prizes) || []).filter(function(p){ return p.id === id; })[0]; }
+function prizeReady(i){
+  var p = DRAFT.prizes[i], s = p && savedPrize(p.id);
+  if(!s || JSON.stringify(s) !== JSON.stringify(p)){ toast('Save first - the overlay uses the saved prize'); return null; }
+  return s;
+}
+
+/* ---------- live ---------- */
+function clock(s){ s = Math.max(0, Math.ceil(s)); return s + 's'; }
+var SHOW_AT = 0;
+function paintNow(){
+  if(!STATUS) return;
+  var sh = STATUS.show || {}, html = '', st = sh.state;
+  var prize = sh.prize ? esc(sh.prize.name) : '';
+  if(st === 'showing') html = 'Showing <b>' + prize + '</b> - up for grabs.';
+  else if(st === 'drawing'){
+    var left = sh.countdown - (sh.elapsed || 0) - (Date.now() - SHOW_AT) / 1000;
+    html = (sh.test ? 'Test draw' : 'Drawing') + ' for <b>' + prize + '</b>: ' + sh.pool + ' could win (' + sh.in_chat + ' in chat' + (sh.groups ? ', ' + esc(sh.groups) : '') + ') - the winner shows in ' + clock(left) + '.';
+  }
+  else if(st === 'revealed'){
+    var w = sh.winner || {}, code = winnerCode(sh.entry);
+    html = (sh.test ? 'Test winner: ' : 'Winner: ') + '<span class="win">' + esc(w.name) + '</span>' + (w.login && w.login !== String(w.name).toLowerCase() ? ' <span class="muted">(' + esc(w.login) + ')</span>' : '')
+         + ' - <b>' + prize + '</b>'
+         + (code ? '<div class="code">their code: <code>' + esc(code) + '</code><button class="sec" data-copy="' + esc(code) + '">Copy</button></div>' : '');
+  }
+  else html = 'Nothing on the overlay.';
+  if(STATUS.problem) html += '<div style="color:var(--warn);margin-top:6px;font-size:13px">' + esc(STATUS.problem) + '</div>';
+  $('now').innerHTML = html;
+  $('draw').disabled = st === 'drawing';
+  $('cancel').disabled = st !== 'drawing';
+  $('hide').disabled = !(st === 'showing' || st === 'revealed');
+  $('reroll').disabled = st === 'drawing' || !((SAVED && SAVED.history) || []).some(function(h){ return !h.rerolled; });
+  $('show').disabled = st === 'drawing';
+}
+function winnerCode(entry){
+  var h = ((SAVED && SAVED.history) || []).filter(function(x){ return x.id === entry; })[0];
+  return h ? h.code : '';
+}
+
+/* ---------- winners ---------- */
+function renderWinners(){
+  var h = (SAVED && SAVED.history) || [];
+  $('winners').innerHTML = h.length ? '<table class="win"><tr><th>When</th><th>Prize</th><th>Winner</th><th>Code</th><th></th></tr>'
+    + h.slice(0, 100).map(function(x, i){
+      var d = new Date(x.at * 1000), w = x.winner || {};
+      return '<tr' + (x.rerolled ? ' class="rerolled"' : '') + '><td class="muted">' + d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}) + '</td>'
+        + '<td>' + esc(x.prize) + '</td><td><b>' + esc(w.name) + '</b>' + (((STATUS && STATUS.channels) || []).length > 1 ? ' <span class="muted">#' + esc(x.channel) + '</span>' : '') + '</td>'
+        + '<td>' + (x.code ? '<code>' + esc(x.code) + '</code> <button class="sec" data-copy="' + esc(x.code) + '" style="padding:3px 8px">Copy</button>' : '<span class="muted">-</span>') + '</td>'
+        + '<td>' + (x.rerolled ? '<span class="muted">rerolled</span>' : '<button class="sec" data-reroll="' + esc(x.id) + '" style="padding:3px 8px">Reroll</button>') + '</td></tr>';
+    }).join('') + '</table>' : '<p class="hint" style="margin:0">No winners yet.</p>';
+}
+
+/* After a draw the server has one fewer of the prize (and a code fewer): take that in, keeping what is being edited. */
+function refreshFromServer(){
+  return api('GET', '/giveaways/api/config').then(function(fresh){
+    var old = SAVED;
+    SAVED = fresh;
+    if(DRAFT){
+      DRAFT.prizes.forEach(function(p){
+        var o = (old.prizes || []).filter(function(x){ return x.id === p.id; })[0];
+        var n = (fresh.prizes || []).filter(function(x){ return x.id === p.id; })[0];
+        if(!o || !n) return;
+        if(p.quantity === o.quantity) p.quantity = n.quantity;
+        if(JSON.stringify(p.codes) === JSON.stringify(o.codes)) p.codes = n.codes;
+      });
+      var focused = document.activeElement && document.activeElement.closest('.prize');
+      if(!focused) renderPrizes(); else fillLivePrizes();
+    }
+    renderWinners(); paintNow(); markDirty();
+  });
+}
+
+function load(){
+  return api('GET', '/giveaways/api/config').then(function(cfg){
+    SAVED = cfg; DRAFT = clone(cfg);
+    fillFields(); renderPrizes(); renderWinners(); markDirty(); pushLook();
+  });
+}
+function save(){
+  document.querySelectorAll('.prize').forEach(readPrize);
+  readFollow();
+  return api('POST', '/giveaways/api/config', settings(DRAFT)).then(function(d){
+    SAVED = d.config; DRAFT = clone(SAVED);
+    fillFields(); renderPrizes(); renderWinners(); markDirty(); paintNow();
+    toast('Giveaway settings saved');
+    return true;
+  }).catch(function(e){ toast(e.message); return false; });
+}
+
+function loadClips(){
+  api('GET', '/api/list').then(function(d){
+    var seen = {}, dl = $('clip-list'); dl.innerHTML = '';
+    (d.audio || []).concat(d.video || []).forEach(function(n){ if(seen[n]) return; seen[n] = 1; var o = document.createElement('option'); o.value = n; dl.appendChild(o); });
+  }).catch(function(){});
+}
+
+/* ---------- the picture picker ---------- */
+function openPick(i){
+  PICK_FOR = i; $('pick-url').value = '';
+  api('GET', '/giveaways/api/images').then(function(d){ IMAGES = d.images || []; paintPick(); });
+  paintPick(); $('pick').classList.add('open');
+}
+function paintPick(){
+  $('pick-imgs').innerHTML = IMAGES.length ? IMAGES.map(function(im){
+    return '<div class="img" data-url="' + esc(im.url) + '" style="background-image:url(&quot;' + esc(im.url) + '&quot;)" title="' + esc(im.name) + '">'
+         + '<button class="x" data-delimg="' + esc(im.name) + '" title="Delete this picture">&times;</button></div>';
+  }).join('') : '<p class="hint" style="grid-column:1/-1;margin:0">No pictures yet - upload one.</p>';
+}
+function pickUrl(url){
+  if(PICK_FOR < 0) return;
+  var card = document.querySelector('.prize[data-i="' + PICK_FOR + '"]'); if(card) readPrize(card);
+  DRAFT.prizes[PICK_FOR].image = url;
+  $('pick').classList.remove('open'); renderPrizes(); markDirty();
+}
+
+/* ---------- events ---------- */
+document.addEventListener('input', function(e){
+  var el = e.target;
+  if(el.dataset && el.dataset.k){ readField(el); }
+  else if(el.id === 'follow-n'){ readFollow(); }
+  var card = el.closest && el.closest('.prize');
+  if(card) readPrize(card);
+  markDirty();
+});
+document.addEventListener('change', function(e){
+  var el = e.target;
+  if(el.dataset && el.dataset.k) readField(el);
+  if(el.id === 'follow-unit' || el.id === 'follow-n') readFollow();
+  markDirty();
+});
+document.addEventListener('click', function(e){
+  var b = e.target.closest('button, .thumb, .img'); if(!b) return;
+  if(b.dataset.copy){ copyText(b.dataset.copy); return; }
+  if(b.dataset.pick != null){ openPick(+b.dataset.pick); return; }
+  if(b.dataset.delimg){
+    e.stopPropagation();
+    api('POST', '/giveaways/api/images/delete', {name: b.dataset.delimg}).then(function(d){ IMAGES = d.images || []; paintPick(); });
+    return;
+  }
+  if(b.classList.contains('img') && b.dataset.url){ pickUrl(b.dataset.url); return; }
+  if(b.dataset.reroll){ reroll(b.dataset.reroll); return; }
+  var card = b.closest('.prize');
+  if(card && b.dataset.pact){
+    var i = +card.dataset.i;
+    if(b.dataset.pact === 'del'){ readPrize(card); DRAFT.prizes.splice(i, 1); renderPrizes(); markDirty(); toast('Removed - press Save to make it stick'); return; }
+    var p = prizeReady(i); if(!p) return;
+    if(b.dataset.pact === 'show') act('/giveaways/api/show', {prize: p.id}, 'On the overlay');
+    if(b.dataset.pact === 'draw'){ $('live-prize').value = p.id; drawNow(p.id); }
+  }
+});
+function act(path, body, ok){
+  return api('POST', path, body).then(function(){ if(ok) toast(ok); }).catch(function(e){ toast(e.message); });
+}
+function drawNow(id){
+  if(!id){ toast('Add a prize and save first'); return; }
+  $('draw').disabled = true;
+  api('POST', '/giveaways/api/draw', {prize: id}).then(function(d){
+    toast('Drawing - ' + d.draw.pool + ' could win');
+  }).catch(function(e){ toast(e.message); $('draw').disabled = false; });
+}
+function reroll(entry){
+  api('POST', '/giveaways/api/reroll', entry ? {entry: entry} : {}).then(function(d){
+    toast('Drawing again - ' + d.draw.pool + ' could win');
+  }).catch(function(e){ toast(e.message); });
+}
+
+$('add-prize').onclick = function(){
+  document.querySelectorAll('.prize').forEach(readPrize);
+  DRAFT.prizes.push({id: '', name: '', description: '', image: '', quantity: 1, codes: []});
+  renderPrizes(); markDirty();
+  var names = document.querySelectorAll('.p-name'); if(names.length) names[names.length - 1].focus();
+};
+$('draw').onclick = function(){ drawNow($('live-prize').value); };
+$('reroll').onclick = function(){ reroll(''); };
+$('cancel').onclick = function(){ act('/giveaways/api/cancel', undefined, 'Cancelled - nobody won'); };
+$('hide').onclick = function(){ act('/giveaways/api/hide', undefined, 'Hidden'); };
+$('show').onclick = function(){ var id = $('live-prize').value; if(!id){ toast('Add a prize and save first'); return; } act('/giveaways/api/show', {prize: id}, 'On the overlay'); };
+$('test-preview').onclick = function(){ act('/giveaways/api/test', {prize: $('live-prize').value, where: 'preview'}); };
+$('test-stream').onclick = function(){ act('/giveaways/api/test', {prize: $('live-prize').value, where: 'stream'}, 'Test on stream'); };
+$('check-pool').onclick = function(){
+  var line = $('pool-line'); line.className = ''; line.textContent = 'asking Twitch...';
+  api('GET', '/giveaways/api/pool').then(function(d){
+    line.textContent = d.in_chat + ' in #' + d.channel + "'s chat, " + d.pool + ' after the exclusions'
+      + (d.subs != null ? ', ' + d.subs + ' of them subscribe' : '') + ' - can win: ' + d.groups
+      + (/followers/.test(d.groups) ? ' (followers are checked as names come up)' : '');
+  }).catch(function(e){ line.className = 'bad'; line.textContent = e.message; });
+};
+$('clear-history').onclick = function(){
+  if(!((SAVED && SAVED.history) || []).length) return;
+  api('POST', '/giveaways/api/history/clear').then(refreshFromServer).then(function(){ toast('Winners list cleared'); });
+};
+$('save').onclick = save;
+$('revert').onclick = function(){ DRAFT = clone(SAVED); fillFields(); renderPrizes(); markDirty(); pushLook(); toast('Back to what is saved'); };
+$('copy-overlay').onclick = function(){ copyText(location.origin + '/giveaways/overlay'); };
+$('pick-close').onclick = function(){ $('pick').classList.remove('open'); };
+$('pick').addEventListener('click', function(e){ if(e.target === $('pick')) $('pick').classList.remove('open'); });
+$('pick-none').onclick = function(){ pickUrl(''); };
+$('pick-url-use').onclick = function(){ var u = $('pick-url').value.trim(); if(!/^https?:\/\//.test(u)){ toast('Paste an http(s) link'); return; } pickUrl(u); };
+$('pick-upload').onclick = function(){ $('pick-file').click(); };
+$('pick-file').onchange = function(){
+  var f = this.files[0]; if(!f) return;
+  var fd = new FormData(); fd.append('file', f);
+  fetch('/giveaways/api/images', {method: 'POST', body: fd}).then(function(r){ return r.json().then(function(d){ return {ok: r.ok, d: d}; }); })
+    .then(function(res){ if(!res.ok){ toast(res.d.error || 'Not uploaded'); return; } IMAGES = res.d.images || []; pickUrl(res.d.url); });
+  this.value = '';
+};
+window.addEventListener('beforeunload', function(e){ if(isDirty()){ e.preventDefault(); e.returnValue = ''; } });
+$('pv').addEventListener('load', pushLook);
+
+function connect(){
+  var ws = new WebSocket((location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + '/giveaways/ws');
+  ws.onmessage = function(e){
+    var m; try{ m = JSON.parse(e.data); }catch(err){ return; }
+    if(m.type === 'status'){
+      var before = STATUS, sig = function(s){ return s ? JSON.stringify([(s.prizes || []).map(function(p){ return [p.id, p.quantity, p.codes]; }), (s.history || []).map(function(h){ return [h.id, h.rerolled]; })]) : ''; };
+      var chans = JSON.stringify((before && before.channels) || []);
+      STATUS = m.status; SHOW_AT = Date.now();
+      if(before && sig(before) !== sig(STATUS)) refreshFromServer();
+      if(DRAFT && chans !== JSON.stringify(STATUS.channels || [])) fillChannels();
+      paintNow();
+    }
+    if(m.type === 'event' && m.event === 'winner') toast(m.winner.name + ' won ' + m.prize.name + '!');
+  };
+  ws.onclose = function(){ setTimeout(connect, 1500); };
+  ws.onerror = function(){ try{ ws.close(); }catch(err){} };
+}
+
+$('u-overlay').textContent = location.origin + '/giveaways/overlay';
+$('u-overlay').href = location.origin + '/giveaways/overlay';
+TwitchConnect.mount($('twitch-conn'), {back: '/giveaways', label: 'Giveaways', compact: true,
+                                       needs: ['moderator:read:chatters', 'user:write:chat']});
+load().then(connect);
+loadClips();
+setInterval(function(){ if(STATUS && STATUS.show && STATUS.show.state === 'drawing') paintNow(); }, 250);
+</script>
+<script src="/static/hexbar.js?v=2"></script>
+</body></html>

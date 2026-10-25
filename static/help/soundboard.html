@@ -13,6 +13,7 @@
     <tr><td>GET /api/play/{name}</td><td>play by name across both kinds (audio checked first)</td></tr>
     <tr><td>GET /api/play/{kind}/{name}</td><td>same, but explicit — kind is <code>audio</code> or <code>video</code></td></tr>
     <tr><td>GET /api/stop</td><td>clear all overlay visuals and stop all audio</td></tr>
+    <tr><td>GET /api/stop/{name}</td><td>stop just that clip: every copy of it playing, a looping one too</td></tr>
     <tr><td>GET /api</td><td>this reference as JSON</td></tr>
   </table>
   <h3>Per-play overrides (query params)</h3>
@@ -20,6 +21,8 @@
     <tr><td>?x=50&amp;y=50&amp;scale=2</td><td>position/size, video only (percent of canvas, scale factor)</td></tr>
     <tr><td>?volume=0.5</td><td>0.0–1.0, audio and video-with-audio</td></tr>
     <tr><td>?start=2&amp;end=5</td><td>trim window in seconds (static images use it as display time)</td></tr>
+    <tr><td>?loop=1</td><td>repeat it (its trim window) until <code>/api/stop/{name}</code> or <code>/api/stop</code>: background
+      music. A clip locked to an avatar plays once</td></tr>
   </table>
   <h3>Lock a clip to an avatar</h3>
   <p class="hint">With the <b>Avatars</b> plugin a video or GIF can play glued to a spot on a model - over a head, on a
@@ -37,6 +40,8 @@
   </table>
   <pre>curl http://localhost:4747/api/play/airhorn
 curl "http://localhost:4747/api/play/video/cheer?x=80&amp;y=20&amp;scale=2&amp;end=3"
+curl "http://localhost:4747/api/play/racemusic?loop=1"
+curl http://localhost:4747/api/stop/racemusic
 curl http://localhost:4747/api/stop</pre>
 </div>
 </section>

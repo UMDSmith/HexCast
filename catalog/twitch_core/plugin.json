@@ -1,0 +1,13 @@
+{
+  "id": "twitch_core",
+  "name": "Twitch connection",
+  "version": "1.0.0",
+  "description": "The Twitch sign-in, channels and chat/event connection that Twitch, Chat Timers and Giveaways share. No tab of its own - it is installed automatically with the plugins that need it, and each of their tabs shows its connection box.",
+  "icon": "🔌",
+  "color": "#a970ff",
+  "category": "Libraries",
+  "author": "UMDSmith",
+  "hidden": true,
+  "help": { "file": "help.html", "toc": [ { "id": "twitch_connection", "label": "Twitch connection" } ] },
+  "legacy_config": []
+}

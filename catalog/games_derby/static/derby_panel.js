@@ -117,7 +117,7 @@
       ['field_size', 'Hounds per race', 'int', [3, 6], 'Drawn from the roster for every race; they wear the numbers 1 to this'],
       ['benched', 'Benched hounds', 'text', 200, 'Hounds (or guests) that never race, comma separated (ids or names): cinder, gnash, terry, sparks, bubba, ember, brimstone, mange, harry; guests hamageddon, skullduggery, cockfather, barrel, mootilator, lordhorny. At least 3 hounds must be left'],
       ['guest_chance', 'Guest racer chance', 'num', [0, 1], 'How often a race has a guest racer instead of a hound: 0 = never, 0.3 = about one race in three, 1 = every race. Your own guests go in config/games_derby_guests/ (see the help)'],
-      ['guests_max', 'Guests per race (max)', 'int', [0, 3], 'At most this many guests in one race'],
+      ['guests_max', 'Guests per race (max)', 'int', [0, 4], 'At most this many guests in one race'],
       ['bet_seconds', 'Lineup / bet window (s)', 'num', [5, 300], 'The lineup with the odds board: chat bets while it shows'],
       ['race_seconds', 'Race length (s, about)', 'num', [25, 90], 'Roughly how long the winner takes; the rest of the field finishes after it'],
       ['result_seconds', 'Result card (s)', 'num', [3, 60]],
@@ -138,7 +138,9 @@
       ['sfx', 'Overlay sound effects', 'bool'],
       ['sfx_volume', 'Sound volume', 'num', [0, 1]],
       ['start_clip', 'Soundboard clip: the gates open', 'clip'],
-      ['finish_clip', 'Soundboard clip: the race is over', 'clip']
+      ['finish_clip', 'Soundboard clip: the race is over', 'clip'],
+      ['music_clip', 'Soundboard clip: race music', 'clip', null, 'Background music: starts when the gates open, stops when the result card is gone (or the race is stopped). Not in test races'],
+      ['music_loop', 'Loop the race music', 'bool', null, 'On: it repeats until the race is over. Off: it plays once (and still stops when the race is over)']
     ],
     reasons: {},                                         // (no ledger reasons beyond the common ones: bet, add, win, refund)
     textRows: {

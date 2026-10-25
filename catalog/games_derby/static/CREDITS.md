@@ -16,6 +16,10 @@ Hexcast repository). The same list is the Credits card at the bottom of the Derb
   https://www.mixamo.com
   Posed for Hexcast (idle, cheer, fist pump, jeer, clap, the throw) and rendered to sprites. Only the frames ship, never the character files.
 
+- **The track**: "Mud Cracked Dry 03" by Dario Barresi, Dimitrios Savva (Poly Haven), CC0 (https://creativecommons.org/publicdomain/zero/1.0/)
+  https://polyhaven.com/a/mud_cracked_dry_03
+  Made grey and evened out (scripts/make_ground.py), then laid over each theme's track colours in perspective.
+
 - **Junk: bone**: "Femur Bone" by Arkify 3D, CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
   https://sketchfab.com/3d-models/6e3e3882bd534e52867dd83b8dd7a827
   Rendered tumbling to sprites.

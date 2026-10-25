@@ -3,7 +3,8 @@
   <h2>Twitch <span class="tag">/twitch</span></h2>
   <p class="hint">Chat overlay, alert overlay with a FIFO queue, and chat-command handling.
     Alerts can fire any soundboard clip by name — set it in the Clip column of the Alerts
-    table on the Twitch panel.</p>
+    table on the Twitch panel. The sign-in, the channels and the connection itself are the shared
+    <a href="/help/twitch_connection">Twitch connection</a> (Chat Timers and Giveaways use it too).</p>
   <table class="api">
     <tr><td>GET /twitch/api/status</td><td>connection state (the primary channel's at the top level, every channel under <code>channels</code>), the accounts signed in, granted scopes, log</td></tr>
     <tr><td>POST /twitch/api/config</td><td><code>{"channels": [{"login": "name", "label": "beta", "enabled": true}], "overlay_channels": "primary|all"}</code> — the channels to watch (first = primary, up to 5); <code>{"channel": "name"}</code> still sets the primary</td></tr>
@@ -21,7 +22,7 @@
     preview that is the real overlay page. All of it is stored under <code>chat</code>, <code>events</code> and
     <code>alerts</code> in <code>config/twitch.json</code> (<code>POST /twitch/api/config</code> takes the same shape).</p>
   <h3>Several channels</h3>
-  <p class="hint">Add channels under <b>Channels</b> on the Connection tab (up to 5; the first is the
+  <p class="hint">Add channels under <b>Channels</b> in the Twitch connection box (up to 5; the first is the
     primary). Each uses the account with its own name if you have signed in as it, else your default
     account, else anonymous chat. Every chat line and alert carries its <code>channel</code>. A source
     with no <code>?channel=</code> in its URL shows what the panel's <b>Chat and alert sources show</b>

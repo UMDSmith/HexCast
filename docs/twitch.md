@@ -7,49 +7,56 @@ like anything else.
 Everything lives under `/twitch/*`, so it cannot collide with the soundboard's
 routes. It is a plugin: add it from the **+** tab.
 
+The connection to Twitch itself - your Twitch app, the accounts you sign in with,
+the channels, EventSub and the anonymous chat fallback - is the shared **Twitch
+connection** (`twitch_core`), a plugin with no tab of its own that is installed
+with Twitch. [Chat Timers](chat_timers.md) and [Giveaways](giveaways.md) use the
+same one, so you set it up once and every tab shows the same **Twitch connection**
+box.
+
 ---
 
 ## Install
 
 Open the **+** tab in the top bar, find **Twitch** and press **Install**. The tab appears straight away, and the
-Python packages it needs are installed for you - no restart. From a terminal:
-`python hexcast.py plugins install twitch`. (More in [Plugins](plugins.md).)
+Python packages it needs are installed for you - no restart. The shared Twitch connection comes with it. From a
+terminal: `python hexcast.py plugins install twitch`. (More in [Plugins](plugins.md).)
 
 Three URLs are printed at startup (and shown on the Twitch page).
 
-### Connecting at boot instead of on first request
+### Connecting at boot
 
-Hexcast builds its app with `FastAPI(lifespan=lifespan)`, which makes Starlette
-ignore `add_event_handler("startup")`. The Twitch connection therefore opens
-lazily, on the first panel or overlay request — fine in practice, but it means
-nothing connects until OBS or a browser asks for it.
+From Hexcast 2.2 the connection opens as soon as Hexcast starts, with no page or overlay open. An older Hexcast
+opens it on the first request to a Twitch page or overlay.
 
-To connect at startup, edit the existing `lifespan` in `hexcast.py`:
+### Updating from Twitch 1.2
 
-```python
-async def lifespan(app: FastAPI):
-    ...
-    obs.start()
+Twitch 1.3 moved the connection into the shared Twitch connection plugin. Pressing **Update** installs that plugin
+first, then the new Twitch. Nothing has to be set up again:
 
-    from hexcast_plugins.twitch.twitch import start_twitch, stop_twitch      # add (only while the plugin is installed)
-    await start_twitch()                              # add
+- your Twitch app and every account you signed in with stay in `config/twitch_secrets.json`, which the shared
+  connection reads as it is;
+- the channel list is copied from `config/twitch.json` into `config/twitch_core.json` on the first start;
+- the sign-in pages kept their address (`/twitch/auth/callback`), so the redirect URL in your Twitch app still
+  matches, and `/twitch/api/status`, `/twitch/api/config` and the overlay URLs answer as before.
 
-    print(f"\n  ==== Hexcast ====")
-    ...
-    yield
-    await stop_twitch()                               # add
-    obs.stop()
-```
+Giveaways needs one scope more (`moderator:read:chatters`): the box lists an account signed in before that as
+missing it, and **Connect a Twitch account** again as that user grants it.
+
+Installing Chat Timers or Giveaways while an older Twitch is still installed: the shared connection will not
+start (both would connect to Twitch) and says so on its card. Update Twitch, then restart Hexcast (or disable and
+enable the new plugin).
 
 ---
 
 ## First run
 
-Open <http://localhost:4747/twitch>.
+Open <http://localhost:4747/twitch>. The **Twitch connection** box on the Connection tab holds the app, the
+channels and the sign-in (the same box as on the Timers and Giveaways tabs).
 
 ### Chat works with no setup at all
 
-Add your channel under **Channels** on the Connection tab and save. Chat starts flowing
+Add your channel under **Channels** in the Twitch connection box and save. Chat starts flowing
 immediately over anonymous Twitch IRC — display names, colours, badges, Twitch
 emotes, and global 7TV/BTTV/FFZ emotes. Add
 `http://localhost:4747/twitch/chat` as a browser source and you're live.
@@ -81,18 +88,18 @@ one registered entry covers both.
 A Hexcast can watch up to five channels at once — your main one and a second
 or test channel, say. Add them under **Channels** on the Connection tab (a
 login, an optional label like `beta`, and an on/off switch); the first is the
-**primary**. Everything below is also in `config/twitch.json`:
+**primary**. The list is the shared connection's, in `config/twitch_core.json`:
 
 ```json
 "channels": [
   {"login": "mainchannel", "label": "primary", "enabled": true},
   {"login": "testchannel", "label": "beta",    "enabled": true}
-],
-"overlay_channels": "primary"
+]
 ```
 
-(`"channel"` is still there and always mirrors the primary's login; an older
-config that only has `"channel"` becomes a one-entry list by itself.)
+and what the overlays show by default is this module's, in `config/twitch.json`: `"overlay_channels": "primary"`.
+`POST /twitch/api/config` still takes `channels` (or the old `channel`, which sets the primary) and passes it on,
+and `GET /twitch/api/config` still shows both.
 
 **Who Hexcast acts as.** Sign in once per Twitch account (**Connect a Twitch
 account** — to add a second account, be signed in to Twitch as that user in the
@@ -489,7 +496,7 @@ Twitch re-prompts for the full list.
 
 **A subscription failed with 400 "invalid subscription type and version".**
 Twitch has retired that version of the event. The subscription list in
-`plugins/twitch/twitch.py` (`SUB_PLAN`) carries a version string per type; check the current
+`plugins/twitch_core/core.py` (`SUB_PLAN`) carries a version string per type; check the current
 one at <https://dev.twitch.tv/docs/eventsub/eventsub-subscription-types/> and
 update it. Hype train moved from v1 to v2 this way.
 

@@ -214,6 +214,22 @@ class Upstream:
             return None
         return CatalogEntry(m, "upstream", url=self.archive_url(), subdir=f"catalog/{pid}")
 
+    def fetch_entry(self, pid: str) -> CatalogEntry | None:
+        """A plugin that is not installed, asked for NOW (blocking: call from a thread) - the new
+        requirement of an update, when the local catalog has no copy of it. None when the check is
+        switched off, GitHub cannot be reached or the repository has no such plugin."""
+        if not self.enabled:
+            return None
+        try:
+            body = self._get(self.raw_url(pid), MANIFEST_MAX, FETCH_TIMEOUT)
+            m = parse_manifest(json.loads(body.decode("utf-8-sig")))
+        except Exception:
+            return None
+        if m.id != pid:
+            return None
+        self._manifests[pid], self._at[pid] = m, time.time()
+        return self.entry(pid)
+
     # ---- refreshing ----
 
     def core_due(self, now: float | None = None) -> bool:

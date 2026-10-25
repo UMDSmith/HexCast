@@ -229,6 +229,13 @@ class PluginContext:
         """Tell open pages that what this plugin contributes changed (a game was added ...)."""
         self._host.revision += 1
 
+    def when_serving(self, fn: Callable[[], Any]) -> None:
+        """Run fn (plain or async, no arguments) once Hexcast is serving: right away when it
+        already is (a plugin installed or updated from the + tab), else as soon as it starts -
+        plugins are loaded before the event loop runs, so setup() itself cannot start
+        background work. Skipped if the plugin was stopped again in the meantime."""
+        self._host.when_serving(self, fn)
+
 
 async def _await_quietly(awaitable, pid: str) -> None:
     try:
@@ -290,6 +297,8 @@ class PluginHost:
         self.revision = 0                             # bumps whenever the set of plugins changes
         self._sockets: set = set()                    # (path, send) of every open websocket
         self._loading: set[str] = set()               # plugins being started right now (cycle guard)
+        self._waiting: list[tuple[PluginContext, Callable[[], Any]]] = []   # ctx.when_serving() before the loop ran
+        self._serving_tasks: set[asyncio.Task] = set()
         try:
             self.plugins_dir.mkdir(parents=True, exist_ok=True)
         except OSError as exc:                        # read-only disk, bad HEXCAST_PLUGINS_DIR ...
@@ -591,6 +600,38 @@ class PluginHost:
         if stopped:
             self.revision += 1
         return stopped, clean
+
+    def when_serving(self, ctx: "PluginContext", fn: Callable[[], Any]) -> None:
+        """See PluginContext.when_serving."""
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:                          # Hexcast is still starting up: wait for serving()
+            self._waiting.append((ctx, fn))
+            return
+        self._run_when_serving(ctx, fn)
+
+    def serving(self) -> None:
+        """Hexcast is serving now (called from inside its lifespan): run what the plugins asked
+        for with ctx.when_serving() while they were being loaded."""
+        waiting, self._waiting = self._waiting, []
+        for ctx, fn in waiting:
+            self._run_when_serving(ctx, fn)
+
+    def _run_when_serving(self, ctx: "PluginContext", fn: Callable[[], Any]) -> None:
+        async def run() -> None:
+            rec = self.loaded.get(ctx.id)
+            if rec is None or rec.ctx is not ctx:     # stopped (or started again) in the meantime
+                return
+            try:
+                result = fn()
+                if inspect.isawaitable(result):
+                    await result
+            except Exception:
+                log.exception("plugin '%s': its start-up work failed", ctx.id)
+
+        task = asyncio.get_running_loop().create_task(run())
+        self._serving_tasks.add(task)
+        task.add_done_callback(self._serving_tasks.discard)
 
     async def shutdown(self) -> None:
         """Hexcast is stopping: give every running plugin the chance to close its sockets."""

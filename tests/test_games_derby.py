@@ -4,11 +4,13 @@ config validation, the HTTP API and the game flow."""
 
 import json
 import math
+import os
 import random
 import re
 import shutil
 import subprocess
 import sys
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -257,6 +259,67 @@ def test_stopping_refunds_an_open_window_and_settles_a_drawn_race(w, monkeypatch
     cents = round(g.history[0]["result"]["field"][1]["mult"] * 100)
     assert ev[-1]["reason"] == "win" and ev[-1]["amount"] == 30 * cents // 100     # a drawn race counts
     assert g.history[0]["result"]["winner"]["num"] == 2
+
+
+def test_the_race_music_plays_from_the_gates_to_the_end_of_the_result(w, monkeypatch):
+    calls = []
+    monkeypatch.setattr(w.derby, "_sound", lambda path, why, after=None: calls.append(path) or path)
+    g = new_game(w, music_clip="Hell Bells", music_loop=True)
+    g.start_game({})
+    assert calls == []                                          # (not on the lineup)
+    to_phase(g, "racing")
+    assert calls == ["/api/play/Hell%20Bells?loop=1"]
+    to_phase(g, "result")
+    assert len(calls) == 1                                      # (it plays on under the result card)
+    play_out(g)
+    assert calls[1:] == ["/api/stop/Hell%20Bells"] and g.g is None
+    # once (no loop); a stopped race stops it too, the clip it started with (whatever the settings say by then)
+    calls.clear()
+    g = new_game(w, music_clip="tune", music_loop=False)
+    g.start_game({})
+    to_phase(g, "racing")
+    w.core.CONFIG["derby"]["music_clip"] = "other"
+    assert g.stop()
+    assert calls == ["/api/play/tune", "/api/stop/tune"]
+    # a restart in the race: the saved game remembers it, settling it stops it
+    calls.clear()
+    g = new_game(w, music_clip="tune", music_loop=True)
+    g.start_game({})
+    to_phase(g, "racing")
+    again = w.derby.Derby(path=g.path, ledger=g.ledger, form=g.form)
+    again.resume()
+    assert calls == ["/api/play/tune?loop=1", "/api/stop/tune"] and again.g is None
+    # none: a test race, no clip set, a lineup nobody raced
+    calls.clear()
+    g = new_game(w, music_clip="tune")
+    g.start_game({"test": True})
+    play_out(g)
+    g = new_game(w, music_clip="tune", run_without_bets=False)
+    g.start_game({})
+    play_out(g)
+    g = new_game(w, music_clip="", run_without_bets=True)
+    g.start_game({})
+    play_out(g)
+    assert calls == [] and g.history[0]["result"]["outcome"] == "raced"
+    assert w.derby.Derby.SCHEMA["music_loop"] == ("bool",) and w.derby.Derby.DEFAULTS["music_loop"] is True
+
+
+def test_the_race_music_reaches_the_soundboard_in_order(w):
+    """The real calls, to a stand-in soundboard on the app: play (looping) when the gates open, stop when the game ends."""
+    heard = []
+    w.app.add_api_route("/api/play/{name}", lambda name, loop: heard.append(("play", name, loop)) or {"ok": True})
+    w.app.add_api_route("/api/stop/{name}", lambda name: heard.append(("stop", name)) or {"ok": True})
+    w.core.CONFIG["derby"].update({"music_clip": "hell bells", "guest_chance": 0})
+    with TestClient(w.app) as c:                                # (one event loop for the whole game: the calls run on it)
+        assert c.post("/games/api/derby/start", json={}).status_code == 200
+        for _ in range(3):
+            c.post("/games/api/derby/next")                     # race, result, over
+        for _ in range(100):
+            if len(heard) == 2:
+                break
+            time.sleep(0.02)
+        assert c.get("/games/api/derby/table").json()["game"] is None
+    assert heard == [("play", "hell bells", "1"), ("stop", "hell bells")]
 
 
 def test_no_bets(w):
@@ -522,6 +585,25 @@ def test_the_junk_has_sprites_lines_and_its_own_comments(w):
     assert len(misses) > 20 and own > len(misses) / 3 and set(rest) <= set(d.LINES["react"]["miss"]), (own, len(misses))
 
 
+def test_the_track_has_its_ground_and_every_runner_its_shadow():
+    """The track's dirt ships (one tile, credited: CC0), and every runner's anchors say where its feet land (sole: the
+    overlay lays its shadow there; the ground can be a wingtip's or the feet joints' level), a floater's that it
+    floats (its shadow stays on the ground); the overlay draws the dirt and a shadow under every runner."""
+    st = DERBY_DIR / "static"
+    tile = st / "derby_ground.webp"
+    assert tile.is_file() and 20_000 < tile.stat().st_size < 400_000
+    credits = json.loads((st / "derby_credits.json").read_text(encoding="utf-8"))["credits"]
+    assert any(c["for"] == "The track" and c["licence"] == "CC0" and c.get("licence_url") for c in credits)
+    sheets = (json.loads((st / "derby_hounds.json").read_text(encoding="utf-8"))["hounds"]
+              + json.loads((st / "derby_guests.json").read_text(encoding="utf-8"))["guests"])
+    for h in sheets:
+        a = h["anchors"]
+        assert isinstance(a.get("sole"), (int, float)) and 0 < a["sole"] <= h["sheet"]["h"], h["id"]
+        assert abs(a["sole"] - a["ground"]) < 40, h["id"]
+    js = (st / "derby.js").read_text(encoding="utf-8")
+    assert "'derby_ground.webp'" in js and "drawShadow(c, r, cam)" in js and "soleOf(A)" in js and "A.hover" in js
+
+
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
 def test_no_hound_talks_to_itself(w):
     """A line that names a hound is said only while that hound races, and never by the hound itself: not in the
@@ -581,7 +663,8 @@ def test_guest_racers_line_up_now_and_then(w, monkeypatch, tmp_path):
             "sheet": {**ham["sheet"], "file": "lola.webp"},
             "lines": {"by": ["Bye, {t}!"], "at": ["Slow down, {t}!"], "ouch": ["LOLA OUCH!", "LOLA OW!"], "back": ["Lola says no, {t}!"],
                       "dodge": ["LOLA DODGES!"], "win": ["LOLA WINS!"], "lose": ["LOLA LOSES!"], "hello": ["Hi, I'm Lola!"],
-                      "ticker": ["{a} IS HERE!"], "nonsense": ["dropped"]}}
+                      "ticker": ["{a} IS HERE!"], "say": ["Lola, from Lolaland!"], "env": ["Hot in here!"], "nonsense": ["dropped"],
+                      "to": {"cinder": ["Cinder, you're toast!", 7], "../x": ["dropped"], "lola": ["dropped too"], "hamageddon": "not a list"}}}
     (pack / "guests.json").write_text(json.dumps({"guests": [lola, {"id": "cinder", "name": "Fake Cinder"},
                                                              {"id": "../x", "name": "Bad"}]}), encoding="utf-8")
     monkeypatch.setattr(d, "GUESTS_DIR", pack)
@@ -589,11 +672,17 @@ def test_guest_racers_line_up_now_and_then(w, monkeypatch, tmp_path):
     assert len(shipped) >= 6 and set(guests) == {g["id"] for g in shipped} | {"lola"}   # (a hound's id or a bad one is skipped)
     assert not guests["hamageddon"]["local"] and guests["lola"]["local"] and guests["lola"]["wobble"] == 0.5
     view = {g["id"]: g for g in w.client.get("/games/api/derby/guests").json()["guests"]}
-    assert view["lola"]["sheet"]["file"] == "/games/api/derby/guests/file/lola.webp" and view["lola"]["lines"]["at"]
-    assert set(view["lola"]["lines"]) == set(d.GUEST_LINES)
+    lola = view["lola"]["sheet"]["file"]
+    assert re.fullmatch(r"/games/api/derby/guests/file/lola\.webp\?v=\d+", lola) and view["lola"]["lines"]["at"]
+    st = (pack / "lola.webp").stat()                            # (exported again: a new address, so no overlay draws the
+    os.utime(pack / "lola.webp", ns=(st.st_atime_ns, st.st_mtime_ns + 5_000_000_000))   # one it cached)
+    again = next(g for g in w.client.get("/games/api/derby/guests").json()["guests"] if g["id"] == "lola")
+    assert again["sheet"]["file"] != lola and w.client.get(again["sheet"]["file"]).status_code == 200
+    assert set(view["lola"]["lines"]) == set(d.GUEST_LINES) | {"to"}
+    assert view["lola"]["lines"]["to"] == {"cinder": ["Cinder, you're toast!"]}      # (a bad id, itself, a non-list: dropped)
     assert w.client.get("/games/api/derby/guests/file/lola.webp").status_code == 200
     for g in shipped:                                           # the add-on's own: every kind of line, a sheet that's there
-        assert all(view[g["id"]]["lines"][k] for k in d.GUEST_LINES), g["id"]
+        assert all(view[g["id"]]["lines"][k] for k in d.GUEST_LINES if k != "morph") and view[g["id"]]["lines"]["to"], g["id"]
         assert view[g["id"]]["sheet"]["file"] == f"guests/{g['id']}.webp" and view[g["id"]]["anchors"]["stride"] > 0
         assert w.client.get("/plugins/games_derby/static/guests/" + g["id"] + ".webp").status_code == 200, g["id"]
     for bad in ("guests.json", "nope.webp", "..%2Fguests.json"):
@@ -602,6 +691,10 @@ def test_guest_racers_line_up_now_and_then(w, monkeypatch, tmp_path):
     g = new_game(w, guest_chance=1, guests_max=2)
     counts = [sum(h["id"] in guests for h in g._new_field()) for _ in range(40)]
     assert all(1 <= k <= 2 for k in counts) and 2 in counts
+    g = new_game(w, guest_chance=1, guests_max=4)                # (four at most: no more than that, ever)
+    counts = [sum(h["id"] in guests for h in g._new_field()) for _ in range(80)]
+    assert all(1 <= k <= 4 for k in counts) and 4 in counts
+    assert g.validate_config({"guests_max": 9})["guests_max"] == 4
     g = new_game(w, guest_chance=0)
     assert not any(h["id"] in guests for _ in range(20) for h in g._new_field())
     # the race: no biting, no dog lines (but its own), its own ouches, last words and wobble
@@ -650,10 +743,184 @@ def test_guest_racers_line_up_now_and_then(w, monkeypatch, tmp_path):
     assert out.returncode == 0, out.stderr
     said = json.loads(out.stdout.strip().splitlines()[-1])
     ham_said = [text for who, text in said if who == "hamageddon"]
-    own = [re.compile("^" + re.escape(x).replace(re.escape("{t}"), ".+") + "$") for k in d.GUEST_LINES for x in guests["hamageddon"]["lines"][k]]
+    ham = guests["hamageddon"]["lines"]
+    own = [re.compile("^" + re.escape(x).replace(re.escape("{t}"), ".+") + "$")
+           for x in [x for k in d.GUEST_LINES for x in ham[k]] + [x for v in ham["to"].values() for x in v]]
     mine = [t for t in ham_said if any(r.match(t) for r in own)]
     assert ham_said and not any(d._DOGGY.search(t) for t in ham_said if t not in mine), ham_said
     assert len(mine) >= 0.6 * len(ham_said), (len(mine), ham_said)                # (mostly its own)
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_guests_talk_to_each_other_by_name(w):
+    """A guest's `to` lines are for one racer, by name: it says them passing that one (and answers that one with
+    them), never anyone else, and only while that one races. Its `say` (what it is) and `env` (the place) come up
+    when it passes anyone."""
+    d = w.derby
+    rng, races = random.Random(21), []
+    for _ in range(40):
+        hounds = rng.sample(d.ROSTER, 4)
+        f = [{"num": i + 1, "id": h["id"], "name": h["name"], "short": h["short"]} for i, h in enumerate(hounds)]
+        f += [{"num": 5, "id": "ayla", "name": "Ayla", "short": "Ayla", "guest": True},
+              {"num": 6, "id": "bort", "name": "Bort", "short": "Bort", "guest": True}]
+        races.append({"field": f, "script": d.build_script(f, rng.sample(range(6), 6), 45, rng.getrandbits(31))})
+    guests = [{"id": "ayla", "name": "Ayla", "short": "Ayla", "guest": True,
+               "lines": {"by": ["Later, {t}!"], "back": ["Whatever, {t}."], "say": ["I'm from the moon, you know."],
+                         "env": ["Lava? Cute."], "to": {"bort": ["Bort, you absolute walnut!", "Eat my dust, Bort!"],
+                                                        "cinder": ["Cinder, you're kindling."]}}},
+              {"id": "bort", "name": "Bort", "short": "Bort", "guest": True,
+               "lines": {"by": ["Move it, {t}!"], "back": ["Hey, {t}!"], "say": ["Bort. Just Bort."], "env": ["Smells like eggs."],
+                         "to": {"ayla": ["Ayla! I'm coming for you!"]}}}]
+    runner = r"""
+      const API = require(process.argv[1]), fs = require('fs'), path = require('path'), dir = path.dirname(process.argv[1]);
+      API.ASSETS.lines = JSON.parse(fs.readFileSync(path.join(dir, 'derby_lines.json'), 'utf8'));
+      API.ASSETS.byId = {};
+      JSON.parse(fs.readFileSync(path.join(dir, 'derby_hounds.json'), 'utf8')).hounds.forEach(h => { API.ASSETS.byId[h.id] = h; });
+      const data = JSON.parse(fs.readFileSync(0, 'utf8'));
+      data.guests.forEach(g => { API.ASSETS.byId[g.id] = g; });
+      const said = [];
+      for (const race of data.races) {
+        const R = API.buildRace({ id: 'to-test', field: race.field, script: race.script });
+        R.talk.forEach(b => said.push([b.r.id, b.text, race.field.map(f => f.id)]));
+      }
+      console.log(JSON.stringify(said));
+    """
+    out = subprocess.run([NODE, "-e", runner, str(DERBY_DIR / "static" / "derby.js")],
+                         input=json.dumps({"guests": guests, "races": races}), capture_output=True, text=True, timeout=120)
+    assert out.returncode == 0, out.stderr
+    said = json.loads(out.stdout.strip().splitlines()[-1])
+    count = lambda who, lines: sum(1 for by, text, _ in said if by == who and text in lines)
+    to_bort, to_ayla, to_cinder = guests[0]["lines"]["to"]["bort"], guests[1]["lines"]["to"]["ayla"], ["Cinder, you're kindling."]
+    assert count("ayla", to_bort) >= 3 and count("bort", to_ayla) >= 3, (count("ayla", to_bort), count("bort", to_ayla))
+    assert count("ayla", guests[0]["lines"]["say"]) + count("ayla", guests[0]["lines"]["env"]) >= 2
+    assert not any(text in to_bort + to_cinder for by, text, _ in said if by != "ayla")             # (only ever its own)
+    cinder = [(text, ids) for by, text, ids in said if by == "ayla" and text in to_cinder]
+    assert all("cinder" in ids for _, ids in cinder), cinder                                    # (only while Cinder races)
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_guest_changes_shape_partway(w, monkeypatch, tmp_path):
+    """A guest with a morph (a robot that turns into its truck) changes partway: somewhere in its `at` share of the
+    race, the same on every overlay, it plays the change once (its `into` sheet, `dur` seconds), says one of its own
+    `morph` lines (always heard) and runs on in its new shape (`then`). Whatever on the track slows it (junk, slime,
+    the hand) changes it again, back and forth (the change played backward turns it back), never while it's still
+    changing; partway only ever turns it into the new shape. A local pack's extra sheets are served like its first;
+    a morph whose sheet isn't there is dropped."""
+    d = w.derby
+    pack = tmp_path / "pack"
+    pack.mkdir()
+    ham = next(g for g in json.loads((DERBY_DIR / "static" / "derby_guests.json").read_text(encoding="utf-8"))["guests"]
+               if g["id"] == "hamageddon")
+    for name in ("bot.webp", "bot__morph.webp", "bot__then.webp", "nomo.webp"):
+        (pack / name).write_bytes((DERBY_DIR / "static" / ham["sheet"]["file"]).read_bytes())
+    shape = lambda f, nose: {"sheet": {**ham["sheet"], "file": f}, "anchors": {**ham["anchors"], "nose": nose}}
+    bot = {"id": "bot", "name": "Robo Truck", "short": "Robo", **shape("bot.webp", 200),
+           "morph": {"at": [0.4, 0.5], "dur": 1.2, "into": shape("bot__morph.webp", 210), "then": shape("bot__then.webp", 220)},
+           "lines": {"morph": ["ROLL OUT!", "Truck mode!"]}}
+    nomo = {"id": "nomo", "name": "No Morph", **shape("nomo.webp", 200),
+            "morph": {"into": shape("gone.webp", 1), "then": shape("bot__then.webp", 1)}}
+    (pack / "guests.json").write_text(json.dumps({"guests": [bot, nomo]}), encoding="utf-8")
+    monkeypatch.setattr(d, "GUESTS_DIR", pack)
+    view = {g["id"]: g for g in w.client.get("/games/api/derby/guests").json()["guests"]}
+    m = view["bot"]["morph"]
+    assert m["at"] == [0.4, 0.5] and m["dur"] == 1.2 and "morph" not in view["nomo"]
+    assert [m[k]["sheet"]["file"].split("?")[0] for k in ("into", "then")] == ["/games/api/derby/guests/file/bot__morph.webp",
+                                                                                "/games/api/derby/guests/file/bot__then.webp"]
+    assert view["bot"]["lines"]["morph"] == ["ROLL OUT!", "Truck mode!"]
+    assert w.client.get(m["into"]["sheet"]["file"]).status_code == 200
+    rng, races, KNOCKS = random.Random(8), [], {"junk", "bonk", "slime", "hand"}
+    while len(races) < 12 or sum(any(e["a"] == 5 and e["type"] in KNOCKS for e in r["script"]["events"]) for r in races) < 6:
+        f = [{"num": i + 1, "id": h["id"], "name": h["name"], "short": h["short"]} for i, h in enumerate(rng.sample(d.ROSTER, 5))]
+        f.append({"num": 6, "id": "bot", "name": "Robo Truck", "short": "Robo", "guest": True})
+        races.append({"field": f, "script": d.build_script(f, rng.sample(range(6), 6), 45, rng.getrandbits(31))})
+    runner = r"""
+      const API = require(process.argv[1]), fs = require('fs'), path = require('path'), dir = path.dirname(process.argv[1]);
+      API.ASSETS.lines = JSON.parse(fs.readFileSync(path.join(dir, 'derby_lines.json'), 'utf8'));
+      API.ASSETS.byId = {};
+      JSON.parse(fs.readFileSync(path.join(dir, 'derby_hounds.json'), 'utf8')).hounds.forEach(h => { API.ASSETS.byId[h.id] = h; });
+      const data = JSON.parse(fs.readFileSync(0, 'utf8'));
+      API.ASSETS.byId.bot = data.bot;
+      const out = [];
+      for (const race of data.races) {
+        const R = API.buildRace({ id: 'morph-test', field: race.field, script: race.script }), r = R.runners[5], M = data.bot.morph;
+        const again = API.buildRace({ id: 'morph-test', field: race.field, script: race.script }).runners[5];
+        const at = t => { API.raceAt(R, t); return [r.A === data.bot.anchors ? 'first' : r.A === M.into.anchors ? 'into' : r.A === M.then.anchors ? 'then' : '?', r.f]; };
+        const seen = r.changes.map(c => ({ t: c.t, then: c.then, before: at(c.t - 0.1), early: at(c.t + 0.1),
+                                          late: at(c.t + M.dur - 0.05), after: at(c.t + M.dur + 0.1) }));
+        const said = R.talk.filter(b => b.r === r && r.mt != null && Math.abs(b.t - r.mt - 0.15) < 1e-6).map(b => b.text);
+        out.push({ mt: r.mt, again: [again.mt, again.changes], changes: r.changes, seen, dur: M.dur,
+                   share: r.mt == null ? null : R.xAt(r, r.mt) / R.D, T: r.T, said });
+      }
+      console.log(JSON.stringify(out));
+    """
+    out = subprocess.run([NODE, "-e", runner, str(DERBY_DIR / "static" / "derby.js")],
+                         input=json.dumps({"bot": view["bot"], "races": races}), capture_output=True, text=True, timeout=120)
+    assert out.returncode == 0, out.stderr
+    res = json.loads(out.stdout.strip().splitlines()[-1])
+    assert len({round(x["mt"], 2) for x in res if x["mt"] is not None}) > 3          # (a different moment each race)
+    knocked = 0
+    for x, race in zip(res, races):
+        assert x["again"] == [x["mt"], x["changes"]], x                                # (the same on every overlay)
+        knocks = [e["t"] + 0.15 for e in race["script"]["events"] if e["a"] == 5 and e["type"] in KNOCKS]
+        assert [c["then"] for c in x["changes"]] == [k % 2 == 0 for k in range(len(x["changes"]))], x   # (back and forth)
+        for c, nxt in zip(x["changes"], x["changes"][1:]):
+            assert nxt["t"] >= c["t"] + x["dur"], x                                  # (never while still changing)
+        for t in knocks:                                                              # (each knock changes it, unless
+            busy = any(c["t"] < t < c["t"] + x["dur"] + 0.2 for c in x["changes"])  # it's still changing)
+            assert busy or any(abs(c["t"] - t) < 1e-9 for c in x["changes"]), (t, x)
+        knocked += sum(not (x["mt"] is not None and abs(c["t"] - x["mt"]) < 1e-9) for c in x["changes"])
+        if x["mt"] is not None:                                                       # (partway, in at: into the truck)
+            assert 0.4 <= x["share"] < 0.52 and x["mt"] < x["T"], x
+            assert next(c for c in x["changes"] if c["t"] == x["mt"])["then"], x
+            assert x["said"] and x["said"][0] in ("ROLL OUT!", "Truck mode!"), x
+        for c in x["seen"]:                                                            # (each change once, in order;
+            assert c["before"][0] == ("first" if c["then"] else "then"), c          # back: the change backward)
+            assert c["early"] == ["into", 1 if c["then"] else 14] and c["late"] == ["into", 15 if c["then"] else 0], c
+            assert c["after"][0] == ("then" if c["then"] else "first"), c
+    assert knocked >= 3 and any(not c["then"] for x in res for c in x["changes"])      # (knocks change it, both ways)
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_mute_guest_never_talks_but_hears_plenty(w):
+    """A mute guest (a pet) says nothing: no event line, no finish word, no passing talk, no answer, no lineup line.
+    The others still talk to it: passed by it, they mostly answer it, by its name."""
+    d = w.derby
+    rng, races = random.Random(5), []
+    for _ in range(40):
+        hounds = rng.sample(d.ROSTER, 5)
+        f = [{"num": i + 1, "id": h["id"], "name": h["name"], "short": h["short"]} for i, h in enumerate(hounds)]
+        f.append({"num": 6, "id": "pup", "name": "Lil Pup", "short": "Pup", "guest": True, "mute": True})
+        races.append({"field": f, "script": d.build_script(f, rng.sample(range(6), 6), 45, rng.getrandbits(31))})
+    for race in races:
+        s, pup = race["script"], 5
+        assert not any(e.get("line") and (e["b"] if e.get("by") == "b" else e["a"]) == pup for e in s["events"])
+        assert not any(e.get("lines") and e["a"] == pup for e in s["events"])
+        if s["order"][0] == pup:
+            assert s["talk"]["win"] == "" and s["talk"]["photo_win"] == ""
+        if s["order"][-1] == pup:
+            assert s["talk"]["last"] == ""
+    guests = [{"id": "pup", "name": "Lil Pup", "short": "Pup", "guest": True, "mute": True,
+               "lines": {"at": ["Sit, {t}!"], "by": ["I should never be said"], "say": ["Nor this"]}}]
+    runner = r"""
+      const API = require(process.argv[1]), fs = require('fs'), path = require('path'), dir = path.dirname(process.argv[1]);
+      API.ASSETS.lines = JSON.parse(fs.readFileSync(path.join(dir, 'derby_lines.json'), 'utf8'));
+      API.ASSETS.byId = {};
+      JSON.parse(fs.readFileSync(path.join(dir, 'derby_hounds.json'), 'utf8')).hounds.forEach(h => { API.ASSETS.byId[h.id] = h; });
+      const data = JSON.parse(fs.readFileSync(0, 'utf8'));
+      data.guests.forEach(g => { API.ASSETS.byId[g.id] = g; });
+      const said = [];
+      for (const race of data.races) {
+        const R = API.buildRace({ id: 'mute-test', field: race.field, script: race.script });
+        R.talk.forEach(b => said.push([b.r.id, b.text]));
+      }
+      console.log(JSON.stringify(said));
+    """
+    out = subprocess.run([NODE, "-e", runner, str(DERBY_DIR / "static" / "derby.js")],
+                         input=json.dumps({"guests": guests, "races": races}), capture_output=True, text=True, timeout=120)
+    assert out.returncode == 0, out.stderr
+    said = json.loads(out.stdout.strip().splitlines()[-1])
+    assert said and not any(by == "pup" for by, _ in said), [t for by, t in said if by == "pup"]
+    assert sum(1 for by, t in said if by != "pup" and "Pup" in t) >= 5            # (they talk to it, by name)
 
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")

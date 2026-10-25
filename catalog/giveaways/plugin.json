@@ -1,0 +1,22 @@
+{
+  "id": "giveaways",
+  "name": "Giveaways",
+  "version": "1.0.0",
+  "description": "Prizes with a picture and a description, drawn from everyone in your Twitch chat - or followers (for at least a set time) and/or subscribers - with a countdown and a name jumble on an OBS overlay before the winner shows, a chat message for them, rerolls and a winners list.",
+  "icon": "🎁",
+  "color": "#ff5fa2",
+  "category": "Integrations",
+  "author": "UMDSmith",
+  "requires": ["twitch_core"],
+  "nav": {
+    "label": "Giveaways",
+    "href": "/giveaways",
+    "key": "giveaways",
+    "order": 24,
+    "status_url": "/giveaways/api/status",
+    "status_js": "nav.js"
+  },
+  "help": { "file": "help.html", "toc": [ { "id": "giveaways", "label": "Giveaways" } ] },
+  "legacy_config": [],
+  "order": 24
+}

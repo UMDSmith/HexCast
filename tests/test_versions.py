@@ -445,6 +445,34 @@ def test_a_broken_upstream_download_leaves_the_old_version_running(world, client
     assert job["state"] == "error" and world.host.scan()["alpha"].version == "1.0.0"
 
 
+def test_an_upstream_update_brings_a_new_requirement_from_github_too(world, client, server):
+    """A ZIP install has no catalog copy of a plugin that only came with the new version (Twitch 1.3 needing the
+    twitch_core library, say): the update fetches it from the repository as well, and starts it first."""
+    installed_alpha(world, "1.0.0")
+    world.host.load_all()
+    world.host.upstream = Upstream(server.config)
+    alpha = {"id": "alpha", "name": "Alpha", "version": "1.1.0", "requires": ["newlib"]}
+    newlib = {"id": "newlib", "name": "Newlib", "version": "1.0.0", "hidden": True}
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for m in (alpha, newlib):
+            z.writestr(f"hexcast-main/catalog/{m['id']}/plugin.json", json.dumps(m))
+            z.writestr(f"hexcast-main/catalog/{m['id']}/plugin.py", "def setup(ctx):\n    pass\n")
+    server.files["/zip/UMDSmith/hexcast/main.zip"] = buf.getvalue()
+    for m in (alpha, newlib):
+        server.files[f"/raw/UMDSmith/hexcast/main/catalog/{m['id']}/plugin.json"] = json.dumps(m).encode()
+    world.host.upstream.refresh(["alpha"], force=True)
+    assert "newlib" not in world.host.catalog.entries()
+    job = wait_job(client, client.post("/api/plugins/alpha/update").json()["job"])
+    assert job["state"] == "done", job
+    assert world.host.scan()["newlib"].meta["source"] == "upstream" and world.host.scan()["alpha"].version == "1.1.0"
+    assert {"alpha", "newlib"} <= set(world.host.loaded)
+    # with the check switched off nothing is asked for: such an update fails as before (the old version keeps running)
+    world.host.upstream.configure(None)
+    with pytest.raises(InstallError, match="not in the catalog"):
+        world.installer.plan_install("newlib", upstream=True)
+
+
 def test_updating_an_add_on_touches_only_that_add_on(world, client, server):
     write_plugin(world.catalog, "base", version="1.0.0")
     write_plugin(world.catalog, "kid", version="1.0.0", parent="base", nav=False, requires=["base"])

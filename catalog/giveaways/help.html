@@ -1,0 +1,31 @@
+<section id="giveaways">
+<div class="card">
+  <h2>Giveaways <span class="tag">/giveaways</span></h2>
+  <p class="hint">Prizes with a picture and a description; a draw from who is in your Twitch chat right now; a countdown with a
+    jumble of names on the overlay (<code>/giveaways/overlay</code>, a 1920×1080 browser source), the winner revealed with
+    confetti, then a chat message for them. Who can win: <b>everyone in chat</b>, <b>followers</b> (optionally for at least
+    some minutes / hours / days) and/or <b>subscribers</b> - any ticked group counts, and every viewer who qualifies has the
+    same chance. The broadcaster, Hexcast's own accounts, the names in <b>Never win</b> and (if ticked) past winners are left out.</p>
+  <p class="hint">"In chat" is Twitch's own list of who is connected to the chat - lurkers too, not people watching with chat
+    closed - and it can lag a minute or two. Followers are checked as names are drawn (so a big chat costs a few lookups);
+    subscribers can only be seen by the channel's own account. It needs the shared <a href="/help/twitch_connection">Twitch
+    connection</a> signed in with the <code>moderator:read:chatters</code> scope (an account signed in before Giveaways
+    existed: connect it again), and <code>user:write:chat</code> for the chat message.</p>
+  <p class="hint">Each prize has a quantity - one fewer with every winner - and optional private keys or codes: one goes to
+    each winner, shown only in the winners list (and <code>GET /giveaways/api/config</code>), never on the overlay.
+    <b>Reroll</b> draws again for that prize without the winner, who gives the prize and code back.</p>
+  <table class="api">
+    <tr><td>GET /giveaways/api/status</td><td>what the overlay shows (<code>show.state</code>: idle · showing · drawing · revealed), the prizes without their codes, who can win, the latest winners, and <code>problem</code> when a draw cannot work</td></tr>
+    <tr><td>POST /giveaways/api/draw</td><td><code>{"prize": "id", "channel"?: "name", "eligible"?: {"everyone": false, "followers": true, "follow_seconds": 86400, "subs": true}}</code> — draw now and start the show; the winner comes back at once, the overlay reveals them after the countdown</td></tr>
+    <tr><td>POST /giveaways/api/reroll</td><td>draw again for the last winner's prize (<code>{"entry": "id"}</code> for an earlier one)</td></tr>
+    <tr><td>POST /giveaways/api/cancel · hide</td><td>stop a draw that is counting down (nobody wins) · take the prize or winner off the overlay</td></tr>
+    <tr><td>POST /giveaways/api/show</td><td><code>{"prize": "id"}</code> — show the prize on the overlay, up for grabs</td></tr>
+    <tr><td>POST /giveaways/api/test</td><td><code>{"prize"?: "id", "where": "stream|preview"}</code> — the whole show with made-up names; nothing is recorded or posted</td></tr>
+    <tr><td>GET /giveaways/api/pool</td><td>how many are in chat and could win right now</td></tr>
+    <tr><td>POST /giveaways/api/prizes · /prizes/{id} · /prizes/{id}/delete</td><td>add (<code>{"name", "description", "image", "quantity", "codes"}</code>), change some fields of, or remove a prize</td></tr>
+    <tr><td>GET · POST /giveaways/api/config</td><td>every setting (countdown, hold, announce, message, sounds, look, exclusions ...) and the prizes; what you leave out stays</td></tr>
+    <tr><td>GET · POST /giveaways/api/images</td><td>the prize picture library (POST a <code>file</code>; <code>/images/delete</code> with <code>{"name"}</code>)</td></tr>
+    <tr><td>WS /giveaways/ws</td><td>live status, <code>{"type": "event", "event": "winner", ...}</code> when a winner shows, and every call above by name: <code>{"cmd": "draw", "prize": "id", "rid": 1}</code></td></tr>
+  </table>
+</div>
+</section>

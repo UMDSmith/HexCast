@@ -1,0 +1,22 @@
+<section id="chat_timers">
+<div class="card">
+  <h2>Chat Timers <span class="tag">/chat_timers</span></h2>
+  <p class="hint">Messages Hexcast posts in your Twitch chat on a timer, as your account - your Discord link, schedule
+    or socials. Each message has its own interval and waits for that many chat lines since it last posted (lines from
+    Hexcast itself do not count), so a quiet chat is not filled with timers. <b>Only while live</b> (on by default)
+    holds it while the stream is offline, and a stream starting restarts the clock: the first message comes one interval
+    in. With several messages due, the one that waited longest goes first, and the next waits at least the
+    <b>seconds between two timer messages</b>. <code>{channel}</code> and <code>{uptime}</code> are filled in.</p>
+  <p class="hint">It uses the shared <a href="/help/twitch_connection">Twitch connection</a>: sign in there, with an
+    account that may post in the channel (its own, or a moderator - the <code>user:write:chat</code> scope).</p>
+  <table class="api">
+    <tr><td>GET /chat_timers/api/status</td><td>every timer with, per channel it posts in, what it waits for (<code>interval</code> · <code>chat</code> · <code>live</code> · <code>gap</code> · <code>off</code>, or <code>""</code> when due), <code>next_in</code> seconds, <code>lines_needed</code>, <code>sent</code>, <code>last_error</code>; and <code>problem</code> when posting cannot work</td></tr>
+    <tr><td>GET · POST /chat_timers/api/config</td><td><code>{"on": true, "gap": 60, "timers": [...]}</code> — what you leave out stays; <code>timers</code> replaces the whole list</td></tr>
+    <tr><td>POST /chat_timers/api/timers</td><td>add one: <code>{"text": "...", "every": 15, "lines": 5, "live_only": true, "channel": "primary|all|name", "name": "Discord", "on": true}</code></td></tr>
+    <tr><td>POST /chat_timers/api/timers/{id}</td><td>change some of its settings (only the fields you send)</td></tr>
+    <tr><td>POST /chat_timers/api/timers/{id}/send</td><td>post it now (<code>{"channel": "name"}</code> for one channel), due or not; its clock starts again</td></tr>
+    <tr><td>POST /chat_timers/api/timers/{id}/delete</td><td>remove it</td></tr>
+    <tr><td>WS /chat_timers/ws</td><td>live <code>{"type": "status"}</code> updates, and every call above by name: <code>{"cmd": "send", "id": "...", "rid": 1}</code> (<code>status</code>, <code>config</code>, <code>set_config</code>, <code>add</code>, <code>update</code>, <code>delete</code>, <code>send</code>) — replies carry your <code>rid</code></td></tr>
+  </table>
+</div>
+</section>

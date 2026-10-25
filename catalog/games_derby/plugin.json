@@ -1,7 +1,7 @@
 {
   "id": "games_derby",
   "name": "Hellhound Derby",
-  "version": "1.3.0",
+  "version": "1.3.4",
   "parent": "games",
   "description": "Hellhounds race on one track and chat bets on the winner by its race number. Odds come from the hounds' form (hot streaks pay less), the race is pure chaos: tumbles, bites, slime, flaming arses, a crowd throwing junk, trash talk and photo finishes.",
   "icon": "🐕",

@@ -1,0 +1,22 @@
+{
+  "id": "chat_timers",
+  "name": "Chat Timers",
+  "version": "1.0.0",
+  "description": "Messages posted in your Twitch chat on a timer, as your account - your Discord, schedule or socials - each with its own interval, a minimum of chat in between and live-only by default, like StreamElements timers.",
+  "icon": "⏲️",
+  "color": "#9146ff",
+  "category": "Integrations",
+  "author": "UMDSmith",
+  "requires": ["twitch_core"],
+  "nav": {
+    "label": "Timers",
+    "href": "/chat_timers",
+    "key": "chat_timers",
+    "order": 22,
+    "status_url": "/chat_timers/api/status",
+    "status_js": "nav.js"
+  },
+  "help": { "file": "help.html", "toc": [ { "id": "chat_timers", "label": "Chat Timers" } ] },
+  "legacy_config": [],
+  "order": 22
+}

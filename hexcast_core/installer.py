@@ -87,9 +87,12 @@ class Installer:
 
     # ---- planning ------------------------------------------------------------------
 
-    def plan_install(self, pid: str) -> list[CatalogEntry]:
+    def plan_install(self, pid: str, *, upstream: bool = False) -> list[CatalogEntry]:
         """What has to be copied in to get `pid` running: the plugins it requires that are
-        not installed yet, then `pid` itself, dependencies first."""
+        not installed yet, then `pid` itself, dependencies first.
+        `upstream=True` (a new requirement of an update): a plugin the local catalog does not
+        have is asked for on GitHub - a ZIP install updated from upstream has no copy of a
+        plugin that only came into existence with the new version. Blocking: call from a thread."""
         entries = self.host.catalog.entries()
         installed = self.host.scan()
         plan: list[CatalogEntry] = []
@@ -101,6 +104,8 @@ class Installer:
             if here is not None and here.manifest is not None and x != pid:
                 return                                   # a dependency that is already there
             entry = entries.get(x)
+            if entry is None and upstream:
+                entry = self.host.upstream.fetch_entry(x)
             if entry is None:
                 if x == pid:
                     raise InstallError(f"'{x}' is not in the catalog")
@@ -192,7 +197,7 @@ class Installer:
             here = installed.get(dep)
             if here is not None and here.manifest is not None:
                 continue
-            for e in self.plan_install(dep):
+            for e in self.plan_install(dep, upstream=True):
                 if all(x.id != e.id for x in out):
                     out.append(e)
         return out

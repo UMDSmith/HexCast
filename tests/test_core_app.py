@@ -91,6 +91,27 @@ def test_soundboard_still_works_without_any_plugin(hexcast, client):
     assert "second" in client.get("/api/list").json()["audio"]
 
 
+def test_a_clip_can_loop_and_be_stopped_on_its_own(hexcast, client):
+    tiny_wav(hexcast.AUDIO_DIR / "racemusic.wav")
+    hexcast.reindex()
+    with client.websocket_connect("/ws/overlay") as plain, client.websocket_connect("/ws/overlay?role=avatar") as obs:
+        for _ in range(100):                                   # (both have to be registered)
+            if len(hexcast.overlay_clients) >= 2 and any(m.get("role") == "avatar" for m in hexcast.overlay_meta.values()):
+                break
+            time.sleep(0.02)
+        assert client.get("/api/play/racemusic?loop=1").json()["delivered"] == 1
+        played = plain.receive_json()
+        assert played["type"] == "audio" and played["loop"] is True and played["url"].endswith("/racemusic.wav")
+        client.get("/api/play/audio/racemusic")
+        assert "loop" not in plain.receive_json()                  # (without it: once, as ever)
+        # one clip's stop goes to the Soundboard overlay only (an Avatars overlay takes any stop for "stop all")
+        assert client.get("/api/stop/RaceMusic").json()["delivered"] == 1
+        assert plain.receive_json() == {"type": "stop", "url": played["url"]}
+        assert client.get("/api/stop/nothing-here").status_code == 404
+        assert client.get("/api/stop").json()["delivered"] == 2
+        assert plain.receive_json() == {"type": "stop"} and obs.receive_json() == {"type": "stop"}
+
+
 def test_install_and_remove_from_the_running_app(hexcast, client):
     r = client.post("/api/plugins/countdown/install")
     assert r.status_code == 200

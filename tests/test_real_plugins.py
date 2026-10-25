@@ -14,6 +14,8 @@ PLUGINS = [
     ("clips", "/clips/api/status", []),
     ("music", "/ytm/api/status", ["socketio", "aiohttp"]),
     ("avatar", "/avatar/api/status", []),
+    ("chat_timers", "/chat_timers/api/status", ["websockets"]),
+    ("giveaways", "/giveaways/api/status", ["websockets"]),
 ]
 
 
@@ -51,6 +53,30 @@ def test_music_and_clips_share_the_ytdlp_library(real_world):
     assert c.get("/clips/api/status").status_code == 404
 
 
+def test_the_twitch_modules_share_one_connection(real_world):
+    """Twitch, Chat Timers and Giveaways each install on their own and bring the connection with them; with all
+    three there is one connection, and stopping one module leaves the others (and the connection) running."""
+    pytest.importorskip("websockets")
+    real_world.installer.install("giveaways")
+    real_world.host.load_all()
+    assert set(real_world.host.loaded) == {"twitch_core", "giveaways"}                  # no Twitch tab came with it
+    real_world.installer.install("chat_timers")
+    real_world.installer.install("twitch")
+    real_world.host.load_all()
+    assert set(real_world.host.dependents("twitch_core")) == {"giveaways", "chat_timers", "twitch"}
+    from hexcast_core import running_plugin
+    core = running_plugin("twitch_core").core
+    assert len(core.HOOKS.chat) == 2 and len(core.HOOKS.event) == 2                     # Twitch's and Timers' listeners
+    asyncio.run(real_world.host.unload("chat_timers"))
+    assert len(core.HOOKS.chat) == 1 and "twitch_core" in real_world.host.loaded       # Timers' listeners went with it
+    c = TestClient(real_world.app)
+    assert c.get("/twitch/api/connection").status_code == 200 and c.get("/twitch/api/status").status_code == 200
+    stopped, clean = asyncio.run(real_world.host.unload("twitch_core"))                 # the library takes its users along
+    assert set(stopped) == {"twitch_core", "giveaways", "twitch"} and clean
+    for name in ("twitch.json", "twitch_core.json", "twitch_secrets.json", "twitch_queue.json", "chat_timers.json", "giveaways.json"):
+        (real_world.config / name).unlink(missing_ok=True)
+
+
 def test_twitch_shoutout_finds_clips_only_when_installed(real_world):
     from hexcast_core import running_plugin
     real_world.installer.install("twitch")
@@ -64,7 +90,7 @@ def test_twitch_shoutout_finds_clips_only_when_installed(real_world):
 def test_every_catalog_plugin_has_a_valid_manifest_and_help(real_world):
     entries = real_world.host.catalog.entries()
     assert real_world.host.catalog.errors == {}
-    assert {"twitch", "music", "avatar", "discord", "clips", "countdown", "games", "ticker", "ytdlp",
+    assert {"twitch", "twitch_core", "chat_timers", "giveaways", "music", "avatar", "discord", "clips", "countdown", "games", "ticker", "ytdlp",
             "games_roulette", "games_craps", "games_russian", "games_trivia", "games_hexfall", "games_climb", "games_blackjack", "games_derby"} <= set(entries)
     for pid, e in entries.items():
         m = e.manifest
