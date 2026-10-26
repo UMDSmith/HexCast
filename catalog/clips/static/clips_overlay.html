@@ -179,6 +179,14 @@ function play(msg){
     var err = v.error ? ('media error ' + v.error.code) : 'media error';
     fail(id, err);
   });
+  // A browser without the video's codec (HEVC in OBS without hardware decoding) plays the sound alone:
+  // no picture and no error. Twitch and YouTube always have a picture, so report it and this overlay
+  // falls back to the embed. Generic links may be sound only.
+  if ((msg.item || {}).kind !== 'media') {
+    v.addEventListener('loadedmetadata', function(){
+      if (!v.videoWidth && !v.videoHeight) fail(id, 'sound but no picture: this browser cannot decode the video');
+    });
+  }
 
   // Appended to the DOM so OBS's browser source captures the audio - same
   // reason the soundboard overlay attaches its Audio elements.

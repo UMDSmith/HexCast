@@ -23,6 +23,12 @@ unnecessary.
 The Twitch iframe embed is kept only as a best-effort **fallback** for things
 direct playback can't reach (sub-only VODs, expired clips).
 
+Newer Twitch clips are listed as HEVC (H.265) only. A browser without an HEVC
+decoder plays just their sound (OBS without hardware decoding: no picture and
+no error) or refuses them (Firefox: `media error 4`). Twitch also keeps an
+H.264 copy beside it, and Clips plays that copy instead (pre-downloads too).
+Older clips are H.264 already.
+
 ---
 
 ## Install
@@ -118,6 +124,8 @@ can't decode it), only that overlay switches to the embed. Other overlays,
 OBS included, keep the direct video, and the clip still ends, pauses and
 reports progress through them. When it ends, the embed is cleared too. Only
 when no connected overlay can play it does the whole item go to the embed.
+A Twitch or YouTube video that loads with sound but no picture counts as
+"can't play it" too.
 
 ---
 
@@ -296,3 +304,11 @@ error badge shows exactly what yt-dlp reported. Remove the row.
 **The overlay shows a Twitch player frame instead of clean video.** That's
 the iframe fallback kicking in — the row will carry an error badge explaining
 why direct playback failed.
+
+**Twitch clips play sound but no picture (YouTube is fine).** An HEVC clip on
+Clips 1.1.1 or older: update Clips. A clip pre-downloaded by an older Clips
+stays HEVC; remove it and add it again.
+
+**"clips.twitch.tv will not allow Firefox to display the page" (or a grey
+"refused to connect" box).** The embed fallback only works when the overlay
+is opened as `http://localhost:4747/clips/overlay` (or `127.0.0.1`).

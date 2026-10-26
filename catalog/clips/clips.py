@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi import WebSocket, WebSocketDisconnect
@@ -545,6 +546,58 @@ def _pick_mp4(info: dict) -> str:
     return info.get("url") or ""
 
 
+# Twitch started listing clips as HEVC (H.265) only. A browser without an HEVC decoder plays just the
+# sound (OBS without hardware decoding: no picture, no error) or refuses it ("media error 4" in Firefox),
+# but the same signed link also opens the H.264 copy in a sibling folder:
+# .../landscape/hevc/source/index.mp4 -> .../landscape/h264/1080/index.mp4.
+_HEVC_DIR = re.compile(r"/hevc/([^/]+)/")
+
+
+def _h264_twins(info: dict) -> list[str]:
+    """H.264 copies to try for a clip yt-dlp listed as HEVC, best first: each landscape format's
+    twin, then the H.264 link Twitch names in the access token (720p)."""
+    out: list[str] = []
+    fmts = [f for f in info.get("formats") or []
+            if f.get("url") and not str(f.get("format_id") or "").startswith("portrait")]
+    for f in sorted(fmts, key=lambda f: f.get("height") or 0, reverse=True):
+        m = _HEVC_DIR.search(f["url"])
+        if not m:
+            continue
+        for folder in (str(f.get("height") or ""), m.group(1)):
+            if folder:
+                out.append(f["url"][:m.start()] + f"/h264/{folder}/" + f["url"][m.end():])
+    for f in fmts:
+        query = parse_qs(urlparse(f["url"]).query)
+        try:
+            uri = json.loads((query.get("token") or ["{}"])[0]).get("clip_uri") or ""
+        except (ValueError, AttributeError):
+            uri = ""
+        if "/h264/" in uri:
+            out.append(uri + "?" + urlparse(f["url"]).query)
+        break
+    return list(dict.fromkeys(out))
+
+
+async def _reachable(url: str) -> bool:
+    try:
+        async with httpx.AsyncClient(timeout=8, follow_redirects=True) as client:
+            async with client.stream("GET", url, headers={"Range": "bytes=0-0"}) as r:
+                return r.status_code in (200, 206)
+    except httpx.HTTPError:
+        return False
+
+
+async def _prefer_h264(entry: dict, info: dict) -> None:
+    """After _apply_info: swap a clip's HEVC link for its H.264 copy, when Twitch has one."""
+    cached = _SRC_CACHE.get(entry["id"])
+    if entry["kind"] != "clip" or not cached or not _HEVC_DIR.search(cached[0]):
+        return
+    for url in _h264_twins(info):
+        if await _reachable(url):
+            _SRC_CACHE[entry["id"]] = (url, cached[1], cached[2])
+            return
+
+
 def _pick_hls(info: dict) -> str:
     for f in reversed(info.get("formats") or []):
         if "m3u8" in str(f.get("protocol") or "") and f.get("url"):
@@ -641,6 +694,7 @@ async def resolve_entry(eid: str) -> None:
             await HUB.broadcast_queue()
             return
         _apply_info(entry, info)
+        await _prefer_h264(entry, info)
         save_store()
         await HUB.broadcast_queue()
         if settings().get("level_enabled") and entry["kind"] != "vod":
@@ -661,7 +715,11 @@ async def download_clip(entry: dict) -> None:
     if target.exists():
         return
     tmp = Path(tempfile.gettempdir()) / f"hexcast_clip_{entry['id']}.mp4"
-    if entry["kind"] == "clip":
+    source = entry["url"]
+    cached = _SRC_CACHE.get(entry["id"])
+    if entry["kind"] == "clip" and cached and "/h264/" in cached[0]:
+        fmt, source = [], cached[0]       # the H.264 copy _prefer_h264 found (yt-dlp lists HEVC)
+    elif entry["kind"] == "clip":
         fmt = ["-f", "b[ext=mp4]/b"]
     else:
         # YouTube (and most sites) serve the good streams video-only + audio-
@@ -669,7 +727,7 @@ async def download_clip(entry: dict) -> None:
         fmt = ["-f", "bv*[height<=1080]+ba/b[height<=1080]/b",
                "--merge-output-format", "mp4"]
     try:
-        await _ytdlp(*fmt, "-o", str(tmp), entry["url"], timeout=300)
+        await _ytdlp(*fmt, "-o", str(tmp), source, timeout=300)
     except Exception as exc:
         STATE.note(f"pre-download failed for #{entry['num']} ({exc}) - will stream instead")
         tmp.unlink(missing_ok=True)
@@ -795,6 +853,7 @@ async def build_source(entry: dict) -> dict:
     else:
         info = await resolve_info(entry["url"])
         _apply_info(entry, info)
+        await _prefer_h264(entry, info)
         save_store()
         await HUB.broadcast_queue()
         c = _SRC_CACHE.get(entry["id"])

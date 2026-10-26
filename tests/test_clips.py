@@ -10,6 +10,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 from fastapi.testclient import TestClient
@@ -58,7 +59,7 @@ def queued(api):
 
 def test_the_manifest_version_was_bumped():
     manifest = json.loads((ROOT / "catalog" / "clips" / "plugin.json").read_text(encoding="utf-8"))
-    assert manifest["version"] == "1.1.1"
+    assert manifest["version"] == "1.1.2"
 
 
 def test_a_rename_is_what_the_queue_and_the_player_show(api, clips, entry):
@@ -237,6 +238,85 @@ def test_without_the_embed_only_the_failing_overlay_stops(clips, entry, playing,
     assert tab.sent == [{"type": "stop"}] and obs.sent == [] and clips.PLAYER["state"] == "playing"
     error(clips, entry, obs)
     assert clips.PLAYER["state"] == "idle" and obs.sent == [{"type": "stop"}, {"type": "stop"}]
+
+
+# ---------------------------------------------------------------- HEVC clips: play the H.264 copy instead
+
+CDN = "https://cdn.example/nauth/abc"
+QUERY = "sig=f00&token=" + quote(json.dumps({"clip_uri": CDN + "/landscape/h264/720/index.mp4"}))
+
+
+def hevc_info():
+    """What yt-dlp now returns for a Twitch clip: HEVC links only, portrait copies first (seen 2026-10)."""
+    fmts = [{"format_id": f"{side}{h}", "height": h, "ext": "mp4", "protocol": "https",
+             "url": f"{CDN}/{folder}/hevc/{q}/index.mp4?{QUERY}"}
+            for side, folder in (("portrait-", "portrait"), ("", "landscape"))
+            for h, q in ((720, "720"), (1080, "source"))]
+    return {"title": "A clip", "formats": fmts}
+
+
+def h264(folder):
+    return f"{CDN}/landscape/h264/{folder}/index.mp4?{QUERY}"
+
+
+def test_the_h264_copies_of_an_hevc_clip_are_tried_best_first(clips):
+    # 1080's HEVC folder is "source", which has no H.264 twin; the token's 720p link is already in the list
+    assert clips._h264_twins(hevc_info()) == [h264("1080"), h264("source"), h264("720")]
+
+
+def test_an_hevc_clip_plays_its_h264_copy(clips, entry, monkeypatch):
+    tried = []
+
+    async def reachable(url):
+        tried.append(url)
+        return url == h264("1080")
+
+    monkeypatch.setattr(clips, "_reachable", reachable)
+    info = hevc_info()
+    clips._apply_info(entry, info)
+    assert "/hevc/source/" in clips._SRC_CACHE[entry["id"]][0]
+    asyncio.run(clips._prefer_h264(entry, info))
+    assert clips._SRC_CACHE[entry["id"]][:2] == (h264("1080"), "mp4") and tried == [h264("1080")]
+
+
+def test_an_hevc_clip_without_an_h264_copy_keeps_hevc_and_an_h264_clip_is_left_alone(clips, entry, monkeypatch):
+    tried = []
+
+    async def reachable(url):
+        tried.append(url)
+        return False
+
+    monkeypatch.setattr(clips, "_reachable", reachable)
+    info = hevc_info()
+    clips._apply_info(entry, info)
+    asyncio.run(clips._prefer_h264(entry, info))
+    assert "/hevc/source/" in clips._SRC_CACHE[entry["id"]][0] and len(tried) == 3
+    tried.clear()
+    old = {"formats": [{"format_id": "1080", "height": 1080, "ext": "mp4", "protocol": "https",
+                        "url": "https://cdn.example/nauth/old/landscape/avc/1080/index.mp4"}]}
+    clips._apply_info(entry, old)
+    asyncio.run(clips._prefer_h264(entry, old))
+    assert "/avc/1080/" in clips._SRC_CACHE[entry["id"]][0] and tried == []
+
+
+def test_a_pre_download_fetches_the_h264_copy(clips, entry, monkeypatch):
+    calls = []
+
+    async def ytdlp(*args, **kw):
+        calls.append(args)
+        return b""
+
+    monkeypatch.setattr(clips, "_ytdlp", ytdlp)
+    clips._SRC_CACHE[entry["id"]] = (h264("1080"), "mp4", 0.0)
+    asyncio.run(clips.download_clip(entry))
+    assert calls[0][-1] == h264("1080") and "-f" not in calls[0]
+
+
+def test_the_overlay_reports_sound_without_a_picture(clips):
+    # OBS without an HEVC decoder plays the sound alone and raises no error; the overlay must say so
+    html = (STATIC / "clips_overlay.html").read_text(encoding="utf-8")
+    check = html[html.index("addEventListener('loadedmetadata', function(){\n      if (!v.videoWidth"):]
+    assert "fail(id" in check.split("\n")[1] and "kind !== 'media'" in html
 
 
 # ---------------------------------------------------------------- the browser scripts (checked with node when it is installed)
