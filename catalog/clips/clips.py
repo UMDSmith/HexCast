@@ -291,6 +291,10 @@ class Hub:
     async def to_overlay(self, payload: dict) -> None:
         await self._send(self.overlay, payload)
 
+    async def to_overlays(self, sockets, payload: dict) -> None:
+        """Only some overlays (the ones that could not play the current item directly)."""
+        await self._send(self.overlay & set(sockets), payload)
+
     async def to_panel(self, payload: dict) -> None:
         await self._send(self.panel, payload)
 
@@ -755,6 +759,9 @@ async def measure_entry(entry: dict) -> None:
 # --------------------------------------------------------------------------
 
 _IFRAME_TIMER: asyncio.Task | None = None
+# Overlays that reported a playback error for the current item: each shows the embed (or nothing) on
+# its own, so a browser tab that can't decode a clip doesn't knock OBS off the direct video.
+GAVE_UP: set[WebSocket] = set()
 
 
 def _cancel_iframe_timer() -> None:
@@ -799,6 +806,7 @@ async def build_source(entry: dict) -> dict:
 
 async def play_entry(entry: dict) -> dict:
     _cancel_iframe_timer()
+    GAVE_UP.clear()
     if PLAYER["item_id"] != entry["id"]:
         EPHEMERAL.pop(PLAYER["item_id"], None)   # replaced mid-play
     start = entry.get("start") or 0.0
@@ -855,6 +863,9 @@ def _schedule_iframe_finish(entry: dict, delay: float) -> None:
 
 async def finish_current(mark_played: bool) -> None:
     _cancel_iframe_timer()
+    # it ended on an overlay playing it directly; the embed can't tell, so clear it elsewhere
+    await HUB.to_overlays(GAVE_UP, {"type": "stop"})
+    GAVE_UP.clear()
     entry = entry_by_id(PLAYER["item_id"])
     if entry and mark_played and entry.get("status") != "played" \
             and PLAYER["item_id"] not in EPHEMERAL:
@@ -879,6 +890,7 @@ async def stop_playback() -> dict:
     """Stop = clear the overlay, item stays queued and is NOT marked played."""
     playing = PLAYER["state"] in ("playing", "paused", "loading")
     _cancel_iframe_timer()
+    GAVE_UP.clear()
     _drop_pending_shoutouts()
     EPHEMERAL.pop(PLAYER["item_id"], None)
     PLAYER.update(state="idle", item_id="", mode="", position=0.0, duration=0.0)
@@ -898,7 +910,7 @@ async def set_paused(paused: bool) -> dict:
     return {"ok": True, "player": player_snapshot()}
 
 
-async def _handle_overlay_msg(msg: dict) -> None:
+async def _handle_overlay_msg(msg: dict, ws: WebSocket) -> None:
     t = msg.get("type")
     eid = str(msg.get("id") or "")
     if t == "progress":
@@ -917,20 +929,31 @@ async def _handle_overlay_msg(msg: dict) -> None:
             await finish_current(mark_played=True)
         return
     if t == "error":
-        if eid != PLAYER["item_id"] or PLAYER["state"] == "idle":
+        if eid != PLAYER["item_id"] or PLAYER["state"] == "idle" or ws in GAVE_UP:
             return
         entry = entry_by_id(eid)
         detail = str(msg.get("message") or "playback error")
         if entry:
             entry["error"] = detail
             save_store()
-        STATE.note(f"overlay playback error: {detail}")
         src = iframe_source(entry) if entry else None
-        if src and PLAYER["mode"] != "iframe" and settings().get("iframe_fallback"):
+        if not (src and PLAYER["mode"] != "iframe" and settings().get("iframe_fallback")):
+            src = None
+        # Only the overlay that failed falls back; the others keep the direct video.
+        GAVE_UP.add(ws)
+        await HUB.to_overlays([ws], {"type": "play", "item": public_entry(entry), "src": src,
+                                     "volume": settings().get("volume", 1.0),
+                                     "level": _level_for(entry)} if src else {"type": "stop"})
+        direct = len(HUB.overlay - GAVE_UP)
+        if direct:
+            STATE.note(f"overlay playback error: {detail} - {'the embed' if src else 'nothing'} on that "
+                       f"overlay, {direct} other overlay{'s' if direct > 1 else ''} still playing it")
+            await HUB.broadcast_queue()
+            return
+        # none left playing it directly: the item as a whole is on the embed now (or stops)
+        STATE.note(f"overlay playback error: {detail}")
+        if src:
             PLAYER.update(state="playing", mode="iframe")
-            await HUB.to_overlay({"type": "play", "item": public_entry(entry),
-                                  "src": src, "volume": settings().get("volume", 1.0),
-                                  "level": _level_for(entry)})
             if entry.get("duration"):
                 _schedule_iframe_finish(
                     entry, float(entry["duration"]) - (entry.get("start") or 0.0) + 4.0)
@@ -1327,11 +1350,12 @@ async def ws_overlay(ws: WebSocket):
                 msg = json.loads(raw)
             except Exception:
                 continue
-            await _handle_overlay_msg(msg)
+            await _handle_overlay_msg(msg, ws)
     except (WebSocketDisconnect, Exception):
         pass
     finally:
         HUB.overlay.discard(ws)
+        GAVE_UP.discard(ws)
 
 
 async def _resume_overlay(ws: WebSocket) -> None:

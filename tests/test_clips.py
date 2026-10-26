@@ -3,6 +3,7 @@
 Driven through the real plugin host like the other plugin tests. Entries are added with add_links (no
 yt-dlp, no network) and their 'resolved' metadata is set by hand."""
 
+import asyncio
 import importlib
 import json
 import re
@@ -57,7 +58,7 @@ def queued(api):
 
 def test_the_manifest_version_was_bumped():
     manifest = json.loads((ROOT / "catalog" / "clips" / "plugin.json").read_text(encoding="utf-8"))
-    assert manifest["version"] == "1.1.0"
+    assert manifest["version"] == "1.1.1"
 
 
 def test_a_rename_is_what_the_queue_and_the_player_show(api, clips, entry):
@@ -148,6 +149,94 @@ def test_public_entry_and_entry_title_agree_on_the_effective_title(clips, entry)
     assert clips.entry_title(entry) == clips.public_entry(entry)["title"] == "Original title"
     entry["custom_title"] = "Shown on the overlay"                      # what play_entry sends the overlay
     assert clips.entry_title(entry) == clips.public_entry(entry)["title"] == "Shown on the overlay"
+
+
+# ---------------------------------------------------------------- a playback error only moves that overlay to the embed
+
+class Overlay:
+    """A connected overlay socket: records what the server sends it."""
+
+    def __init__(self):
+        self.sent = []
+
+    async def send_text(self, text):
+        self.sent.append(json.loads(text))
+
+
+@pytest.fixture
+def playing(clips, entry, monkeypatch):
+    """The entry playing directly (an MP4) on two overlays: OBS and a browser tab."""
+    obs, tab = Overlay(), Overlay()
+    monkeypatch.setattr(clips.HUB, "overlay", {obs, tab})
+    monkeypatch.setattr(clips, "GAVE_UP", set())
+    entry["duration"] = 26.0
+    clips.PLAYER.update(state="playing", item_id=entry["id"], mode="mp4")
+    yield obs, tab
+    clips._cancel_iframe_timer()
+    clips.PLAYER.update(state="idle", item_id="", mode="")
+
+
+def error(clips, entry, ws):
+    asyncio.run(clips._handle_overlay_msg({"type": "error", "id": entry["id"], "message": "media error 4"}, ws))
+
+
+def test_an_overlay_that_cannot_play_a_clip_gets_the_embed_alone(clips, entry, playing):
+    obs, tab = playing
+    error(clips, entry, tab)
+    assert [(m["type"], m["src"]["mode"]) for m in tab.sent] == [("play", "iframe")]
+    assert obs.sent == []                                               # OBS keeps the direct video
+    assert clips.PLAYER["mode"] == "mp4" and clips._IFRAME_TIMER is None  # OBS reports progress and the end
+    assert entry["error"] == "media error 4"
+    error(clips, entry, tab)                                            # it can only give up once
+    assert len(tab.sent) == 1
+    asyncio.run(clips._handle_overlay_msg({"type": "ended", "id": entry["id"]}, obs))
+    assert tab.sent[-1] == {"type": "stop"} and obs.sent == []          # the embed can't tell it ended
+    assert clips.PLAYER["state"] == "idle" and entry["status"] == "played" and not clips.GAVE_UP
+
+
+def test_the_item_goes_to_the_embed_when_no_overlay_can_play_it(clips, entry, playing):
+    obs, tab = playing
+
+    async def both_fail():
+        await clips._handle_overlay_msg({"type": "error", "id": entry["id"], "message": "a"}, tab)
+        await clips._handle_overlay_msg({"type": "error", "id": entry["id"], "message": "b"}, obs)
+        timer = clips._IFRAME_TIMER
+        clips._cancel_iframe_timer()
+        return timer
+
+    assert asyncio.run(both_fail()) is not None                         # the embed's end is timed
+    assert clips.PLAYER["mode"] == "iframe" and clips.PLAYER["state"] == "playing"
+    assert [m["type"] for m in tab.sent] == [m["type"] for m in obs.sent] == ["play"]   # one embed each
+
+
+def test_over_the_overlay_socket_only_the_failing_overlay_gets_the_embed(api, clips, entry, monkeypatch):
+    async def build_source(e):
+        return {"mode": "mp4", "url": "https://cdn.example/clip.mp4", "start": 0.0}
+
+    monkeypatch.setattr(clips, "build_source", build_source)
+    monkeypatch.setattr(clips.STATE, "started", True)                  # no yt-dlp startup (network)
+    entry["duration"] = 26.0
+    with api.websocket_connect("/clips/ws/overlay") as obs, api.websocket_connect("/clips/ws/overlay") as tab:
+        assert obs.receive_json()["type"] == tab.receive_json()["type"] == "config"
+        assert api.post(f"/clips/api/play/{entry['id']}").json()["ok"]
+        assert obs.receive_json()["src"]["mode"] == tab.receive_json()["src"]["mode"] == "mp4"
+        tab.send_json({"type": "error", "id": entry["id"], "message": "media error 4"})
+        assert tab.receive_json()["src"]["mode"] == "iframe"
+        assert api.post("/clips/api/pause").json()["ok"]                # still a direct video, so it pauses
+        assert obs.receive_json() == {"type": "pause"}                  # and OBS got nothing before it
+        assert tab.receive_json() == {"type": "pause"}
+        obs.send_json({"type": "ended", "id": entry["id"]})
+        assert tab.receive_json() == {"type": "stop"}
+    assert clips.PLAYER["state"] == "idle" and not clips.GAVE_UP
+
+
+def test_without_the_embed_only_the_failing_overlay_stops(clips, entry, playing, monkeypatch):
+    obs, tab = playing
+    monkeypatch.setitem(clips.settings(), "iframe_fallback", False)
+    error(clips, entry, tab)
+    assert tab.sent == [{"type": "stop"}] and obs.sent == [] and clips.PLAYER["state"] == "playing"
+    error(clips, entry, obs)
+    assert clips.PLAYER["state"] == "idle" and obs.sent == [{"type": "stop"}, {"type": "stop"}]
 
 
 # ---------------------------------------------------------------- the browser scripts (checked with node when it is installed)

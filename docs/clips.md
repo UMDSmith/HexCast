@@ -109,8 +109,15 @@ retries through the official iframe embed (`clips.twitch.tv/embed` /
   server clears the overlay itself a few seconds after the clip should have
   finished; otherwise press Stop.
 - Twitch requires a `parent` hostname it accepts. The overlay passes the
-  hostname it was loaded from — `localhost` works; a bare LAN IP may not.
+  hostname it was loaded from: `localhost` or `127.0.0.1` work, a LAN IP
+  like `192.168.x.x` is refused, and a machine name only works over https.
   Pause/Resume don't work in this mode.
+
+When an overlay reports that it can't play the video (say a Firefox tab that
+can't decode it), only that overlay switches to the embed. Other overlays,
+OBS included, keep the direct video, and the clip still ends, pauses and
+reports progress through them. When it ends, the embed is cleared too. Only
+when no connected overlay can play it does the whole item go to the embed.
 
 ---
 
