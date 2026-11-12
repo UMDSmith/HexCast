@@ -12,8 +12,14 @@ describing them. Two styles, one renderer:
              blinking), which states (costumes) it belongs to, wobble, follow-lag, rotation drag,
              squash & stretch, sprite-sheet frames and clipping to its parent.
 
+Either style can also have expression pictures (`expressions`: {"shrug": {"idle": "shrug.png"}}): a
+picture that stands in for the whole avatar while it is switched on (`expression`, often with `for`),
+on top of whatever state is showing, which comes back when it goes off. It has the same roles as a
+simple state, so it can have its own talking / blinking pictures, but one picture is all it needs.
+
 A folder of pictures becomes a simple rig on import (the file names say which picture is which:
-`idle.png`, `talk.png`, `blink.png`, `talk_blink.png`, `happy_talk.png` ...; anything that can't be
+`idle.png`, `talk.png`, `blink.png`, `talk_blink.png`, `happy_talk.png` ...; a picture with a name of
+its own that no state can use, like `shrug.png`, becomes an expression picture; anything that can't be
 guessed is fixed in the Avatars tab). A PNGTuber Plus `.save` becomes a layered rig.
 """
 
@@ -22,6 +28,7 @@ from __future__ import annotations
 import base64
 import json
 import re
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -88,6 +95,11 @@ def classify(filename: str) -> tuple[str, str]:
     return state, ""
 
 
+def _key(s: Any) -> str:
+    """A state's or an expression picture's name as it is kept: lower case, a-z 0-9 _ -."""
+    return re.sub(r"[^a-z0-9_-]+", "_", str(s).lower()).strip("_")[:32]
+
+
 def simple_rig(files: list[str], name: str) -> dict:
     """A simple rig from the pictures in a folder (names relative to it)."""
     pics = sorted(f for f in files if Path(f).suffix.lower() in IMAGE_EXTS and not Path(f).name.startswith("."))
@@ -99,22 +111,39 @@ def simple_rig(files: list[str], name: str) -> dict:
         if role and role not in slot:
             slot[role] = f
         else:
-            unknown.append(f)
-    # pictures nobody could place: fill the empty roles in order (idle, talk, blink, talk_blink),
-    # so 4 pictures named 1.png .. 4.png still make a working PNGtuber to fix up in the tab
-    if unknown:
-        target = states.setdefault("neutral", {}) if not states or "neutral" in states else next(iter(states.values()))
-        for f in unknown:
-            free = next((r for r in ("idle", "talk", "blink", "talk_blink") if r not in target), None)
-            if free is None:
-                break
+            unknown.append((f, state))
+    # pictures nobody could place. Nameless ones (1.png .. 4.png) and numbered series (jagie1.png .. jagie4.png) fill
+    # the empty roles in order (idle, talk, blink, talk_blink), so they still make a working PNGtuber to fix up in the
+    # tab. One with a name of its own ("smile.png", "shrug.png") is the quiet picture of the state of that name if there
+    # is one, or the main picture when there is none yet. Whatever is left over becomes an expression picture.
+    base = "neutral" if not states or "neutral" in states else next(iter(states))
+    series = Counter(re.sub(r"\d+", "", s) for _, s in unknown)
+    roles = ("idle", "talk", "blink", "talk_blink")
+    expressions: dict[str, dict] = {}
+    for f, state in unknown:
+        target = states.setdefault(base, {})
+        named = state != "neutral" and series[re.sub(r"\d+", "", state)] < 2
+        own = states.get(state) if named and state != base else None
+        free = next((r for r in roles if r not in own), None) if own else None
+        if free:
+            own[free] = f
+            continue
+        free = ("idle" if "idle" not in target else None) if named else next((r for r in roles if r not in target), None)
+        if free:
             target[free] = f
+            continue
+        key = _key(state if named else Path(f).stem) or "picture"
+        k, n = key, 2
+        while states.get(k) or k == base or k in expressions:
+            k, n = f"{key[:28]}_{n}", n + 1
+        expressions[k] = {"idle": f}
     for s in list(states):                         # a state needs at least something to show
         if not states[s]:
             del states[s]
     order = sorted(states, key=lambda s: (s != "neutral", s))
     return normalize({"version": 1, "type": "png", "style": "simple", "name": name,
-                      "states": {s: states[s] for s in order}, "default_state": order[0] if order else "neutral"},
+                      "states": {s: states[s] for s in order}, "default_state": order[0] if order else "neutral",
+                      "expressions": expressions},
                      files=pics)
 
 
@@ -223,7 +252,7 @@ def normalize(rig: dict, files: list[str] | None = None) -> dict:
     if style == "simple":
         states = {}
         for s, roles in list((rig.get("states") or {}).items())[:40]:
-            key = re.sub(r"[^a-z0-9_-]+", "_", str(s).lower()).strip("_")[:32]
+            key = _key(s)
             if not key or not isinstance(roles, dict):
                 continue
             clean = {r: _pic(roles.get(r), have) for r in ROLES if _pic(roles.get(r), have)}
@@ -233,6 +262,7 @@ def normalize(rig: dict, files: list[str] | None = None) -> dict:
         out["states"] = states
         ds = str(rig.get("default_state") or "")
         out["default_state"] = ds if ds in states else next(iter(states))
+        out["expressions"] = _expressions(rig, have, set(states))
         return out
     layers, ids = [], set()
     for l in (rig.get("layers") or [])[:300]:
@@ -267,11 +297,32 @@ def normalize(rig: dict, files: list[str] | None = None) -> dict:
     out["states"] = states or ["default"]
     ds = str(rig.get("default_state") or "")
     out["default_state"] = ds if ds in out["states"] else out["states"][0]
+    out["expressions"] = _expressions(rig, have, set(out["states"]))
+    return out
+
+
+def _expressions(rig: dict, have: set[str] | None, states: set[str]) -> dict:
+    """The expression pictures: name -> {role: picture}, like a simple state. A name a state has is the state's
+    (an expression switches by name, so the two can't share one). One without a picture yet is kept for the editor;
+    switched on, it shows nothing new."""
+    out: dict[str, dict] = {}
+    taken = {s.lower() for s in states}
+    raw = rig.get("expressions")
+    for s, roles in list(raw.items() if isinstance(raw, dict) else [])[:40]:
+        key = _key(s)
+        if not key or key in taken or key in out or not isinstance(roles, dict):
+            continue
+        out[key] = {r: _pic(roles.get(r), have) for r in ROLES if _pic(roles.get(r), have)}
     return out
 
 
 def state_names(rig: dict) -> list[str]:
     return list(rig["states"]) if rig.get("style") == "simple" else list(rig.get("states") or [])
+
+
+def expression_names(rig: dict) -> list[str]:
+    """The expression pictures that have a picture (switching on one without would show the avatar as it is)."""
+    return [k for k, v in (rig.get("expressions") or {}).items() if v]
 
 
 def first_picture(rig: dict) -> str:

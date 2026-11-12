@@ -172,6 +172,59 @@ const frames = (r, seconds) => { for (let i = 0; i < Math.round(seconds * 60); i
   for (let i = 0; i < 20; i++) { if (!gate.update(0, 1 / 60, { threshold: 0.12, snap: 0.6, minOpen: 0.05, minClosed: 0.045 })) shut++; }
   out.pngGate = { openSteady, shutWithinThirdOfASecond: shut > 0 };
 }
+{ // a PNGtuber's expression pictures: one at a time over its state, which comes back when the picture goes
+  const { HA, env } = load(file);
+  const spec = { style: 'simple', default_state: 'neutral', bounce: 0, beat: 0, gravity: 1000, threshold: 0.12, hold: 0.22, snap: 0.6, mouth: 'follow', breathe: false,
+                 states: { neutral: { idle: 'n.png', talk: 'nt.png' }, happy: { idle: 'h.png' } },
+                 expressions: { shrug: { idle: 's.png' }, wave: { idle: 'w.png', talk: 'wt.png' }, empty: {} } };
+  const av = bare(HA);
+  const rig = new HA.PngRig(av, spec); rig.box = { x: 0, y: 0, w: 300, h: 300 };
+  av.png = rig; av.kind = 'png';
+  const shown = (talking) => { rig.talking = !!talking; return rig.layers.filter((l) => rig._shown(l)).map((l) => l.image).join(','); };
+  const tick = (secs) => { for (let i = 0; i < Math.round(secs * 60); i++) { env.clock += 1 / 60; rig.update(1 / 60, { lip: {} }, env.clock); } };
+  const o = {};
+  o.ids = rig.layers.filter((l) => l.expr).map((l) => l.id);
+  o.rest = [shown(), shown(true)];
+  av.command({ cmd: 'expression', states: { shrug: 'on' } });
+  o.shrug = [shown(), shown(true)];                                  // the one picture, talking or not
+  av.command({ cmd: 'expression', states: { happy: 'on' } });        // a state under it: the picture stays
+  o.stateUnder = [shown(), rig.state];
+  av.command({ cmd: 'expression', states: { wave: 'on' } });         // another picture takes over
+  o.wave = [shown(), shown(true)];                                   // it has a talking picture of its own
+  av.command({ cmd: 'expression', states: { wave: 'off' } });
+  o.waveOff = [shown(), rig.state];                                  // the state is back
+  av.command({ cmd: 'expression', states: { empty: 'on' } });        // a picture with nothing in it: no change
+  o.empty = shown();
+  av.command({ cmd: 'expression', states: { shrug: 'on' }, until: env.clock + 2 });
+  tick(1); o.timedAt1 = shown();
+  tick(1.2); o.timedAt22 = shown();                                  // ran out: the state again
+  av.command({ cmd: 'expression', states: { happy: 'on' }, until: env.clock + 1 });
+  tick(1.5); o.timedState = rig.state;                               // a state switched on for a while runs out too
+  av.command({ cmd: 'expression', states: { shrug: 'on', happy: 'on' } });
+  av.command({ cmd: 'clear_expressions' });
+  o.cleared = [shown(), rig.state];
+  // an emotion that names a picture shows it; the next emotion (or the emotion running out) takes it away again
+  av.command({ cmd: 'emotion', name: 'confused', expressions: ['shrug'], face: {} });
+  o.emotionPic = [shown(), rig.state];
+  av.command({ cmd: 'emotion', name: 'happy', expressions: ['happy'], face: {} });
+  o.nextEmotion = [shown(), rig.state];
+  av.command({ cmd: 'emotion', name: 'confused', expressions: ['shrug'], face: {}, until: env.clock + 1 });
+  env.clock += 1.5; av._drive(1 / 60, env.clock);
+  o.emotionRanOut = shown();
+  av.command({ cmd: 'expression', states: { wave: 'on' } });         // switched on by the bot: an emotion leaves it alone
+  av.command({ cmd: 'emotion', name: 'happy', expressions: ['happy'], face: {} });
+  o.botPicStays = shown();
+  // switched on before the pictures have loaded (a renderer that joins late is told what is on): both come back
+  const late = bare(HA);
+  late.command({ cmd: 'expression', name: 'happy', state: 'on', fade: 0 });
+  late.command({ cmd: 'expression', name: 'shrug', state: 'on', until: env.clock + 30, fade: 0 });
+  const r2 = new HA.PngRig(late, spec);
+  const on = Object.keys(late.exprs).filter((k) => late.exprs[k].to > 0);
+  const ons = on.filter((k) => !r2.hasPicture(k)).pop(), onp = on.filter((k) => r2.hasPicture(k)).pop();
+  r2.setState(ons || null, ons ? late.exprs[ons].until : 0); if (onp) r2.setPicture(onp, late.exprs[onp].until);
+  o.lateJoin = [r2.state, r2.expr, r2.exprUntil > env.clock];
+  out.pngPictures = o;
+}
 { // colours: multiply / overlay / alpha on the whole model, parts (folders) and single art meshes, in layers
   const { HA, env } = load(file);
   // parts: Body (a folder) > Hair > Fringe, and Eyes; art meshes: 0 ArtBody in Body, 1 ArtHair in Hair, 2 ArtFringe in Fringe, 3 ArtEye in Eyes, 4 ArtLoose in no part

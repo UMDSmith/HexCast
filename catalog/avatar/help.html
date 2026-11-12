@@ -49,7 +49,9 @@ http://localhost:4747/avatar/overlay?audio=0         silent (another source play
     faces (click a slot or drop a picture on it), the voice (the mouth opens and closes with each word, with a live
     meter and a built-in test voice) and the movement (a hop when talking starts and a small bounce on each word
     as the audio comes in; breathing). The API is the same: speech and
-    <code>MouthOpen</code> make it talk, <code>expression</code> / <code>emotion</code> switch its state (one at a time),
+    <code>MouthOpen</code> make it talk, <code>expression</code> / <code>emotion</code> switch its state (one at a time)
+    and show its <b>expression pictures</b> (a shrug, a wave ...: a picture that stands in for the whole avatar while it is on,
+    e.g. <code>{"name": "shrug", "for": 3}</code>, then the face comes back),
     <code>gesture</code> / <code>look</code> move it, <code>parts</code> shows / hides layers; <code>motion</code> is for Live2D only.</p>
   <h3>Mouth</h3>
   <p class="hint">Per avatar: <b>speech sent to Hexcast</b> (the <code>speak</code> call — the OBS overlay plays it
@@ -86,7 +88,7 @@ http://localhost:4747/avatar/overlay?audio=0         silent (another source play
     <tr><td>look</td><td><code>{"x": 0.7, "y": 0.2}</code> · <code>{"at": "camera"}</code> · <code>{"stage_x": 85, "stage_y": 30}</code>, <code>"head"</code>, <code>"for"</code> · <code>{"release": true}</code></td></tr>
     <tr><td>gesture</td><td><code>{"name": "nod|double_nod|shake|tilt|bounce|lean_left|lean_right|look_away", "amount": 1}</code></td></tr>
     <tr><td>transform</td><td><code>{"x": 70, "y": 55, "scale": 1.2, "rotation": 0, "flip": false, "duration": 1, "ease": "out"}</code>, <code>by_x</code> … relative, <code>"save": true</code> to keep, <code>{"reset": true}</code></td></tr>
-    <tr><td>show · hide</td><td><code>{"fade": 0.4}</code></td></tr>
+    <tr><td>show · hide · visible</td><td><code>{"fade": 0.4, "save": false}</code>; <code>visible</code> takes <code>{"state": "on|off|toggle"}</code> (<code>toggle</code> flips it)</td></tr>
     <tr><td>speak</td><td>multipart field <code>audio</code>, raw audio, <code>{"url": …}</code> or <code>{"audio_b64": …}</code>; <code>volume</code>, <code>text</code>, <code>interrupt</code>; <code>?wait=1</code> answers when it has played</td></tr>
     <tr><td>stop_speaking</td><td></td></tr>
     <tr><td>lipsync</td><td><code>{"state": "on|off|toggle"}</code> — the Mouth tab's <b>Lipsync</b> tick box (saved, like ticking it); the answer has <code>state</code>, what it is now. Takes effect at once, also mid-line</td></tr>

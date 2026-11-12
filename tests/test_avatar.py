@@ -880,6 +880,84 @@ def test_pngtuber_from_pictures(av):
     assert saved["states"]["neutral"]["half"] == "Extra Mouth.png" and "talk" not in saved["states"]["neutral"]
 
 
+def test_pngtuber_expression_pictures_from_a_folder_and_switched_over_the_state(av):
+    from hexcast_plugins.avatar import pngtuber
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for n in ("idle.png", "talk.png", "blink.png", "talk_blink.png", "happy_idle.png", "shrug.png", "double middle finger.png"):
+            z.writestr("Tuber/" + n, _png(20, 30))
+    m = _upload(av, buf.getvalue(), "tuber.zip")
+    # the four faces are the face; the two pictures with names of their own are expression pictures
+    assert m["ok"] and m["states"] == ["neutral", "happy"] and m["expression_pictures"] == ["double_middle_finger", "shrug"]
+    assert [e["name"] for e in m["expressions"]] == ["neutral", "happy", "double_middle_finger", "shrug"]
+    rig = av.get(f"/avatar/api/models/{m['id']}/engine").json()
+    assert rig["states"]["neutral"] == {"idle": "idle.png", "talk": "talk.png", "blink": "blink.png", "talk_blink": "talk_blink.png"}
+    assert rig["expressions"] == {"double_middle_finger": {"idle": "double middle finger.png"}, "shrug": {"idle": "shrug.png"}}
+    av.post("/avatar/api/avatars", json={"name": "t", "model": m["id"]})
+    say = lambda body: av.post("/avatar/api/avatars/t/expression", json=body).json()
+    r = say({"name": "shrug", "for": 3})
+    assert r["states"] == {"shrug": "on"} and r["active"] == ["shrug"] and r["until"]
+    r = say({"name": "happy"})                                             # a state leaves the picture on (it shows over the state)
+    assert r["states"] == {"happy": "on"} and r["active"] == ["happy", "shrug"]
+    r = say({"name": "Double_Middle_Finger"})                              # another picture takes over from the one before (any case)
+    assert r["states"] == {"double_middle_finger": "on", "shrug": "off"} and r["active"] == ["double_middle_finger", "happy"]
+    r = say({"name": "neutral"})                                           # ... and a state from the state before, the picture stays
+    assert r["states"] == {"neutral": "on", "happy": "off"} and r["active"] == ["double_middle_finger", "neutral"]
+    r = say({"name": "double_middle_finger", "state": "toggle"})
+    assert r["state"] == "off" and r["active"] == ["neutral"]
+    r = say({"names": ["happy", "shrug"]})                                 # one of each kind in one call
+    assert r["active"] == ["happy", "shrug"]
+    r = say({"name": "double_middle_finger", "only": True})                # "only" takes everything else off
+    assert r["active"] == ["double_middle_finger"] and r["states"]["happy"] == "off" and r["states"]["shrug"] == "off"
+    assert av.post("/avatar/api/avatars/t/clear_expressions").json()["fade"] is not None
+    assert av.get("/avatar/api/avatars/t").json()["live"]["expressions"] == {}
+    assert "has no state 'wave'" in say({"name": "wave"})["error"]
+    # the rig editor: one added, a name a state has is the state's, a picture that isn't in the folder is dropped
+    rig["expressions"]["wave"] = {"idle": "happy_idle.png", "talk": "talk.png"}
+    rig["expressions"]["happy"] = {"idle": "shrug.png"}
+    rig["expressions"]["ghost"] = {"idle": "../../nope.png"}
+    saved = av.post(f"/avatar/api/models/{m['id']}/settings", json={"rig": rig}).json()["settings"]["rig"]
+    assert saved["expressions"]["wave"] == {"idle": "happy_idle.png", "talk": "talk.png"}
+    assert "happy" not in saved["expressions"] and saved["expressions"]["ghost"] == {}       # kept for the editor ...
+    assert "ghost" not in pngtuber.expression_names(saved) and "wave" in pngtuber.expression_names(saved)   # ... but nothing to switch on
+    assert say({"name": "wave"})["states"] == {"wave": "on"}
+    # a layered rig can have them too
+    layered = pngtuber.normalize({"style": "layered", "layers": [{"id": "a", "image": "i.png"}], "states": ["default"],
+                                  "expressions": {"Shrug!": {"idle": "s.png"}, "default": {"idle": "s.png"}}}, files=["i.png", "s.png"])
+    assert layered["expressions"] == {"shrug": {"idle": "s.png"}}
+
+
+def test_a_numbered_set_of_pictures_still_fills_the_faces_in_order(av):
+    from hexcast_plugins.avatar import pngtuber
+    jag = pngtuber.simple_rig([f"jagie{i}-removebg-preview.png" for i in range(1, 5)], "j")
+    assert jag["states"] == {"jagie1_removebg_preview": {"idle": "jagie1-removebg-preview.png", "talk": "jagie2-removebg-preview.png",
+                                                         "blink": "jagie3-removebg-preview.png", "talk_blink": "jagie4-removebg-preview.png"}}
+    assert jag["expressions"] == {}
+    six = pngtuber.simple_rig([f"{i}.png" for i in range(1, 7)], "six")         # two more than the faces take: expression pictures
+    assert six["states"]["neutral"] == {"idle": "1.png", "talk": "2.png", "blink": "3.png", "talk_blink": "4.png"}
+    assert six["expressions"] == {"5": {"idle": "5.png"}, "6": {"idle": "6.png"}}
+    lone = pngtuber.simple_rig(["bob.png"], "bob")                              # one picture with a name: that is the PNGtuber
+    assert lone["states"] == {"bob": {"idle": "bob.png"}} and lone["expressions"] == {}
+    smile = pngtuber.simple_rig(["idle.png", "talk.png", "smile.png", "smile_talk.png"], "s")    # the quiet picture of its state
+    assert smile["states"]["smile"] == {"idle": "smile.png", "talk": "smile_talk.png"} and smile["expressions"] == {}
+
+
+def test_visibility_can_be_toggled(av):
+    m = _upload(av)
+    av.post("/avatar/api/avatars", json={"name": "a", "model": m["id"]})
+    vis = lambda path, body=None: av.post(f"/avatar/api/avatars/a/{path}", json=body or {}).json()
+    assert vis("visible", {"state": "toggle"})["visible"] is False
+    assert av.get("/avatar/api/avatars/a").json()["live"]["visible"] is False
+    assert vis("visible", {"state": "toggle"})["visible"] is True
+    assert vis("visible", {"state": "off"})["visible"] is False and vis("visible", {"state": "on"})["visible"] is True
+    assert vis("hide", {"state": "toggle"})["visible"] is False                 # /show and /hide say it themselves
+    assert vis("hide")["visible"] is False and vis("visible", {"state": "toggle"})["visible"] is True
+    assert vis("visible", {"state": "toggle", "save": True})["visible"] is False   # saved: the setting itself
+    assert av.get("/avatar/api/avatars/a").json()["avatar"]["visible"] is False
+    assert vis("visible", {"state": "toggle"})["visible"] is True                # from the saved one
+    assert av.post("/avatar/api/avatars/a/visible", json={"state": "flip"}).status_code == 400
+
+
 def test_pngtuber_plus_save_import(av):
     pic = base64.b64encode(_png(16, 16)).decode()
     save = {"0": {"type": "sprite", "identification": 11, "parentId": None, "imageData": pic, "path": "user://body.png",
@@ -1581,6 +1659,20 @@ def test_colours_come_in_layers_a_later_one_winning_field_by_field(engine):
 def test_colours_survive_a_new_model_and_an_old_runtime_and_reach_pngtuber_layers(engine):
     assert engine["reloadColoursTheNewModel"] == [1, 0, 0] and engine["oldRuntimeIsHarmless"]
     assert engine["pngLayer"] == [0x804000, 0x808080, 0xFFFFFF, 0.25, 0.5, 1]                            # a layer: its own x `all` (tint and alpha; no overlay)
+
+
+def test_a_pngtuber_expression_picture_stands_in_for_the_avatar_over_its_state(engine):
+    o = engine["pngPictures"]
+    assert o["ids"] == ["expr:shrug:idle", "expr:wave:idle", "expr:wave:talk"]
+    assert o["rest"] == ["n.png", "nt.png"] and o["shrug"] == ["s.png", "s.png"]           # the one picture, talking or not
+    assert o["stateUnder"] == ["s.png", "happy"]                                         # a state switched on under it
+    assert o["wave"] == ["w.png", "wt.png"]                                              # its own talking picture
+    assert o["waveOff"] == ["h.png", "happy"] and o["empty"] == "h.png"                  # the state is back; an empty one changes nothing
+    assert o["timedAt1"] == "s.png" and o["timedAt22"] == "h.png" and o["timedState"] == "neutral"   # `for` runs out: the state under it is back (a state's own `for` too)
+    assert o["cleared"] == ["n.png", "neutral"]
+    assert o["emotionPic"] == ["s.png", "neutral"] and o["nextEmotion"] == ["h.png", "happy"]
+    assert o["emotionRanOut"] == "n.png" and o["botPicStays"] == "w.png"                  # an emotion only takes its own picture away
+    assert o["lateJoin"] == ["happy", "shrug", True]
 
 
 # ---------------------------------------------------------------- pin points, items locked / pinned by name, avatars hanging from avatars

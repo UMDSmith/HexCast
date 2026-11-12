@@ -116,15 +116,24 @@ An avatar can show a **PNGtuber** instead of a Live2D model — everything else 
 
 **Simple** — a few pictures per state: **quiet**, **talking**, **blinking** and **talking + blinking** (any can be left out), and if you like a **half-open** mouth for quiet talking and a **mouth per vowel** (A / I / U / E / O — the same vowel detection Live2D models use). States are sets of those pictures (`neutral`, `happy` …).
 
-- **Library → New PNGtuber from pictures…** (or import a folder / zip of them). File names place the pictures by themselves: `idle` / `quiet` / `closed mouth` → quiet, `talk` / `open mouth` / `loud` → talking, `blink` / `eyes closed` → blinking, both → talking + blinking, a word in front makes a state (`happy_talk.png`). Anything that can't be placed is filled in order and fixed on the **PNGtuber** tab.
+- **Library → New PNGtuber from pictures…** (or import a folder / zip of them). File names place the pictures by themselves: `idle` / `quiet` / `closed mouth` → quiet, `talk` / `open mouth` / `loud` → talking, `blink` / `eyes closed` → blinking, both → talking + blinking, a word in front makes a state (`happy_talk.png`). Nameless and numbered pictures (`1.png` … `4.png`, `frame1.png` …) fill the slots in order. A picture with a name of its own that no state uses (`shrug.png`, `middle finger.png`) becomes an **expression picture** once the main face has its picture. Everything can be fixed on the **PNGtuber** tab.
 - **The PNGtuber tab** has three parts. Changes show in the preview at once (the preview card stays in view while you scroll the settings); **Save** puts them on stream, **Undo** goes back to what is saved.
   - **Faces** — each state is a small grid, eyes across (open / shut) and mouth down (closed / open), of big picture slots. Click a slot to pick from this PNGtuber's pictures (or **Upload** one), or **drop a picture file straight on it**; × takes it away. Only the top-left one (mouth closed, eyes open) is needed; the mouth-open ones make it talk and the eyes-shut ones make it blink. *More mouths* adds a half-open mouth (for quiet talking) and one per vowel A / I / U / E / O. **Add pictures…** puts more pictures in the PNGtuber's folder; **Make it layered** turns it into layers.
   - **Voice** — a live meter of the voice with a white line where the mouth opens, and whether it is open right now. **Mouth** is *Follows each word* (the default: the mouth opens as the voice rises and shuts in the dips between words and sounds, so it opens and closes with the speech, and blinking carries on as usual) or *Opens and stays open while talking* (the old behaviour: open at any sound and for **Stays open (s)** after it). **Opens above** is how loud the voice has to be; **Word detail** is how deep a dip has to be to shut the mouth. **▶ Test voice** plays a made-up voice (words of vowel-shaped syllables with pauses between) through the preview, so you can tune all of this without an audio file; it is silent unless **Hear speech** under the preview is ticked, and it never reaches OBS.
+  - **Expression pictures** — see below. **+ Expression picture** adds one: give it a name, then click or drop a picture on its tile. **Try** shows it in the preview for 3 seconds (OBS doesn't see it).
   - **Movement** — **Hop at the start** (how high it jumps when it starts talking), **Bounce with the voice** (a small hop on each word as the audio comes in, bigger for a louder voice; 0 = none), **Fall speed** and **Breathe**. The **Idle** tab's *Talking motion* scales both hops.
 
   The mouth follows the voice for layered PNGtubers too (a layer that shows *only talking* is the open mouth), and for a bot that drives `MouthOpen` itself.
 
 **Layered** — pieces stacked and attached to each other, like **PNGTuber Plus**: import its `.save` file as it is (**Import a zip / .save…**). Each layer has a picture, a parent, a position and pivot offset, a depth, when it shows (always / only quiet / only talking / only talking softly, and always / eyes open / blinking), the states (costumes) it belongs to, wobble, follow-lag, swing, squash & stretch, sprite-sheet frames, and clipping of its attached layers. **Make it layered** turns a simple PNGtuber into layers to build on.
+
+**Expression pictures** (simple or layered) are extra poses a bot shows for a moment: a shrug, a wave, a double middle finger. One stands in for the whole avatar while it is on. It still hops and bounces with the voice, and it shows over whichever state is on. When it goes off, that state's face is back. One picture is all it needs. Give it a *talking* picture too and its mouth moves with the speech. They are switched like expressions, by name:
+
+```json
+{"cmd": "expression", "avatar": "main", "name": "shrug", "for": 3}
+```
+
+That shows the shrug for 3 seconds. `state` `on` / `off` / `toggle` works as for any expression, and `clear_expressions` takes it off. One is shown at a time: a new one replaces the one before. Switching a state doesn't take a picture off, and a picture doesn't change the state, unless the call says `"only": true`. An emotion whose table names one shows it until the next emotion or until its `for` runs out (in the **Emotion → expression table**, pick it like an expression). `GET …/info` lists them under `expression_pictures` (and with the states in `expressions`).
 
 What the API does with a PNGtuber:
 
@@ -132,7 +141,7 @@ What the API does with a PNGtuber:
 | --- | --- |
 | `speak`, a device, `MouthOpen` (`params`), `face` `mouth_open` | talking (the mouth pictures) |
 | blinking (built in), `EyeOpenLeft` / `EyeOpenRight`, `face` `eyes`, `wink_*` | blinking |
-| `expression` / `emotion` | switch the **state** — one at a time (an emotion uses the state of the same name, or the one its table names) |
+| `expression` / `emotion` | switch the **state** — one at a time (an emotion uses the state of the same name, or the one its table names) — and show an **expression picture** over it (one at a time, `for` a while or until switched off) |
 | `gesture`, `look`, idle sway | move, bob and tilt the whole picture (`bounce` hops) |
 | `parts` | show / hide **layers** by id |
 | `motion` | not for PNGtubers (an error says so) |
@@ -279,7 +288,7 @@ For values every frame (your own lipsync, head motion from a tracker of your own
 | `POST …/look` | `{"x": 0.7, "y": 0.2}`, `{"at": "camera"}`, `{"stage_x": 85, "stage_y": 30}`, `"head": 1`, `"for": 4`, `"speed": 1`, or `{"release": true}` |
 | `POST …/gesture` | `{"name": "nod", "amount": 1, "duration": 0.7}` |
 | `POST …/transform` | `{"x": 70, "y": 55, "scale": 1.2, "rotation": 0, "flip": false, "duration": 1, "ease": "out"}`; `by_x` / `by_y` / `by_scale` / `by_rotation` move relative; `"save": true` keeps it; `{"reset": true}` goes back to the saved placement |
-| `POST …/show` · `POST …/hide` | `{"fade": 0.4, "save": false}` |
+| `POST …/show` · `POST …/hide` | `{"fade": 0.4, "save": false}`; `POST …/visible` `{"state": "on"\|"off"\|"toggle"}` (or `{"visible": false}`) does the same, and `toggle` flips whatever it is now. The answer has `visible`. Without `save` it's for now: the saved **Visible** setting comes back when Hexcast restarts. Over the WebSocket: `{"cmd": "visible", "avatar": "main", "state": "toggle"}` |
 | `POST …/speak` | the audio: a multipart file field `audio`, the raw bytes as the body, or JSON `{"url": "https://…"}` / `{"audio_b64": "…"}`; options `volume` (0–2), `text` (for the log), `interrupt` (stop what is playing; otherwise lines queue), `wait=1` (answer when the line has finished) |
 | `POST …/stop_speaking` | |
 | `POST …/item_add` | `{"item": "halo", "id": "halo1", "x": 50, "y": 5, "scale": 1, "rotation": 0, "layer": "front"\|"back", "opacity": 1, "flip": false, "fps": 12, "anchor": "head_top", "locked": false}` — `anchor` glues it to one of the model's pin points (`…/info` lists them) |

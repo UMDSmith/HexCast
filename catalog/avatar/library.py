@@ -494,8 +494,10 @@ def _png_meta(mid: str, folder: Path) -> dict:
     return {
         "id": mid, "type": "png", "style": rig["style"], "name": rig.get("name") or mid, "ok": problem is None,
         "problem": problem, "url": _url("models", mid, pngtuber.RIG), "icon": _url("models", mid, first) if first else "",
-        "expressions": [{"name": s, "file": ""} for s in pngtuber.state_names(rig)], "motions": [],
-        "states": pngtuber.state_names(rig), "default_state": rig.get("default_state"),
+        # what `expression` switches: its states (one at a time), then its expression pictures (one at a time, over the state)
+        "expressions": [{"name": s, "file": ""} for s in pngtuber.state_names(rig) + pngtuber.expression_names(rig)],
+        "motions": [], "states": pngtuber.state_names(rig), "default_state": rig.get("default_state"),
+        "expression_pictures": pngtuber.expression_names(rig),
         "pictures": _folder_pictures(folder), "layers": len(rig.get("layers") or []), "size": size,
         "mappings_from": "", "hotkeys": [], "idle_motion": "", "use_physics": False, "editor": "PNG",
         "source": rig.get("source", ""), "color_presets": sorted(color_presets(mid), key=str.lower),

@@ -168,6 +168,12 @@
                 transform:rotate(180deg);text-align:center;justify-self:center}
   .extras{display:grid;grid-template-columns:repeat(3,minmax(0,92px));gap:10px;margin-top:8px}
   .ftw{display:flex;flex-direction:column;gap:3px;align-items:stretch}
+  /* expression pictures: a card each - the picture, and a smaller optional one for talking */
+  .xgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(178px,1fr));gap:10px;margin-top:8px}
+  .xcard{border:1px solid var(--line);border-radius:10px;padding:8px;background:#0e0e14;display:flex;flex-direction:column;gap:7px;min-width:0}
+  .xcard .hd{display:flex;align-items:center;gap:4px;min-width:0}
+  .xcard .hd b{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .xcard .tl{display:grid;grid-template-columns:minmax(0,1fr) 58px;gap:7px;align-items:end}
   .ftw>span{font-size:11px;color:var(--muted);text-align:center}
   .ftile{position:relative;aspect-ratio:1;border:2px dashed var(--line-hi);border-radius:10px;cursor:pointer;overflow:hidden;
          background:repeating-conic-gradient(#1b1b24 0 25%,#12121a 0 50%) 0 0/14px 14px;display:flex;align-items:center;justify-content:center;
@@ -409,6 +415,10 @@
           <div id="png-simple"></div>
           <div id="png-layered"></div>
           <div class="row" style="margin:8px 0 2px"><button class="sm" id="png-add-pics">Add pictures...</button><span class="grow"></span><button class="sm ghost" id="png-convert" title="Turn the pictures into layers you can wobble, offset and parent">Make it layered</button></div>
+
+          <h3>Expression pictures</h3>
+          <p class="hint" style="margin:4px 0 0">A picture the bot can show for a moment - a shrug, a wave, a rude gesture. While it is on it takes the place of the whole avatar (it still hops and bounces), then the face comes back: <span class="mono">expression {"name": "shrug", "for": 3}</span>. One at a time, over whichever state is on. Give it a talking picture too if the mouth should move.</p>
+          <div id="png-pics"></div>
 
           <h3>Voice</h3>
           <div class="vbox"><div class="vmeter" title="The voice level; the white line is where the mouth opens"><i id="pv-level"></i><b id="pv-thr"></b></div><span class="pill" id="pv-mouth">mouth shut</span></div>
@@ -882,8 +892,9 @@
     $('tab-png').style.display = isPng ? '' : 'none';
     document.querySelectorAll('#insp .l2d-only').forEach(function (e) { e.style.display = isPng ? 'none' : ''; });
     $('map-edit').style.display = isPng ? 'none' : '';
-    $('m-exprs-h').firstChild.textContent = isPng ? 'States ' : 'Expressions ';
-    $('m-exprs-h').querySelector('span').textContent = isPng ? '(one at a time)' : "(the model's own - several can be on)";
+    $('m-exprs-h').firstChild.textContent = isPng ? ((m.expression_pictures || []).length ? 'States & pictures ' : 'States ') : 'Expressions ';
+    $('m-exprs-h').querySelector('span').textContent = isPng ? ((m.expression_pictures || []).length ? '(one state at a time, and one expression picture over it)' : '(one at a time)')
+      : "(the model's own - several can be on)";
     if (!isPng && paneSel === 'png') document.querySelector('#tabs [data-p=place]').click();
     if (isPng && paneSel === 'png') loadPng();
     renderMood(); renderMouth(); renderItems(); renderAttach(); renderLight(); renderApi(); renderColors();
@@ -932,7 +943,12 @@
     var curEmo = (live.emotion && live.emotion.name) || 'neutral';
     $('m-emos').innerHTML = emoNames.map(function (n) { return '<button class="sm' + (n === curEmo ? ' on' : '') + '" data-e="' + esc(n) + '">' + esc(n) + '</button>'; }).join('');
     if (S.pickFor !== a.name) { S.picks = {}; S.pickFor = a.name; }
-    $('m-exprs').innerHTML = (m.expressions || []).map(function (e) { return '<button class="sm' + (e.name in onExpr ? ' on' : '') + (S.picks[e.name] ? ' pick' : '') + '" data-x="' + esc(e.name) + '">' + esc(e.name) + '</button>'; }).join('') ||
+    var xpics = m.expression_pictures || [];
+    $('m-exprs').innerHTML = (m.expressions || []).map(function (e) {
+      var pic = xpics.indexOf(e.name) >= 0;
+      return '<button class="sm' + (e.name in onExpr ? ' on' : '') + (S.picks[e.name] ? ' pick' : '') + '" data-x="' + esc(e.name) + '"' + (pic ? ' title="An expression picture (shown over the state)"' : '') + '>' +
+        (pic ? '&#128444; ' : '') + esc(e.name) + '</button>';
+    }).join('') ||
       '<span class="empty">This model has no expressions.</span>';
     $('m-motions').innerHTML = (m.motions || []).map(function (x) { return '<button class="sm" data-mo="' + esc(x.name) + '" title="group ' + esc(x.group) + ' #' + x.index + '">&#9654; ' + esc(x.name) + '</button>'; }).join('') +
       ((m.motions || []).length ? '<button class="sm ghost" id="mo-stop">Stop</button>' : '<span class="empty">This model has no motions.</span>');
@@ -1490,14 +1506,31 @@
     $('png-simple').style.display = r.style === 'simple' ? '' : 'none';
     $('png-layered').style.display = r.style === 'simple' ? 'none' : '';
     if (r.style === 'simple') renderPngSimple(r); else renderPngLayered(r);
+    renderPngPictures(r);
   }
 
   /* a slot for one picture: click for the library of this PNGtuber, or drop a file on it */
-  function faceTile(r, st, k, small) {
-    var f = (r.states[st] || {})[k] || '';
-    return '<div class="ftile' + (f ? ' has' : '') + (small ? ' small' : '') + '" tabindex="0" role="button" data-st="' + esc(st) + '" data-role="' + k + '" title="' + esc(ROLE_HINT[k] || '') + '">' +
+  function faceTile(r, st, k, small, ex) {
+    var f = (pngSet(r, st, ex) || {})[k] || '', hint = ex ? (k === 'idle' ? 'The picture' : 'The picture while talking (optional)') : ROLE_HINT[k] || '';
+    return '<div class="ftile' + (f ? ' has' : '') + (small ? ' small' : '') + '" tabindex="0" role="button" ' + (ex ? 'data-ex="' + esc(ex) + '"' : 'data-st="' + esc(st) + '"') +
+      ' data-role="' + k + '" title="' + esc(hint) + '">' +
       (f ? '<div class="im" style="background-image:url(\'' + esc(picUrl(f)) + '\')"></div><div class="nm">' + esc(f) + '</div><span class="x" data-clear="1" title="Take this picture away">&times;</span>'
          : '<span>' + (small ? '+' : '+ pick or drop a picture') + '</span>') + '</div>';
+  }
+  /* the pictures of a state (simple rig) or of an expression picture (`ex`) */
+  function pngSet(r, st, ex) { return ex ? (r.expressions || {})[ex] : (r.states || {})[st]; }
+  function pngNameTaken(r, n) {
+    return (r.style === 'simple' ? !!r.states[n] : r.states.indexOf(n) >= 0) || !!(r.expressions || {})[n];
+  }
+  function renderPngPictures(r) {
+    var ex = r.expressions || {}, names = Object.keys(ex);
+    $('png-pics').innerHTML = (names.length ? '<div class="xgrid">' + names.map(function (n) {
+      return '<div class="xcard"><div class="hd"><b class="mono" title="' + esc(n) + '">' + esc(n) + '</b>' +
+        '<button class="sm" data-xtry="' + esc(n) + '" title="Show it in the preview for 3 seconds"' + (ex[n].idle || ex[n].talk ? '' : ' disabled') + '>Try</button>' +
+        '<button class="sm ghost" data-xren="' + esc(n) + '" title="Rename">&#9998;</button><button class="sm danger" data-xdel="' + esc(n) + '" title="Remove it">&times;</button></div>' +
+        '<div class="tl">' + faceTile(r, '', 'idle', false, n) + '<div class="ftw">' + faceTile(r, '', 'talk', true, n) + '<span>talking</span></div></div></div>';
+    }).join('') + '</div>' : '') +
+      '<div class="row" style="margin-top:8px"><button class="sm" id="png-add-xpic">+ Expression picture</button></div>';
   }
   function renderPngSimple(r) {
     $('png-simple').innerHTML = Object.keys(r.states).map(function (st) {
@@ -1567,10 +1600,10 @@
   });
 
   /* pictures: the library of this PNGtuber in a small pop-up, or a file dropped on a slot */
-  var PIC = { st: '', role: '' };
-  function assignPic(st, role, name) {
-    var r = PNG.rig; if (!r || !r.states[st]) return;
-    if (name) r.states[st][role] = name; else delete r.states[st][role];
+  var PIC = { st: '', role: '', ex: '' };
+  function assignPic(st, role, name, ex) {
+    var set = PNG.rig && pngSet(PNG.rig, st, ex); if (!set) return;
+    if (name) set[role] = name; else delete set[role];
     pngChanged(true);
   }
   async function uploadPngPics(files) {
@@ -1583,18 +1616,18 @@
   }
   // upload a picture and put it in a slot. The library broadcast that follows an upload reloads the editor from disk,
   // so the editor is "busy" until the picture is in the (unsaved) rig and that reload would lose it.
-  async function uploadToSlot(file, st, role) {
+  async function uploadToSlot(file, st, role, ex) {
     PNG.busy = true;
     try {
       var added = await uploadPngPics([file]);
-      if (added && added[0]) assignPic(st, role, added[0]);
+      if (added && added[0]) assignPic(st, role, added[0], ex);
     } finally { PNG.busy = false; }
   }
   function closePicPop() { $('pic-pop').classList.remove('open'); }
   function openPicPop(tile) {
-    var st = tile.dataset.st, role = tile.dataset.role, cur = ((PNG.rig.states[st] || {})[role]) || '', pics = pngPics(), pop = $('pic-pop');
-    PIC.st = st; PIC.role = role;
-    var h = '<div style="font:600 12px var(--mono);color:var(--dim);margin-bottom:8px">' + esc(ROLE_HINT[role] || role) + '</div><div class="pgrid">' +
+    var st = tile.dataset.st || '', ex = tile.dataset.ex || '', role = tile.dataset.role, cur = ((pngSet(PNG.rig, st, ex) || {})[role]) || '', pics = pngPics(), pop = $('pic-pop');
+    PIC.st = st; PIC.role = role; PIC.ex = ex;
+    var h = '<div style="font:600 12px var(--mono);color:var(--dim);margin-bottom:8px">' + esc(ex ? ex + (role === 'talk' ? ' - while talking' : '') : ROLE_HINT[role] || role) + '</div><div class="pgrid">' +
       '<button type="button" class="pt' + (cur ? '' : ' sel') + '" data-pp="">None</button>';
     pics.forEach(function (f) {
       h += '<button type="button" class="pt' + (f === cur ? ' sel' : '') + '" data-pp="' + esc(f) + '" title="' + esc(f) + '"><span class="im" style="background-image:url(\'' + esc(picUrl(f)) + '\')"></span></button>';
@@ -1611,7 +1644,7 @@
   $('pic-pop').addEventListener('click', function (e) {
     var b = e.target.closest('button'); if (!b) return;
     if (b.id === 'pp-up') { $('f-pngslot').click(); return; }
-    if (b.dataset.pp != null) { closePicPop(); assignPic(PIC.st, PIC.role, b.dataset.pp); }
+    if (b.dataset.pp != null) { closePicPop(); assignPic(PIC.st, PIC.role, b.dataset.pp, PIC.ex); }
   });
   document.addEventListener('mousedown', function (e) {
     if ($('pic-pop').classList.contains('open') && !$('pic-pop').contains(e.target) && !e.target.closest('.ftile')) closePicPop();
@@ -1619,8 +1652,8 @@
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closePicPop(); });
   $('f-pngslot').onchange = async function () {
     var f = this.files[0]; this.value = ''; if (!f) return;
-    var st = PIC.st, role = PIC.role; closePicPop();
-    await uploadToSlot(f, st, role);
+    var st = PIC.st, role = PIC.role, ex = PIC.ex; closePicPop();
+    await uploadToSlot(f, st, role, ex);
   };
 
   $('png-simple').addEventListener('change', function (e) {
@@ -1639,21 +1672,63 @@
     if (b.dataset.ren) return renamePngState(b.dataset.ren);
     if (b.dataset.del) { delete r.states[b.dataset.del]; if (r.default_state === b.dataset.del) r.default_state = Object.keys(r.states)[0]; pngChanged(true); }
   });
-  $('png-simple').addEventListener('keydown', function (e) {
-    var t = e.target.closest && e.target.closest('.ftile');
-    if (t && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openPicPop(t); }
+  ['png-simple', 'png-pics'].forEach(function (id) {
+    $(id).addEventListener('keydown', function (e) {
+      var t = e.target.closest && e.target.closest('.ftile');
+      if (t && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openPicPop(t); }
+    });
+    ['dragenter', 'dragover'].forEach(function (ev) {
+      $(id).addEventListener(ev, function (e) { var t = e.target.closest('.ftile'); if (t) { e.preventDefault(); t.classList.add('over'); } });
+    });
+    $(id).addEventListener('dragleave', function (e) { var t = e.target.closest('.ftile'); if (t) t.classList.remove('over'); });
+    $(id).addEventListener('drop', async function (e) {
+      var t = e.target.closest('.ftile'); if (!t) return;
+      e.preventDefault(); t.classList.remove('over');
+      var files = Array.prototype.filter.call(e.dataTransfer.files, function (f) { return /\.(png|jpe?g|webp|gif)$/i.test(f.name); });
+      if (!files.length) { toast('Drop a picture (png, jpg, webp or gif)', true); return; }
+      await uploadToSlot(files[0], t.dataset.st || '', t.dataset.role, t.dataset.ex || '');
+    });
   });
-  ['dragenter', 'dragover'].forEach(function (ev) {
-    $('png-simple').addEventListener(ev, function (e) { var t = e.target.closest('.ftile'); if (t) { e.preventDefault(); t.classList.add('over'); } });
+  $('png-pics').addEventListener('click', function (e) {
+    var r = PNG.rig, tile = e.target.closest('.ftile');
+    if (!r) return;
+    if (tile) {
+      if (e.target.closest('[data-clear]')) { delete (r.expressions[tile.dataset.ex] || {})[tile.dataset.role]; pngChanged(true); }
+      else openPicPop(tile);
+      return;
+    }
+    var b = e.target.closest('button'); if (!b) return;
+    if (b.id === 'png-add-xpic') return addPngPicture();
+    if (b.dataset.xren) return renamePngPicture(b.dataset.xren);
+    if (b.dataset.xdel) { delete r.expressions[b.dataset.xdel]; pngChanged(true); }
+    if (b.dataset.xtry) tryPngPicture(b.dataset.xtry);
   });
-  $('png-simple').addEventListener('dragleave', function (e) { var t = e.target.closest('.ftile'); if (t) t.classList.remove('over'); });
-  $('png-simple').addEventListener('drop', async function (e) {
-    var t = e.target.closest('.ftile'); if (!t) return;
-    e.preventDefault(); t.classList.remove('over');
-    var files = Array.prototype.filter.call(e.dataTransfer.files, function (f) { return /\.(png|jpe?g|webp|gif)$/i.test(f.name); });
-    if (!files.length) { toast('Drop a picture (png, jpg, webp or gif)', true); return; }
-    await uploadToSlot(files[0], t.dataset.st, t.dataset.role);
-  });
+  function pngKey(v) { return String(v || '').trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 32); }
+  function addPngPicture() {
+    dialog('New expression picture', '<p class="hint">A name the bot switches it on by (<span class="mono">expression</span>), e.g. "shrug". Then click its tile to give it a picture.</p>' +
+      '<div class="f"><span>Name</span><div class="ctl"><input id="nps" class="grow" maxlength="32"></div></div>', function () {
+      var n = pngKey($('nps').value), r = PNG.rig; if (!n) return false;
+      if (pngNameTaken(r, n)) { toast('"' + n + '" is taken (a state or another expression picture)', true); return false; }
+      r.expressions = r.expressions || {}; r.expressions[n] = {};
+      pngChanged(true);
+    });
+  }
+  function renamePngPicture(old) {
+    dialog('Rename ' + old, '<div class="f"><span>New name</span><div class="ctl"><input id="nps" class="grow" maxlength="32" value="' + esc(old) + '"></div></div>', function () {
+      var n = pngKey($('nps').value), r = PNG.rig; if (!n || n === old) return;
+      if (pngNameTaken(r, n)) { toast('"' + n + '" is taken (a state or another expression picture)', true); return false; }
+      var out = {}; Object.keys(r.expressions).forEach(function (k) { out[k === old ? n : k] = r.expressions[k]; }); r.expressions = out;
+      pngChanged(true);
+    });
+  }
+  /* on for 3 seconds in the preview only (the unsaved pictures too); OBS does not see it */
+  function tryPngPicture(n) {
+    var av = stage && S.sel && stage.avatars[S.sel];
+    if (!av || !av.png) { toast('The preview has to show this avatar', true); return; }
+    if (!av.png.hasPicture(n)) { toast('Give it a picture first', true); return; }
+    var on = {}; on[n] = 'on';
+    av.command({ cmd: 'expression', states: on, until: Date.now() / 1000 + 3 });
+  }
 
   $('png-layered').addEventListener('click', function (e) {
     var r = PNG.rig, a = e.target.closest('a');
@@ -1703,6 +1778,7 @@
     dialog('New state', '<p class="hint">A set of pictures (simple) or of layers (layered) the bot can switch to - e.g. "happy".</p><div class="f"><span>Name</span><div class="ctl"><input id="nps" class="grow" maxlength="32"></div></div>', function () {
       var n = $('nps').value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '_'); if (!n) return false;
       var r = PNG.rig;
+      if ((r.expressions || {})[n]) { toast('"' + n + '" is an expression picture already', true); return false; }
       if (r.style === 'simple') { if (r.states[n]) return false; r.states[n] = {}; }
       else { if (r.states.indexOf(n) >= 0) return false; r.states.push(n); }
       pngChanged(true);
@@ -1711,6 +1787,7 @@
   function renamePngState(old) {
     dialog('Rename ' + old, '<div class="f"><span>New name</span><div class="ctl"><input id="nps" class="grow" maxlength="32" value="' + esc(old) + '"></div></div>', function () {
       var n = $('nps').value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '_'), r = PNG.rig; if (!n || n === old) return;
+      if ((r.expressions || {})[n]) { toast('"' + n + '" is an expression picture already', true); return false; }
       if (r.style === 'simple') {
         if (r.states[n]) return false;
         var out = {}; Object.keys(r.states).forEach(function (k) { out[k === old ? n : k] = r.states[k]; }); r.states = out;

@@ -512,6 +512,14 @@ def _expression_names(a: dict, names: list[str]) -> list[str]:
     return out
 
 
+def _png_pictures(a: dict) -> set[str]:
+    """A PNGtuber's expression pictures (what `expression` shows over its state, as opposed to its states)."""
+    try:
+        return set(library.model_meta(a["model"]).get("expression_pictures") or []) if a.get("model") else set()
+    except library.LibraryError:
+        return set()
+
+
 def _emotion_forget(st: dict, names=None) -> None:
     """An expression switched on or off by itself is no longer the emotion's: the emotion's record (what a renderer that joins
     late is told, and what the next emotion switches off) lets go of it - `names` None lets go of all of them."""
@@ -1076,24 +1084,31 @@ async def _command_one(name: str, kind: str, cmd: dict, source: str) -> dict:
             raise CommandError("state is 'on', 'off' or 'toggle'")
         until = _until(cmd)
         states = {}
-        if _model_type(a) == "png" and names:            # one state at a time: the last one switched on wins
-            last_on = None
+        png = _model_type(a) == "png"
+        if png and names:
+            # one state at a time, and one expression picture at a time (shown over the state): the last of each kind
+            # switched on wins and switches the one before it off. A state leaves the picture alone and the other way round.
+            pics = _png_pictures(a)
+            want = {n: ("off" if n in st["expressions"] else "on") if state == "toggle" else state for n in names}
+            for is_pic in (False, True):
+                mine = [n for n in names if (n in pics) == is_pic]
+                on = [n for n in mine if want[n] == "on"][-1:]
+                for n in on or mine:
+                    states[n] = want[n]
+                for n in st["expressions"] if on else []:
+                    if (n in pics) == is_pic and n != on[0]:
+                        states[n] = "off"
+            names = [n for n in names if n in states]
+        else:
             for n in names:
-                s = ("off" if n in st["expressions"] else "on") if state == "toggle" else state
-                if s == "on":
-                    last_on = n
-            names = [last_on] if last_on else names
-            state = "on" if last_on else "off"
-            only = only or bool(last_on)
-        for n in names:
-            s = ("off" if n in st["expressions"] else "on") if state == "toggle" else state
-            states[n] = s
+                states[n] = ("off" if n in st["expressions"] else "on") if state == "toggle" else state
+        for n, s in states.items():
             if s == "on":
                 st["expressions"][n] = until or 0
             else:
                 st["expressions"].pop(n, None)
         if only is None:                          # one switched on takes over from the others (a switch off is just that one)
-            only = a["replace_expressions"] and "on" in states.values()
+            only = not png and a["replace_expressions"] and "on" in states.values()
         off = []
         if only:
             off = [n for n in st["expressions"] if n not in states or states[n] == "off"]
@@ -1198,7 +1213,12 @@ async def _command_one(name: str, kind: str, cmd: dict, source: str) -> dict:
         else:
             st["transform"] = {**(st["transform"] or {}), **t}
     elif kind == "visible":
-        vis = bool(cmd.get("visible", True))
+        # {"visible": false}, or {"state": "on" | "off" | "toggle"} like an expression
+        state = cmd.get("state")
+        if state is not None and state not in ("on", "off", "toggle"):
+            raise CommandError("state is 'on', 'off' or 'toggle'")
+        shown = a["visible"] if st["visible"] is None else st["visible"]
+        vis = (not shown) if state == "toggle" else (state == "on") if state else bool(cmd.get("visible", True))
         out.update({"visible": vis, "fade": _num(cmd.get("fade", 0.4), 0, 30, 0.4)})
         if cmd.get("save"):
             a["visible"] = vis
@@ -2294,6 +2314,7 @@ def _make_visibility_route(show: bool):
         body = {}
         if (request.headers.get("content-length") or "0") != "0" or request.headers.get("transfer-encoding"):
             body = await _json(request)
+        body.pop("state", None)                   # /show and /hide say it themselves
         return await command(name, {**body, "cmd": "visible", "visible": show}, _source(request))
     handler.__name__ = "api_show" if show else "api_hide"
     return guarded(handler)
@@ -2326,14 +2347,14 @@ API_ROUTES = [
     "POST /avatar/api/models/<id>/color_presets/<name>/default  {default: false for none} - the model's default colours: what an avatar starts in when it loads the model",
     "POST /avatar/api/models/<id>/color_presets/import  {vts, default} - take the art mesh colours VTube Studio saved (the model's own .vtube.json, or `vts`: another one as text) into presets: its tints as \"VTube Studio\", each colour hotkey by name",
     "POST /avatar/api/models/<id>/color_presets/<name>/as_model {name} - a preset + its model saved as a new model of the library (a full copy that starts in it)",
-    "POST /avatar/api/avatars/<name>/expression    {name} or {names:[...]}, state:on|off|toggle, only, for",
+    "POST /avatar/api/avatars/<name>/expression    {name} or {names:[...]}, state:on|off|toggle, only, for - a PNGtuber: its states and expression pictures",
     "POST /avatar/api/avatars/<name>/motion        {name} or {group, index}, loop",
     "POST /avatar/api/avatars/<name>/emotion       {name:happy, intensity, for}",
     "POST /avatar/api/avatars/<name>/face          {smile, brows, eyes, mouth_open, cheek, mouth_x, tilt, wink_left, wink_right}",
     "POST /avatar/api/avatars/<name>/look          {x,y} -1..1, {at:camera|left|...}, {stage_x,stage_y} or {release:true}",
     "POST /avatar/api/avatars/<name>/gesture       {name:nod|shake|tilt|bounce|lean_left|lean_right|look_away|double_nod}",
     "POST /avatar/api/avatars/<name>/transform     {x,y,scale,rotation,flip, duration, save}",
-    "POST /avatar/api/avatars/<name>/show | hide   {fade}",
+    "POST /avatar/api/avatars/<name>/show | hide   {fade, save}  |  .../visible {state:on|off|toggle, fade, save} - the answer has visible",
     "POST /avatar/api/avatars/<name>/speak         audio (multipart / raw / {url} / {audio_b64}), ?wait=1",
     "POST /avatar/api/avatars/<name>/stop_speaking",
     "POST /avatar/api/avatars/<name>/lipsync       {state:on|off|toggle} - the Mouth tab's Lipsync tick box (saved); the answer has the new state",

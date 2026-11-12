@@ -900,9 +900,14 @@
     this.baseScale = H / rig.box.h;
     rig.root.scale.set(this.baseScale);
     this.holder.addChildAt(rig.root, 0);
-    // a PNGtuber's expressions are its states: the last one switched on is shown
+    // a PNGtuber's expressions are its states and its expression pictures: the last one of each switched on is shown
     var on = Object.keys(this.exprs).filter(function (k) { return this.exprs[k].to > 0; }, this);
-    rig.setState(on.length ? on[on.length - 1] : null);
+    var ons = on.filter(function (k) { return !rig.hasPicture(k); }).pop(), onp = on.filter(function (k) { return rig.hasPicture(k); }).pop();
+    rig.setState(ons || null, ons ? this.exprs[ons].until : 0);
+    if (onp) {
+      rig.setPicture(onp, this.exprs[onp].until);
+      if ((this.emo.exprs || []).indexOf(onp) >= 0) rig.emoPic = onp;
+    }
     this.exprs = {};
     this.info = { parameters: [], parts: rig.layers.map(function (l) { return { id: l.id, name: l.name || '' }; }), drawables: [],
                   hit_areas: [], size: [Math.round(rig.box.w), Math.round(rig.box.h)], states: (meta.states || []) };
@@ -915,10 +920,15 @@
   /* the PNGtuber editor's unsaved rig, shown right away (the preview only) */
   Avatar.prototype.previewRig = function (rig) {
     if (this.kind !== 'png' || !this.spec) return;
-    var seq = ++this.loadSeq, state = this.png && this.png.state;
+    var seq = ++this.loadSeq, was = this.png;
+    var keep = was ? { state: was.state, su: was.stateUntil, expr: was.expr, eu: was.exprUntil, emo: was.emoPic } : null;
     var self = this;
     this._loadPng(seq, this.modelId, this.meta, Object.assign({}, rig, { type: 'png', base: this.spec.base, url: this.spec.url }))
-      .then(function () { if (self.png && state) self.png.setState(state); });
+      .then(function () {
+        if (!self.png || !keep || self.png === was) return;
+        self.png.setState(keep.state, keep.su);
+        if (keep.expr) { self.png.setPicture(keep.expr, keep.eu); self.png.emoPic = self.png.expr && self.png.expr === keep.emo ? keep.emo : ''; }
+      });
   };
 
   /* the PNGtuber editor's voice and movement settings, live in the preview (no reload of the pictures) */
@@ -1746,11 +1756,14 @@
         break;
       }
       case 'expression':                                   // one, or several in the same frame
-        if (this.png) {                                    // a PNGtuber shows one state at a time
-          var sts = c.states || (function () { var o = {}; o[c.name] = c.state === 'off' ? 'off' : 'on'; return o; })();
+        if (this.png) {                    // a PNGtuber shows one state at a time, and one expression picture at a time over it
+          var sts = c.states || (function () { var o = {}; o[c.name] = c.state === 'off' ? 'off' : 'on'; return o; })(), pr = this.png;
           for (k in sts) {
-            if (sts[k] === 'on') this.png.setState(k);
-            else if (this.png.state === k) this.png.setState(null);
+            if (pr.hasPicture(k)) {
+              if (sts[k] === 'on') pr.setPicture(k, c.until);
+              else if (pr.expr === k) pr.setPicture(null);
+            } else if (sts[k] === 'on') { if (pr.isState(k)) pr.setState(k, c.until); }      // (a name it hasn't got changes nothing)
+            else if (pr.state === k) pr.setState(null);
           }
           break;
         }
@@ -1760,12 +1773,19 @@
         var mine = c.states ? Object.keys(c.states) : [c.name];
         if (this.emo.exprs) this.emo.exprs = this.emo.exprs.filter(function (n) { return mine.indexOf(n) < 0; });
         break;
-      case 'clear_expressions': if (this.png) this.png.setState(null); for (k in this.exprs) { this.exprs[k].to = 0; this.exprs[k].fadeOut = c.fade || this.exprs[k].fadeOut; } this.emo.exprs = []; break;
+      case 'clear_expressions': if (this.png) { this.png.setState(null); this.png.setPicture(null); } for (k in this.exprs) { this.exprs[k].to = 0; this.exprs[k].fadeOut = c.fade || this.exprs[k].fadeOut; } this.emo.exprs = []; break;
       case 'motion': this._motion(c); break;
       case 'stop_motion': if (this.model && !this.png) { this.model.internalModel.motionManager.stopAllMotions(); this._motionEnded('stopped'); } break;
       case 'emotion': {
         var self = this;
-        if (this.png) this.png.setState(c.name === 'neutral' ? null : ((c.expressions || [])[0] || c.name));
+        if (this.png) {                                   // its state (or the default), and an expression picture if it names one
+          var pr2 = this.png, wants = c.name === 'neutral' ? [] : ((c.expressions || []).length ? c.expressions : [c.name]);
+          var pic = wants.filter(function (n) { return pr2.hasPicture(n); })[0];
+          if (pr2.emoPic && pr2.expr === pr2.emoPic) pr2.setPicture(null);           // the last emotion's picture goes
+          pr2.emoPic = '';
+          pr2.setState(wants.filter(function (n) { return !pr2.hasPicture(n); })[0] || null);
+          if (pic) { pr2.setPicture(pic); pr2.emoPic = pic; }
+        }
         if (!this.png) {
           (c.previous || []).forEach(function (n) { if ((c.expressions || []).indexOf(n) < 0) self._expression(n, false, c.fade); });
           (c.expressions || []).forEach(function (n) { self._expression(n, true, c.fade, c.until); });
@@ -1806,7 +1826,11 @@
 
   Avatar.prototype._emotionOff = function () {
     var self = this;
-    if (this.png) this.png.setState(null);
+    if (this.png) {
+      this.png.setState(null);
+      if (this.png.emoPic && this.png.expr === this.png.emoPic) this.png.setPicture(null);
+      this.png.emoPic = '';
+    }
     (this.emo.exprs || []).forEach(function (n) { self._expression(n, false, 0.5); });
     this.emo = { name: 'neutral', face: {}, intensity: 1, until: 0, tau: 0.25, exprs: [] };
   };
@@ -2056,25 +2080,32 @@
     return { a: m.d / det, b: -m.b / det, c: -m.c / det, d: m.a / det, tx: (m.c * m.ty - m.d * m.tx) / det, ty: (m.b * m.tx - m.a * m.ty) / det };
   }
 
-  /* a simple rig (pictures per state) as layers, with the show-when rules of each picture */
+  /* the pictures of one simple state (or of one expression picture) as layers, with the show-when rules of each picture */
+  function roleLayers(out, key, s, extra) {
+    var talks = !!(s.talk || s.talk_blink || s.half || s.A || s.I || s.U || s.E || s.O);
+    function add(role, talk, blink, vowel) {
+      if (!s[role]) return;
+      out.push(Object.assign({ id: key + ':' + role, name: key + ' ' + role, image: s[role], parent: null, x: 0, y: 0, ox: 0, oy: 0, z: 0,
+                 talk: talk, blink: blink, vowel: vowel || '', states: [], wobble: [0, 0, 0, 0], drag: 0, rot_drag: 0,
+                 rot_min: -180, rot_max: 180, stretch: 0, ignore_bounce: false, frames: 1, fps: 0, clip: false, toggle: '' }, extra));
+    }
+    add('idle', talks ? 1 : 0, s.blink ? 1 : 0);
+    add('blink', talks ? 1 : 0, 2);
+    add('talk', 2, s.talk_blink ? 1 : 0);
+    add('talk_blink', 2, 2);
+    add('half', 3, 0);
+    ['A', 'I', 'U', 'E', 'O'].forEach(function (v) { add(v, 2, 0, v); });
+  }
+  /* a simple rig (pictures per state) as layers */
   function simpleLayers(rig) {
     var out = [];
-    Object.keys(rig.states || {}).forEach(function (st) {
-      var s = rig.states[st];
-      var talks = !!(s.talk || s.talk_blink || s.half || s.A || s.I || s.U || s.E || s.O);
-      function add(role, talk, blink, vowel) {
-        if (!s[role]) return;
-        out.push({ id: st + ':' + role, name: st + ' ' + role, image: s[role], parent: null, x: 0, y: 0, ox: 0, oy: 0, z: 0,
-                   talk: talk, blink: blink, vowel: vowel || '', states: [st], wobble: [0, 0, 0, 0], drag: 0, rot_drag: 0,
-                   rot_min: -180, rot_max: 180, stretch: 0, ignore_bounce: false, frames: 1, fps: 0, clip: false, toggle: '' });
-      }
-      add('idle', talks ? 1 : 0, s.blink ? 1 : 0);
-      add('blink', talks ? 1 : 0, 2);
-      add('talk', 2, s.talk_blink ? 1 : 0);
-      add('talk_blink', 2, 2);
-      add('half', 3, 0);
-      ['A', 'I', 'U', 'E', 'O'].forEach(function (v) { add(v, 2, 0, v); });
-    });
+    Object.keys(rig.states || {}).forEach(function (st) { roleLayers(out, st, rig.states[st], { states: [st] }); });
+    return out;
+  }
+  /* the expression pictures (either style) as layers: each stands in for the whole avatar while it is on */
+  function pictureLayers(rig) {
+    var out = [];
+    Object.keys(rig.expressions || {}).forEach(function (n) { roleLayers(out, 'expr:' + n, rig.expressions[n] || {}, { expr: n }); });
     return out;
   }
 
@@ -2108,21 +2139,24 @@
     this.draw = new PIXI.Container();
     this.draw.sortableChildren = true;
     this.root.addChild(this.draw);
-    var src = rig.style === 'simple' ? simpleLayers(rig) : (rig.layers || []);
+    var src = (rig.style === 'simple' ? simpleLayers(rig) : (rig.layers || [])).concat(pictureLayers(rig));
     this.layers = src.map(function (l) { return Object.assign({}, l, { s: { dx: null, dy: null, rot: 0, sx: 1, sy: 1, ft: 0 } }); });
     this.byId = {};
     var self = this;
     this.layers.forEach(function (l) { self.byId[l.id] = l; });
     this.parts = { ids: this.layers.map(function (l) { return l.id; }), index: {} };
     this.layers.forEach(function (l, i) { self.parts.index[l.id] = i; });
-    this.state = rig.default_state;
+    this.state = rig.default_state; this.stateUntil = 0;
+    // the expression picture shown over the state ('' = none), until when, and whether an emotion put it there
+    this.pics = {}; this.expr = ''; this.exprUntil = 0; this.emoPic = '';
+    this.layers.forEach(function (l) { if (l.expr) self.pics[l.expr] = true; });
     this.talking = false; this.soft = false; this.blinking = false; this.vowel = ''; this.level = 0;
     this.speaking = false; this.speakHold = 0; this.gate = new MouthGate();     // `talking` = the mouth is open
     this.hold = 0; this.by = 0; this.vy = 0; this.t = 0;
     // per state: does it have a half-open mouth / vowel mouths (they take over from the plain one)
     this.stateInfo = {};
     this.layers.forEach(function (l) {
-      (l.states && l.states.length ? l.states : ['*']).forEach(function (st) {
+      (l.expr ? ['@' + l.expr] : l.states && l.states.length ? l.states : ['*']).forEach(function (st) {
         var si = self.stateInfo[st] = self.stateInfo[st] || { half: false, vowels: {} };
         if (l.talk === 3) si.half = true;
         if (l.vowel) si.vowels[l.vowel] = true;
@@ -2186,20 +2220,39 @@
     box = box || { x0: -50, y0: -50, x1: 50, y1: 50 };
     this.box = { x: box.x0, y: box.y0, w: Math.max(1, box.x1 - box.x0), h: Math.max(1, box.y1 - box.y0) };
     this.root.pivot.set(this.box.x + this.box.w / 2, this.box.y + this.box.h / 2);
+    // an expression picture is drawn where the avatar is: centred on it (a simple rig's pictures all are, on 0, 0)
+    if (this.rig.style !== 'simple') {
+      var cx = this.box.x + this.box.w / 2, cy = this.box.y + this.box.h / 2;
+      this.layers.forEach(function (l) { if (l.expr) { l.x = cx; l.y = cy; } });
+    }
     if (!this.layers.some(function (l) { return l.sprite; })) throw new Error('none of its pictures could be loaded');
   };
 
-  PngRig.prototype.setState = function (name) {
-    if (name && (this.rig.style === 'simple' ? this.rig.states[name] : (this.rig.states || []).indexOf(name) >= 0)) this.state = name;
-    else this.state = this.rig.default_state;
+  PngRig.prototype.isState = function (name) {
+    return !!name && !!(this.rig.style === 'simple' ? (this.rig.states || {})[name] : (this.rig.states || []).indexOf(name) >= 0);
+  };
+  PngRig.prototype.setState = function (name, until) {
+    var ok = this.isState(name);
+    this.state = ok ? name : this.rig.default_state;
+    this.stateUntil = ok && until || 0;
+  };
+
+  /* an expression picture over the state (null: none) - one at a time */
+  PngRig.prototype.hasPicture = function (name) { return !!name && !!this.pics[name]; };
+  PngRig.prototype.setPicture = function (name, until) {
+    this.expr = this.hasPicture(name) ? name : '';
+    this.exprUntil = this.expr && until || 0;
+    this.emoPic = '';
   };
 
   PngRig.prototype.hop = function (amount) { if (this.by > -16) this.vy = -this.rig.bounce * (amount || 1); };
 
   /* is this layer shown right now */
   PngRig.prototype._shown = function (l) {
-    if (l.states && l.states.length && l.states.indexOf(this.state) < 0) return false;
-    var si = this.stateInfo[this.state] || this.stateInfo['*'] || { half: false, vowels: {} }, t = this.talking;
+    if (this.expr) { if (l.expr !== this.expr) return false; }          // an expression picture: only its own pictures
+    else if (l.expr) return false;
+    else if (l.states && l.states.length && l.states.indexOf(this.state) < 0) return false;
+    var si = this.stateInfo[this.expr ? '@' + this.expr : this.state] || this.stateInfo['*'] || { half: false, vowels: {} }, t = this.talking;
     switch (l.talk) {
       case 1: if (t) return false; break;
       case 2:
@@ -2256,6 +2309,9 @@
 
   PngRig.prototype.update = function (dt, F, now) {
     var r = this.rig, av = this.av, lip = (F && F.lip) || {};
+    // a state or an expression picture switched on for a while (the call's "for")
+    if (this.exprUntil && now >= this.exprUntil) this.setPicture(null);
+    if (this.stateUntil && now >= this.stateUntil) this.setState(null);
     // the voice (or the bot's MouthOpen / mouth_open)
     // (the unsmoothed level when there is one: the dips between words are what the mouth follows)
     var level = Math.max(lip.raw != null ? lip.raw : (lip.level || 0), av.inputOv('MouthOpen', F ? F.MouthOpen : 0));
