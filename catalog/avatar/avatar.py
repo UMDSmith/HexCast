@@ -44,6 +44,11 @@ from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
 from hexcast_core import paths
+try:
+    from hexcast_core.sockets import send as ws_send          # Hexcast 2.3+: gives up on a client that stopped reading
+except ImportError:                                          # an older Hexcast: a plain send, as before
+    async def ws_send(ws, data):
+        await (ws.send_bytes(data) if isinstance(data, bytes) else ws.send_text(data))
 from hexcast_core.api import ApiError, check_same_origin
 from hexcast_core.staticfiles import RevalidatingStaticFiles
 
@@ -801,6 +806,7 @@ class Client:
         self.overlay = overlay                    # an OBS source draws one overlay; None (the tab's preview) draws any
         self.stats: dict = {}
         self.id = uuid.uuid4().hex[:8]
+        self.pcm_busy = False                     # a block of device audio is on its way to this renderer
 
     def wants(self, name: str) -> bool:
         """Does this renderer draw the avatar? Everything that goes to renderers (commands, speech, the
@@ -818,6 +824,7 @@ class Hub:
         self.clients: set[Client] = set()
         self.captures = capture.Captures()
         self.loop: asyncio.AbstractEventLoop | None = None
+        self.pcm_tasks: set[asyncio.Task] = set()     # device audio on its way to renderers (at most one each)
 
     def of(self, kind: str) -> list[Client]:
         return [c for c in self.clients if c.kind == kind]
@@ -829,10 +836,7 @@ class Hub:
         text = payload if isinstance(payload, bytes) else json.dumps(payload)
         for c in list(clients):
             try:
-                if isinstance(text, bytes):
-                    await c.ws.send_bytes(text)
-                else:
-                    await c.ws.send_text(text)
+                await ws_send(c.ws, text)
             except Exception:
                 self.clients.discard(c)
 
@@ -867,9 +871,21 @@ class Hub:
         key = dev.encode("utf-8")[:255]
         frame = bytes([len(key)]) + key + pcm
         users = {a["name"] for a in CONFIG["avatars"] if a["mouth"]["source"] == "device" and a["mouth"]["device"] == dev}
-        targets = [c for c in self.of("render") if any(c.wants(n) for n in users)]
-        if targets and self.loop:
-            self.loop.create_task(self._send(targets, frame))
+        targets = [c for c in self.of("render") if not c.pcm_busy and any(c.wants(n) for n in users)]
+        if self.loop:
+            for c in targets:
+                c.pcm_busy = True
+                task = self.loop.create_task(self._pcm_to(c, frame))
+                self.pcm_tasks.add(task)
+                task.add_done_callback(self.pcm_tasks.discard)
+
+    async def _pcm_to(self, c: Client, frame: bytes) -> None:
+        """One block to one renderer. A renderer still taking the last block skips this one: its mouth stays
+        in step with the voice instead of falling behind, and one that stopped reading never piles up sends."""
+        try:
+            await self._send([c], frame)
+        finally:
+            c.pcm_busy = False
 
 
 HUB = Hub()
@@ -2580,9 +2596,11 @@ async def detach() -> None:
             if h is not None and not getattr(h, "done", lambda: False)():
                 h.cancel()
     BURSTS.clear()
+    for task in list(HUB.pcm_tasks):
+        task.cancel()
     for c in list(HUB.clients):
         try:
-            await c.ws.close()
+            await asyncio.wait_for(c.ws.close(), 2)   # a renderer that stopped reading would never take the close
         except Exception:
             pass
     HUB.clients.clear()

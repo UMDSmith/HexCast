@@ -1,7 +1,7 @@
 {
   "id": "countdown",
   "name": "Countdown",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A styleable countdown timer overlay - a fixed duration or a clock time - with media cues that fire soundboard clips at any point on the way down.",
   "icon": "⏱️",
   "color": "#ffb020",

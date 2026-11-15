@@ -66,6 +66,11 @@ from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from hexcast_core import paths
+try:
+    from hexcast_core.sockets import send as ws_send          # Hexcast 2.3+: gives up on a client that stopped reading
+except ImportError:                                          # an older Hexcast: a plain send, as before
+    async def ws_send(ws, data):
+        await (ws.send_bytes(data) if isinstance(data, bytes) else ws.send_text(data))
 
 log = logging.getLogger("hexcast")
 
@@ -2445,7 +2450,7 @@ class Hub:
         text = json.dumps(payload)
         for ws in list(group):
             try:
-                await ws.send_text(text)
+                await ws_send(ws, text)
             except Exception:
                 dead.append(ws)
         for ws in dead:

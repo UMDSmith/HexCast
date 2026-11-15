@@ -1,7 +1,7 @@
 {
   "id": "giveaways",
   "name": "Giveaways",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Prizes with a picture and a description, drawn from everyone in your Twitch chat - or followers (for at least a set time) and/or subscribers - with a countdown and a name jumble on an OBS overlay before the winner shows, a chat message for them, rerolls and a winners list.",
   "icon": "🎁",
   "color": "#ff5fa2",

@@ -1,0 +1,456 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="/static/hexcast.png">
+<link rel="stylesheet" href="/static/hexbar.css?v=2">
+<title>Hexcast - Memory</title>
+<style>
+  :root{
+    --bg:var(--hb-bg); --line:var(--hb-line); --ink:var(--hb-ink); --dim:var(--hb-dim); --muted:var(--hb-muted);
+    --good:var(--hb-good); --warn:var(--hb-warn);
+    --data:#3987e5; --data-soft:#2a5fa3; --track:#1b2433; --grid:#242431;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 'Segoe UI',system-ui,sans-serif;}
+  main{padding:8px 22px 70px;max-width:1120px}
+  h1{margin:6px 0 4px;font-size:22px}
+  .lead{margin:0 0 16px;color:var(--dim);max-width:78ch}
+  .card{background:var(--hb-card);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
+  .card h2{margin:0 0 4px;font:800 13px/1.2 var(--hb-mono);letter-spacing:.16em;text-transform:uppercase}
+  .hint{margin:0 0 12px;color:var(--dim);font-size:13px;max-width:80ch}
+  code,.mono{font:12.5px var(--hb-mono);color:var(--muted)}
+  .num{font-variant-numeric:tabular-nums}
+  #state{min-height:1.4em;font-size:13px;color:var(--dim);margin:-8px 0 12px}
+  #state.bad{color:var(--warn)}
+  .stale{opacity:.55;transition:opacity .2s}
+
+  /* stat tiles */
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:16px}
+  .tile{background:var(--hb-card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;min-width:0}
+  .tile .l{font-size:12.5px;color:var(--dim)}
+  .tile .v{font-size:24px;font-weight:650;line-height:1.25;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tile .s{font-size:12.5px;color:var(--dim);margin-top:2px}
+  .tile.alert{border-color:#5a4210}
+  .flag{display:inline-flex;align-items:center;gap:6px;color:var(--warn);font-size:12.5px;margin-top:4px}
+  .flag svg{flex:0 0 auto}
+
+  /* the chart */
+  .chart{position:relative;height:240px;margin-top:6px}
+  .chart svg{display:block;width:100%;height:100%;overflow:visible}
+  .chart .empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:13.5px;text-align:center;padding:0 20px}
+  .axis text{fill:var(--dim);font:11.5px 'Segoe UI',system-ui,sans-serif}
+  .tip{position:absolute;pointer-events:none;background:#0e0e14;border:1px solid var(--hb-line-hi);border-radius:8px;padding:8px 10px;
+       font-size:12.5px;min-width:160px;opacity:0;transition:opacity .08s;z-index:5}
+  .tip.on{opacity:1}
+  .tip .t{color:var(--dim);margin-bottom:4px}
+  .tip .r{display:flex;justify-content:space-between;gap:14px}
+  .tip .r b{font-weight:650}
+  .tip .r span{color:var(--dim)}
+  .tip .key{display:inline-block;width:12px;height:2px;background:var(--data);vertical-align:middle;margin-right:6px;border-radius:1px}
+
+  /* the module table */
+  .scroll{overflow-x:auto;margin:0 -4px;padding:0 4px}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th{font:600 11.5px 'Segoe UI',system-ui,sans-serif;color:var(--dim);text-align:left;letter-spacing:.06em;text-transform:uppercase;
+     padding:6px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+  th.r,td.r{text-align:right}
+  td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  tr.mod{cursor:pointer}
+  tr.mod:hover td{background:#1b1b25}
+  tr.mod:focus-visible{outline:2px solid var(--data);outline-offset:-2px}
+  .name{display:flex;align-items:flex-start;gap:8px;min-width:150px}
+  .name .chev{flex:0 0 auto;width:14px;margin-top:4px;color:var(--dim);transition:transform .15s}
+  tr.open .chev{transform:rotate(90deg)}
+  .name b{font-weight:600}
+  .name small{display:block;color:var(--dim);font-size:12px}
+  .held{min-width:150px}
+  .bar{height:6px;border-radius:0 3px 3px 0;background:var(--data);margin-top:5px;min-width:2px}
+  .bartrack{background:var(--track);border-radius:0 3px 3px 0}
+  .chg{white-space:nowrap}
+  .chg small,.dimtxt{color:var(--dim);font-size:12px;display:block}
+  .spark{display:block;margin-top:3px}
+  .rest td{color:var(--muted)}
+  .rest .name b{color:var(--ink)}
+  tr.detail td{background:#121219;font-size:13px;color:var(--muted);padding:10px 14px 14px 34px}
+  tr.detail h4{margin:6px 0 4px;font:600 11.5px 'Segoe UI',system-ui,sans-serif;color:var(--dim);letter-spacing:.06em;text-transform:uppercase}
+  tr.detail ul{margin:0;padding-left:18px}
+  .stuck{color:var(--warn);white-space:nowrap}
+  .foot{margin-top:10px;color:var(--dim);font-size:12.5px}
+
+  /* key-value lists */
+  dl.kv{display:grid;grid-template-columns:max-content 1fr;gap:4px 18px;margin:0;font-size:13.5px}
+  dl.kv dt{color:var(--dim)}
+  dl.kv dd{margin:0;min-width:0;overflow-wrap:anywhere}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+  .lines td{font-size:13px}
+  .lines td.f{font:12.5px var(--hb-mono);color:var(--muted);overflow-wrap:anywhere}
+  @media (max-width:760px){ .two{grid-template-columns:1fr} }
+  @media (max-width:560px){ main{padding:8px 16px 70px} .card{padding:14px} .tile .v{font-size:21px} .chart{height:200px} }
+</style></head>
+<body>
+<div id="hexbar" data-section="Memory" data-key="memory"></div>
+<script src="/static/hexbar.js?v=2"></script>
+
+<main>
+  <h1>Memory</h1>
+  <p class="lead">How much memory Hexcast is using, how that changed since it started, and which module is holding it.
+    This page only reads; nothing here changes anything. It updates every 5 seconds while it is open.</p>
+  <div id="state" aria-live="polite">Loading ...</div>
+
+  <div id="body">
+    <div class="tiles" id="tiles"></div>
+
+    <section class="card">
+      <h2>Since start</h2>
+      <p class="hint" id="chart-hint">Memory in use, noted every 5 minutes.</p>
+      <div class="chart" id="chart"><div class="tip" id="tip"></div></div>
+    </section>
+
+    <section class="card">
+      <h2>By module</h2>
+      <p class="hint">What each module is holding right now: the Python objects its code keeps (its globals, its routes and the
+        tasks running its code). Memory outside Python objects - network buffers, TLS, the allocator's spare room - is in
+        <b>Everything else</b>. Click a row for what the memory is made of.</p>
+      <div class="scroll"><table id="mods">
+        <thead><tr><th>Module</th><th>Holding</th><th>Change</th><th class="r">Tasks</th><th class="r">Websockets</th><th class="r" id="th-alloc" hidden>Allocated</th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+      <div class="foot" id="mods-foot"></div>
+    </section>
+
+    <div class="two">
+      <section class="card" id="alloc-card">
+        <h2>Allocations</h2>
+        <div id="alloc"></div>
+      </section>
+      <section class="card">
+        <h2>This process</h2>
+        <dl class="kv" id="proc"></dl>
+      </section>
+    </div>
+  </div>
+</main>
+
+<script>
+(function(){
+  var $ = function(id){ return document.getElementById(id); };
+  var D = null, open = {}, busy = false;
+  var SVGNS = 'http://www.w3.org/2000/svg';
+  var WARN = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 2 21h20L12 3z"/><path d="M12 10v5"/><path d="M12 18h.01"/></svg>';
+
+  function esc(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function bytes(n, signed){
+    if(n == null || isNaN(n)) return '-';
+    var sign = n < 0 ? '-' : (signed && n > 0 ? '+' : ''), a = Math.abs(n), u = [['GB', 1073741824], ['MB', 1048576], ['KB', 1024]];
+    for(var i = 0; i < u.length; i++) if(a >= u[i][1]){
+      var v = a / u[i][1];
+      return sign + (v >= 100 || u[i][0] === 'KB' ? Math.round(v) : v.toFixed(v >= 10 ? 1 : 2)) + ' ' + u[i][0];
+    }
+    return sign + Math.round(a) + ' B';
+  }
+  function count(n){ return n == null ? '-' : Number(n).toLocaleString(); }
+  function span(sec){
+    sec = Math.max(0, Math.round(sec));
+    var d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60);
+    if(d) return d + ' d ' + h + ' h';
+    if(h) return h + ' h ' + m + ' min';
+    if(m) return m + ' min';
+    return sec + ' s';
+  }
+  function clock(ts, withDay, withSeconds){
+    var d = new Date(ts * 1000), o = { hour: '2-digit', minute: '2-digit' };
+    if(withDay) o.weekday = 'short';
+    if(withSeconds) o.second = '2-digit';
+    return d.toLocaleString([], o);
+  }
+  function every(sec){
+    return sec < 120 ? sec + ' seconds' : sec < 7200 ? Math.round(sec / 60) + ' minutes' : Math.round(sec / 3600) + ' hours';
+  }
+  function ago(ts){ var s = Date.now() / 1000 - ts; return s < 5 ? 'just now' : span(s) + ' ago'; }
+
+  // ---- tiles ----
+  function tile(label, value, sub, alert){
+    return '<div class="tile' + (alert ? ' alert' : '') + '"><div class="l">' + esc(label) + '</div><div class="v num">' + esc(value) +
+      '</div>' + (sub ? '<div class="s">' + sub + '</div>' : '') + (alert ? '<div class="flag">' + WARN + esc(alert) + '</div>' : '') + '</div>';
+  }
+  function renderTiles(){
+    var p = D.process, g = D.growth, h = '';
+    var sub = [];
+    if(p.swap != null) sub.push('in RAM ' + esc(bytes(p.rss)) + ' + swap ' + esc(bytes(p.swap)));
+    else if(p.private != null && p.rss != null) sub.push('private bytes; in RAM ' + esc(bytes(p.rss)));
+    else if(p.rss != null) sub.push('in RAM');
+    h += tile('In use', bytes(p.total), sub.join(''));
+    if(g.per_hour != null){
+      h += tile('Growth', bytes(g.per_hour, true) + '/h', 'trend over the last ' + esc(span(g.window_hours * 3600)) +
+        (g.since_start != null ? '; ' + esc(bytes(g.since_start, true)) + ' since the first note' : ''));
+    } else {
+      h += tile('Growth', 'measuring', 'shows once there are 10 minutes of notes');
+    }
+    h += tile('Running for', span(D.now - D.started), 'since ' + esc(clock(D.started, true)));
+    var other = D.modules.rest.tasks || 0;
+    h += tile('Tasks', count(D.tasks), 'asyncio tasks; ' + count(D.tasks - other) + ' run module code');
+    var socks = 0, waiting = 0, stuck = 0;
+    D.modules.rows.forEach(function(r){ socks += r.sockets; waiting += r.waiting; stuck += r.stuck; });
+    var c = D.connections || {};
+    h += tile('Websockets', count(socks), esc(bytes(waiting)) + ' waiting to be sent' + (c.open != null ? '; ' + count(c.open) + ' connections in all' : ''),
+      stuck ? stuck + (stuck === 1 ? ' page is' : ' pages are') + ' not taking what is sent' : '');
+    $('tiles').innerHTML = h;
+  }
+
+  // ---- the chart ----
+  function niceTicks(lo, hi, n){
+    var span = hi - lo || hi || 1, step = Math.pow(10, Math.floor(Math.log10(span / n))), err = span / n / step;
+    step *= err >= 7.5 ? 10 : err >= 3.5 ? 5 : err >= 1.5 ? 2 : 1;
+    var out = [], t = Math.floor(lo / step) * step;
+    for(; t <= hi + step * 0.5; t += step) out.push(t);
+    return out;
+  }
+  function renderChart(){
+    var box = $('chart'), tip = $('tip');
+    Array.prototype.slice.call(box.children).forEach(function(c){ if(c !== tip) box.removeChild(c); });
+    var pts = (D.history || []).filter(function(s){ return s[1] != null; });
+    var live = D.process.total;
+    if(live != null) pts = pts.concat([[D.now, live, D.process.rss, D.process.swap, D.tasks, null, null, true]]);
+    $('chart-hint').textContent = 'Memory in use: a note every ' + every(D.every.sample) + ' (the last ' +
+      Math.round(D.every.keep / 86400) + ' days are kept), and the reading right now at the end.';
+    if(pts.length < 2){
+      var e = document.createElement('div'); e.className = 'empty';
+      e.textContent = 'The first note is taken 20 seconds after start, then one every ' + every(D.every.sample) + '.';
+      box.appendChild(e); return;
+    }
+    var W = box.clientWidth, H = box.clientHeight, L = 64, R = 14, T = 10, B = 26;
+    var t0 = pts[0][0], t1 = pts[pts.length - 1][0];
+    var vals = pts.map(function(p){ return p[1]; });
+    var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+    var pad = (hi - lo) * 0.12 || hi * 0.05 || 1;
+    var ticks = niceTicks(Math.max(0, lo - pad), hi + pad, 4);
+    var y0 = ticks[0], y1 = ticks[ticks.length - 1];
+    var x = function(t){ return L + (t1 === t0 ? 0 : (t - t0) / (t1 - t0)) * (W - L - R); };
+    var y = function(v){ return T + (1 - (v - y0) / (y1 - y0 || 1)) * (H - T - B); };
+    var svg = document.createElementNS(SVGNS, 'svg');
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', 'Memory in use from ' + bytes(vals[0]) + ' to ' + bytes(vals[vals.length - 1]) + ' over ' + span(t1 - t0));
+    var g = '<g class="axis">';
+    ticks.forEach(function(v){
+      g += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + y(v) + '" y2="' + y(v) + '" stroke="var(--grid)" stroke-width="1"/>' +
+           '<text x="' + (L - 8) + '" y="' + (y(v) + 4) + '" text-anchor="end">' + esc(bytes(v)) + '</text>';
+    });
+    var long = t1 - t0 > 86400, short = t1 - t0 < 900, nx = Math.max(2, Math.min(6, Math.floor((W - L - R) / 110)));
+    for(var i = 0; i <= nx; i++){
+      var t = t0 + (t1 - t0) * i / nx;
+      g += '<text x="' + x(t) + '" y="' + (H - 6) + '" text-anchor="' + (i === 0 ? 'start' : i === nx ? 'end' : 'middle') + '">' + esc(clock(t, long, short)) + '</text>';
+    }
+    g += '</g>';
+    var d = pts.map(function(p, i){ return (i ? 'L' : 'M') + x(p[0]).toFixed(1) + ',' + y(p[1]).toFixed(1); }).join('');
+    var last = pts[pts.length - 1];
+    g += '<path d="' + d + '" fill="none" stroke="var(--data)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>';
+    g += '<circle cx="' + x(last[0]) + '" cy="' + y(last[1]) + '" r="4" fill="var(--data)" stroke="var(--hb-card)" stroke-width="2"/>';
+    g += '<line id="xh" y1="' + T + '" y2="' + (H - B) + '" stroke="var(--hb-line-hi)" stroke-width="1" visibility="hidden"/>';
+    g += '<circle id="xd" r="4" fill="var(--data)" stroke="var(--hb-card)" stroke-width="2" visibility="hidden"/>';
+    g += '<rect x="' + L + '" y="0" width="' + (W - L - R) + '" height="' + H + '" fill="transparent" id="hit" tabindex="0" aria-label="Memory over time; arrow keys step through the notes"/>';
+    svg.innerHTML = g;
+    box.insertBefore(svg, tip);
+    var hit = svg.querySelector('#hit'), xh = svg.querySelector('#xh'), xd = svg.querySelector('#xd'), at = pts.length - 1;
+    function show(i){
+      at = Math.max(0, Math.min(pts.length - 1, i));
+      var p = pts[at], px = x(p[0]), py = y(p[1]);
+      xh.setAttribute('x1', px); xh.setAttribute('x2', px); xh.setAttribute('visibility', 'visible');
+      xd.setAttribute('cx', px); xd.setAttribute('cy', py); xd.setAttribute('visibility', 'visible');
+      tip.textContent = '';
+      var head = document.createElement('div'); head.className = 't';
+      head.textContent = p[7] ? 'Now' : new Date(p[0] * 1000).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+      tip.appendChild(head);
+      function row(label, value, key){
+        var r = document.createElement('div'); r.className = 'r';
+        var s = document.createElement('span');
+        if(key){ var k = document.createElement('i'); k.className = 'key'; s.appendChild(k); }
+        s.appendChild(document.createTextNode(label));
+        var b = document.createElement('b'); b.textContent = value; b.className = 'num';
+        r.appendChild(s); r.appendChild(b); tip.appendChild(r);
+      }
+      row('In use', bytes(p[1]), true);
+      if(p[3] != null){ row('In RAM', bytes(p[2])); row('Swap', bytes(p[3])); }
+      if(p[4] != null) row('Tasks', count(p[4]));
+      if(p[5] != null) row('Websockets', count(p[5]) + (p[6] ? ' (' + bytes(p[6]) + ' waiting)' : ''));
+      tip.classList.add('on');
+      var tw = tip.offsetWidth, left = px + 14;
+      if(left + tw > W) left = px - tw - 14;
+      tip.style.left = Math.max(0, left) + 'px';
+      tip.style.top = Math.max(0, Math.min(py - 20, H - tip.offsetHeight)) + 'px';
+    }
+    function hide(){ tip.classList.remove('on'); xh.setAttribute('visibility', 'hidden'); xd.setAttribute('visibility', 'hidden'); }
+    function nearest(clientX){
+      var r = svg.getBoundingClientRect(), mx = (clientX - r.left) * W / r.width, best = 0, bd = Infinity;
+      pts.forEach(function(p, i){ var dd = Math.abs(x(p[0]) - mx); if(dd < bd){ bd = dd; best = i; } });
+      return best;
+    }
+    hit.addEventListener('pointermove', function(e){ show(nearest(e.clientX)); });
+    hit.addEventListener('pointerleave', hide);
+    hit.addEventListener('focus', function(){ show(at); });
+    hit.addEventListener('blur', hide);
+    hit.addEventListener('keydown', function(e){
+      if(e.key === 'ArrowLeft'){ show(at - 1); e.preventDefault(); }
+      else if(e.key === 'ArrowRight'){ show(at + 1); e.preventDefault(); }
+    });
+  }
+
+  // ---- the module table ----
+  function spark(hist, now){
+    var pts = (hist || []).map(function(h){ return h[1]; }).concat(now != null ? [now] : []);
+    if(pts.length < 3) return '';
+    var w = 90, h = 18, lo = Math.min.apply(null, pts), hi = Math.max.apply(null, pts);
+    var r = Math.max(hi - lo, hi * 0.02, 65536);           // a few bytes either way stays a flat line
+    var d = pts.map(function(v, i){ return (i ? 'L' : 'M') + (i / (pts.length - 1) * (w - 4) + 2).toFixed(1) + ',' + (h - 2 - (v - lo) / r * (h - 4)).toFixed(1); }).join('');
+    return '<svg class="spark" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '" aria-hidden="true"><path d="' + d +
+      '" fill="none" stroke="var(--data-soft)" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg>';
+  }
+  function changeCell(r){
+    var c = r.change;
+    if(!c || c.since == null) return '<span class="dimtxt">first count at the next note</span>';
+    var h = '';
+    if(c.hour != null) h += '<span class="num">' + esc(bytes(c.hour, true)) + '</span> <small style="display:inline">in 1 h</small>';
+    h += '<small>' + (Math.abs(c.since) >= 1024 ? esc(bytes(c.since, true)) : 'no change') + ' since ' + esc(clock(c.since_at, D.now - c.since_at > 86400)) + '</small>';
+    return h + spark(c.history, r.held);
+  }
+  function sockCell(r){
+    if(!r.sockets) return '<span class="dimtxt">-</span>';
+    var h = '<span class="num">' + count(r.sockets) + '</span>';
+    if(r.waiting) h += '<small class="dimtxt">' + esc(bytes(r.waiting)) + ' waiting</small>';
+    if(r.stuck) h += '<span class="stuck">' + WARN + ' ' + r.stuck + ' not reading</span>';
+    return h;
+  }
+  function detail(r, cols){
+    var h = '';
+    if(r.types && r.types.length){
+      h += '<h4>Made of</h4><ul>' + r.types.map(function(t){
+        return '<li><span class="num">' + esc(bytes(t[1])) + '</span> in ' + count(t[2]) + ' <span class="mono">' + esc(t[0]) + '</span></li>';
+      }).join('') + '</ul>';
+    }
+    if(r.task_top && r.task_top.length){
+      h += '<h4>Tasks running</h4><ul>' + r.task_top.map(function(t){
+        return '<li><span class="mono">' + esc(t[0]) + '</span>' + (t[1] > 1 ? ' &times; ' + count(t[1]) : '') + '</li>';
+      }).join('') + '</ul>';
+    }
+    if(r.sockets) h += '<h4>Websockets</h4><div>' + count(r.sockets) + ' open; ' + esc(bytes(r.waiting)) + ' waiting to be sent' +
+      (r.waiting_max ? ', at most ' + esc(bytes(r.waiting_max)) + ' on one' : '') + '.' +
+      (r.stuck ? ' A page that does not take what is sent (a frozen or hidden browser source) is dropped after 10 seconds and reconnects.' : '') + '</div>';
+    if(r.objects != null) h += '<h4>Objects</h4><div>' + count(r.objects) + ' Python objects counted</div>';
+    return '<tr class="detail"><td colspan="' + cols + '">' + (h || 'Nothing more to show.') + '</td></tr>';
+  }
+  function renderTable(){
+    var m = D.modules, tracing = D.allocations && D.allocations.tracing, cols = tracing ? 6 : 5;
+    $('th-alloc').hidden = !tracing;
+    var max = 0;
+    m.rows.forEach(function(r){ max = Math.max(max, r.held || 0); });
+    var h = '';
+    m.rows.forEach(function(r){
+      var w = max ? Math.max(1, (r.held || 0) / max * 100) : 0, isOpen = !!open[r.key];
+      h += '<tr class="mod' + (isOpen ? ' open' : '') + '" data-key="' + esc(r.key) + '" tabindex="0" aria-expanded="' + isOpen + '">' +
+        '<td><div class="name"><svg class="chev" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>' +
+        '<div><b>' + esc(r.name) + '</b><small>' + esc(r.kind === 'core' ? 'soundboard + plugin system' : r.key + (r.version ? ' ' + r.version : '')) + '</small></div></div></td>' +
+        '<td class="held"><span class="num">' + esc(bytes(r.held)) + '</span><div class="bartrack"><div class="bar" style="width:' + w.toFixed(1) + '%"></div></div></td>' +
+        '<td class="chg">' + changeCell(r) + '</td>' +
+        '<td class="r num" title="' + esc((r.task_top || []).map(function(t){ return t[0] + (t[1] > 1 ? ' x' + t[1] : ''); }).join(', ')) + '">' + (r.tasks ? count(r.tasks) : '<span class="dimtxt">-</span>') + '</td>' +
+        '<td class="r">' + sockCell(r) + '</td>' +
+        (tracing ? '<td class="r num">' + esc(bytes(r.allocated)) + '</td>' : '') + '</tr>';
+      if(isOpen) h += detail(r, cols);
+    });
+    var rest = m.rest, isOpen = !!open[''];
+    h += '<tr class="mod rest' + (isOpen ? ' open' : '') + '" data-key="" tabindex="0" aria-expanded="' + isOpen + '">' +
+      '<td><div class="name"><svg class="chev" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>' +
+      '<div><b>Everything else</b><small>Python, libraries, buffers outside Python</small></div></div></td>' +
+      '<td class="held num">' + esc(bytes(rest.held)) + '</td><td><span class="dimtxt">see the chart</span></td>' +
+      '<td class="r num">' + (rest.tasks ? count(rest.tasks) : '<span class="dimtxt">-</span>') + '</td><td class="r"><span class="dimtxt">-</span></td>' +
+      (tracing ? '<td class="r num">' + esc(bytes(rest.allocated)) + '</td>' : '') + '</tr>';
+    if(isOpen){
+      h += '<tr class="detail"><td colspan="' + cols + '">The process total minus what the modules hold: the Python interpreter and the libraries ' +
+        '(FastAPI, uvicorn, httpx ...), the code itself, and memory that is not a Python object - socket and TLS buffers, ' +
+        'the allocator\'s spare room. When this grows while every module stays flat, the growth is outside Python objects; ' +
+        'see the notes under Allocations.' +
+        (rest.task_top && rest.task_top.length ? '<h4>Tasks running</h4><ul>' + rest.task_top.map(function(t){
+          return '<li><span class="mono">' + esc(t[0]) + '</span>' + (t[1] > 1 ? ' &times; ' + count(t[1]) : '') + '</li>'; }).join('') + '</ul>' : '') +
+        '</td></tr>';
+    }
+    $('mods').tBodies[0].innerHTML = h;
+    $('mods-foot').textContent = 'Counted ' + count(m.objects) + ' objects in ' + m.took + ' s, ' + ago(m.at) + ' (at most every ' + D.every.fresh +
+      ' s). Something two modules share is counted once, under the first.' + (m.partial ? ' This count stopped early, so it is incomplete.' : '');
+  }
+
+  // ---- allocations + process ----
+  function renderAlloc(){
+    var a = D.allocations || {}, p = D.process, h = '';
+    if(a.tracing){
+      h += '<p class="hint">Hexcast was started with <code>PYTHONTRACEMALLOC=' + esc(a.frames) + '</code>, so every allocation is traced: ' +
+        esc(bytes(a.traced)) + ' live (peak ' + esc(bytes(a.peak)) + '); tracing itself uses ' + esc(bytes(a.overhead)) + '. ' +
+        'Read ' + esc(ago(a.at)) + ', at most once a minute. The lines holding the most:</p>';
+      h += '<div class="scroll"><table class="lines"><thead><tr><th>Line</th><th>Module</th><th class="r">Live</th><th class="r">Blocks</th></tr></thead><tbody>' +
+        a.top.map(function(t){
+          return '<tr><td class="f">' + esc(t.file) + ':' + esc(t.line) + '</td><td>' + esc(t.owner || '-') + '</td><td class="r num">' + esc(bytes(t.size)) +
+            '</td><td class="r num">' + count(t.count) + '</td></tr>';
+        }).join('') + '</tbody></table></div>';
+    } else {
+      h += '<p class="hint">Allocation tracing is off, which is right for streaming. For a leak hunt, start Hexcast with ' +
+        '<code>PYTHONTRACEMALLOC=25</code> set (Linux: <code>PYTHONTRACEMALLOC=25 python hexcast.py</code>; Windows: <code>set PYTHONTRACEMALLOC=25</code> first). ' +
+        'This page then shows which code allocated the memory that is still alive, line by line. Tracing makes Hexcast slower and use more memory.</p>';
+    }
+    if(p.c_heap){
+      var c = p.c_heap;
+      h += '<h2 style="margin-top:14px">C heap</h2><p class="hint">glibc\'s own count: ' + esc(bytes(c.in_use)) + ' in use, ' + esc(bytes(c.free_kept)) +
+        ' freed but kept for reuse. If <i>freed but kept</i> keeps growing while <i>in use</i> stays flat, the memory is fragmentation, not a leak; ' +
+        'starting Hexcast with <code>MALLOC_ARENA_MAX=2</code> usually stops it.</p>';
+    }
+    $('alloc').innerHTML = h;
+  }
+  function renderProc(){
+    var p = D.process, v = D.versions, c = D.connections || {}, rows = [];
+    function add(k, val){ if(val != null && val !== '') rows.push('<dt>' + esc(k) + '</dt><dd class="num">' + esc(val) + '</dd>'); }
+    add('Hexcast', window.__hexcastVersion || null);
+    add('Python', v.python + (v.implementation && v.implementation !== 'CPython' ? ' (' + v.implementation + ')' : ''));
+    add('uvicorn', v.uvicorn); add('websockets', v.websockets); add('Websocket handler', c.websocket_impl);
+    add('Starlette', v.starlette); add('FastAPI', v.fastapi); add('httpx', v.httpx); add('Event loop', v.loop);
+    add('System', v.os); add('Process id', v.pid);
+    add('In RAM', p.rss != null ? bytes(p.rss) : null); add('Peak in RAM', p.peak != null ? bytes(p.peak) : null);
+    add('Swap', p.swap != null ? bytes(p.swap) : null); add('Private bytes', p.private != null ? bytes(p.private) : null);
+    add('Threads', p.threads != null ? count(p.threads) : null);
+    add(p.os_sockets != null ? 'Open files' : 'Open handles', p.files != null ? count(p.files) : null);
+    add('Open sockets', p.os_sockets != null ? count(p.os_sockets) : null);
+    add('Python memory blocks', count(p.python_blocks));
+    $('proc').innerHTML = rows.join('');
+  }
+
+  function render(){
+    if(!D) return;
+    renderTiles(); renderChart(); renderTable(); renderAlloc(); renderProc();
+  }
+
+  $('mods').addEventListener('click', function(e){
+    var tr = e.target.closest('tr.mod'); if(!tr) return;
+    var k = tr.getAttribute('data-key'); open[k] = !open[k]; renderTable();
+    var again = $('mods').querySelector('tr.mod[data-key="' + (window.CSS && CSS.escape ? CSS.escape(k) : k) + '"]'); if(again) again.focus();
+  });
+  $('mods').addEventListener('keydown', function(e){
+    if((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('tr.mod')){ e.preventDefault(); e.target.click(); }
+  });
+
+  function load(){
+    if(busy) return; busy = true;
+    fetch('/api/memory', { cache: 'no-store' }).then(function(r){ return r.json(); }).then(function(d){
+      busy = false;
+      if(!d || !d.ok) throw new Error('bad answer');
+      D = d; $('body').classList.remove('stale');
+      $('state').className = ''; $('state').textContent = 'Updated ' + new Date().toLocaleTimeString();
+      render();
+    }).catch(function(){
+      busy = false; $('body').classList.add('stale');
+      $('state').className = 'bad'; $('state').textContent = 'Could not reach Hexcast - showing the last numbers. Trying again ...';
+    });
+  }
+  fetch('/api/version', { cache: 'no-store' }).then(function(r){ return r.json(); }).then(function(v){ window.__hexcastVersion = v.version; if(D) renderProc(); }).catch(function(){});
+  var resizeT;
+  window.addEventListener('resize', function(){ clearTimeout(resizeT); resizeT = setTimeout(function(){ if(D) renderChart(); }, 120); });
+  document.addEventListener('visibilitychange', function(){ if(!document.hidden) load(); });
+  load();
+  setInterval(function(){ if(!document.hidden) load(); }, 5000);
+})();
+</script>
+</body></html>

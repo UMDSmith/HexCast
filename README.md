@@ -83,6 +83,47 @@ stream-deck buttons.
 > overlays, so keep the base `/overlay` source in your scene alongside whatever
 > plugin overlays you're using.
 
+### 📊 Memory page (the core)
+
+**What it does.** Shows how much memory Hexcast is using, how that changed
+since it started, and **which module is holding it** — open
+`http://localhost:4747/memory` — or click the **memory-stick icon** next to the
+⚙ gear in the top bar, on any Hexcast page. It
+only reads: nothing on it changes anything, and it updates every 5 seconds
+while it is open.
+
+- **The totals** — memory in use (in RAM + swap on Linux, private bytes on
+  Windows), the growth per hour, how long Hexcast has run, asyncio tasks, and
+  open websockets with the bytes still waiting to be sent to them.
+- **Since start** — a chart of memory in use: a note every 5 minutes, the last
+  3 days kept, so it shows growth even when nobody had the page open.
+- **By module** — what the soundboard and each plugin hold right now, the
+  change over the last hour and since start, the tasks running its code and
+  its websockets. Click a row for what the memory is made of (e.g. *6.2 MB in
+  66 bytes*). An overlay that stopped taking what is sent is flagged *not
+  reading*. **Everything else** is the rest of the process: Python itself, the
+  libraries, and memory outside Python objects.
+- **C heap** (Linux) — glibc's count of memory in use vs freed but kept.
+- **Allocations** — when Hexcast is started with `PYTHONTRACEMALLOC=25`, each
+  module's share by the code that allocated it, and the source lines holding
+  the most (tracing makes Hexcast slower; use it for a leak hunt, not a show).
+
+Once an hour Hexcast also prints one dated line to the console, e.g.
+`2026-11-15 18:00:03 [memory] 1.42 GB in use; +12 MB/h over 6.0 h; 143 tasks; 13 websockets, 0 B waiting | avatar 48 MB, music 12 MB, core 9 MB`,
+so a log kept across restarts shows where an old process's memory went. The
+same numbers are at `GET /api/memory`.
+
+**Reading it.** One module growing → that module (its row says what of). Only
+*Everything else* growing → the growth is outside Python objects: if the C
+heap's *freed but kept* grows while *in use* stays flat it is fragmentation —
+start Hexcast with `MALLOC_ARENA_MAX=2`. A *not reading* flag or a task count
+that keeps rising → a stuck overlay or work that never finishes.
+
+**How it works.** Each module's share is the size of the Python objects its
+code keeps (its globals, routes and running tasks), counted in a background
+thread at most every 30 seconds — a few hundredths of a second with every
+plugin installed. Something two modules share is counted once, under the first.
+
 ### 💬 Twitch *(plugin)*
 
 **What it does.** Adds a **chat overlay** and an **alert overlay** for follows,
@@ -519,6 +560,7 @@ GET|POST /api/play/{kind}/{name}   → explicit: kind = audio | video
      ?loop=1                       → repeat it (its trim window) until it is stopped (background music)
 GET|POST /api/stop                 → clear all visuals + stop all audio (panic)
 GET|POST /api/stop/{name}          → stop just that clip (every copy playing, a looping one too)
+GET  /api/memory                   → JSON: memory in use, its history, each module's share (the /memory page; read-only)
 POST /rename                       → {file, kind, new_stem} → rename media + sidecar + poster
 POST /attach                       → {file, kind: "video", attach: {avatar, anchor, ...} | null} → lock a clip to an avatar
 ```
@@ -743,8 +785,8 @@ The overlay is canvas-agnostic (percentage-based), so the same setup works at
 ```
 hexcast/
 ├── hexcast.py                 # the server: the soundboard + the plugin host (the core)
-├── hexcast_core/              # the plugin system (manifest, installer, store API)
-├── static/                    # the core's web files: control panel, top bar, the + store page, help
+├── hexcast_core/              # the plugin system (manifest, installer, store API) + the Memory page's numbers
+├── static/                    # the core's web files: control panel, top bar, the + store page, settings, memory, help
 ├── catalog/                   # every plugin that ships with Hexcast — what the + tab installs from
 │   ├── twitch/  twitch_core/  chat_timers/  giveaways/  music/  avatar/  discord/  clips/  countdown/  ticker/  ytdlp/
 │   └── games/  games_roulette/  games_craps/  games_russian/  games_trivia/  games_hexfall/  games_climb/  games_blackjack/  games_derby/
@@ -765,7 +807,8 @@ can hand-edit the JSON; the watcher ignores `.json` writes.
 
 ### Troubleshooting
 
-- **Check `hexcast.log` first** (next to `hexcast.py`, rotated at 1 MB × 3). It records conversion/poster failures with ffmpeg's real error output, and playback errors reported back from inside the OBS browser source.
+- **Check `hexcast.log` first** (next to `hexcast.py`, rotated at 1 MB × 3). It records conversion/poster failures with ffmpeg's real error output, and playback errors reported back from inside the OBS browser source. If you keep your own log of the console (e.g. `>> somefile.log` in a start script), give it another name - rotation would move it away.
+- **Hexcast uses more and more memory:** open the [Memory page](#-memory-page-the-core) (`/memory`) - it shows which module is growing, or that the growth is outside Python. The hourly `[memory]` console line keeps the same story in a log.
 - **No posters / gifs animate in the picker:** ffmpeg isn't in PATH — run `ffmpeg -version`.
 - **Clip fires but nothing shows, log says "decode failed":** the file is corrupt — re-upload (a race in versions ≤1.1.0 could corrupt converted gifs; fixed since).
 - **No audio in OBS:** enable **Control audio via OBS** on the browser source; it appears in the Audio Mixer.

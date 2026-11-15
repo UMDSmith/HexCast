@@ -712,3 +712,37 @@ def test_the_overlay_helpers_clean_fonts_and_build_the_background_variables():
     assert out["shadow"] == "1px 2px 3px rgba(255,0,0,0.5)"
     assert out["cls"] == ["", "bgs bgs-glass", ""]
     assert out["face"] == '@font-face{font-family:"My Font";src:url("/media/overlays/fonts/My_Font.woff2") format("woff2");font-weight:100 900;font-display:swap}'
+
+
+def test_a_chat_overlay_that_stopped_reading_is_dropped_and_chat_goes_on(tw, monkeypatch):
+    """One overlay that stays connected but never reads (uvicorn 0.52.1+ then holds every send to it) must not
+    hold chat up for the others: after the send timeout it is dropped, and asked to close."""
+    from hexcast_core import sockets
+    monkeypatch.setattr(sockets, "SEND_TIMEOUT", 0.05)
+
+    class WS:
+        def __init__(self, stuck=False):
+            self.stuck, self.sent, self.closed = stuck, [], False
+
+        async def send_text(self, text):
+            if self.stuck:
+                await asyncio.Event().wait()
+            self.sent.append(json.loads(text))
+
+        async def close(self, code=1000):
+            self.closed = True
+
+    stuck, reading = WS(stuck=True), WS()
+
+    async def main():
+        tw.HUB.chat = {stuck: "", reading: ""}
+        try:
+            first = await tw.HUB.to_chat({"type": "config"})
+            again = await asyncio.wait_for(tw.HUB.to_chat({"type": "config"}), 0.04)    # no wait left
+            await asyncio.sleep(0)
+            return first, again
+        finally:
+            tw.HUB.chat = {}
+    first, again = asyncio.run(main())
+    assert first == (1, 1) and again == (1, 1)                  # the stuck one is gone after the first line
+    assert len(reading.sent) == 2 and stuck.sent == [] and stuck.closed

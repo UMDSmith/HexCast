@@ -39,6 +39,7 @@
   .btn{font:600 13px/1 'Segoe UI',system-ui,sans-serif;padding:10px 15px;border-radius:8px;cursor:pointer;border:1px solid var(--line);
        background:var(--hb-panel);color:var(--ink)}
   .btn:hover{border-color:var(--hb-line-hi)}
+  a.btn{display:inline-block;text-decoration:none}
   .btn.primary{background:var(--good);border-color:var(--good);color:#06110a}
   .btn:disabled{opacity:.45;cursor:not-allowed}
   .status{margin-top:14px;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:#0c0c11;font-size:13.5px}
@@ -93,6 +94,13 @@
       <span class="k" id="checking"></span>
     </div>
     <div class="status" id="status" aria-live="polite"></div>
+  </section>
+
+  <section class="card" id="memory">
+    <h2>Memory</h2>
+    <p class="hint">How much memory Hexcast is using, how that changed since it started, and which module is holding it.
+      Read-only; it changes nothing.</p>
+    <a class="btn" href="/memory">Open the Memory page</a>
   </section>
 </main>
 <div id="toast"></div>

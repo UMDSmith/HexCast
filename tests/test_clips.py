@@ -59,7 +59,7 @@ def queued(api):
 
 def test_the_manifest_version_was_bumped():
     manifest = json.loads((ROOT / "catalog" / "clips" / "plugin.json").read_text(encoding="utf-8"))
-    assert manifest["version"] == "1.1.2"
+    assert manifest["version"] == "1.1.3"
 
 
 def test_a_rename_is_what_the_queue_and_the_player_show(api, clips, entry):

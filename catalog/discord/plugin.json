@@ -1,7 +1,7 @@
 {
   "id": "discord",
   "name": "Discord",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A voice-reactive overlay: everyone in your current Discord voice channel appears in OBS and lights up as they speak, using Discord avatars or custom PNGTuber-style idle/talking image pairs.",
   "icon": "🎙️",
   "color": "#5865f2",

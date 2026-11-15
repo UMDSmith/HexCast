@@ -44,7 +44,9 @@ from pathlib import Path
 import uvicorn
 from hexcast_core import Installer, PluginHost, PluginService, build_router
 from hexcast_core import backgrounds as overlay_backgrounds
+from hexcast_core import memory as memory_page
 from hexcast_core import migrate as plugin_migrate
+from hexcast_core import sockets
 from hexcast_core.staticfiles import RevalidatingStaticFiles
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -535,9 +537,9 @@ def reindex():
 async def broadcast_index():
     msg = json.dumps({"type": "index", "data": index})
     dead = set()
-    for ws in control_clients:
+    for ws in list(control_clients):            # a copy: a slow client gives others time to come and go
         try:
-            await ws.send_text(msg)
+            await sockets.send(ws, msg)
         except Exception:
             dead.add(ws)
     control_clients.difference_update(dead)
@@ -586,6 +588,7 @@ async def lifespan(app: FastAPI):
     except Exception:
         log.exception("plugins: restoring missing packages failed")
     plugin_host.serving()                      # plugins' ctx.when_serving() work (a connection opened at boot ...)
+    memory_monitor.start()                     # the Memory page's history: a few numbers every 5 minutes
     # GitHub: newest Hexcast + module versions - a background thread, never blocks start-up
     plugin_host.upstream.kick([p for p, i in plugin_host.scan().items() if i.meta.get("source") in ("bundled", "upstream")])
     if plugin_host.catalog.remote_urls:        # configured plugin indexes: fetch in the background (never blocks start-up)
@@ -595,6 +598,7 @@ async def lifespan(app: FastAPI):
     print(f"  Control panel:       http://localhost:{PORT}/")
     print(f"  OBS browser source:  http://localhost:{PORT}/overlay")
     print(f"  Add plugins:         http://localhost:{PORT}/plugins   (the + tab)")
+    print(f"  Memory use:          http://localhost:{PORT}/memory")
     print(f"  Audio root:          {AUDIO_DIR}")
     print(f"  Video root:          {VIDEO_DIR}")
     print(f"  Error log:           {LOG_FILE}")
@@ -603,6 +607,7 @@ async def lifespan(app: FastAPI):
     print(f"\n  ! No authentication — keep this on a trusted LAN behind a firewall.")
     print(f"    Do NOT expose this to the internet.\n")
     yield
+    await memory_monitor.stop()
     try:
         await plugin_host.shutdown()           # let the plugins close their sockets
     except Exception:
@@ -787,7 +792,7 @@ async def _broadcast_trigger(payload: dict) -> dict:
     dead = set()
     for ws, body in targets:
         try:
-            await ws.send_text(json.dumps(body))
+            await sockets.send(ws, json.dumps(body))
         except Exception:
             dead.add(ws)
     overlay_clients.difference_update(dead)
@@ -828,6 +833,8 @@ async def api_root():
         "play_by_kind":  "GET|POST /api/play/{kind}/{name}    (kind = audio|video)",
         "stop_all":      "GET|POST /api/stop",
         "stop_one":      "GET|POST /api/stop/{name}    (every playing copy of that clip, on the Soundboard overlay)",
+        "memory":        "GET /api/memory    (read-only: memory in use, its history, and each module's share, tasks and "
+                         "websockets - what the /memory page shows)",
         "position_override (video)":   "?x=50&y=50&scale=2",
         "volume_override (audio/video)": "?volume=0.5  (0.0-1.0)",
         "trim_override (all kinds)":     "?start=2&end=5  (seconds; static images ignore start)",
@@ -1178,8 +1185,8 @@ async def ws_overlay(ws: WebSocket):
 async def ws_control(ws: WebSocket):
     await ws.accept()
     control_clients.add(ws)
-    await ws.send_text(json.dumps({"type": "index", "data": index}))
     try:
+        await ws.send_text(json.dumps({"type": "index", "data": index}))
         while True:
             await ws.receive_text()
     except WebSocketDisconnect:
@@ -1196,6 +1203,8 @@ plugin_installer = Installer(plugin_host)
 plugin_service = PluginService(plugin_host, plugin_installer, STATIC_DIR)
 app.include_router(build_router(plugin_service))          # /plugins, /api/plugins/*, /help
 app.include_router(overlay_backgrounds.build_router(MEDIA_DIR))   # /api/backgrounds: pictures for overlays
+memory_monitor = memory_page.Monitor(plugin_host)
+app.include_router(memory_page.build_router(memory_monitor, STATIC_DIR))   # /memory: what each module is using (read-only)
 
 # Nothing about plugins may stop the soundboard from starting: each step reports and moves on.
 def _plugin_step(what: str, fn) -> None:

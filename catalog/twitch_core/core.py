@@ -295,20 +295,43 @@ def own_logins() -> set[str]:
     return {a.user_login.lower() for a in SECRETS.authed()}
 
 
+_HTTP: tuple[asyncio.AbstractEventLoop, httpx.AsyncClient] | None = None
+
+
+def http() -> httpx.AsyncClient:
+    """The one HTTP client every Twitch module shares: its connections stay open between calls, where a client
+    per call built a fresh TLS context (CA bundle and all) every time. It belongs to the running event loop -
+    a new loop (a test, a restart) gets a new client. Pass `timeout=` per request to change the default 20 s."""
+    global _HTTP
+    loop = asyncio.get_running_loop()
+    if _HTTP is None or _HTTP[0] is not loop or getattr(_HTTP[1], "is_closed", False):
+        _HTTP = (loop, httpx.AsyncClient(timeout=20))
+    return _HTTP[1]
+
+
+async def close_http() -> None:
+    global _HTTP
+    held, _HTTP = _HTTP, None
+    if held is not None and held[0] is asyncio.get_running_loop():
+        try:
+            await held[1].aclose()
+        except Exception:
+            pass
+
+
 async def exchange_code(code: str, redirect_uri: str) -> Account:
-    async with httpx.AsyncClient(timeout=15) as c:
-        r = await c.post(
-            f"{TWITCH_ID}/token",
-            data={
-                "client_id": SECRETS.client_id,
-                "client_secret": SECRETS.client_secret,
-                "code": code,
-                "grant_type": "authorization_code",
-                "redirect_uri": redirect_uri,
-            },
-        )
-        r.raise_for_status()
-        tok = r.json()
+    r = await http().post(
+        f"{TWITCH_ID}/token",
+        data={
+            "client_id": SECRETS.client_id,
+            "client_secret": SECRETS.client_secret,
+            "code": code,
+            "grant_type": "authorization_code",
+            "redirect_uri": redirect_uri,
+        },
+    )
+    r.raise_for_status()
+    tok = r.json()
     acct = Account({"access_token": tok["access_token"], "refresh_token": tok.get("refresh_token", ""),
                     "expires_at": time.time() + tok.get("expires_in", 3600)})
     if not await validate_token(acct):
@@ -324,16 +347,15 @@ async def refresh_token(acct: Account, stale: str = "") -> bool:
     async with acct.lock:
         if stale and acct.access_token != stale:
             return True
-        async with httpx.AsyncClient(timeout=15) as c:
-            r = await c.post(
-                f"{TWITCH_ID}/token",
-                data={
-                    "client_id": SECRETS.client_id,
-                    "client_secret": SECRETS.client_secret,
-                    "grant_type": "refresh_token",
-                    "refresh_token": acct.refresh_token,
-                },
-            )
+        r = await http().post(
+            f"{TWITCH_ID}/token",
+            data={
+                "client_id": SECRETS.client_id,
+                "client_secret": SECRETS.client_secret,
+                "grant_type": "refresh_token",
+                "refresh_token": acct.refresh_token,
+            },
+        )
         if r.status_code != 200:
             STATE.note(f"token refresh failed for {acct.user_login or 'an account'} ({r.status_code}) - "
                        f"reconnect Twitch in the panel")
@@ -349,8 +371,7 @@ async def refresh_token(acct: Account, stale: str = "") -> bool:
 async def validate_token(acct: Account) -> bool:
     if not acct.access_token:
         return False
-    async with httpx.AsyncClient(timeout=15) as c:
-        r = await c.get(f"{TWITCH_ID}/validate", headers={"Authorization": f"OAuth {acct.access_token}"})
+    r = await http().get(f"{TWITCH_ID}/validate", headers={"Authorization": f"OAuth {acct.access_token}"})
     if r.status_code != 200:
         return False
     d = r.json()
@@ -368,8 +389,7 @@ async def helix(method: str, path: str, *, acct: Account, params=None, json_body
         "Client-Id": SECRETS.client_id,
         "Authorization": f"Bearer {stale}",
     }
-    async with httpx.AsyncClient(timeout=20) as c:
-        r = await c.request(method, f"{HELIX}{path}", headers=headers, params=params, json=json_body)
+    r = await http().request(method, f"{HELIX}{path}", headers=headers, params=params, json=json_body)
     if r.status_code == 401 and retry:
         if await refresh_token(acct, stale):
             return await helix(method, path, acct=acct, params=params, json_body=json_body, retry=False)
@@ -507,11 +527,12 @@ class State:
         return self.channels.get(login) if login else self.primary()
 
     def note(self, msg: str) -> None:
-        stamp = time.strftime("%H:%M:%S")
-        line = f"[{stamp}] {msg}"
+        now = time.localtime()
+        line = f"[{time.strftime('%H:%M:%S', now)}] {msg}"
         self.log.append(line)
         del self.log[:-60]
-        print(f"[twitch] {msg}", flush=True)
+        # dated like hexcast.log: a console that has run for days needs the day too
+        print(f"{time.strftime('%Y-%m-%d %H:%M:%S', now)} [twitch] {msg}", flush=True)
 
     def rows(self) -> list[dict]:
         out = []
@@ -1334,3 +1355,4 @@ async def start() -> None:
 
 async def stop() -> None:
     await RUNNER._stop()
+    await close_http()

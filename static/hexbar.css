@@ -109,6 +109,7 @@ a.hb-up:hover, button.hb-up:hover{ border-color:var(--hb-good); filter:brightnes
 .hb-gear:hover{ color:var(--hb-ink); border-color:var(--hb-line-hi); }
 .hb-gear:hover svg{ transform:rotate(45deg); }
 .hb-gear svg{ transition:transform .3s ease; display:block; }
+.hb-mem:hover svg{ transform:none; }
 .hb-gear.sel{ color:var(--hb-ink); border-color:var(--hb-line-hi); background:var(--hb-panel); }
 .hb-gear:focus-visible{ outline:2px solid var(--hb-good); outline-offset:2px; }
 

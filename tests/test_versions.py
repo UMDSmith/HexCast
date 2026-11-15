@@ -551,7 +551,7 @@ def test_nav_items_carry_the_module_version(real_world):
     real_world.installer.install("games")
     real_world.host.load_all()
     item = [i for i in real_world.host.nav_items() if i["id"] == "games"][0]
-    assert item["version_label"] == "1.0" and item["installed_version"] == "1.0.0" and item["update_available"] is False
+    assert item["version_label"] == "1.0.1" and item["installed_version"] == "1.0.1" and item["update_available"] is False
 
 
 @pytest.fixture(scope="module")

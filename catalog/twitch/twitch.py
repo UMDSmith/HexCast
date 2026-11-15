@@ -17,6 +17,7 @@ to the chat overlay (and the !so command), events become alerts in a queue the a
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import re
 import secrets
@@ -30,6 +31,11 @@ from fastapi import APIRouter, File, Request, UploadFile, WebSocket, WebSocketDi
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from hexcast_core import paths, running_plugin
+try:
+    from hexcast_core.sockets import send as ws_send          # Hexcast 2.3+: gives up on a client that stopped reading
+except ImportError:                                          # an older Hexcast: a plain send, as before
+    async def ws_send(ws, data):
+        await (ws.send_bytes(data) if isinstance(data, bytes) else ws.send_text(data))
 from hexcast_plugins.twitch_core import core as tc
 
 # --------------------------------------------------------------------------
@@ -458,6 +464,8 @@ class AlertQueue:
                 if msg_id in self.seen_msg_ids:
                     return False
                 self.seen_msg_ids[msg_id] = None
+                if len(self.seen_msg_ids) > 2000:        # Twitch re-sends within minutes; the file keeps 1000 too
+                    self.seen_msg_ids = dict.fromkeys(list(self.seen_msg_ids)[-1000:])
             self.queue.append(alert)
             self.save()
         await HUB.to_panel({"type": "queue", "queue": self.snapshot()})
@@ -514,7 +522,7 @@ class Hub:
         text = json.dumps(payload)
         for ws in list(group):
             try:
-                await ws.send_text(text)
+                await ws_send(ws, text)
             except Exception:
                 dead.append(ws)
         for ws in dead:
@@ -530,7 +538,7 @@ class Hub:
             if not self.wants(flt, channel):
                 continue
             try:
-                await ws.send_text(text)
+                await ws_send(ws, text)
                 matched += 1
             except Exception:
                 dead.append(ws)
@@ -561,6 +569,18 @@ HUB = Hub()
 # --------------------------------------------------------------------------
 # emotes + badges
 # --------------------------------------------------------------------------
+
+@contextlib.asynccontextmanager
+async def _http():
+    """twitch_core's shared HTTP client (twitch_core 1.1+); next to an older twitch_core, a client for the call.
+    Callers pass `timeout=` on each request."""
+    shared = getattr(tc, "http", None)
+    if shared is not None:
+        yield shared()
+    else:
+        async with httpx.AsyncClient() as c:
+            yield c
+
 
 class Assets:
     """Third-party emotes (7TV / BTTV / FFZ) and Twitch chat badges."""
@@ -594,7 +614,7 @@ class Assets:
         return None
 
     async def _seventv(self, channel_id: str) -> None:
-        async with httpx.AsyncClient() as c:
+        async with _http() as c:
             g = await self._get(c, "https://7tv.io/v3/emote-sets/global")
             u = await self._get(c, f"https://7tv.io/v3/users/twitch/{channel_id}")
         sets = []
@@ -610,7 +630,7 @@ class Assets:
                     self.emotes[name] = f"https://cdn.7tv.app/emote/{eid}/2x.webp"
 
     async def _bttv(self, channel_id: str) -> None:
-        async with httpx.AsyncClient() as c:
+        async with _http() as c:
             g = await self._get(c, "https://api.betterttv.net/3/cached/emotes/global")
             u = await self._get(c, f"https://api.betterttv.net/3/cached/users/twitch/{channel_id}")
         items = list(g or [])
@@ -622,7 +642,7 @@ class Assets:
                 self.emotes[name] = f"https://cdn.betterttv.net/emote/{eid}/2x"
 
     async def _ffz(self, channel_id: str) -> None:
-        async with httpx.AsyncClient() as c:
+        async with _http() as c:
             g = await self._get(c, "https://api.frankerfacez.com/v1/set/global")
             u = await self._get(c, f"https://api.frankerfacez.com/v1/room/id/{channel_id}")
         for blob in (g, u):
@@ -814,8 +834,8 @@ async def forward_chat(msg: dict) -> None:
     if not fwd:
         return
     try:
-        async with httpx.AsyncClient(timeout=6) as c:
-            await c.post(fwd, json=msg)
+        async with _http() as c:
+            await c.post(fwd, json=msg, timeout=6)
     except Exception:
         pass
 
@@ -1046,16 +1066,16 @@ async def queue_loop(stop: asyncio.Event) -> None:
         if clip:
             base = CONFIG.get("hexcast_url", "http://localhost:4747").rstrip("/")
             try:
-                async with httpx.AsyncClient(timeout=6) as c:
-                    await c.get(f"{base}/api/play/{urllib.parse.quote(clip)}")
+                async with _http() as c:
+                    await c.get(f"{base}/api/play/{urllib.parse.quote(clip)}", timeout=6)
             except Exception as exc:
                 tc.note(f"clip trigger failed for '{clip}': {exc}")
 
         fwd = (CONFIG.get("forward_url") or "").strip()
         if fwd:
             try:
-                async with httpx.AsyncClient(timeout=6) as c:
-                    await c.post(fwd, json=alert)
+                async with _http() as c:
+                    await c.post(fwd, json=alert, timeout=6)
             except Exception:
                 pass
 

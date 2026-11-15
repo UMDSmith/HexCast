@@ -1075,6 +1075,39 @@ def _cmds(c):
     return [m["avatar"] for m in c.ws.sent if isinstance(m, dict) and m.get("type") == "cmd"]
 
 
+def test_device_audio_to_a_renderer_that_stopped_reading_does_not_pile_up(av, renderers):
+    """uvicorn 0.52.1+ holds a send to a client that stopped reading. Device audio is 62.5 blocks a second: one
+    send each would pile up for as long as the client stays connected. One block in flight per renderer."""
+    _avatar(av, "a")
+    av.mod.CONFIG["avatars"][0]["mouth"].update(source="device", device="mic")
+    hub = av.mod.HUB
+    reading, stuck = renderers(), renderers()
+
+    class Stuck(_FakeWS):
+        async def send_bytes(self, data):
+            await asyncio.Event().wait()                    # never taken
+
+    stuck.ws = Stuck()
+
+    old = hub.loop
+
+    async def main():
+        hub.loop = asyncio.get_running_loop()
+        try:
+            for _ in range(200):
+                hub._pcm("mic", b"\0" * 512)
+                for _ in range(3):
+                    await asyncio.sleep(0)
+            assert len(reading.ws.sent) == 200              # the renderer that reads gets every block
+            assert stuck.pcm_busy and len(hub.pcm_tasks) == 1     # one send waits on the stuck one, not 200
+        finally:
+            for t in list(hub.pcm_tasks):
+                t.cancel()
+            await asyncio.sleep(0)
+            hub.loop = old
+    asyncio.run(main())
+
+
 def test_overlays_start_with_main_and_are_made_and_deleted(av):
     assert av.get("/avatar/api/overlays").json()["overlays"] == [{"id": "main", "path": "/avatar/overlay", "avatars": [], "sources": 0}]
     made = _overlay(av, "Guest")                                          # any case, stored lower

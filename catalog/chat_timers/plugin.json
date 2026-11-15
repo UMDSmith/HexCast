@@ -1,7 +1,7 @@
 {
   "id": "chat_timers",
   "name": "Chat Timers",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Messages posted in your Twitch chat on a timer, as your account - your Discord, schedule or socials - each with its own interval, a minimum of chat in between and live-only by default, like StreamElements timers.",
   "icon": "⏲️",
   "color": "#9146ff",

@@ -91,6 +91,11 @@
     '<nav class="hb-nav"></nav>' +
     '<span class="hb-spacer"></span>' +
     '<div class="hb-right"><div class="hb-vers" id="hb-vers"></div>' +
+    '<a class="hb-gear hb-mem' + (forcedKey === 'memory' ? ' sel' : '') + '" id="hb-mem" href="/memory" title="Memory - how much Hexcast is using, and which module is holding it" aria-label="Memory">' +
+      '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<rect x="2.5" y="6" width="19" height="10" rx="1.5"/><rect x="6" y="9" width="3" height="4"/><rect x="10.5" y="9" width="3" height="4"/><rect x="15" y="9" width="3" height="4"/>' +
+      '<path d="M6 16v3M10 16v3M14 16v3M18 16v3"/></svg>' +
+    '</a>' +
     '<a class="hb-gear' + (forcedKey === 'options' ? ' sel' : '') + '" id="hb-gear" href="/options" title="Settings - update checks and other options for all of Hexcast" aria-label="Settings">' +
       '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
       '<circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.11-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.56-1.11 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.01A1.7 1.7 0 0 0 10 3.09V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.01A1.7 1.7 0 0 0 20.91 10H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1z"/></svg>' +

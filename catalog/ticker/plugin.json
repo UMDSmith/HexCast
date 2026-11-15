@@ -1,7 +1,7 @@
 {
   "id": "ticker",
   "name": "Ticker",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A news-style scrolling ticker overlay you place and style anywhere on the 1920x1080 stage, fed by named feeds that you edit in the panel, that a bot writes over HTTP, or that poll a JSON URL.",
   "icon": "📰",
   "color": "#ff7a3d",

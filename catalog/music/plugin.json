@@ -1,7 +1,7 @@
 {
   "id": "music",
   "name": "Music",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A now-playing overlay with album art, live progress, an accent colour from the artwork and an audio visualiser - fed by the YouTube Music Desktop app (optionally with its music video) or by a folder of your own files, with a searchable library, queue and playlists. Includes a plain-text !song endpoint for chat bots.",
   "icon": "🎵",
   "color": "#ff0033",
