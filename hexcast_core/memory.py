@@ -10,25 +10,31 @@ A leak can hide in three places, so the page shows all three:
   between the process total and the modules is shown as "everything else". Bytes a websocket client has
   not taken yet are read from each connection's transport and shown next to the module that owns it.
 - What each module's code allocated (tracemalloc) - only when Hexcast was started with PYTHONTRACEMALLOC.
+- Inside "everything else": who holds the whole process's memory (Python's allocator, the C allocator, the
+  files mapped from disk) and every Python object by type, with what holds the biggest and fastest-growing
+  types - for memory no module reaches (a library's cache, objects only a C extension or a stray frame holds).
 
-A sampler notes the process totals every 5 minutes and each module's share every 30 minutes, for 3 days,
-so the page shows growth even when nobody had it open. Once an hour it prints one dated line to the
-console, so a log kept across restarts shows where an old process's memory went.
+A sampler notes the process totals and that split every 5 minutes, each module's share and every object by
+type every 30 minutes, for 3 days, so the page shows growth even when nobody had it open. Once an hour it
+prints one dated line to the console, so a log kept across restarts shows where an old process's memory went.
 """
 
 from __future__ import annotations
 
 import asyncio
+import bisect
 import gc
 import logging
 import os
 import platform
+import re
 import sys
 import threading
 import time
 import tracemalloc
 import types
 from collections import Counter, deque
+from itertools import islice
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +53,10 @@ ALLOC_FRESH_SECONDS = 60            # ... and re-reads tracemalloc at most this 
 FIRST_SAMPLE_SECONDS = 20           # the first count, once start-up has settled
 WALK_SECONDS = 30.0                 # a count stops (and says it is partial) after this long ...
 WALK_OBJECTS = 5_000_000            # ... or this many objects
+CENSUS_EVERY_SECONDS = 1800         # every Python object counted by type ...
+CENSUS_FRESH_SECONDS = 120          # ... and again when the page asks, at most this often
+CENSUS_SECONDS = 20.0               # a census stops (and says it is partial) after this long
+CENSUS_SHOW = 25                    # the biggest types on the page (plus the fastest growing)
 CHART_POINTS = 400
 
 _STARTED = time.time()
@@ -128,7 +138,8 @@ def _linux_status() -> dict:
         except (KeyError, ValueError, IndexError):
             return None
 
-    out.update(rss=kb("VmRSS"), peak=kb("VmHWM"), swap=kb("VmSwap"), anon=kb("RssAnon"), file=kb("RssFile"))
+    out.update(rss=kb("VmRSS"), peak=kb("VmHWM"), swap=kb("VmSwap"), anon=kb("RssAnon"), file=kb("RssFile"),
+               shmem=kb("RssShmem"))
     try:
         out["threads"] = int(fields["Threads"].split()[0])
     except (KeyError, ValueError, IndexError):
@@ -224,6 +235,9 @@ def process_stats() -> dict:
     elif sys.platform == "win32":
         out.update(_windows_status())
         out["total"] = out.get("private", out.get("rss"))
+        heap, _bases = _windows_heaps()
+        if heap:
+            out["c_heap"] = heap
     else:
         try:
             import resource
@@ -398,7 +412,9 @@ def _roots(host: Any, owners: _Owners, tasks: dict[str, list]) -> tuple[list[tup
 def _type_name(t: type) -> str:
     mod = getattr(t, "__module__", "") or ""
     name = getattr(t, "__qualname__", None) or getattr(t, "__name__", "?")
-    if mod in ("builtins", ""):
+    if not isinstance(name, str):                         # a metaclass's own descriptor, not a name
+        name = type.__dict__["__qualname__"].__get__(t) if isinstance(t, type) else "?"
+    if not isinstance(mod, str) or mod in ("builtins", ""):
         return name
     if mod.startswith("hexcast_plugins."):
         mod = mod.split(".", 2)[-1] if mod.count(".") >= 2 else mod
@@ -570,6 +586,648 @@ def _allocations(owners: _Owners) -> dict:
             "took": round(time.monotonic() - started, 3), "at": time.time()}
 
 
+# ---- inside "everything else": where the memory sits ---------------------------------------------
+
+_STAT = re.compile(r"^\s*(\S.*?)\s*=\s*([\d,]+)\s*$")
+_STAT_OTHER = re.compile(r"^\s*$|^[-\s]+$|^Small block threshold|^class\s+size|^\s*\d+(\s+\d+){4}\s*$|^arena map counts\s*$")
+_stats_lock = threading.Lock()
+
+
+def _pymalloc_text() -> str | None:
+    """What sys._debugmallocstats prints. It writes only to the C stderr, so for the few milliseconds it takes
+    stderr is pointed at a temporary file; a line something else wrote meanwhile is passed on afterwards."""
+    fn = getattr(sys, "_debugmallocstats", None)
+    if fn is None:
+        return None
+    import tempfile
+    with _stats_lock:
+        try:
+            if sys.stderr is not None:
+                sys.stderr.flush()
+        except Exception:
+            pass
+        try:
+            tmp = tempfile.TemporaryFile()
+        except OSError:
+            return None
+        with tmp:
+            try:
+                saved: int | None = os.dup(2)
+            except OSError:
+                saved = None                              # no stderr at all (pythonw, a service)
+            try:
+                os.dup2(tmp.fileno(), 2)
+            except OSError:
+                if saved is not None:
+                    os.close(saved)
+                return None
+            try:
+                fn()
+            finally:
+                try:
+                    if saved is not None:
+                        os.dup2(saved, 2)
+                        os.close(saved)
+                    else:
+                        os.close(2)
+                except OSError:
+                    pass
+            tmp.seek(0)
+            text = tmp.read().decode("utf-8", "replace")
+        foreign = [ln for ln in text.splitlines() if not (_STAT.match(ln) or _STAT_OTHER.match(ln))]
+        if foreign and len(foreign) <= 3 and saved is not None:      # more is a format this code does not know
+            try:
+                os.write(2, ("\n".join(foreign) + "\n").encode("utf-8", "replace"))
+            except OSError:
+                pass
+        return text
+
+
+def _parse_pymalloc(text: str) -> dict | None:
+    """The numbers of Python's own allocator for objects of 512 bytes or less (the first section of
+    sys._debugmallocstats: up to its first 'Total')."""
+    vals: dict[str, int] = {}
+    arena_size = None
+    for line in text.splitlines():
+        m = _STAT.match(line)
+        if not m:
+            continue
+        key, val = m.group(1), int(m.group(2).replace(",", ""))
+        vals.setdefault(key, val)
+        a = re.match(r"(\d+) arenas \* (\d+) bytes/arena", key)
+        if a:
+            arena_size = int(a.group(2))
+        if key == "Total":
+            break
+    used, total = vals.get("# bytes in allocated blocks"), vals.get("Total")
+    if used is None or total is None:
+        return None
+    return {"in_use": used, "reserved": total, "free": max(0, total - used), "arenas": vals.get("# arenas allocated current"),
+            "highwater": vals.get("# arenas highwater mark"), "arena_size": arena_size}
+
+
+def python_allocator() -> dict | None:
+    """Python's small-object allocator: what its live objects use, and the room it keeps (pools freed by
+    objects that are gone, held for new ones). None when it cannot be read (another allocator, another Python)."""
+    try:
+        text = _pymalloc_text()
+        return _parse_pymalloc(text) if text else None
+    except Exception:
+        return None
+
+
+WHERE = ("python", "python_free", "c", "c_free", "tracing", "files", "other")
+
+
+def _where(proc: dict, py: dict | None) -> dict | None:
+    """The process total split by who holds it: Python's allocator (in use / spare room), the C allocator
+    (in use / freed but kept, Linux), tracemalloc's own records, the program and libraries mapped from disk
+    (Linux), and the rest. A part this system cannot tell is None. The modules' share is inside the Python
+    and C parts."""
+    total = proc.get("total")
+    if total is None:
+        return None
+    g: dict[str, int | None] = dict.fromkeys(WHERE)
+    if py:
+        g["python"], g["python_free"] = py["in_use"], py["free"]
+    over = tracemalloc.get_tracemalloc_memory() if tracemalloc.is_tracing() else 0
+    heap = proc.get("c_heap")
+    if heap:
+        g["c"], g["c_free"] = max(0, heap["in_use"] - over), heap["free_kept"]
+    if over:
+        g["tracing"] = over
+    if proc.get("file") is not None:
+        g["files"] = proc["file"] + (proc.get("shmem") or 0)
+    g["other"] = max(0, total - sum(v for k, v in g.items() if v and k != "other"))
+    return g
+
+
+def _parse_smaps(lines: Any) -> tuple[dict[bytes, list[int]], list[list]]:
+    """From /proc/<pid>/smaps lines (bytes): in RAM and in swap per mapped file, and every other mapping as
+    [start, end, perms, name, in RAM, in swap]."""
+    files: dict[bytes, list[int]] = {}
+    anon: list[list] = []
+    cur: list | None = None
+    for line in lines:
+        c = line[:1]
+        if c.isdigit() or c.islower():                   # a mapping starts: range, perms, offset, dev, inode[, path]
+            parts = line.split(None, 5)
+            path = parts[5].strip() if len(parts) > 5 else b""
+            if path.startswith(b"/"):
+                cur = files.setdefault(path, [0, 0])
+            else:
+                lo, _, hi = parts[0].partition(b"-")
+                cur = [int(lo, 16), int(hi, 16), parts[1], path, 0, 0]
+                anon.append(cur)
+        elif cur is not None:
+            if line.startswith(b"Rss:"):
+                cur[-2] += int(line.split()[1]) * 1024
+            elif line.startswith(b"Swap:"):
+                cur[-1] += int(line.split()[1]) * 1024
+    return files, anon
+
+
+_THREAD_ARENA = 64 << 20                                  # glibc's per-thread heap: 64 MB, aligned to it
+
+
+def _linux_blocks(anon: list[list]) -> list[list]:
+    """[kind, name, size, in RAM + swap] per memory mapping that is not a file. glibc's thread heaps are told
+    by their 64 MB alignment and the reserved rest after them, thread stacks by the guard page before them."""
+    out = []
+    for i, (lo, hi, perms, name, rss, swap) in enumerate(anon):
+        used = rss + swap
+        if not used:
+            continue
+        size = hi - lo
+        nm = name.decode("utf-8", "replace")
+        prv = anon[i - 1] if i else None
+        nxt = anon[i + 1] if i + 1 < len(anon) else None
+        if nm == "[heap]":
+            kind = "heap"
+        elif nm.startswith("[stack"):
+            kind = "stack"
+        elif nm.startswith("[anon:"):
+            kind, nm = "named", nm[6:-1].strip()
+        elif nm:
+            kind = "named"
+        elif lo % _THREAD_ARENA == 0 and (size == _THREAD_ARENA or (
+                nxt is not None and nxt[0] == hi and nxt[2].startswith(b"---") and size + nxt[1] - nxt[0] == _THREAD_ARENA)):
+            kind = "thread_heap"
+        elif (prv is not None and prv[1] == lo and prv[2].startswith(b"---") and prv[1] - prv[0] <= 1 << 16
+              and perms.startswith(b"rw")):
+            kind = "thread_stack"
+        else:
+            kind = "block"
+        out.append([kind, nm, size, used])
+    return out
+
+
+_K32: Any = None
+
+
+def _k32() -> Any:
+    """kernel32 with the functions used here typed, once."""
+    global _K32
+    if _K32 is None:
+        import ctypes
+        from ctypes import wintypes
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.GetProcessHeaps.restype = wintypes.DWORD
+        k32.GetProcessHeaps.argtypes = [wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
+        k32.HeapSummary.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.c_void_p]
+        k32.VirtualQuery.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t]
+        k32.VirtualQuery.restype = ctypes.c_size_t
+        _K32 = k32
+    return _K32
+
+
+def _windows_heaps() -> tuple[dict | None, set[int]]:
+    """Windows: every heap of the process (the C runtime's malloc uses the default one) - bytes handed out and
+    bytes committed; the difference is freed memory a heap keeps. Also the heaps' base addresses."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class Summary(ctypes.Structure):
+            _fields_ = [("cb", wintypes.DWORD), ("cbAllocated", ctypes.c_size_t), ("cbCommitted", ctypes.c_size_t),
+                        ("cbReserved", ctypes.c_size_t), ("cbMaxReserve", ctypes.c_size_t)]
+
+        k32 = _k32()
+        n = k32.GetProcessHeaps(0, None) + 8
+        handles = (wintypes.HANDLE * n)()
+        got = k32.GetProcessHeaps(n, handles)
+        if not got or got > n:
+            return None, set()
+        used = committed = 0
+        bases: set[int] = set()
+        for h in handles[:got]:
+            summary = Summary()
+            summary.cb = ctypes.sizeof(summary)
+            if h and k32.HeapSummary(h, 0, ctypes.byref(summary)):
+                used += summary.cbAllocated
+                committed += summary.cbCommitted
+                bases.add(h)
+        return {"heap": committed, "in_use": used, "free_kept": max(0, committed - used), "big_blocks": None}, bases
+    except Exception:
+        return None, set()
+
+
+def _windows_blocks(arena_size: int | None, heaps: set[int]) -> list[list]:
+    """Windows: committed private memory in the pieces it was reserved in (one VirtualAlloc each), as
+    [kind, '', size, committed]: Python's arenas, the heaps' first pieces, and blocks libraries reserved."""
+    import ctypes
+    from ctypes import wintypes
+
+    class Info(ctypes.Structure):
+        _fields_ = [("BaseAddress", ctypes.c_void_p), ("AllocationBase", ctypes.c_void_p),
+                    ("AllocationProtect", wintypes.DWORD), ("PartitionId", wintypes.WORD), ("RegionSize", ctypes.c_size_t),
+                    ("State", wintypes.DWORD), ("Protect", wintypes.DWORD), ("Type", wintypes.DWORD)]
+
+    k32 = _k32()
+    info = Info()
+    size_of = ctypes.sizeof(info)
+    per: dict[int, int] = {}
+    addr = 0
+    for _ in range(200_000):
+        if not k32.VirtualQuery(ctypes.c_void_p(addr), ctypes.byref(info), size_of):
+            break
+        if info.State == 0x1000 and info.Type == 0x20000:      # MEM_COMMIT, MEM_PRIVATE
+            base = info.AllocationBase or 0
+            per[base] = per.get(base, 0) + info.RegionSize
+        nxt = (info.BaseAddress or 0) + info.RegionSize
+        if nxt <= addr:
+            break
+        addr = nxt
+    out = []
+    for base, size in per.items():
+        kind = "heap" if base in heaps else "python" if arena_size and size == arena_size else "block"
+        out.append([kind, "", size, size])
+    return out
+
+
+_BLOCK_KINDS = ("python", "heap", "thread_heap", "stack", "thread_stack", "named", "block")
+
+
+def _group_blocks(blocks: list[list], limit: int = 10) -> list[dict]:
+    """Same kind (and, for plain blocks, the same size) together, the most memory first."""
+    groups: dict[tuple, list[int]] = {}
+    for kind, name, size, used in blocks:
+        key = (kind, name, size if kind == "block" else 0)
+        g = groups.get(key)
+        if g is None:
+            groups[key] = [1, used, size]
+        else:
+            g[0] += 1
+            g[1] += used
+            g[2] += size
+    rows = sorted(groups.items(), key=lambda kv: -kv[1][1])
+    return [{"kind": k, "name": n or None, "size": sz or None, "count": c, "used": u, "reserved": r}
+            for (k, n, sz), (c, u, r) in rows if u >= 1 << 20][:limit]
+
+
+def _mapped(owners: _Owners, arena_size: int | None) -> dict | None:
+    """The files mapped into the process taking the most RAM (Linux: the Python program, the libraries' native
+    code, fonts - shared with other programs, and the system can drop them when memory is short), and the
+    biggest blocks of the rest of its memory."""
+    try:
+        if sys.platform.startswith("linux"):
+            with open("/proc/self/smaps", "rb") as f:
+                files, anon = _parse_smaps(f)
+            rows = sorted(files.items(), key=lambda kv: -(kv[1][0] + kv[1][1]))
+            return {"files": {"count": len(files), "top": [{"file": _short(os.fsdecode(p), owners), "rss": r, "swap": s}
+                                                            for p, (r, s) in rows[:8] if r + s]},
+                    "blocks": _group_blocks(_linux_blocks(anon)), "measure": "in RAM + swap"}
+        if sys.platform == "win32":
+            _heap, bases = _windows_heaps()
+            return {"blocks": _group_blocks(_windows_blocks(arena_size, bases)), "measure": "committed"}
+    except Exception:
+        log.debug("memory: reading the memory map failed", exc_info=True)
+    return None
+
+
+def _threads(native: int | None) -> dict:
+    """Python's threads by name (numbers folded, so 8 workers are one line), and how many the system counts."""
+    names: Counter = Counter()
+    py = threading.enumerate()
+    for t in py:
+        names[re.sub(r"\d+", "N", t.name or "?")] += 1
+    out: dict = {"python": len(py), "names": names.most_common(8)}
+    if native is not None:
+        out["native"] = native
+    return out
+
+
+def _gc_state() -> dict:
+    try:
+        stats = gc.get_stats()
+    except Exception:
+        stats = []
+    return {"enabled": gc.isenabled(), "count": list(gc.get_count()), "threshold": list(gc.get_threshold()),
+            "collections": [s.get("collections", 0) for s in stats],
+            "collected": sum(s.get("collected", 0) for s in stats),
+            "uncollectable": sum(s.get("uncollectable", 0) for s in stats), "garbage": len(gc.garbage),
+            "frozen": gc.get_freeze_count() if hasattr(gc, "get_freeze_count") else 0}
+
+
+# ---- inside "everything else": every Python object, by type -----------------------------------------
+
+_IMMORTAL = 1 << 29                                      # refcounts this high are objects Python keeps for good
+_STDLIB = frozenset(getattr(sys, "stdlib_module_names", ())) | {"builtins", "__main__"}
+
+
+def _ref_base() -> int:
+    """The references sys.getrefcount sees besides the real ones when _census reads them: the list of
+    referents and map's own. Read through map (C) on purpose - a count read in Python code depends on how
+    that Python version compiled the loop (3.14 lends some locals without a reference)."""
+    holder = [bytearray(1)]
+    return list(map(sys.getrefcount, gc.get_referents(holder)))[0] - 1
+
+
+def _defined_by(name: Any, owners: _Owners, cache: dict) -> str:
+    """The module (a plugin id, the core) or top-level package a module name belongs to; 'python' for Python
+    itself and its standard library."""
+    got = cache.get(name)
+    if got is None:
+        if not isinstance(name, str) or not name:
+            got = "python"
+        else:
+            got = owners.of_name(name) or name.split(".")[0]
+            if got in _STDLIB or got.startswith("_") and got[1:] in _STDLIB:
+                got = "python"
+        cache[name] = got
+    return got
+
+
+def _resolve_type(name: str) -> type | None:
+    """The class behind a _type_name, if it is still loaded."""
+    import builtins
+    if "." not in name:
+        t = getattr(builtins, name, None)
+        return t if isinstance(t, type) else None
+    mod, _, qual = name.rpartition(".")
+    obj: Any = sys.modules.get(mod) or sys.modules.get(f"hexcast_plugins.{mod}")
+    while obj is None and "." in mod:                    # a nested class: module.Outer.Inner
+        mod, _, outer = mod.rpartition(".")
+        qual = f"{outer}.{qual}"
+        obj = sys.modules.get(mod)
+    for part in qual.split("."):
+        obj = getattr(obj, part, None)
+    return obj if isinstance(obj, type) else None
+
+
+def _global_names(wanted: set[int], seconds: float = 3.0, budget: int = 1_500_000) -> dict[int, str]:
+    """Where a few objects hang in the module globals, up to three steps down: 'module.NAME',
+    'module.NAME.attr', 'module.NAME[key]'."""
+    found: dict[int, str] = {}
+    deadline = time.monotonic() + seconds
+    visits = 0
+    skip = (types.ModuleType, types.FunctionType, types.BuiltinFunctionType, types.MethodType, str, bytes, int, float)
+    seqs = (list, tuple, deque, set, frozenset)
+
+    def label(path: tuple) -> str:
+        out = path[0]
+        for kind, key in path[1:]:
+            out += f".{key}" if kind == "." else f"[{key!r}]" if isinstance(key, (str, int)) else f"[{type(key).__name__}]"
+        return out
+
+    def look(v: Any, path: tuple, depth: int) -> None:
+        nonlocal visits
+        visits += 1
+        i = id(v)
+        if i in wanted and i not in found:
+            found[i] = label(path)
+        tv = type(v)
+        if depth == 0 or issubclass(tv, skip) or visits > budget:
+            return
+        try:                                               # plain storage only: no library's own attribute code runs
+            if issubclass(tv, dict):
+                items: list = list(islice(dict.items(v), 2000))
+                kind = "["
+            elif tv in seqs:
+                items = list(islice(enumerate(v), 2000))
+                kind = "["
+            else:
+                d = object.__getattribute__(v, "__dict__")
+                if type(d) is dict:
+                    items = list(islice(dict.items(d), 2000))
+                elif type(d) is types.MappingProxyType:
+                    items = list(islice(d.items(), 2000))
+                else:
+                    return
+                kind = "."
+        except Exception:
+            return
+        for key, x in items:
+            look(x, path + ((kind, key),), depth - 1)
+
+    mods = sorted(list(sys.modules.items()), key=lambda kv: not kv[0].startswith(("hexcast", "__main__")))
+    for depth in range(4):                               # one step deeper each round: the shortest names first
+        for name, mod in mods:
+            d = getattr(mod, "__dict__", None)
+            if type(d) is not dict:
+                continue
+            for key, v in list(dict.items(d)):
+                look(v, (f"{name}.{key}",), depth)
+            if len(found) == len(wanted) or visits > budget or time.monotonic() > deadline:
+                return found
+    return found
+
+
+def _census(owners: _Owners, grew: dict[str, int] | None = None, seconds: float = 20.0,
+            keep: int = 400) -> dict:
+    """Every Python object by type. The objects the garbage collector tracks (dicts, lists, instances, functions,
+    frames ...) are each counted once. The others (strings, bytes, numbers, tuples of them, arrays) are counted
+    through the objects that hold them: one with n references counts 1/n at each holder, so it adds up to one
+    without a list of everything seen. Objects Python keeps for good (interned names, small numbers) are left out.
+    For the types holding the most, and the ones that grew most since the first census (`grew`: type name ->
+    bytes), it also notes what holds them, and where the biggest holders hang in the module globals."""
+    getsizeof, referents, is_tracked, getrefcount = sys.getsizeof, gc.get_referents, gc.is_tracked, sys.getrefcount
+    monotonic = time.monotonic
+    base = _ref_base()
+    started = monotonic()
+    deadline = started + seconds
+    objs = gc.get_objects()
+    tracked: dict[type, list] = {}
+    packages: dict[str, list] = {}
+    pkg_cache: dict = {}
+    type_pkg: dict[type, str] = {}
+    partial = False
+    n = 0
+    FunctionType, ModuleType = types.FunctionType, types.ModuleType
+    for o in objs:
+        t = type(o)
+        try:
+            s = getsizeof(o)
+        except Exception:
+            s = 0
+        e = tracked.get(t)
+        if e is None:
+            tracked[t] = [1, s]
+        else:
+            e[0] += 1
+            e[1] += s
+        if t is FunctionType or issubclass(t, type):
+            p = _defined_by(getattr(o, "__module__", None), owners, pkg_cache)
+        elif t is ModuleType:
+            p = _defined_by(getattr(o, "__name__", None), owners, pkg_cache)
+        else:
+            p = type_pkg.get(t)
+            if p is None:
+                p = type_pkg[t] = _defined_by(getattr(t, "__module__", None), owners, pkg_cache)
+        pe = packages.get(p)
+        if pe is None:
+            packages[p] = [1, s]
+        else:
+            pe[0] += 1
+            pe[1] += s
+        n += 1
+        if not n & 0x3FF and monotonic() > deadline:
+            partial = True
+            break
+
+    names = {t: _type_name(t) for t in tracked}
+    targets: set[type] = {bytes, bytearray}
+    targets.update(sorted(tracked, key=lambda t: -tracked[t][1])[:6])
+    by_name = {v: k for k, v in names.items()}
+    for name, d in sorted((grew or {}).items(), key=lambda kv: -kv[1])[:6]:
+        t = by_name.get(name) or _resolve_type(name)
+        if d > 0 and t is not None:
+            targets.add(t)
+    loose: dict[type, list] = {}
+    hold: dict[type, dict[type, list]] = {t: {} for t in targets}      # target -> holder type -> [refs, bytes, holders]
+    biggest: dict[type, list] = {t: [] for t in targets}              # target -> [[bytes, refs, holder], ...] (3)
+    stack: list = []
+    refs: Any = None
+    counts: Any = None
+    done = 0
+
+    def note(mine: dict, holder: Any) -> None:
+        ht = type(holder)
+        for rt, (w, s) in mine.items():
+            h = hold[rt].get(ht)
+            if h is None:
+                hold[rt][ht] = [w, s, 1]
+            else:
+                h[0] += w
+                h[1] += s
+                h[2] += 1
+            top = biggest[rt]
+            if len(top) < 3 or s > top[-1][0]:
+                top.append([s, w, holder])
+                top.sort(key=lambda x: -x[0])
+                del top[3:]
+
+    if not partial:
+        for o in objs:
+            done += 1
+            if not done & 0x3FF and monotonic() > deadline:
+                partial = True
+                break
+            try:
+                refs = referents(o)
+                counts = list(map(getrefcount, refs))
+            except Exception:
+                continue
+            mine: dict | None = None
+            for r, raw in zip(refs, counts):
+                rt = type(r)
+                if is_tracked(r):
+                    if rt in hold:
+                        rc = raw - base - 1                      # the list of every object holds one more
+                        if rc < _IMMORTAL:
+                            w = 1.0 / rc if rc > 1 else 1.0
+                            if mine is None:
+                                mine = {}
+                            m = mine.get(rt)
+                            if m is None:
+                                mine[rt] = [w, getsizeof(r) * w]
+                            else:
+                                m[0] += w
+                                m[1] += getsizeof(r) * w
+                    continue
+                rc = raw - base
+                if rc >= _IMMORTAL:
+                    continue
+                w = 1.0 / rc if rc > 1 else 1.0
+                s = getsizeof(r) * w
+                e = loose.get(rt)
+                if e is None:
+                    loose[rt] = [w, s]
+                else:
+                    e[0] += w
+                    e[1] += s
+                if rt in hold:
+                    if mine is None:
+                        mine = {}
+                    m = mine.get(rt)
+                    if m is None:
+                        mine[rt] = [w, s]
+                    else:
+                        m[0] += w
+                        m[1] += s
+                if rt is tuple:
+                    stack.append((r, w))
+            r = None                                         # a loop variable left holding the last one would count as a holder
+            if mine:
+                note(mine, o)
+            while stack:                                   # what untracked tuples hold (strings, numbers, more tuples)
+                x, xw = stack.pop()
+                refs = referents(x)
+                counts = list(map(getrefcount, refs))
+                inner: dict | None = None
+                for r, raw in zip(refs, counts):
+                    if is_tracked(r):
+                        continue
+                    rc = raw - base
+                    if rc >= _IMMORTAL:
+                        continue
+                    rt = type(r)
+                    w = xw / rc if rc > 1 else xw
+                    s = getsizeof(r) * w
+                    e = loose.get(rt)
+                    if e is None:
+                        loose[rt] = [w, s]
+                    else:
+                        e[0] += w
+                        e[1] += s
+                    if rt in hold:
+                        if inner is None:
+                            inner = {}
+                        m = inner.get(rt)
+                        if m is None:
+                            inner[rt] = [w, s]
+                        else:
+                            m[0] += w
+                            m[1] += s
+                    if rt is tuple:
+                        stack.append((r, w))
+                r = None
+                if inner:
+                    note(inner, x)
+                del x
+    del objs, refs, counts
+
+    rows: dict[str, list] = {}
+    for src in (tracked, loose):
+        for t, (c, s) in src.items():
+            name = names.get(t) or _type_name(t)
+            r = rows.get(name)
+            if r is None:
+                rows[name] = [name, c, s, type_pkg.get(t) or _defined_by(getattr(t, "__module__", None), owners, pkg_cache)]
+            else:
+                r[1] += c
+                r[2] += s
+    for t, (c, s) in loose.items():                     # strings, bytes ... belong to no package
+        p = type_pkg.get(t) or _defined_by(getattr(t, "__module__", None), owners, pkg_cache)
+        pe = packages.setdefault(p, [0, 0])
+        pe[0] += c
+        pe[1] += s
+    ordered = sorted(rows.values(), key=lambda r: -r[2])
+    for r in ordered:
+        r[1], r[2] = round(r[1]), round(r[2])
+    rest = ordered[keep:]
+    held_by: dict[str, dict] = {}
+    want: set[int] = set()
+    for rt, by in hold.items():
+        if not by:
+            continue
+        tops = sorted(by.items(), key=lambda kv: -kv[1][1])[:5]
+        held_by[_type_name(rt)] = {
+            "by": [[_type_name(ht), round(w), round(s), k] for ht, (w, s, k) in tops],
+            "biggest": [{"type": _type_name(type(h)), "size": round(s), "refs": round(w), "id": id(h)}
+                        for s, w, h in biggest[rt] if s >= 65536]}
+        want.update(id(h) for s, _w, h in biggest[rt] if s >= 1 << 20)
+    biggest.clear()
+    where = _global_names(want) if want else {}
+    for info in held_by.values():
+        for b in info["biggest"]:
+            b["where"] = where.get(b.pop("id"))
+    return {"types": ordered[:keep], "rest": [len(rest), sum(r[1] for r in rest), sum(r[2] for r in rest)],
+            "size": sum(r[2] for r in ordered), "objects": n, "partial": partial,
+            "packages": sorted(([p, round(c), round(s)] for p, (c, s) in packages.items()), key=lambda r: -r[2])[:30],
+            "held_by": held_by, "took": round(monotonic() - started, 3)}
+
+
 # ---- the monitor ----------------------------------------------------------------------------
 
 def _fmt(n: float | None) -> str:
@@ -596,6 +1254,18 @@ def _slope(points: list[tuple[float, float]]) -> float | None:
     return sum((p[0] - mx) * (p[1] - my) for p in points) / den * 3600
 
 
+def _change_of(hist: list[tuple[float, int]], now_bytes: int) -> dict:
+    """Change since the first point and since the point about an hour ago, plus a thinned history."""
+    out: dict = {"since": None, "since_at": None, "hour": None}
+    if hist:
+        out["since"], out["since_at"] = now_bytes - hist[0][1], hist[0][0]
+        ago = [(t, b) for t, b in hist if t <= time.time() - 3000]
+        if ago:
+            out["hour"] = now_bytes - ago[-1][1]
+    out["history"] = [[t, b] for t, b in _thin(hist, 120)]
+    return out
+
+
 def _thin(rows: list, most: int) -> list:
     if len(rows) <= most:
         return rows
@@ -613,10 +1283,18 @@ class Monitor:
         self.host = host
         self.samples: deque = deque(maxlen=int(KEEP_SECONDS // SAMPLE_SECONDS) + 1)     # (t, total, rss, swap, tasks, sockets, waiting)
         self.module_samples: deque = deque(maxlen=int(KEEP_SECONDS // MODULES_SECONDS) + 1)   # (t, ((key, bytes), ...))
+        self.where_samples: deque = deque(maxlen=int(KEEP_SECONDS // SAMPLE_SECONDS) + 1)    # (t, (bytes per WHERE part))
         self.last_modules: dict | None = None
         self.last_alloc: dict | None = None
+        self.last_where: dict | None = None
+        self.census_first: dict | None = None
+        self.census_last: dict | None = None
+        self.census_hist: deque = deque(maxlen=4)          # the scheduled ones, for "in the last hour"
         self._lock: asyncio.Lock | None = None
         self._alloc_lock: asyncio.Lock | None = None
+        self._census_lock: asyncio.Lock | None = None
+        self._py: tuple[float, dict | None] | None = None
+        self._files: tuple[float, dict | None] | None = None
         self._task: asyncio.Task | None = None
         self.started = _STARTED
 
@@ -660,6 +1338,50 @@ class Monitor:
                 self.last_alloc = await asyncio.to_thread(_allocations, self._owners())
             return self.last_alloc
 
+    def python_stats(self, max_age: float = FRESH_SECONDS) -> dict | None:
+        if self._py is None or time.monotonic() - self._py[0] >= max_age:
+            self._py = (time.monotonic(), python_allocator())
+        return self._py[1]
+
+    def mapped(self, owners: _Owners, arena_size: int | None) -> dict | None:
+        if self._files is None or time.monotonic() - self._files[0] >= FRESH_SECONDS:
+            self._files = (time.monotonic(), _mapped(owners, arena_size))
+        return self._files[1]
+
+    def _grew(self) -> dict[str, int]:
+        first, last = self.census_first, self.census_last
+        if not first or not last or first is last:
+            return {}
+        before = {r[0]: r[2] for r in first["types"]}
+        return {r[0]: r[2] - before.get(r[0], 0) for r in last["types"]}
+
+    async def census(self, max_age: float | None = None, scheduled: bool = False) -> dict:
+        """Every Python object by type (see _census), counted again when the last count is older than max_age
+        (default CENSUS_FRESH_SECONDS), in a worker thread. The first count is kept, so the page can show what
+        grew since."""
+        if max_age is None:
+            max_age = CENSUS_FRESH_SECONDS
+
+        def fresh() -> bool:
+            return bool(self.census_last) and time.time() - self.census_last["at"] < max_age
+
+        if self._census_lock is None:
+            self._census_lock = asyncio.Lock()
+        async with self._census_lock:
+            if not fresh():
+                owners, grew = self._owners(), self._grew()
+                if getattr(sys, "_is_gil_enabled", lambda: True)():
+                    result = await asyncio.to_thread(_census, owners, grew, CENSUS_SECONDS)
+                else:                                       # free-threaded Python: see modules()
+                    result = _census(owners, grew, 5.0)
+                result["at"] = time.time()
+                if self.census_first is None:
+                    self.census_first = result
+                self.census_last = result
+            if scheduled and (not self.census_hist or self.census_hist[-1] is not self.census_last):
+                self.census_hist.append(self.census_last)
+            return self.census_last
+
     # -- the history --
 
     def sample(self) -> dict:
@@ -671,6 +1393,10 @@ class Monitor:
         socks = sum(r["sockets"] for r in per.values())
         waiting = sum(r["waiting"] for r in per.values())
         self.samples.append((round(time.time()), proc.get("total"), proc.get("rss"), proc.get("swap"), n_tasks, socks, waiting))
+        where = _where(proc, self.python_stats(0))
+        if where:
+            self.where_samples.append((round(time.time()), tuple(where[k] for k in WHERE)))
+            self.last_where = where
         return proc
 
     def note_modules(self, result: dict) -> None:
@@ -701,11 +1427,33 @@ class Monitor:
         if mods:
             top = sorted(mods["held"].items(), key=lambda kv: -kv[1][0])[:5]
             line += " | " + ", ".join(f"{k} {_fmt(v[0])}" for k, v in top)
+        w = self.last_where
+        if w:
+            bits = []
+            if w.get("python") is not None:
+                bits.append(f"python objects {_fmt(w['python'])} (+{_fmt(w['python_free'])} spare)")
+            if w.get("c") is not None:
+                bits.append(f"C {_fmt(w['c'])} (+{_fmt(w['c_free'])} freed, kept)")
+            if w.get("tracing"):
+                bits.append(f"tracemalloc {_fmt(w['tracing'])}")
+            if w.get("files") is not None:
+                bits.append(f"files {_fmt(w['files'])}")
+            bits.append(f"other {_fmt(w['other'])}")
+            line += " | " + ", ".join(bits)
+        first, last = self.census_first, self.census_last
+        if first and last and first is not last:
+            before = {r[0]: r for r in first["types"]}
+            grew = sorted(((r[2] - (before[r[0]][2] if r[0] in before else 0), r[1] - (before[r[0]][1] if r[0] in before else 0), r[0])
+                           for r in last["types"]), reverse=True)[:3]
+            grew = [g for g in grew if g[0] >= 1 << 20]
+            if grew:
+                line += f" | grew since {time.strftime('%H:%M', time.localtime(first['at']))}: " + ", ".join(
+                    f"{name} {dn:+,} ({_fmt(db)})" for db, dn, name in grew)
         return f"{time.strftime('%Y-%m-%d %H:%M:%S')} [memory] {line}"
 
     async def _run(self) -> None:
         await asyncio.sleep(FIRST_SAMPLE_SECONDS)
-        next_modules = next_log = 0.0
+        next_modules = next_census = next_log = 0.0
         while True:
             try:
                 proc = self.sample()
@@ -713,6 +1461,14 @@ class Monitor:
                 if now >= next_modules:
                     self.note_modules(await self.modules(max_age=60))
                     next_modules = now + MODULES_SECONDS
+                if now >= next_census:
+                    next_census = now + CENSUS_EVERY_SECONDS
+                    try:
+                        await self.census(max_age=60, scheduled=True)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        log.exception("memory: counting objects failed")
                 if now >= next_log:
                     print(self.log_line(proc), flush=True)
                     next_log = now + LOG_SECONDS
@@ -744,17 +1500,59 @@ class Monitor:
 
     def _change(self, key: str, now_bytes: int) -> dict:
         hist = [(t, dict(rows).get(key)) for t, rows in self.module_samples]
-        hist = [(t, b) for t, b in hist if b is not None]
-        out: dict = {"since": None, "since_at": None, "hour": None}
-        if hist:
-            out["since"], out["since_at"] = now_bytes - hist[0][1], hist[0][0]
-            ago = [(t, b) for t, b in hist if t <= time.time() - 3000]
-            if ago:
-                out["hour"] = now_bytes - ago[-1][1]
-        out["history"] = [[t, b] for t, b in _thin(hist, 120)]
+        return _change_of([(t, b) for t, b in hist if b is not None], now_bytes)
+
+    def _rest_change(self, now_bytes: int) -> dict:
+        """Everything else over time: each module count's process total (the note taken with it) minus the modules."""
+        times = [s[0] for s in self.samples]
+        hist = []
+        for t, rows in self.module_samples:
+            i = bisect.bisect_right(times, t + 5) - 1
+            if i >= 0 and self.samples[i][1] is not None:
+                hist.append((t, max(0, self.samples[i][1] - sum(b for _k, b in rows))))
+        return _change_of(hist, now_bytes)
+
+    def _where_change(self, key: str, now_bytes: int) -> dict:
+        i = WHERE.index(key)
+        return _change_of([(t, v[i]) for t, v in self.where_samples if v[i] is not None], now_bytes)
+
+    def _census_view(self) -> dict:
+        out: dict = {"every": CENSUS_EVERY_SECONDS, "fresh": CENSUS_FRESH_SECONDS,
+                     "running": bool(self._census_lock and self._census_lock.locked())}
+        last, first = self.census_last, self.census_first
+        if not last or not first:
+            return out
+        older = [c for c in self.census_hist if c["at"] <= last["at"] - 3000]
+        hour = older[-1] if older else None
+        f_map = {r[0]: r for r in first["types"]} if first is not last else None
+        h_map = {r[0]: r for r in hour["types"]} if hour is not None and hour is not last else None
+
+        def diff(m: dict | None, r: list) -> list | None:
+            if m is None:
+                return None
+            o = m.get(r[0])
+            return [r[1] - (o[1] if o else 0), r[2] - (o[2] if o else 0)]
+
+        top = last["types"][:CENSUS_SHOW]
+        grown: list = []
+        if f_map is not None:
+            shown = {r[0] for r in top}
+            grown = sorted((r for r in last["types"] if r[0] not in shown), key=lambda r: -diff(f_map, r)[1])[:8]
+            grown = [r for r in grown if diff(f_map, r)[1] >= 1 << 20]
+        rows = [{"name": r[0], "count": r[1], "size": r[2], "defined": r[3], "since": diff(f_map, r), "hour": diff(h_map, r),
+                 "held_by": last["held_by"].get(r[0])} for r in top + grown]
+        p_first = {p[0]: p for p in first["packages"]} if first is not last else None
+        packages = [{"name": p[0], "count": p[1], "size": p[2], "since": diff(p_first, p)} for p in last["packages"][:15]]
+        out.update(at=last["at"], took=last["took"], objects=last["objects"], size=last["size"], partial=last["partial"],
+                   first_at=first["at"], hour_at=hour["at"] if h_map is not None else None, rows=rows, packages=packages,
+                   rest=last["rest"])
         return out
 
-    async def view(self) -> dict:
+    async def view(self, census: bool = False) -> dict:
+        """The page's numbers. census=True counts every object again first (when the last count is older than
+        CENSUS_FRESH_SECONDS); otherwise the page shows the last scheduled one."""
+        if census:
+            await self.census()
         proc = process_stats()
         owners = self._owners()
         tasks, labels, other_tasks = _tasks(owners)
@@ -784,9 +1582,18 @@ class Monitor:
         held_sum = sum(r["held"] or 0 for r in rows)
         total = proc.get("total")
         rest = {"held": max(0, total - held_sum) if total is not None else None,
-                "tasks": sum(other_tasks.values()), "task_top": other_tasks.most_common(5)}
+                "tasks": sum(other_tasks.values()), "task_top": other_tasks.most_common(8)}
+        if rest["held"] is not None:
+            rest["change"] = self._rest_change(rest["held"])
         if alloc.get("tracing"):
             rest["allocated"] = alloc["by_module"].get("", 0)
+        py = self.python_stats()
+        where = _where(proc, py)
+        if where:
+            rest["where"] = where
+            rest["where_change"] = {k: self._where_change(k, v) for k, v in where.items() if v is not None}
+        rest.update(python=py, mapped=self.mapped(owners, (py or {}).get("arena_size")), gc=_gc_state(), census=self._census_view(),
+                    threads=_threads(proc.get("threads") if sys.platform.startswith("linux") else None))
         chart = [list(s) for s in _thin(list(self.samples), CHART_POINTS)]
         return {"ok": True, "now": time.time(), "started": self.started, "process": proc, "growth": self.growth(),
                 "tasks": n_tasks, "connections": conns, "versions": versions(),
@@ -806,7 +1613,8 @@ def build_router(monitor: Monitor, static_dir: Path) -> APIRouter:
         return HTMLResponse((Path(static_dir) / "memory.html").read_text(encoding="utf-8"), headers=nocache)
 
     @router.get("/api/memory")
-    async def api_memory():
-        return await monitor.view()
+    async def api_memory(census: int = 0):
+        """?census=1 counts every Python object again first (at most every 2 minutes) - it takes a few seconds."""
+        return await monitor.view(census=bool(census))
 
     return router

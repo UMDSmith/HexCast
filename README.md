@@ -102,27 +102,47 @@ while it is open.
   its websockets. Click a row for what the memory is made of (e.g. *6.2 MB in
   66 bytes*). An overlay that stopped taking what is sent is flagged *not
   reading*. **Everything else** is the rest of the process: Python itself, the
-  libraries, and memory outside Python objects.
-- **C heap** (Linux) — glibc's count of memory in use vs freed but kept.
+  libraries, and memory outside Python objects — click it to open it:
+- **Inside everything else** — who holds the whole process's memory: Python
+  objects, Python's spare room, C memory in use and freed-but-kept (glibc on
+  Linux, the heaps on Windows), the program and libraries mapped from disk
+  (Linux) and the rest, each with its change since start. Then the **biggest
+  blocks** (e.g. *7 blocks of 32 MB* — OpenBLAS, numpy's maths library, sets
+  32 MB aside per thread; *a thread's C heap*), and **every Python object by
+  type**, counted at start and every 30 minutes (or with **Count again**): the
+  change since the first count and, for the biggest and fastest-growing types,
+  what holds them and where (e.g. *one list holds 4.9 MB — at
+  hexcast_plugins.music.ytmusic.CACHE*). Plus the threads, the garbage
+  collector and the tasks the libraries run.
+- **C heap** — glibc's (Linux) or the heaps' (Windows) count of memory in use
+  vs freed but kept.
 - **Allocations** — when Hexcast is started with `PYTHONTRACEMALLOC=25`, each
   module's share by the code that allocated it, and the source lines holding
   the most (tracing makes Hexcast slower; use it for a leak hunt, not a show).
 
 Once an hour Hexcast also prints one dated line to the console, e.g.
-`2026-11-15 18:00:03 [memory] 1.42 GB in use; +12 MB/h over 6.0 h; 143 tasks; 13 websockets, 0 B waiting | avatar 48 MB, music 12 MB, core 9 MB`,
+`2026-11-15 18:00:03 [memory] 1.42 GB in use; +12 MB/h over 6.0 h; 143 tasks; 13 websockets, 0 B waiting | avatar 48 MB, music 12 MB, core 9 MB | python objects 310 MB (+20 MB spare), C 90 MB (+40 MB freed, kept), files 35 MB, other 15 MB | grew since 09:00: dict +120,000 (30 MB)`,
 so a log kept across restarts shows where an old process's memory went. The
-same numbers are at `GET /api/memory`.
+same numbers are at `GET /api/memory` (`?census=1` counts every object again
+first).
 
 **Reading it.** One module growing → that module (its row says what of). Only
-*Everything else* growing → the growth is outside Python objects: if the C
-heap's *freed but kept* grows while *in use* stays flat it is fragmentation —
-start Hexcast with `MALLOC_ARENA_MAX=2`. A *not reading* flag or a task count
-that keeps rising → a stuck overlay or work that never finishes.
+*Everything else* growing → open it. The part that grows says who holds it:
+*Python objects* → the type table's change column says which objects, and
+*held by* says what keeps them; *C memory freed but kept* growing while *in
+use* stays flat → fragmentation — start Hexcast with `MALLOC_ARENA_MAX=2`
+(Linux); *C memory in use* or *not in those* → memory outside Python objects,
+and the biggest blocks show where. A *not reading* flag or a task count that
+keeps rising → a stuck overlay or work that never finishes.
 
 **How it works.** Each module's share is the size of the Python objects its
 code keeps (its globals, routes and running tasks), counted in a background
 thread at most every 30 seconds — a few hundredths of a second with every
 plugin installed. Something two modules share is counted once, under the first.
+The count of every object by type runs in a background thread too — about a
+second for 140,000 objects. Strings, bytes and numbers are counted through the
+objects holding them, each split between its holders, so nothing is counted
+twice.
 
 ### 💬 Twitch *(plugin)*
 

@@ -281,3 +281,215 @@ def test_the_sampler_notes_the_process_and_the_modules(world, monkeypatch):
     assert dict(mon.module_samples[0][1])["hoarder"] > 0
     assert len(printed) == 1 and "[memory]" in printed[0]
     assert mon._task is None
+    assert len(mon.where_samples) == len(mon.samples) and mon.census_first is mon.census_last is not None
+    assert list(mon.census_hist) == [mon.census_first]
+
+
+# ---- inside "everything else" ----------------------------------------------------------------
+
+MALLOC_STATS = """Small block threshold = 512, in 32 size classes.
+
+class   size   num pools   blocks in use  avail blocks
+-----   ----   ---------   -------------  ------------
+    0     16           1              77           944
+    1     32         394          200849            91
+
+# arenas allocated total           =                   61
+# arenas reclaimed                 =                   12
+# arenas highwater mark            =                   52
+# arenas allocated current         =                   49
+49 arenas * 1048576 bytes/arena    =           51,380,224
+
+# bytes in allocated blocks        =           49,880,336
+# bytes in available blocks        =              434,240
+7 unused pools * 16384 bytes       =              114,688
+# bytes lost to pool headers       =              150,912
+# bytes lost to quantization       =              800,048
+# bytes lost to arena alignment    =                    0
+Total                              =           51,380,224
+
+arena map counts
+# arena map mid nodes              =                    1
+Total                              =              655,360
+
+            4 free PyDictObjects * 48 bytes each =                  192
+"""
+
+
+def test_pythons_allocator_numbers_are_read_from_its_stats():
+    py = memory._parse_pymalloc(MALLOC_STATS)
+    assert py == {"in_use": 49_880_336, "reserved": 51_380_224, "free": 1_499_888, "arenas": 49, "highwater": 52,
+                  "arena_size": 1_048_576}
+    assert memory._parse_pymalloc("mimalloc says something else\n") is None
+
+
+def test_reading_pythons_allocator_leaves_stderr_working(capfd):
+    py = memory.python_allocator()
+    if py is None:
+        pytest.skip("this Python's allocator is not pymalloc")
+    assert py["in_use"] > 1_000_000 and py["reserved"] >= py["in_use"]
+    print("still here", file=sys.stderr, flush=True)
+    err = capfd.readouterr().err
+    assert "still here" in err and "arenas allocated" not in err
+
+
+def test_the_parts_add_up_to_the_process_total():
+    mb = 1 << 20
+    proc = {"total": 1000 * mb, "c_heap": {"in_use": 300 * mb, "free_kept": 100 * mb}, "file": 50 * mb, "shmem": 5 * mb}
+    w = memory._where(proc, {"in_use": 200 * mb, "free": 20 * mb})
+    assert w == {"python": 200 * mb, "python_free": 20 * mb, "c": 300 * mb, "c_free": 100 * mb, "tracing": None,
+                 "files": 55 * mb, "other": 325 * mb}
+    w = memory._where({"total": 400 * mb}, {"in_use": 100 * mb, "free": 10 * mb})          # no C heap numbers, no files
+    assert w["c"] is None and w["files"] is None and w["other"] == 290 * mb
+    assert memory._where({"total": None}, None) is None
+
+
+SMAPS = b"""55d4c6a3e000-55d4c6a5e000 r-xp 00000000 fd:01 1234                       /usr/bin/python3.12
+Size:                128 kB
+Rss:                 120 kB
+Swap:                  0 kB
+VmFlags: rd ex mr mw me dw
+55d4c6a5e000-55d4c6a6e000 rw-p 00020000 fd:01 1234                       /usr/bin/python3.12
+Rss:                  60 kB
+Swap:                  4 kB
+55d4c8000000-55d4d0000000 rw-p 00000000 00:00 0                          [heap]
+Rss:              120000 kB
+Swap:              10000 kB
+7f0000000000-7f0002000000 rw-p 00000000 00:00 0
+Rss:               30000 kB
+Swap:               2000 kB
+7f0002000000-7f0004000000 ---p 00000000 00:00 0
+Rss:                   0 kB
+7f1000000000-7f1000001000 ---p 00000000 00:00 0
+Rss:                   0 kB
+7f1000001000-7f1000801000 rw-p 00000000 00:00 0
+Rss:                1100 kB
+7f2000000000-7f2002000000 rw-p 00000000 00:00 0
+Rss:                3000 kB
+7f2002000000-7f2004000000 rw-p 00000000 00:00 0                          [anon:cpython obmalloc]
+Rss:                2048 kB
+7ffd00000000-7ffd00021000 rw-p 00000000 00:00 0                          [stack]
+Rss:                 132 kB
+"""
+
+
+def test_the_linux_memory_map_is_split_into_files_and_blocks():
+    files, anon = memory._parse_smaps(SMAPS.splitlines(keepends=True))
+    assert files == {b"/usr/bin/python3.12": [180 * 1024, 4 * 1024]}
+    blocks = memory._linux_blocks(anon)
+    assert [b[:2] for b in blocks] == [["heap", "[heap]"], ["thread_heap", ""], ["thread_stack", ""], ["block", ""],
+                                       ["named", "cpython obmalloc"], ["stack", "[stack]"]]
+    groups = memory._group_blocks(blocks)
+    assert groups[0] == {"kind": "heap", "name": "[heap]", "size": None, "count": 1, "used": 130000 * 1024,
+                         "reserved": 128 << 20}
+    assert [g["kind"] for g in groups] == ["heap", "thread_heap", "block", "named", "thread_stack"]   # under 1 MB: left out
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows heaps and VirtualQuery")
+def test_windows_heaps_and_blocks_are_read():
+    heap, bases = memory._windows_heaps()
+    assert heap["in_use"] > 0 and heap["heap"] >= heap["in_use"] and bases
+    py = memory.python_allocator()
+    m = memory._mapped(memory._Owners(None), py and py["arena_size"])
+    assert m["measure"] == "committed" and m["blocks"]
+    if py:
+        assert any(b["kind"] == "python" for b in m["blocks"])
+
+
+GROWER = '''
+from fastapi import APIRouter
+router = APIRouter()
+KEPT = []
+SHARED = []
+
+class Item:
+    def __init__(self, n):
+        self.n = n
+
+def keep(n, size):
+    for _ in range(n):
+        KEPT.append(bytes(size))
+
+def items(n):
+    KEPT.append([Item(i) for i in range(n)])
+
+def share(size):
+    big = "z" * size
+    SHARED.extend([[big], [big], [big]])     # one string, three holders
+
+def setup(ctx):
+    ctx.include_router(router)
+'''
+
+
+def _rows(c):
+    return {r[0]: r for r in c["types"]}
+
+
+def test_the_census_counts_every_object_by_type_and_says_what_holds_the_big_ones(world):
+    mod = _start(world, "grower", GROWER)
+    owners = memory._Owners(world.plugins)
+    before = _rows(memory._census(owners))
+    mod.keep(30, 100_000)                                  # 3 MB of bytes in one module list
+    mod.items(5000)
+    mod.share(4_000_000)
+    c = memory._census(owners, grew={"bytes": 3_000_000})
+    after = _rows(c)
+    assert not c["partial"] and c["objects"] > 1000
+    assert 2_900_000 <= after["bytes"][2] - before["bytes"][2] <= 3_300_000
+    assert after["plugin.Item"][1] == 5000 and after["plugin.Item"][3] == "grower"
+    assert 3_800_000 <= after["str"][2] - before["str"][2] <= 4_600_000      # one string, counted once
+    held = c["held_by"]["bytes"]
+    assert held["by"][0][0] == "list" and held["by"][0][2] >= 2_900_000
+    big = held["biggest"][0]
+    assert big["type"] == "list" and big["size"] >= 2_900_000 and big["where"] == "hexcast_plugins.grower.plugin.KEPT"
+    packages = {p[0]: p for p in c["packages"]}
+    assert packages["grower"][1] >= 5000 and packages["python"][2] > packages["grower"][2]
+
+
+def test_the_census_stops_when_out_of_time(world):
+    assert memory._census(memory._Owners(world.plugins), seconds=0)["partial"]
+
+
+def test_global_names_find_where_an_object_hangs(world):
+    mod = _start(world, "grower", GROWER)
+    mod.KEPT.append({"inner": [1, 2, 3]})
+    inner = mod.KEPT[-1]["inner"]
+    found = memory._global_names({id(inner), id(mod.KEPT)})
+    assert found[id(mod.KEPT)] == "hexcast_plugins.grower.plugin.KEPT"
+    assert found[id(inner)] == "hexcast_plugins.grower.plugin.KEPT[0]['inner']"
+
+
+def test_the_page_shows_what_grew_since_the_first_census(world):
+    from hexcast_core.paths import STATIC_DIR
+    mod = _start(world, "grower", GROWER)
+    mon = memory.Monitor(world.host)
+    world.app.include_router(memory.build_router(mon, STATIC_DIR))
+    c = TestClient(world.app)
+    rest = c.get("/api/memory").json()["modules"]["rest"]
+    assert "rows" not in rest["census"] and rest["gc"]["enabled"] in (True, False) and rest["threads"]["python"] >= 1
+    assert rest["where"]["other"] is not None
+    first = c.get("/api/memory?census=1").json()["modules"]["rest"]["census"]
+    assert first["rows"] and first["rows"][0]["since"] is None
+    mod.keep(40, 100_000)
+    mon.census_last["at"] -= memory.CENSUS_FRESH_SECONDS + 1           # old enough to count again
+    again = c.get("/api/memory?census=1").json()["modules"]["rest"]["census"]
+    rows = {r["name"]: r for r in again["rows"]}
+    assert rows["bytes"]["since"][1] >= 3_900_000 and rows["bytes"]["since"][0] >= 40
+    assert again["first_at"] == first["at"] - memory.CENSUS_FRESH_SECONDS - 1 and again["at"] > again["first_at"]
+    assert rows["bytes"]["held_by"]["biggest"][0]["where"] == "hexcast_plugins.grower.plugin.KEPT"
+    mon.census_last["at"] = time.time()
+    same = c.get("/api/memory?census=1").json()["modules"]["rest"]["census"]
+    assert same["at"] == mon.census_last["at"]                          # too soon: the same count
+
+
+def test_the_log_line_says_who_holds_the_memory_and_what_grew():
+    mon = memory.Monitor(None)
+    mb = 1 << 20
+    mon.last_where = {"python": 300 * mb, "python_free": 20 * mb, "c": 90 * mb, "c_free": 40 * mb, "tracing": None,
+                      "files": 35 * mb, "other": 15 * mb}
+    mon.census_first = {"at": time.time() - 7200, "types": [["dict", 1000, 1 * mb, "python"], ["bytes", 10, 1000, "python"]]}
+    mon.census_last = {"at": time.time(), "types": [["dict", 121_000, 31 * mb, "python"], ["bytes", 10, 1000, "python"]]}
+    line = mon.log_line({"total": 500 * mb, "rss": 500 * mb})
+    assert "python objects 300 MB (+20 MB spare), C 90 MB (+40 MB freed, kept), files 35 MB, other 15 MB" in line
+    assert "dict +120,000 (30 MB)" in line and "bytes" not in line.split("grew since")[1]

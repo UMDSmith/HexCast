@@ -74,6 +74,27 @@
   tr.detail h4{margin:6px 0 4px;font:600 11.5px 'Segoe UI',system-ui,sans-serif;color:var(--dim);letter-spacing:.06em;text-transform:uppercase}
   tr.detail ul{margin:0;padding-left:18px}
   .stuck{color:var(--warn);white-space:nowrap}
+  .xd-box{background:#121219;border:1px solid var(--line);border-top:0;border-radius:0 0 10px 10px;padding:6px 16px 16px;
+          font-size:13px;color:var(--muted);margin:0 -4px}
+  .xd{max-width:860px}
+  .xd > p{margin:0 0 6px}
+  .xd h3{margin:16px 0 4px;font:700 12px/1.2 var(--hb-mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ink)}
+  .xd h3:first-of-type{margin-top:8px}
+  .xd .hint{margin:0 0 6px;font-size:12.5px}
+  table.sub{font-size:13px;margin-top:2px}
+  table.sub th{font-size:11px;padding:4px 8px}
+  table.sub td{padding:6px 8px;background:transparent;color:var(--muted)}
+  table.sub td b{color:var(--ink);font-weight:600}
+  table.sub td small{display:block;color:var(--dim);font-size:12px;line-height:1.35;overflow-wrap:anywhere}
+  table.sub .bartrack{width:120px}
+  .tname{font:12.5px var(--hb-mono);color:var(--ink);overflow-wrap:anywhere}
+  .chips{display:flex;flex-wrap:wrap;gap:6px 14px;margin:2px 0}
+  .chips span{white-space:nowrap}
+  .btn{display:inline-flex;align-items:center;gap:6px;background:#1d2a3d;border:1px solid #2d4466;color:var(--ink);border-radius:8px;
+       padding:5px 12px;font:600 12.5px 'Segoe UI',system-ui,sans-serif;cursor:pointer}
+  .btn:hover{background:#24364f}
+  .btn[disabled]{opacity:.6;cursor:default}
+  .row-gap{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:4px 0 6px}
   .foot{margin-top:10px;color:var(--dim);font-size:12.5px}
 
   /* key-value lists */
@@ -84,6 +105,8 @@
   .lines td{font-size:13px}
   .lines td.f{font:12.5px var(--hb-mono);color:var(--muted);overflow-wrap:anywhere}
   @media (max-width:760px){ .two{grid-template-columns:1fr} }
+  @media (max-width:560px){ .xd-box{padding:6px 10px 14px} table.sub td,table.sub th{padding:6px 5px} table.sub .bartrack{width:64px}
+    .chg .spark{width:64px} }
   @media (max-width:560px){ main{padding:8px 16px 70px} .card{padding:14px} .tile .v{font-size:21px} .chart{height:200px} }
 </style></head>
 <body>
@@ -109,11 +132,13 @@
       <h2>By module</h2>
       <p class="hint">What each module is holding right now: the Python objects its code keeps (its globals, its routes and the
         tasks running its code). Memory outside Python objects - network buffers, TLS, the allocator's spare room - is in
-        <b>Everything else</b>. Click a row for what the memory is made of.</p>
+        <b>Everything else</b>. Click a row for what the memory is made of; <b>Everything else</b> opens who holds the
+        rest of the process and every Python object by type.</p>
       <div class="scroll"><table id="mods">
         <thead><tr><th>Module</th><th>Holding</th><th>Change</th><th class="r">Tasks</th><th class="r">Websockets</th><th class="r" id="th-alloc" hidden>Allocated</th></tr></thead>
         <tbody></tbody>
       </table></div>
+      <div class="xd-box" id="rest-detail" hidden></div>
       <div class="foot" id="mods-foot"></div>
     </section>
 
@@ -133,7 +158,7 @@
 <script>
 (function(){
   var $ = function(id){ return document.getElementById(id); };
-  var D = null, open = {}, busy = false;
+  var D = null, open = {}, busy = false, counting = false;
   var SVGNS = 'http://www.w3.org/2000/svg';
   var WARN = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 2 21h20L12 3z"/><path d="M12 10v5"/><path d="M12 18h.01"/></svg>';
 
@@ -337,11 +362,161 @@
     if(r.objects != null) h += '<h4>Objects</h4><div>' + count(r.objects) + ' Python objects counted</div>';
     return '<tr class="detail"><td colspan="' + cols + '">' + (h || 'Nothing more to show.') + '</td></tr>';
   }
+  // ---- inside everything else ----
+  var PARTS = {
+    python: ['Python objects', 'Live objects of 512 bytes or less (ints, short strings, small lists and dicts, frames), from Python\'s own allocator.'],
+    python_free: ['Python\'s spare room', 'Room in Python\'s allocator left by objects that are gone, kept for new ones. Growing while Python objects stay flat is fragmentation.'],
+    c: ['C memory in use', 'What malloc has handed out: bigger Python objects (long strings, bytes, the tables of big lists and dicts) and what libraries allocate themselves (TLS, audio, numpy).'],
+    c_free: ['C memory freed but kept', 'Freed, but kept by the allocator for reuse. Growing while <i>in use</i> stays flat is fragmentation, not a leak.'],
+    tracing: ['tracemalloc\'s records', 'Tracing\'s own bookkeeping; gone when Hexcast runs without PYTHONTRACEMALLOC.'],
+    files: ['Program and libraries', 'Python and the libraries\' native code, mapped from disk. Shared with other programs; the system drops it first when memory is short.'],
+    other: ['Not in those', '']
+  };
+  var KINDS = {
+    python: 'Python\'s arenas', heap: 'the C heap', thread_heap: 'a thread\'s C heap (glibc arena)', stack: 'the main thread\'s stack',
+    thread_stack: 'thread stacks', named: '', block: ''
+  };
+  function bigParts(w){
+    return Object.keys(PARTS).filter(function(k){ return w[k] != null && (w[k] > 0 || k === 'python' || k === 'c'); });
+  }
+  function chgShort(c){
+    if(!c || c.since == null) return '<span class="dimtxt">-</span>';
+    var h = '<span class="num">' + (Math.abs(c.since) >= 1024 ? esc(bytes(c.since, true)) : 'no change') + '</span>' +
+      '<small>since ' + esc(clock(c.since_at, D.now - c.since_at > 86400)) + (c.hour != null ? '; ' + esc(bytes(c.hour, true)) + ' in 1 h' : '') + '</small>';
+    return h;
+  }
+  function blockLabel(b, measure){
+    var many = b.count > 1, label;
+    if(b.kind === 'block'){
+      label = (many ? count(b.count) + ' blocks of ' : 'a block of ') + bytes(b.size);
+    } else if(b.kind === 'named'){
+      label = (b.name || 'named') + (many ? ' &times; ' + count(b.count) : '');
+      return '<span class="mono">' + esc(label) + '</span>';
+    } else {
+      label = KINDS[b.kind] || b.kind;
+      if(many && b.kind !== 'python') label += ' (' + count(b.count) + ')';
+    }
+    return label;
+  }
+  function blockNote(b, measure){
+    if(b.kind === 'block' && b.size === 33554432 && b.count > 1)
+      return 'Probably OpenBLAS, numpy\'s maths library: it sets aside 32 MB per thread. ' +
+        (measure === 'committed' ? 'Windows counts it as committed even where it is never touched. ' : '') +
+        'Starting Hexcast with <code>OPENBLAS_NUM_THREADS=1</code> keeps one.';
+    if(b.kind === 'python') return count(b.count) + ' of ' + bytes(b.reserved / b.count) + ' each; what is in them is the first two parts above.';
+    if(b.kind === 'thread_heap') return 'glibc gives busy threads their own heap; <code>MALLOC_ARENA_MAX=2</code> caps how many.';
+    if(b.kind === 'block') return 'Reserved in one piece, by malloc for one big allocation or by a library itself.';
+    return '';
+  }
+  function restDetail(rest, held){
+    var p = D.process, w = rest.where, h = '<div class="xd">';
+    h += '<p>The process total (' + esc(bytes(p.total)) + ') minus what the modules hold (' + esc(bytes(held)) + '). ' +
+      'Below is the whole process: who holds its memory, the biggest blocks of it, and every Python object by type. ' +
+      'The modules\' share is inside the Python objects and C memory.</p>';
+    if(w){
+      var parts = bigParts(w), wc = rest.where_change || {};
+      PARTS.other[1] = w.c != null ? 'Memory libraries reserve outside malloc, thread stacks, and pages the allocators count but never touched. The biggest blocks below show what it is.'
+        : 'The C heap and what libraries reserve themselves' + (p.private != null ? ' - Windows counts reserved memory that was never touched, too' : '') + '. The biggest blocks below show what it is.';
+      h += '<h3>Who holds it</h3><div class="scroll"><table class="sub"><thead><tr><th>Part</th><th>Size</th><th>Change</th></tr></thead><tbody>';
+      parts.forEach(function(k){
+        var pct = p.total ? w[k] / p.total * 100 : 0;
+        h += '<tr><td><b>' + PARTS[k][0] + '</b><small>' + PARTS[k][1] + '</small></td>' +
+          '<td class="num" style="white-space:nowrap">' + esc(bytes(w[k])) + ' <small style="display:inline">' + (pct >= 1 ? Math.round(pct) : '<1') + '%</small>' +
+          '<div class="bartrack"><div class="bar" style="width:' + Math.max(1, pct).toFixed(1) + '%"></div></div></td>' +
+          '<td class="chg">' + chgShort(wc[k]) + spark(wc[k] && wc[k].history, w[k]) + '</td></tr>';
+      });
+      h += '</tbody></table></div>';
+      if(rest.python && rest.python.highwater) h += '<p class="hint">Python\'s allocator has ' + count(rest.python.arenas) + ' arenas now; at most ' +
+        count(rest.python.highwater) + ' at once since start.</p>';
+    }
+    var mp = rest.mapped;
+    if(mp && mp.blocks && mp.blocks.length){
+      h += '<h3>Biggest blocks</h3><p class="hint">' + (mp.measure === 'committed' ? 'Committed private memory, in the pieces it was reserved in.' :
+        'Memory not mapped from a file, per mapping, in RAM + swap.') + '</p><div class="scroll"><table class="sub"><tbody>';
+      mp.blocks.forEach(function(b){
+        var note = blockNote(b, mp.measure);
+        h += '<tr><td><b>' + blockLabel(b, mp.measure) + '</b>' + (note ? '<small>' + note + '</small>' : '') + '</td><td class="r num" style="white-space:nowrap">' + esc(bytes(b.used)) + '</td></tr>';
+      });
+      h += '</tbody></table></div>';
+    }
+    if(mp && mp.files && mp.files.top.length){
+      h += '<h3>Files in memory</h3><p class="hint">The ' + count(mp.files.count) + ' files mapped from disk, the most in RAM first.</p><div class="chips">' +
+        mp.files.top.map(function(f){ return '<span><span class="mono">' + esc(f.file) + '</span> ' + esc(bytes(f.rss + f.swap)) + '</span>'; }).join('') + '</div>';
+    }
+    h += censusPart(rest.census || {});
+    var t = rest.threads;
+    if(t){
+      h += '<h3>Threads</h3><div>' + count(t.python) + ' Python threads: ' + t.names.map(function(n){ return '<span class="mono">' + esc(n[0]) + '</span>' + (n[1] > 1 ? ' &times; ' + n[1] : ''); }).join(', ') +
+        (t.native != null && t.native > t.python ? '; ' + count(t.native) + ' in all (' + count(t.native - t.python) + ' started by libraries, outside Python)' : '') + '.</div>';
+    }
+    var g = rest.gc;
+    if(g){
+      h += '<h3>Garbage collector</h3><div>' + (g.enabled ? 'On' : '<span class="stuck">' + WARN + ' off</span>') + '; ' +
+        g.collections.map(count).join(' / ') + ' collections (young to old), ' + count(g.collected) + ' objects freed by it' +
+        (g.uncollectable || g.garbage ? '; <span class="stuck">' + WARN + ' ' + count(g.uncollectable) + ' it could not free, ' + count(g.garbage) + ' in gc.garbage</span>' : '; nothing it could not free') +
+        (g.frozen ? '; ' + count(g.frozen) + ' frozen' : '') + '.</div>';
+    }
+    if(rest.task_top && rest.task_top.length){
+      h += '<h3>Tasks running</h3><div class="chips">' + rest.task_top.map(function(t){
+        return '<span><span class="mono">' + esc(t[0]) + '</span>' + (t[1] > 1 ? ' &times; ' + count(t[1]) : '') + '</span>'; }).join('') + '</div>';
+    }
+    return h + '</div>';
+  }
+  function heldBy(r){
+    var hb = r.held_by; if(!hb) return '';
+    var out = '';
+    if(hb.by && hb.by.length && r.size){
+      out += '<small>held by ' + hb.by.slice(0, 3).map(function(b){
+        var pct = b[2] / r.size * 100;
+        return (b[3] === 1 ? 'one ' : count(b[3]) + ' ') + '<span class="mono">' + esc(b[0]) + '</span> (' + (pct >= 1 ? Math.round(pct) : '<1') + '%)';
+      }).join(', ') + '</small>';
+    }
+    (hb.biggest || []).slice(0, 2).forEach(function(b){
+      if(!r.size || b.size < r.size * 0.05) return;
+      out += '<small>one <span class="mono">' + esc(b.type) + '</span> holds ' + esc(bytes(b.size)) +
+        (b.where ? ' - at <span class="mono">' + esc(b.where) + '</span>' : '') + '</small>';
+    });
+    return out;
+  }
+  function censusPart(c){
+    var h = '<h3>Python objects by type</h3>';
+    var busyNow = counting || c.running, wait = c.at ? Math.ceil(c.fresh - (D.now - c.at)) : 0;
+    var btn = '<button class="btn" type="button" id="census-again"' + (busyNow || wait > 0 ? ' disabled' : '') + '>' + (busyNow ? 'Counting ...' : 'Count again') + '</button>' +
+      (!busyNow && wait > 0 ? '<span class="dimtxt">possible again in ' + esc(span(wait)) + '</span>' : '');
+    if(!c.rows){
+      return h + '<div class="row-gap">' + btn + '<span class="dimtxt">Not counted yet: the first count runs 20 seconds after start, then every ' + every(c.every || 1800) + '.</span></div>';
+    }
+    h += '<div class="row-gap">' + btn + '<span class="dimtxt">' + count(c.objects) + ' objects the garbage collector tracks, with what they hold: ' + esc(bytes(c.size)) +
+      '. Counted ' + esc(ago(c.at)) + ' in ' + c.took + ' s; on its own every ' + every(c.every) + '.' +
+      (c.partial ? ' <span class="stuck">' + WARN + ' This count stopped early, so it is incomplete.</span>' : '') + '</span></div>';
+    h += '<p class="hint">Strings, bytes and numbers are counted through the objects holding them. Change is since the first count, at ' +
+      esc(clock(c.first_at, D.now - c.first_at > 86400)) + (c.first_at === c.at ? ' (this one; the next shows what grew)' : '') + '.</p>';
+    h += '<div class="scroll"><table class="sub"><thead><tr><th>Type</th><th class="r">Objects</th><th class="r">Size</th><th>Change</th></tr></thead><tbody>';
+    c.rows.forEach(function(r){
+      var ch = '<span class="dimtxt">-</span>';
+      if(r.since){
+        ch = '<span class="num">' + (Math.abs(r.since[1]) >= 1024 ? esc(bytes(r.since[1], true)) : 'no change') + '</span><small>' +
+          (r.since[0] ? (r.since[0] > 0 ? '+' : '') + count(r.since[0]) + ' objects' : 'same count') + (r.hour ? '; ' + esc(bytes(r.hour[1], true)) + ' in 1 h' : '') + '</small>';
+      }
+      h += '<tr><td><span class="tname">' + esc(r.name) + '</span>' + (r.defined && r.defined !== 'python' ? '<small>from ' + esc(r.defined) + '</small>' : '') + heldBy(r) + '</td>' +
+        '<td class="r num">' + count(r.count) + '</td><td class="r num" style="white-space:nowrap">' + esc(bytes(r.size)) + '</td><td class="chg">' + ch + '</td></tr>';
+    });
+    if(c.rest && c.rest[0]) h += '<tr><td><span class="dimtxt">' + count(c.rest[0]) + ' more types</span></td><td class="r num">' + count(c.rest[1]) + '</td><td class="r num">' + esc(bytes(c.rest[2])) + '</td><td></td></tr>';
+    h += '</tbody></table></div>';
+    if(c.packages && c.packages.length){
+      h += '<h3>By where the type comes from</h3><p class="hint"><i>python</i> is Python\'s own types (dicts, lists, strings, functions ...) - whoever made them. ' +
+        'The rest are instances, classes and functions of that package or module.</p><div class="chips">' + c.packages.map(function(p){
+          return '<span><b>' + esc(p.name) + '</b> ' + esc(bytes(p.size)) + (p.since && Math.abs(p.since[1]) >= 1048576 ? ' <span class="dimtxt">(' + esc(bytes(p.since[1], true)) + ')</span>' : '') + '</span>';
+        }).join('') + '</div>';
+    }
+    return h;
+  }
+
   function renderTable(){
     var m = D.modules, tracing = D.allocations && D.allocations.tracing, cols = tracing ? 6 : 5;
     $('th-alloc').hidden = !tracing;
-    var max = 0;
-    m.rows.forEach(function(r){ max = Math.max(max, r.held || 0); });
+    var max = 0, held = 0;
+    m.rows.forEach(function(r){ max = Math.max(max, r.held || 0); held += r.held || 0; });
     var h = '';
     m.rows.forEach(function(r){
       var w = max ? Math.max(1, (r.held || 0) / max * 100) : 0, isOpen = !!open[r.key];
@@ -359,18 +534,12 @@
     h += '<tr class="mod rest' + (isOpen ? ' open' : '') + '" data-key="" tabindex="0" aria-expanded="' + isOpen + '">' +
       '<td><div class="name"><svg class="chev" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>' +
       '<div><b>Everything else</b><small>Python, libraries, buffers outside Python</small></div></div></td>' +
-      '<td class="held num">' + esc(bytes(rest.held)) + '</td><td><span class="dimtxt">see the chart</span></td>' +
+      '<td class="held num">' + esc(bytes(rest.held)) + '</td><td class="chg">' + (rest.change ? changeCell(rest) : '<span class="dimtxt">see the chart</span>') + '</td>' +
       '<td class="r num">' + (rest.tasks ? count(rest.tasks) : '<span class="dimtxt">-</span>') + '</td><td class="r"><span class="dimtxt">-</span></td>' +
       (tracing ? '<td class="r num">' + esc(bytes(rest.allocated)) + '</td>' : '') + '</tr>';
-    if(isOpen){
-      h += '<tr class="detail"><td colspan="' + cols + '">The process total minus what the modules hold: the Python interpreter and the libraries ' +
-        '(FastAPI, uvicorn, httpx ...), the code itself, and memory that is not a Python object - socket and TLS buffers, ' +
-        'the allocator\'s spare room. When this grows while every module stays flat, the growth is outside Python objects; ' +
-        'see the notes under Allocations.' +
-        (rest.task_top && rest.task_top.length ? '<h4>Tasks running</h4><ul>' + rest.task_top.map(function(t){
-          return '<li><span class="mono">' + esc(t[0]) + '</span>' + (t[1] > 1 ? ' &times; ' + count(t[1]) : '') + '</li>'; }).join('') + '</ul>' : '') +
-        '</td></tr>';
-    }
+    var box = $('rest-detail');                         // under the table, so it gets the card's full width on a phone
+    box.hidden = !isOpen;
+    box.innerHTML = isOpen ? restDetail(rest, held) : '';
     $('mods').tBodies[0].innerHTML = h;
     $('mods-foot').textContent = 'Counted ' + count(m.objects) + ' objects in ' + m.took + ' s, ' + ago(m.at) + ' (at most every ' + D.every.fresh +
       ' s). Something two modules share is counted once, under the first.' + (m.partial ? ' This count stopped early, so it is incomplete.' : '');
@@ -395,9 +564,10 @@
     }
     if(p.c_heap){
       var c = p.c_heap;
-      h += '<h2 style="margin-top:14px">C heap</h2><p class="hint">glibc\'s own count: ' + esc(bytes(c.in_use)) + ' in use, ' + esc(bytes(c.free_kept)) +
-        ' freed but kept for reuse. If <i>freed but kept</i> keeps growing while <i>in use</i> stays flat, the memory is fragmentation, not a leak; ' +
-        'starting Hexcast with <code>MALLOC_ARENA_MAX=2</code> usually stops it.</p>';
+      var win = p.private != null;
+      h += '<h2 style="margin-top:14px">C heap</h2><p class="hint">' + (win ? 'The Windows heaps\' own count: ' : 'glibc\'s own count: ') + esc(bytes(c.in_use)) + ' in use, ' + esc(bytes(c.free_kept)) +
+        ' freed but kept for reuse. If <i>freed but kept</i> keeps growing while <i>in use</i> stays flat, the memory is fragmentation, not a leak' +
+        (win ? '.</p>' : '; starting Hexcast with <code>MALLOC_ARENA_MAX=2</code> usually stops it.</p>');
     }
     $('alloc').innerHTML = h;
   }
@@ -423,6 +593,9 @@
     renderTiles(); renderChart(); renderTable(); renderAlloc(); renderProc();
   }
 
+  $('rest-detail').addEventListener('click', function(e){
+    if(e.target.closest('#census-again') && !counting){ counting = true; renderTable(); load(true); }
+  });
   $('mods').addEventListener('click', function(e){
     var tr = e.target.closest('tr.mod'); if(!tr) return;
     var k = tr.getAttribute('data-key'); open[k] = !open[k]; renderTable();
@@ -432,16 +605,17 @@
     if((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('tr.mod')){ e.preventDefault(); e.target.click(); }
   });
 
-  function load(){
-    if(busy) return; busy = true;
-    fetch('/api/memory', { cache: 'no-store' }).then(function(r){ return r.json(); }).then(function(d){
-      busy = false;
+  function load(census){
+    if(busy && !census) return; busy = true;
+    fetch('/api/memory' + (census ? '?census=1' : ''), { cache: 'no-store' }).then(function(r){ return r.json(); }).then(function(d){
+      busy = false; if(census) counting = false;
       if(!d || !d.ok) throw new Error('bad answer');
       D = d; $('body').classList.remove('stale');
       $('state').className = ''; $('state').textContent = 'Updated ' + new Date().toLocaleTimeString();
       render();
     }).catch(function(){
-      busy = false; $('body').classList.add('stale');
+      busy = false; if(census){ counting = false; if(D) renderTable(); }
+      $('body').classList.add('stale');
       $('state').className = 'bad'; $('state').textContent = 'Could not reach Hexcast - showing the last numbers. Trying again ...';
     });
   }
