@@ -478,6 +478,11 @@
     });
     return out;
   }
+  // How long a count took. Counts pause between short bursts so the show keeps up, so the work is shown too when the pauses added much.
+  function paced(c){
+    var s = c.took + ' s';
+    return c.worked != null && c.took - c.worked >= 0.5 ? s + ' (' + c.worked + ' s of work, paused in between so the show keeps up)' : s;
+  }
   function censusPart(c){
     var h = '<h3>Python objects by type</h3>';
     var busyNow = counting || c.running, wait = c.at ? Math.ceil(c.fresh - (D.now - c.at)) : 0;
@@ -487,7 +492,7 @@
       return h + '<div class="row-gap">' + btn + '<span class="dimtxt">Not counted yet: the first count runs 20 seconds after start, then every ' + every(c.every || 1800) + '.</span></div>';
     }
     h += '<div class="row-gap">' + btn + '<span class="dimtxt">' + count(c.objects) + ' objects the garbage collector tracks, with what they hold: ' + esc(bytes(c.size)) +
-      '. Counted ' + esc(ago(c.at)) + ' in ' + c.took + ' s; on its own every ' + every(c.every) + '.' +
+      '. Counted ' + esc(ago(c.at)) + ' in ' + paced(c) + '; on its own every ' + every(c.every) + '.' +
       (c.partial ? ' <span class="stuck">' + WARN + ' This count stopped early, so it is incomplete.</span>' : '') + '</span></div>';
     h += '<p class="hint">Strings, bytes and numbers are counted through the objects holding them. Change is since the first count, at ' +
       esc(clock(c.first_at, D.now - c.first_at > 86400)) + (c.first_at === c.at ? ' (this one; the next shows what grew)' : '') + '.</p>';
@@ -541,7 +546,7 @@
     box.hidden = !isOpen;
     box.innerHTML = isOpen ? restDetail(rest, held) : '';
     $('mods').tBodies[0].innerHTML = h;
-    $('mods-foot').textContent = 'Counted ' + count(m.objects) + ' objects in ' + m.took + ' s, ' + ago(m.at) + ' (at most every ' + D.every.fresh +
+    $('mods-foot').textContent = 'Counted ' + count(m.objects) + ' objects in ' + paced(m) + ', ' + ago(m.at) + ' (at most every ' + D.every.fresh +
       ' s). Something two modules share is counted once, under the first.' + (m.partial ? ' This count stopped early, so it is incomplete.' : '');
   }
 

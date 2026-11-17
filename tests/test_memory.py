@@ -447,8 +447,62 @@ def test_the_census_counts_every_object_by_type_and_says_what_holds_the_big_ones
     assert packages["grower"][1] >= 5000 and packages["python"][2] > packages["grower"][2]
 
 
+def test_the_census_counts_what_plain_data_dicts_hold(world):
+    """Python 3.12 and older don't track a dict holding only strings and numbers (a parsed JSON message): the
+    census must still count the strings in it, through the dict."""
+    mod = _start(world, "grower", GROWER)
+    owners = memory._Owners(world.plugins)
+    before = _rows(memory._census(owners))
+    mod.KEPT.extend({"user": f"viewer{i}", "text": "x" * 1000 + str(i)} for i in range(2000))
+    after = _rows(memory._census(owners))
+    assert after["str"][2] - before["str"][2] >= 2_000_000           # 2000 messages of ~1 KB
+    assert after["dict"][1] - before["dict"][1] >= 1990
+
+
 def test_the_census_stops_when_out_of_time(world):
     assert memory._census(memory._Owners(world.plugins), seconds=0)["partial"]
+
+
+def test_a_paced_count_rests_between_bursts_and_its_limit_counts_only_the_work():
+    pace = memory._Pace(0.02, rest=0.01, burst=0.001)
+    started = time.perf_counter()
+    with pytest.raises(memory._OutOfTime):
+        while True:
+            pace.check()
+    wall = time.perf_counter() - started
+    assert 0.02 <= pace.worked() < 0.05
+    assert wall >= 0.1                                     # about 20 rests of 10 ms, none of them counted as work
+
+
+def test_counts_in_a_worker_thread_rest_so_the_event_loop_keeps_up(world):
+    owners = memory._Owners(world.plugins)
+    c = memory._census(owners, rest=0.005)                  # 0.1 s of work or more here: dozens of 2 ms bursts
+    assert not c["partial"] and c["took"] - c["worked"] >= 0.02
+    plain = memory._census(owners)
+    assert plain["took"] - plain["worked"] < 0.02           # in the event loop's own thread it never sleeps
+    order, stop, claimed = memory._roots(world.host, owners, {})
+    w = memory._walk(order, stop, owners, claimed, rest=0.005)  # too short here to be sure of a rest
+    assert not w["partial"] and w["worked"] <= w["took"] + 0.001
+
+
+def test_the_monitor_paces_its_counts(world, monkeypatch):
+    seen = {}
+    real_census, real_walk = memory._census, memory._walk
+
+    def census(*a, **k):
+        seen["census"] = k.get("rest")
+        return real_census(*a, **k)
+
+    def walk(*a, **k):
+        seen["walk"] = k.get("rest")
+        return real_walk(*a, **k)
+
+    monkeypatch.setattr(memory, "_census", census)
+    monkeypatch.setattr(memory, "_walk", walk)
+    mon = memory.Monitor(world.host)
+    asyncio.run(mon.census())
+    asyncio.run(mon.modules())
+    assert seen == {"census": memory.PACE_REST, "walk": memory.PACE_REST}
 
 
 def test_global_names_find_where_an_object_hangs(world):

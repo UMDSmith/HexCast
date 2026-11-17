@@ -90,7 +90,8 @@ since it started, and **which module is holding it** — open
 `http://localhost:4747/memory` — or click the **memory-stick icon** next to the
 ⚙ gear in the top bar, on any Hexcast page. It
 only reads: nothing on it changes anything, and it updates every 5 seconds
-while it is open.
+while it is open. Its counts pause every few milliseconds so a running show
+never waits for them; on a big process a count can take a minute or two.
 
 - **The totals** — memory in use (in RAM + swap on Linux, private bytes on
   Windows), the growth per hour, how long Hexcast has run, asyncio tasks, and

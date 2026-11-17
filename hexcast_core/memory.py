@@ -51,11 +51,13 @@ KEEP_SECONDS = 3 * 86400            # how far back the history goes
 FRESH_SECONDS = 30                  # the page re-counts the modules at most this often
 ALLOC_FRESH_SECONDS = 60            # ... and re-reads tracemalloc at most this often
 FIRST_SAMPLE_SECONDS = 20           # the first count, once start-up has settled
-WALK_SECONDS = 30.0                 # a count stops (and says it is partial) after this long ...
+WALK_SECONDS = 30.0                 # a count stops (and says it is partial) after this much work ...
 WALK_OBJECTS = 5_000_000            # ... or this many objects
 CENSUS_EVERY_SECONDS = 1800         # every Python object counted by type ...
 CENSUS_FRESH_SECONDS = 120          # ... and again when the page asks, at most this often
-CENSUS_SECONDS = 20.0               # a census stops (and says it is partial) after this long
+CENSUS_SECONDS = 20.0               # a census stops (and says it is partial) after this much work
+PACE_BURST = 0.002                  # a count in a worker thread works this long at a time ...
+PACE_REST = 0.006                   # ... then sleeps this long, so the show keeps up (see _Pace)
 CENSUS_SHOW = 25                    # the biggest types on the page (plus the fastest growing)
 CHART_POINTS = 400
 
@@ -72,6 +74,43 @@ _SHARED, _DATA = object(), object()
 
 def _norm(p: Any) -> str:
     return os.path.normcase(os.path.abspath(str(p)))
+
+
+class _OutOfTime(Exception):
+    """A paced count used up its time (see _Pace.check)."""
+
+
+class _Pace:
+    """Keeps a count in a worker thread from starving the event loop, and stops it when its work time is up.
+
+    A worker thread that never waits takes the GIL back every time the event loop lets go of it (each wait
+    for the network or a timer) and keeps it for up to sys.getswitchinterval(), 5 ms. A show wakes the loop
+    hundreds of times a second (audio blocks every 16 ms to each overlay ...), so the loop falls further
+    behind for as long as the count runs: with 7.5 M objects, a 10 s census left such a loop 8 s behind,
+    on Python 3.12 and 3.14 alike. So a count works for `burst` seconds at a time and then sleeps for `rest`
+    (a sleeping thread does not want the GIL), and its time limit counts only the work. With rest=0 (a
+    count in the event loop's own thread) it never sleeps."""
+
+    def __init__(self, seconds: float, rest: float = 0.0, burst: float = PACE_BURST) -> None:
+        self.seconds, self.rest, self.burst = seconds, rest, burst
+        self.done = 0.0                                  # the work in the bursts before this one
+        self.since = time.perf_counter()                 # when this burst began (monotonic ticks every 15.6 ms on Windows)
+
+    def worked(self) -> float:
+        return self.done + time.perf_counter() - self.since
+
+    def check(self) -> None:
+        """Call this every few thousand small steps. Raises _OutOfTime once the work time is used up."""
+        now = time.perf_counter()
+        spent = now - self.since
+        if self.done + spent >= self.seconds:
+            raise _OutOfTime
+        if spent >= self.burst:
+            self.done += spent
+            if self.rest > 0:
+                time.sleep(self.rest)                    # (waiting for the GIL back after it is not work either)
+                now = time.perf_counter()
+            self.since = now
 
 
 class _Owners:
@@ -422,18 +461,21 @@ def _type_name(t: type) -> str:
 
 
 def _walk(order: list[tuple[str, list]], stop: set[int], owners: _Owners, claimed: dict[int, set] | None = None,
-          seconds: float = WALK_SECONDS, limit: int = WALK_OBJECTS) -> dict:
+          seconds: float = WALK_SECONDS, limit: int = WALK_OBJECTS, rest: float = 0.0) -> dict:
     """Add up sys.getsizeof over everything each module reaches (see _roots). Never walks into another
     module's globals, classes or objects, nor into shared machinery (the event loop, threads, loggers,
-    the server's connection objects) or code. Each object is counted once, under the first module."""
-    getsizeof, referents, monotonic = sys.getsizeof, gc.get_referents, time.monotonic
+    the server's connection objects) or code. Each object is counted once, under the first module.
+    `seconds` of work at most, resting `rest` between bursts (see _Pace)."""
+    getsizeof, referents, clock = sys.getsizeof, gc.get_referents, time.perf_counter
     claimed = claimed or {}
     seen = set(stop)
     rooted: set[int] = set()
     kinds: dict[type, Any] = {}
     of_name = owners.of_name
-    started = monotonic()
-    deadline = started + seconds
+    started = clock()
+    pace = _Pace(seconds, rest)
+    check = pace.check
+    steps = 0
     held: dict[str, list[int]] = {}
     visited = 0
     partial = False
@@ -458,54 +500,63 @@ def _walk(order: list[tuple[str, list]], stop: set[int], owners: _Owners, claime
                 rooted.add(id(r))
                 seen.add(id(r))
                 stack.append(r)
-        while stack:
-            o = stack.pop()
-            try:
-                s = getsizeof(o)
-            except Exception:
-                s = 0
-            size += s
-            count += 1
-            bt = by_type.get(type(o))
-            if bt is None:
-                by_type[type(o)] = [s, 1]
-            else:
-                bt[0] += s
-                bt[1] += 1
-            if not count & 0x1FFF and (monotonic() > deadline or visited + count > limit):
-                partial = True
-                break
-            try:
-                refs = referents(o)
-            except Exception:
-                continue
-            for r in refs:
-                i = id(r)
-                if i in seen:
-                    continue
-                c = claimed.get(i)
-                if c is not None and key not in c:            # another module's global
-                    continue
-                t = type(r)
-                if isinstance(r, type):                       # a class: only its own module walks into it
-                    if of_name(getattr(r, "__module__", None)) != key:
-                        continue
-                elif t is types.FunctionType:                 # a function: likewise (its globals are a stop anyway)
-                    who = of_name(getattr(r, "__module__", None))
-                    if who is not None and who != key:
-                        continue
+        try:
+            while stack:
+                o = stack.pop()
+                try:
+                    s = getsizeof(o)
+                except Exception:
+                    s = 0
+                size += s
+                count += 1
+                bt = by_type.get(type(o))
+                if bt is None:
+                    by_type[type(o)] = [s, 1]
                 else:
-                    k = kind(t)
-                    if k is _SHARED or (k is not _DATA and k != key):
+                    bt[0] += s
+                    bt[1] += 1
+                steps += 1
+                if not steps & 0x3FF:
+                    if visited + count > limit:
+                        raise _OutOfTime
+                    check()
+                try:
+                    refs = referents(o)
+                except Exception:
+                    continue
+                for r in refs:
+                    steps += 1                                # a big container is paced too, not one long burst
+                    if not steps & 0x3FF:
+                        check()
+                    i = id(r)
+                    if i in seen:
                         continue
-                seen.add(i)
-                stack.append(r)
+                    c = claimed.get(i)
+                    if c is not None and key not in c:            # another module's global
+                        continue
+                    t = type(r)
+                    if isinstance(r, type):                       # a class: only its own module walks into it
+                        if of_name(getattr(r, "__module__", None)) != key:
+                            continue
+                    elif t is types.FunctionType:                 # a function: likewise (its globals are a stop anyway)
+                        who = of_name(getattr(r, "__module__", None))
+                        if who is not None and who != key:
+                            continue
+                    else:
+                        k = kind(t)
+                        if k is _SHARED or (k is not _DATA and k != key):
+                            continue
+                    seen.add(i)
+                    stack.append(r)
+        except _OutOfTime:
+            partial = True
         visited += count
         top = sorted(by_type.items(), key=lambda kv: -kv[1][0])[:6]
         held[key] = [size, count, [[_type_name(t), b, n] for t, (b, n) in top]]
         if partial:
             break
-    return {"held": held, "objects": visited, "took": round(monotonic() - started, 3), "partial": partial}
+    return {"held": held, "objects": visited, "took": round(clock() - started, 3),
+            "worked": round(pace.worked(), 3), "partial": partial}
 
 
 # ---- what each module's code allocated (tracemalloc) ------------------------------------------
@@ -539,10 +590,10 @@ def _raw_traces(snap: Any) -> list:
     return [(t.domain, t.size, tuple((f.filename, f.lineno) for f in reversed(t.traceback))) for t in snap.traces]
 
 
-def _allocations(owners: _Owners) -> dict:
+def _allocations(owners: _Owners, rest: float = 0.0) -> dict:
     """Live memory by the code that allocated it: the most recent plugin frame of each allocation, else the
     core's, else 'everything else'; and the source lines holding the most. Imports and tracemalloc's own
-    bookkeeping are left out."""
+    bookkeeping are left out. Rests `rest` between bursts (see _Pace), never stops early."""
     if not tracemalloc.is_tracing():
         return {"tracing": False}
     started = time.monotonic()
@@ -551,7 +602,12 @@ def _allocations(owners: _Owners) -> dict:
     by: Counter = Counter()
     lines: dict[tuple, list[int]] = {}
     owner_of: dict[int, str] = {}                  # identical tracebacks share one tuple: one look each
+    check = _Pace(float("inf"), rest).check
+    steps = 0
     for trace in raw:
+        steps += 1
+        if not steps & 0x3FF:
+            check()
         size, frames = trace[1], trace[2]
         if not frames:
             continue
@@ -955,11 +1011,12 @@ def _resolve_type(name: str) -> type | None:
     return obj if isinstance(obj, type) else None
 
 
-def _global_names(wanted: set[int], seconds: float = 3.0, budget: int = 1_500_000) -> dict[int, str]:
+def _global_names(wanted: set[int], seconds: float = 3.0, budget: int = 1_500_000, rest: float = 0.0) -> dict[int, str]:
     """Where a few objects hang in the module globals, up to three steps down: 'module.NAME',
-    'module.NAME.attr', 'module.NAME[key]'."""
+    'module.NAME.attr', 'module.NAME[key]'. `seconds` of work at most, resting `rest` between bursts
+    (see _Pace)."""
     found: dict[int, str] = {}
-    deadline = time.monotonic() + seconds
+    check = _Pace(seconds, rest).check
     visits = 0
     skip = (types.ModuleType, types.FunctionType, types.BuiltinFunctionType, types.MethodType, str, bytes, int, float)
     seqs = (list, tuple, deque, set, frozenset)
@@ -973,6 +1030,8 @@ def _global_names(wanted: set[int], seconds: float = 3.0, budget: int = 1_500_00
     def look(v: Any, path: tuple, depth: int) -> None:
         nonlocal visits
         visits += 1
+        if not visits & 0x3FF:
+            check()
         i = id(v)
         if i in wanted and i not in found:
             found[i] = label(path)
@@ -1001,32 +1060,38 @@ def _global_names(wanted: set[int], seconds: float = 3.0, budget: int = 1_500_00
             look(x, path + ((kind, key),), depth - 1)
 
     mods = sorted(list(sys.modules.items()), key=lambda kv: not kv[0].startswith(("hexcast", "__main__")))
-    for depth in range(4):                               # one step deeper each round: the shortest names first
-        for name, mod in mods:
-            d = getattr(mod, "__dict__", None)
-            if type(d) is not dict:
-                continue
-            for key, v in list(dict.items(d)):
-                look(v, (f"{name}.{key}",), depth)
-            if len(found) == len(wanted) or visits > budget or time.monotonic() > deadline:
-                return found
+    try:
+        for depth in range(4):                           # one step deeper each round: the shortest names first
+            for name, mod in mods:
+                d = getattr(mod, "__dict__", None)
+                if type(d) is not dict:
+                    continue
+                for key, v in list(dict.items(d)):
+                    look(v, (f"{name}.{key}",), depth)
+                if len(found) == len(wanted) or visits > budget:
+                    return found
+                check()
+    except _OutOfTime:
+        pass
     return found
 
 
 def _census(owners: _Owners, grew: dict[str, int] | None = None, seconds: float = 20.0,
-            keep: int = 400) -> dict:
+            keep: int = 400, rest: float = 0.0) -> dict:
     """Every Python object by type. The objects the garbage collector tracks (dicts, lists, instances, functions,
     frames ...) are each counted once. The others (strings, bytes, numbers, tuples of them, arrays) are counted
     through the objects that hold them: one with n references counts 1/n at each holder, so it adds up to one
     without a list of everything seen. Objects Python keeps for good (interned names, small numbers) are left out.
     For the types holding the most, and the ones that grew most since the first census (`grew`: type name ->
-    bytes), it also notes what holds them, and where the biggest holders hang in the module globals."""
+    bytes), it also notes what holds them, and where the biggest holders hang in the module globals.
+    `seconds` of work at most, resting `rest` between bursts (see _Pace)."""
     getsizeof, referents, is_tracked, getrefcount = sys.getsizeof, gc.get_referents, gc.is_tracked, sys.getrefcount
-    monotonic = time.monotonic
+    clock = time.perf_counter
     base = _ref_base()
-    started = monotonic()
-    deadline = started + seconds
-    objs = gc.get_objects()
+    started = clock()
+    pace = _Pace(seconds, rest)
+    check = pace.check
+    objs = gc.get_objects()                              # the one step that cannot rest: a single C call
     tracked: dict[type, list] = {}
     packages: dict[str, list] = {}
     pkg_cache: dict = {}
@@ -1034,36 +1099,38 @@ def _census(owners: _Owners, grew: dict[str, int] | None = None, seconds: float 
     partial = False
     n = 0
     FunctionType, ModuleType = types.FunctionType, types.ModuleType
-    for o in objs:
-        t = type(o)
-        try:
-            s = getsizeof(o)
-        except Exception:
-            s = 0
-        e = tracked.get(t)
-        if e is None:
-            tracked[t] = [1, s]
-        else:
-            e[0] += 1
-            e[1] += s
-        if t is FunctionType or issubclass(t, type):
-            p = _defined_by(getattr(o, "__module__", None), owners, pkg_cache)
-        elif t is ModuleType:
-            p = _defined_by(getattr(o, "__name__", None), owners, pkg_cache)
-        else:
-            p = type_pkg.get(t)
-            if p is None:
-                p = type_pkg[t] = _defined_by(getattr(t, "__module__", None), owners, pkg_cache)
-        pe = packages.get(p)
-        if pe is None:
-            packages[p] = [1, s]
-        else:
-            pe[0] += 1
-            pe[1] += s
-        n += 1
-        if not n & 0x3FF and monotonic() > deadline:
-            partial = True
-            break
+    try:
+        for o in objs:
+            t = type(o)
+            try:
+                s = getsizeof(o)
+            except Exception:
+                s = 0
+            e = tracked.get(t)
+            if e is None:
+                tracked[t] = [1, s]
+            else:
+                e[0] += 1
+                e[1] += s
+            if t is FunctionType or issubclass(t, type):
+                p = _defined_by(getattr(o, "__module__", None), owners, pkg_cache)
+            elif t is ModuleType:
+                p = _defined_by(getattr(o, "__name__", None), owners, pkg_cache)
+            else:
+                p = type_pkg.get(t)
+                if p is None:
+                    p = type_pkg[t] = _defined_by(getattr(t, "__module__", None), owners, pkg_cache)
+            pe = packages.get(p)
+            if pe is None:
+                packages[p] = [1, s]
+            else:
+                pe[0] += 1
+                pe[1] += s
+            n += 1
+            if not n & 0x1FF:
+                check()
+    except _OutOfTime:
+        partial = True
 
     names = {t: _type_name(t) for t in tracked}
     targets: set[type] = {bytes, bytearray}
@@ -1079,7 +1146,9 @@ def _census(owners: _Owners, grew: dict[str, int] | None = None, seconds: float 
     stack: list = []
     refs: Any = None
     counts: Any = None
-    done = 0
+    r: Any = None
+    x: Any = None
+    steps = 0
 
     def note(mine: dict, holder: Any) -> None:
         ht = type(holder)
@@ -1098,71 +1167,40 @@ def _census(owners: _Owners, grew: dict[str, int] | None = None, seconds: float 
                 del top[3:]
 
     if not partial:
-        for o in objs:
-            done += 1
-            if not done & 0x3FF and monotonic() > deadline:
-                partial = True
-                break
-            try:
-                refs = referents(o)
-                counts = list(map(getrefcount, refs))
-            except Exception:
-                continue
-            mine: dict | None = None
-            for r, raw in zip(refs, counts):
-                rt = type(r)
-                if is_tracked(r):
-                    if rt in hold:
-                        rc = raw - base - 1                      # the list of every object holds one more
-                        if rc < _IMMORTAL:
-                            w = 1.0 / rc if rc > 1 else 1.0
-                            if mine is None:
-                                mine = {}
-                            m = mine.get(rt)
-                            if m is None:
-                                mine[rt] = [w, getsizeof(r) * w]
-                            else:
-                                m[0] += w
-                                m[1] += getsizeof(r) * w
+        try:
+            for o in objs:
+                steps += 1
+                if not steps & 0x3FF:
+                    check()
+                try:
+                    refs = referents(o)
+                    counts = list(map(getrefcount, refs))
+                except Exception:
                     continue
-                rc = raw - base
-                if rc >= _IMMORTAL:
-                    continue
-                w = 1.0 / rc if rc > 1 else 1.0
-                s = getsizeof(r) * w
-                e = loose.get(rt)
-                if e is None:
-                    loose[rt] = [w, s]
-                else:
-                    e[0] += w
-                    e[1] += s
-                if rt in hold:
-                    if mine is None:
-                        mine = {}
-                    m = mine.get(rt)
-                    if m is None:
-                        mine[rt] = [w, s]
-                    else:
-                        m[0] += w
-                        m[1] += s
-                if rt is tuple:
-                    stack.append((r, w))
-            r = None                                         # a loop variable left holding the last one would count as a holder
-            if mine:
-                note(mine, o)
-            while stack:                                   # what untracked tuples hold (strings, numbers, more tuples)
-                x, xw = stack.pop()
-                refs = referents(x)
-                counts = list(map(getrefcount, refs))
-                inner: dict | None = None
+                mine: dict | None = None
                 for r, raw in zip(refs, counts):
+                    steps += 1                                   # a big container is paced too, not one long burst
+                    if not steps & 0x3FF:
+                        check()
+                    rt = type(r)
                     if is_tracked(r):
+                        if rt in hold:
+                            rc = raw - base - 1                      # the list of every object holds one more
+                            if rc < _IMMORTAL:
+                                w = 1.0 / rc if rc > 1 else 1.0
+                                if mine is None:
+                                    mine = {}
+                                m = mine.get(rt)
+                                if m is None:
+                                    mine[rt] = [w, getsizeof(r) * w]
+                                else:
+                                    m[0] += w
+                                    m[1] += getsizeof(r) * w
                         continue
                     rc = raw - base
                     if rc >= _IMMORTAL:
                         continue
-                    rt = type(r)
-                    w = xw / rc if rc > 1 else xw
+                    w = 1.0 / rc if rc > 1 else 1.0
                     s = getsizeof(r) * w
                     e = loose.get(rt)
                     if e is None:
@@ -1171,21 +1209,61 @@ def _census(owners: _Owners, grew: dict[str, int] | None = None, seconds: float 
                         e[0] += w
                         e[1] += s
                     if rt in hold:
-                        if inner is None:
-                            inner = {}
-                        m = inner.get(rt)
+                        if mine is None:
+                            mine = {}
+                        m = mine.get(rt)
                         if m is None:
-                            inner[rt] = [w, s]
+                            mine[rt] = [w, s]
                         else:
                             m[0] += w
                             m[1] += s
-                    if rt is tuple:
-                        stack.append((r, w))
-                r = None
-                if inner:
-                    note(inner, x)
-                del x
-    del objs, refs, counts
+                    if rt is tuple or rt is dict:                # Python <= 3.13 untracks a dict of only strings and
+                        stack.append((r, w))                     # numbers (a parsed JSON message): count what it holds
+                r = None                                         # a loop variable left holding the last one would count as a holder
+                if mine:
+                    note(mine, o)
+                while stack:                                   # what untracked tuples and dicts hold (strings, numbers, tuples)
+                    x, xw = stack.pop()
+                    refs = referents(x)
+                    counts = list(map(getrefcount, refs))
+                    inner: dict | None = None
+                    for r, raw in zip(refs, counts):
+                        steps += 1
+                        if not steps & 0x3FF:
+                            check()
+                        if is_tracked(r):
+                            continue
+                        rc = raw - base
+                        if rc >= _IMMORTAL:
+                            continue
+                        rt = type(r)
+                        w = xw / rc if rc > 1 else xw
+                        s = getsizeof(r) * w
+                        e = loose.get(rt)
+                        if e is None:
+                            loose[rt] = [w, s]
+                        else:
+                            e[0] += w
+                            e[1] += s
+                        if rt in hold:
+                            if inner is None:
+                                inner = {}
+                            m = inner.get(rt)
+                            if m is None:
+                                inner[rt] = [w, s]
+                            else:
+                                m[0] += w
+                                m[1] += s
+                        if rt is tuple:
+                            stack.append((r, w))
+                    r = None
+                    if inner:
+                        note(inner, x)
+                    x = None
+        except _OutOfTime:
+            partial = True
+            stack.clear()
+    del objs, refs, counts, r, x
 
     rows: dict[str, list] = {}
     for src in (tracked, loose):
@@ -1205,7 +1283,7 @@ def _census(owners: _Owners, grew: dict[str, int] | None = None, seconds: float 
     ordered = sorted(rows.values(), key=lambda r: -r[2])
     for r in ordered:
         r[1], r[2] = round(r[1]), round(r[2])
-    rest = ordered[keep:]
+    beyond = ordered[keep:]
     held_by: dict[str, dict] = {}
     want: set[int] = set()
     for rt, by in hold.items():
@@ -1218,14 +1296,14 @@ def _census(owners: _Owners, grew: dict[str, int] | None = None, seconds: float 
                         for s, w, h in biggest[rt] if s >= 65536]}
         want.update(id(h) for s, _w, h in biggest[rt] if s >= 1 << 20)
     biggest.clear()
-    where = _global_names(want) if want else {}
+    where = _global_names(want, rest=rest) if want else {}
     for info in held_by.values():
         for b in info["biggest"]:
             b["where"] = where.get(b.pop("id"))
-    return {"types": ordered[:keep], "rest": [len(rest), sum(r[1] for r in rest), sum(r[2] for r in rest)],
+    return {"types": ordered[:keep], "rest": [len(beyond), sum(r[1] for r in beyond), sum(r[2] for r in beyond)],
             "size": sum(r[2] for r in ordered), "objects": n, "partial": partial,
             "packages": sorted(([p, round(c), round(s)] for p, (c, s) in packages.items()), key=lambda r: -r[2])[:30],
-            "held_by": held_by, "took": round(monotonic() - started, 3)}
+            "held_by": held_by, "took": round(clock() - started, 3), "worked": round(pace.worked(), 3)}
 
 
 # ---- the monitor ----------------------------------------------------------------------------
@@ -1318,8 +1396,8 @@ class Monitor:
             order, stop, claimed = _roots(self.host, owners, tasks)
             del tasks
             gil = getattr(sys, "_is_gil_enabled", lambda: True)()
-            if gil:
-                result = await asyncio.to_thread(_walk, order, stop, owners, claimed)
+            if gil:                                           # resting between bursts, so the show keeps up (see _Pace)
+                result = await asyncio.to_thread(_walk, order, stop, owners, claimed, rest=PACE_REST)
             else:                                             # free-threaded Python: never walk objects other threads change
                 result = _walk(order, stop, owners, claimed, seconds=5.0)
             result["at"] = time.time()
@@ -1335,7 +1413,7 @@ class Monitor:
             self._alloc_lock = asyncio.Lock()
         async with self._alloc_lock:
             if not (self.last_alloc and time.time() - self.last_alloc["at"] < max_age):
-                self.last_alloc = await asyncio.to_thread(_allocations, self._owners())
+                self.last_alloc = await asyncio.to_thread(_allocations, self._owners(), PACE_REST)
             return self.last_alloc
 
     def python_stats(self, max_age: float = FRESH_SECONDS) -> dict | None:
@@ -1371,7 +1449,7 @@ class Monitor:
             if not fresh():
                 owners, grew = self._owners(), self._grew()
                 if getattr(sys, "_is_gil_enabled", lambda: True)():
-                    result = await asyncio.to_thread(_census, owners, grew, CENSUS_SECONDS)
+                    result = await asyncio.to_thread(_census, owners, grew, CENSUS_SECONDS, rest=PACE_REST)
                 else:                                       # free-threaded Python: see modules()
                     result = _census(owners, grew, 5.0)
                 result["at"] = time.time()
@@ -1543,7 +1621,7 @@ class Monitor:
                  "held_by": last["held_by"].get(r[0])} for r in top + grown]
         p_first = {p[0]: p for p in first["packages"]} if first is not last else None
         packages = [{"name": p[0], "count": p[1], "size": p[2], "since": diff(p_first, p)} for p in last["packages"][:15]]
-        out.update(at=last["at"], took=last["took"], objects=last["objects"], size=last["size"], partial=last["partial"],
+        out.update(at=last["at"], took=last["took"], worked=last.get("worked"), objects=last["objects"], size=last["size"], partial=last["partial"],
                    first_at=first["at"], hour_at=hour["at"] if h_map is not None else None, rows=rows, packages=packages,
                    rest=last["rest"])
         return out
@@ -1597,7 +1675,8 @@ class Monitor:
         chart = [list(s) for s in _thin(list(self.samples), CHART_POINTS)]
         return {"ok": True, "now": time.time(), "started": self.started, "process": proc, "growth": self.growth(),
                 "tasks": n_tasks, "connections": conns, "versions": versions(),
-                "modules": {"at": mods["at"], "took": mods["took"], "objects": mods["objects"], "partial": mods["partial"],
+                "modules": {"at": mods["at"], "took": mods["took"], "worked": mods.get("worked"), "objects": mods["objects"],
+                            "partial": mods["partial"],
                             "rows": rows, "rest": rest},
                 "allocations": alloc, "history": chart,
                 "every": {"sample": SAMPLE_SECONDS, "modules": MODULES_SECONDS, "fresh": FRESH_SECONDS, "keep": KEEP_SECONDS}}
