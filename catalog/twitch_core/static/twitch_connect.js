@@ -139,7 +139,7 @@
       +     '</div>'
       +     '<div class="tcx-row"><button class="tcx-act" data-x="save-creds">Save credentials</button>'
       +       '<button class="tcx-sec" data-x="copy-redir">Copy redirect URL</button></div>'
-      +     '<p class="tcx-warnline">Stored in <code>config/twitch_secrets.json</code>. HexCast has no login, so keep the port on your LAN only. Twitch takes plain <code>http</code> only for <code>localhost</code>: open this page as <code>http://localhost:...</code> on the Hexcast PC to sign in.</p>'
+      +     '<p class="tcx-warnline">Stored in <code>config/twitch_secrets.json</code>. HexCast has no login, so keep the port on your LAN only. Twitch takes plain <code>http</code> only for <code>localhost</code>, so this URL always says <code>localhost</code>, even on a page opened by the PC address (<code>192.168...</code>): sign in from a browser on the Hexcast PC. Signing in from another computer needs Hexcast served over <code>https</code>.</p>'
       +   '</div>'
       +   '<div class="tcx-card"><h2>Channels</h2>'
       +     '<p class="tcx-hint">The channels HexCast watches (up to 5). The first is the <b>primary</b> - what every module uses unless told otherwise. A channel uses the account with its own name if you signed in as it (all its alerts, chat as the broadcaster); otherwise your default account (its chat, and what that user may do there as a moderator), or anonymous chat when nobody is signed in.</p>'
@@ -149,6 +149,7 @@
       +   '</div>'
       +   '<div class="tcx-card"><h2>Sign in</h2>'
       +     '<p class="tcx-hint">Signing in unlocks follows, subs, bits, raids and redeems, posting in chat, and seeing who is in chat - for the channels that account owns or moderates. Without it you still get chat, read anonymously. To add another account, sign in to Twitch as that user in this browser first (a private window works), then connect.</p>'
+      +     '<p class="tcx-warnline" data-x="lan" hidden></p>'
       +     '<div data-x="accts"></div>'
       +     '<div class="tcx-row"><button class="tcx-act" data-x="login">Connect a Twitch account</button>'
       +       '<button class="tcx-sec" data-x="logout-all">Sign out of all</button>'
@@ -157,6 +158,18 @@
       + '</div>';
 
     function $(name) { return el.querySelector('[data-x="' + name + '"]'); }
+
+    // Opened by the PC's address over plain http (http://192.168.1.20:4747): Twitch sends the sign-in back to
+    // http://localhost (the only http address it takes), which only the Hexcast PC's own browser reaches.
+    var host = location.hostname;
+    if (location.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]', '::1'].indexOf(host) < 0) {
+      var here = 'http://localhost' + (location.port ? ':' + location.port : '') + location.pathname + location.search;
+      $('lan').innerHTML = 'You opened this page as <code>' + esc(host) + '</code>. Twitch sends a sign-in back to '
+        + '<code>http://localhost</code> (the only plain-http address it accepts), so press <b>Connect a Twitch account</b> '
+        + 'on the Hexcast PC - or <a class="tcx-link" href="' + esc(here) + '">open this page as localhost</a> there. '
+        + 'From another computer the sign-in cannot come back (Hexcast would need <code>https</code>).';
+      $('lan').hidden = false;
+    }
 
     function readRows() {
       rows = [].map.call(el.querySelectorAll('.tcx-ch'), function (row) {

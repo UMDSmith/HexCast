@@ -676,7 +676,7 @@ def test_the_connection_lists_channels_accounts_and_what_each_sign_in_lacks(api,
     p.id, p.source, p.connected, p.live = "111", "eventsub", True, True
     s = api.get("/twitch/api/connection").json()
     assert s["has_credentials"] is True and s["client_id"] == "cid" and s["default_account"] == "hexacore_ai"
-    assert s["redirect_uri"] == "http://testserver/twitch/auth/callback"
+    assert s["redirect_uri"] == "http://localhost/twitch/auth/callback"                     # plain http: always localhost
     rows = {c["login"]: c for c in s["channels"]}
     assert list(rows) == ["hexacore_ai", "hexacoreai", "gamma_ch"] and rows["hexacore_ai"]["primary"] is True
     assert rows["hexacore_ai"]["live"] is True and rows["hexacoreai"]["live"] is None
@@ -684,6 +684,21 @@ def test_the_connection_lists_channels_accounts_and_what_each_sign_in_lacks(api,
     assert accounts["hexacore_ai"]["missing"] == [] and "moderator:read:chatters" in accounts["hexacoreai"]["missing"]
     text = json.dumps(s)
     assert "very-secret" not in text and "tok-" not in text and "ref-" not in text           # never the secret or a token
+
+
+def test_the_redirect_url_is_localhost_over_http_whatever_address_the_tab_was_opened_by(world, tc, quiet):
+    """Twitch takes plain http only for "localhost": a tab opened as 192.168.x.x or 127.0.0.1 must not show (or send
+    Twitch) its own address. Over https (a reverse proxy) the real host is kept - Twitch takes any https URL."""
+    for base, want in (("http://192.168.68.72:4747", "http://localhost:4747"),
+                       ("http://127.0.0.1:4747", "http://localhost:4747"),
+                       ("http://localhost:4747", "http://localhost:4747"),
+                       ("https://hexcast.example.com", "https://hexcast.example.com")):
+        c = TestClient(world.app, base_url=base)
+        assert c.get("/twitch/api/connection").json()["redirect_uri"] == want + "/twitch/auth/callback", base
+    tc.SECRETS.data.update({"client_id": "cid", "client_secret": "sec"})
+    r = TestClient(world.app, base_url="http://192.168.68.72:4747").get("/twitch/auth/login?next=/redeems",
+                                                                        follow_redirects=False)
+    assert "redirect_uri=http%3A%2F%2Flocalhost%3A4747%2Ftwitch%2Fauth%2Fcallback" in r.headers["location"]
 
 
 def test_the_library_runs_on_its_own(world, tc, quiet):

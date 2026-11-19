@@ -1,0 +1,547 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="/static/hexcast.png">
+<link rel="stylesheet" href="/static/hexbar.css?v=2">
+<title>HexCast - Bot-Free Redeems</title>
+<style>
+  :root{
+    --bg:var(--hb-bg); --panel:var(--hb-panel); --line:var(--hb-line); --ink:var(--hb-ink);
+    --dim:var(--hb-dim); --accent:var(--hb-accent); --good:var(--hb-good); --warn:var(--hb-warn);
+    --mono:var(--hb-mono);
+  }
+  *{box-sizing:border-box}
+  [hidden]{display:none !important}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.5 'Segoe UI',system-ui,-apple-system,sans-serif;}
+  main{padding:18px 22px 90px;max-width:1080px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
+  .card h2{margin:0 0 4px;font-size:14px;letter-spacing:.14em;text-transform:uppercase}
+  .card p.hint,p.hint{margin:0 0 14px;color:var(--dim);font-size:13px}
+  .card code{color:var(--good);font:12.5px var(--mono)}
+  label.f{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--dim);
+          letter-spacing:.06em;text-transform:uppercase;font-weight:600}
+  input,select{background:#08080c;border:1px solid var(--line);color:var(--ink);
+        border-radius:8px;padding:9px 10px;font:14px/1.3 inherit;width:100%}
+  input:focus,select:focus,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px;border-color:var(--accent)}
+  label.sw{display:flex;flex-direction:row;align-items:center;gap:8px;font-size:14px;color:var(--ink);cursor:pointer}
+  label.sw input{width:auto}
+  button.act{background:var(--accent);color:#fff;border:0;border-radius:9px;padding:10px 16px;
+             font:700 14px inherit;cursor:pointer}
+  button.act:hover{filter:brightness(1.12)}
+  button.sec{background:#1c1c25;color:var(--ink);border:1px solid var(--line);border-radius:9px;
+             padding:9px 14px;font:600 13px inherit;cursor:pointer;white-space:nowrap}
+  button.sec:hover{border-color:var(--accent)}
+  button.link{background:none;border:0;color:var(--dim);font:600 12.5px inherit;cursor:pointer;padding:2px 0;text-align:left}
+  button.link:hover{color:var(--ink)}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  .row{display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin-top:14px}
+  .head{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  .head h2{margin:0}
+  .sp{flex:1}
+  .warnline{border-left:3px solid var(--warn);padding:2px 0 2px 12px;color:var(--ink);font-size:13px;margin:0 0 14px}
+
+  /* the set-up steps */
+  details.steps summary{cursor:pointer;font-size:14px;letter-spacing:.14em;text-transform:uppercase;font-weight:700;list-style:none}
+  details.steps summary::-webkit-details-marker{display:none}
+  details.steps summary::before{content:'\25B8';display:inline-block;width:18px;color:var(--dim);transition:transform .15s}
+  details.steps[open] summary::before{transform:rotate(90deg)}
+  ol.how{margin:14px 0 0;padding-left:22px;color:var(--dim);font-size:13.5px}
+  ol.how li{margin-bottom:10px}
+  ol.how b{color:var(--ink)}
+  .url{display:inline-flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:4px}
+  .url code{background:#08080c;border:1px solid var(--line);border-radius:6px;padding:4px 8px}
+  .url button{padding:4px 10px;font-size:12px}
+
+  /* a row: what triggers it -> the sound */
+  .tr{border:1px solid var(--line);border-left:3px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:10px;background:#0d0d12}
+  .tr.is-on{border-left-color:var(--accent)}
+  .tr-line{display:grid;grid-template-columns:auto minmax(170px,1.3fr) auto minmax(190px,1.4fr) auto;gap:12px;align-items:start}
+  .tr-line.cmd{grid-template-columns:auto minmax(150px,1fr) auto minmax(190px,1.4fr) auto}
+  /* the switch, the arrow and the buttons sit level with the first input, below its label */
+  .tr-line > label.sw,.tr-line .arrow,.tr-line .tr-btns{margin-top:23px;min-height:37px;display:flex;align-items:center}
+  .tr-line .arrow{color:var(--dim);font-size:18px}
+  .tr-btns{gap:6px}
+  .tr-btns .r-del{padding:9px 12px}
+  .tr-more{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-top:12px;align-items:end}
+  .clips{display:flex;flex-direction:column;gap:6px}
+  .clip{display:flex;gap:6px;align-items:center}
+  .clip button{padding:7px 10px}
+  .clips .hint{font-size:12px;color:var(--dim)}
+  .tr-st{margin-top:10px;font:12.5px/1.7 var(--mono);color:var(--dim)}
+  .tr-st .ok{color:var(--good)} .tr-st .bad{color:var(--warn)}
+  .empty{color:var(--dim);font-size:14px;margin:0 0 6px}
+  @media (max-width:820px){
+    .tr-line,.tr-line.cmd{grid-template-columns:auto 1fr}
+    .tr-line .arrow{display:none}
+    .tr-line .tr-sound,.tr-line .tr-btns{grid-column:1/-1}
+    .tr-line .tr-btns{margin-top:0;min-height:0}
+  }
+
+  /* what happened */
+  .recent{font:12.5px/1.5 var(--mono)}
+  .recent .ev{display:grid;grid-template-columns:70px 22px minmax(120px,1fr) minmax(90px,.8fr) 2fr;gap:10px;padding:6px 0;border-top:1px solid var(--line)}
+  .recent .ev:first-child{border-top:0}
+  .recent .t{color:var(--dim)} .recent .who{color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .recent .played{color:var(--good)} .recent .skipped{color:var(--dim)} .recent .failed{color:var(--warn)}
+  @media (max-width:820px){ .recent .ev{grid-template-columns:60px 22px 1fr} .recent .ev .res{grid-column:2/-1} .recent .who{display:none} }
+
+  .savebar{position:fixed;left:0;right:0;bottom:0;display:flex;gap:10px;align-items:center;justify-content:flex-end;
+           padding:12px 22px;background:rgba(10,10,14,.94);border-top:1px solid var(--line);z-index:30}
+  .savebar .dirty{color:var(--warn);font:600 12px var(--mono);letter-spacing:.06em;margin-right:auto}
+  #toast{position:fixed;left:50%;bottom:76px;transform:translate(-50%,80px);background:var(--accent);
+         color:#fff;padding:11px 20px;border-radius:99px;font-weight:700;font-size:14px;opacity:0;max-width:90vw;
+         transition:transform .25s ease,opacity .25s ease;z-index:80;pointer-events:none;text-align:center}
+  #toast.up{transform:translate(-50%,0);opacity:1}
+</style></head>
+<body>
+<div id="hexbar" data-section="Bot-Free Redeems" data-key="bot_free_redeems"></div>
+
+<main>
+  <div class="card">
+    <details class="steps" id="steps">
+      <summary>How to set it up</summary>
+      <p class="hint" style="margin-top:10px">Bot-Free Redeems plays a sound from your Soundboard when a viewer redeems a
+        channel point reward, types a chat command like <code>!airhorn</code>, or cheers bits - straight from Twitch, with
+        no bot or AI in between. Five steps, once:</p>
+      <ol class="how">
+        <li><b>Put the Soundboard overlay in OBS.</b> Every sound plays there. Add a <b>Browser</b> source with this URL,
+          1920 &times; 1080, untick <i>Shutdown source when not visible</i> and tick <i>Control audio via OBS</i> (so you
+          can set its volume in the OBS mixer). You only do this once, and the Soundboard tab, the Twitch alerts and the
+          games use the same source.
+          <div class="url"><code id="ov-url">http://localhost:4747/overlay</code><button class="sec" id="ov-copy">Copy</button></div></li>
+        <li><b>Add your sounds to the Soundboard.</b> Open the <a href="/" style="color:var(--ink)">Soundboard</a> tab and drop in
+          sound files (mp3, wav, ogg...) or short videos and GIFs. A clip's name is what you pick here; its volume, trim and
+          cooldown are set on the Soundboard and apply here too.</li>
+        <li><b>Connect Twitch</b> in the box below: add your channel name. That is all <b>chat commands</b> and
+          <b>bits</b> need. <b>Channel point redeems</b> also need you to sign in as the channel itself
+          (<i>Connect a Twitch account</i>), because Twitch only tells a channel's own account about its redeems - and
+          channel points are only for Affiliate and Partner channels.</li>
+        <li><b>Make your rewards on Twitch</b> (for redeems): Creator Dashboard &rarr; <i>Viewer Rewards</i> &rarr;
+          <i>Channel Points</i> &rarr; <i>Manage Rewards &amp; Challenges</i> &rarr; <i>Add New Custom Reward</i>. Set the
+          cost there, and the cooldown and limits too - Twitch checks them before the points are spent, so a viewer is
+          never charged for a sound that does not play. Skip <i>Require Viewer to Enter Text</i> for a plain sound.</li>
+        <li><b>Add a row below</b> for each reward, command or bits amount, pick its sound, press <b>Save</b>. Press
+          <b>&#9654; Test</b> to hear it on stream, then try it for real from your chat. The <b>Recent</b> list at the
+          bottom shows every redeem, command and cheer, and why one did not play.</li>
+      </ol>
+      <p class="hint" style="margin:6px 0 0">Using the <b>Twitch</b> tab's alerts too? A reward or bits amount with a sound
+        here plays only this sound - the alert's own <i>Soundboard clip</i> stays quiet for it, so nothing plays twice.
+        The <a href="/help/bot_free_redeems" style="color:var(--ink)">help page</a> has the details and fixes for common problems.</p>
+    </details>
+  </div>
+
+  <div id="twitch-conn"></div>
+
+  <div class="card">
+    <div class="head"><h2>Bot-Free Redeems</h2><span class="sp"></span>
+      <label class="sw"><input type="checkbox" id="on"> Sounds on</label></div>
+    <p class="hint" style="margin:8px 0 0">The switch for everything below. Off, nothing plays (handy for a quiet stream) and
+      the Twitch alerts play their own clips again.</p>
+  </div>
+
+  <div class="card">
+    <div class="head"><h2>Channel point redeems</h2><span class="sp"></span>
+      <button class="sec" id="rw-reload" title="Ask Twitch for your rewards again (after adding one there)">&#8635; Reload rewards</button></div>
+    <p class="hint" style="margin-top:8px">Pick a reward and the sound it plays. A redeem always plays: its cost, cooldown and
+      limits are the reward's own settings on Twitch.</p>
+    <div id="rw-note" class="warnline" hidden></div>
+    <div id="list-redeem"></div>
+    <div class="row" style="margin-top:4px"><button class="sec" data-add="redeem">+ Add a redeem sound</button></div>
+  </div>
+
+  <div class="card">
+    <h2>Chat commands</h2>
+    <p class="hint">A chat line that starts with the command plays the sound - <code>!airhorn</code>, or several on one row
+      (<code>!airhorn !horn</code>). Choose who may use it; the cooldown holds it for everyone and the second one for the same
+      viewer. You, the broadcaster, are never held up, so you can test.</p>
+    <div id="cmd-note" class="warnline" hidden></div>
+    <div id="list-command"></div>
+    <div class="row" style="margin-top:4px"><button class="sec" data-add="command">+ Add a command</button></div>
+  </div>
+
+  <div class="card">
+    <h2>Bits</h2>
+    <p class="hint">A cheer of at least this many bits plays the sound. With several amounts the biggest one it reaches wins:
+      with 100 and 1000 set, a 500-bit cheer plays the 100 sound.</p>
+    <div id="bits-note" class="warnline" hidden></div>
+    <div id="list-bits"></div>
+    <div class="row" style="margin-top:4px"><button class="sec" data-add="bits">+ Add a bits sound</button></div>
+  </div>
+
+  <div class="card">
+    <h2>Recent</h2>
+    <p class="hint">The last redeems, commands and cheers, newest first, and what each one did.</p>
+    <div class="recent" id="recent"></div>
+  </div>
+</main>
+
+<div class="savebar"><span class="dirty" id="dirty"></span>
+  <button class="sec" id="revert">Revert</button><button class="act" id="save">Save</button></div>
+<div id="toast"></div>
+
+<script src="/plugins/twitch_core/static/twitch_connect.js"></script>
+<script>
+var $ = function(id){ return document.getElementById(id); };
+function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+var toastT = null;
+function toast(msg){
+  var t = $('toast'); t.textContent = msg; t.classList.add('up');
+  clearTimeout(toastT); toastT = setTimeout(function(){ t.classList.remove('up'); }, 3200);
+}
+var MAX_CLIPS = 10, MAX_ROWS = 200;
+var KINDS = ['redeem', 'command', 'bits'];
+var WHO = [['everyone', 'Everyone'], ['subs', 'Subscribers, VIPs and mods'], ['vips', 'VIPs and mods'],
+           ['mods', 'Moderators only'], ['broadcaster', 'Only me (the broadcaster)']];
+var SAVED = null;            // the config as saved
+var DRAFT = null;            // what the tab shows (edits not saved yet)
+var STATUS = null, SKEW = 0; // the server's status, and its clock minus ours
+var CLIPS = null;            // {audio: [...], video: [...]} from the Soundboard, or null
+var REWARDS = {};            // channel login -> {ok, rewards, error} (or {loading: true})
+var TYPED = [];              // rows whose reward is typed by name instead of picked
+
+function clone(o){ return JSON.parse(JSON.stringify(o)); }
+function cleanRows(rows){
+  return rows.map(function(t){ var c = clone(t); c.clips = c.clips.filter(function(x){ return x; }); return c; });
+}
+function isDirty(){
+  return SAVED && DRAFT && JSON.stringify(SAVED) !== JSON.stringify({on: DRAFT.on, triggers: cleanRows(DRAFT.triggers)});
+}
+function markDirty(){ $('dirty').textContent = isDirty() ? 'Not saved yet' : ''; }
+function blank(kind){
+  return {id: '', kind: kind, on: true, reward_id: '', reward: '', command: '', bits: 100, clips: [''],
+          who: 'everyone', cooldown: 30, user_cooldown: 0, channel: 'primary'};
+}
+
+/* ---------------------------------------------------------------- channels and rewards */
+function channels(){ return (STATUS && STATUS.channels) || []; }
+function primary(){ var c = channels(); return c.length ? c[0].login : ''; }
+function multi(){ return channels().length > 1; }
+function rewardChannel(t){ return t.channel === 'primary' || t.channel === 'all' ? primary() : t.channel; }
+
+function channelOptions(sel){
+  var opts = [['primary', 'the primary channel'], ['all', 'every channel']];
+  channels().forEach(function(c){ opts.push([c.login, '#' + c.login + (c.label ? ' (' + c.label + ')' : '')]); });
+  if(sel && !opts.some(function(o){ return o[0] === sel; })) opts.push([sel, '#' + sel + ' (not watched)']);
+  return opts.map(function(o){ return '<option value="' + esc(o[0]) + '"' + (o[0] === sel ? ' selected' : '') + '>' + esc(o[1]) + '</option>'; }).join('');
+}
+
+function loadRewards(login, again){
+  if(!login || (REWARDS[login] && !again)) return;
+  REWARDS[login] = {loading: true};
+  fetch('/redeems/api/rewards?channel=' + encodeURIComponent(login)).then(function(r){ return r.json(); })
+    .then(function(d){ REWARDS[login] = d; }, function(){ REWARDS[login] = {ok: false, error: 'Hexcast did not answer', rewards: []}; })
+    .then(function(){ if(DRAFT) render(); if(again) toast(REWARDS[login].ok ? 'Rewards loaded from Twitch' : 'Could not load the rewards: ' + (REWARDS[login].error || 'Twitch did not answer')); });
+}
+
+function rewardField(t, i){
+  var got = REWARDS[rewardChannel(t)];
+  var typed = TYPED.indexOf(t) >= 0 || !got || got.loading || !got.ok;
+  if(typed){
+    var ph = got && got.loading ? 'loading your rewards...' : "the reward's exact name, e.g. Airhorn";
+    return '<label class="f">Reward<input class="r-reward" maxlength="45" value="' + esc(t.reward) + '" placeholder="' + esc(ph) + '"></label>'
+      + (got && got.ok && got.rewards.length ? '<button class="link r-pick">pick from your rewards instead</button>' : '');
+  }
+  var list = got.rewards, sel = '', title = (t.reward || '').toLowerCase();
+  list.forEach(function(w){ if(t.reward_id && w.id === t.reward_id) sel = w.id; });
+  if(!sel) list.forEach(function(w){ if(!sel && title && w.title.toLowerCase() === title) sel = w.id; });
+  var html = '<option value="">- pick a reward -</option>';
+  list.forEach(function(w){
+    var note = w.cost + ' points' + (!w.enabled ? ', switched off on Twitch' : w.paused ? ', paused on Twitch' : '');
+    html += '<option value="' + esc(w.id) + '"' + (w.id === sel ? ' selected' : '') + '>' + esc(w.title + ' (' + note + ')') + '</option>';
+  });
+  if(!sel && t.reward) html += '<option value="__saved" selected>' + esc(t.reward + ' (not found on Twitch)') + '</option>';
+  html += '<option value="__type">Type a name instead...</option>';
+  return '<label class="f">Reward<select class="r-reward-pick">' + html + '</select></label>';
+}
+
+/* ---------------------------------------------------------------- sounds */
+function clipKnown(name){
+  if(!CLIPS) return true;
+  var n = String(name).toLowerCase();
+  return CLIPS.audio.concat(CLIPS.video).some(function(c){ return String(c).toLowerCase() === n; });
+}
+function clipOptions(sel){
+  var html = '<option value="">- pick a sound -</option>';
+  if(sel && !clipKnown(sel)) html += '<option value="' + esc(sel) + '" selected>' + esc(sel + ' (not on the Soundboard)') + '</option>';
+  if(!CLIPS) return html + (sel ? '<option value="' + esc(sel) + '" selected>' + esc(sel) + '</option>' : '');
+  [['audio', 'Sounds'], ['video', 'Videos and GIFs']].forEach(function(g){
+    var names = CLIPS[g[0]] || [];
+    if(!names.length) return;
+    html += '<optgroup label="' + g[1] + '">' + names.map(function(n){
+      return '<option value="' + esc(n) + '"' + (String(n).toLowerCase() === String(sel).toLowerCase() ? ' selected' : '') + '>' + esc(n) + '</option>';
+    }).join('') + '</optgroup>';
+  });
+  return html;
+}
+function clipsField(t){
+  if(!t.clips.length) t.clips.push('');
+  var many = t.clips.length > 1;
+  var html = t.clips.map(function(c, k){
+    return '<div class="clip"><select class="r-clip" data-k="' + k + '">' + clipOptions(c) + '</select>'
+      + (many ? '<button class="sec r-clip-x" data-k="' + k + '" title="Take this sound off the row">&times;</button>' : '') + '</div>';
+  }).join('');
+  if(many) html += '<div class="hint">one of these plays, at random</div>';
+  if(t.clips.length < MAX_CLIPS) html += '<button class="link r-clip-add">+ another sound' + (many ? '' : ' (one plays at random)') + '</button>';
+  if(CLIPS && !CLIPS.audio.length && !CLIPS.video.length) html += '<div class="hint">The Soundboard is empty - add sounds on the <a href="/" style="color:var(--ink)">Soundboard</a> tab first.</div>';
+  return '<label class="f">Sound</label><div class="clips">' + html + '</div>';
+}
+
+/* ---------------------------------------------------------------- rows */
+function rowHtml(t, i){
+  var head = '<label class="sw" title="Switch this row on or off"><input type="checkbox" class="r-on"' + (t.on ? ' checked' : '') + '></label>';
+  var trigger, more = '';
+  if(t.kind === 'redeem') trigger = '<div>' + rewardField(t, i) + '</div>';
+  else if(t.kind === 'command') trigger = '<label class="f">Command<input class="r-command" value="' + esc(t.command) + '" placeholder="!airhorn" maxlength="200"></label>';
+  else trigger = '<label class="f">At least (bits)<input type="number" class="r-bits" min="1" max="1000000" value="' + esc(t.bits) + '"></label>';
+  if(t.kind === 'command'){
+    more += '<label class="f">Who can use it<select class="r-who">' + WHO.map(function(w){
+      return '<option value="' + w[0] + '"' + (w[0] === t.who ? ' selected' : '') + '>' + esc(w[1]) + '</option>'; }).join('') + '</select></label>';
+    more += '<label class="f">Cooldown (seconds)<input type="number" class="r-cooldown" min="0" max="86400" value="' + esc(t.cooldown) + '"></label>';
+    more += '<label class="f">Same viewer again after (seconds)<input type="number" class="r-ucooldown" min="0" max="86400" value="' + esc(t.user_cooldown) + '"></label>';
+  }
+  if(multi()) more += '<label class="f">Channel<select class="r-channel">' + channelOptions(t.channel) + '</select></label>';
+  return '<div class="tr' + (t.on ? ' is-on' : '') + '" data-i="' + i + '" data-id="' + esc(t.id || '') + '">'
+    + '<div class="tr-line' + (t.kind === 'command' ? ' cmd' : '') + '">' + head + trigger + '<span class="arrow">&rarr;</span>'
+    +   '<div class="tr-sound">' + clipsField(t) + '</div>'
+    +   '<div class="tr-btns"><button class="sec r-test" title="Play the sound now, on the Soundboard overlay (on stream)">&#9654; Test</button>'
+    +   '<button class="sec r-del" title="Delete this row">&times;</button></div>'
+    + '</div>'
+    + (more ? '<div class="tr-more">' + more + '</div>' : '')
+    + '<div class="tr-st"></div></div>';
+}
+
+function render(){
+  $('on').checked = !!DRAFT.on;
+  KINDS.forEach(function(kind){
+    var html = '';
+    DRAFT.triggers.forEach(function(t, i){ if(t.kind === kind) html += rowHtml(t, i); });
+    $('list-' + kind).innerHTML = html || '<p class="empty">' + {redeem: 'No redeem sounds yet.', command: 'No commands yet.', bits: 'No bits sounds yet.'}[kind] + '</p>';
+  });
+  paintStatus();
+  markDirty();
+}
+
+function readRow(card){
+  var t = DRAFT.triggers[+card.dataset.i], q = function(c){ return card.querySelector(c); };
+  t.on = q('.r-on').checked;
+  if(q('.r-reward')){ t.reward = q('.r-reward').value; t.reward_id = ''; }
+  if(q('.r-command')) t.command = q('.r-command').value;
+  if(q('.r-bits')) t.bits = Math.max(1, +q('.r-bits').value || 1);
+  if(q('.r-who')) t.who = q('.r-who').value;
+  if(q('.r-cooldown')) t.cooldown = Math.max(0, +q('.r-cooldown').value || 0);
+  if(q('.r-ucooldown')) t.user_cooldown = Math.max(0, +q('.r-ucooldown').value || 0);
+  if(q('.r-channel')) t.channel = q('.r-channel').value;
+  t.clips = Array.prototype.map.call(card.querySelectorAll('.r-clip'), function(s){ return s.value; });
+  card.classList.toggle('is-on', t.on);
+}
+
+/* ---------------------------------------------------------------- status */
+function ago(ts){
+  var s = Math.max(0, (Date.now() + SKEW) / 1000 - ts);
+  if(s < 60) return 'just now';
+  if(s < 3600) return Math.floor(s / 60) + ' min ago';
+  if(s < 86400) return Math.floor(s / 3600) + ' h ago';
+  return Math.floor(s / 86400) + ' d ago';
+}
+function clock(ts){
+  var d = new Date(ts * 1000 - SKEW), p = function(n){ return (n < 10 ? '0' : '') + n; };
+  return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
+
+function paintStatus(){
+  if(!DRAFT) return;
+  var byId = {};
+  ((STATUS && STATUS.triggers) || []).forEach(function(t){ byId[t.id] = t; });
+  document.querySelectorAll('.tr').forEach(function(card){
+    var st = card.querySelector('.tr-st'), d = DRAFT.triggers[+card.dataset.i], s = byId[card.dataset.id];
+    var saved = SAVED.triggers.filter(function(x){ return x.id === d.id; })[0];
+    if(!card.dataset.id || !saved){ st.innerHTML = '<div>not saved yet - press Save</div>'; return; }
+    if(!s){ st.innerHTML = ''; return; }
+    var html = '';
+    if(!d.on) html = '<div>switched off</div>';
+    else if(s.problem) html = '<div class="bad">' + esc(s.problem) + '</div>';
+    else html = '<div class="ok">ready</div>';
+    if(s.played) html += '<div>played ' + s.played + ' time' + (s.played === 1 ? '' : 's') + ', last ' + esc(ago(s.last)) + (s.by ? ' by ' + esc(s.by) : '') + '</div>';
+    if(JSON.stringify(cleanRows([d])[0]) !== JSON.stringify(saved)) html += '<div>(changed - save to use it)</div>';
+    st.innerHTML = html;
+  });
+  paintNotes();
+  paintRecent();
+}
+
+function sentence(s){ return /[.!?]$/.test(s) ? s : s + '.'; }
+function paintNotes(){
+  var ch = channels()[0], got = REWARDS[primary()];
+  var hasRedeem = DRAFT.triggers.some(function(t){ return t.kind === 'redeem'; });
+  var rw = '';
+  if(!ch) rw = 'Add your channel in the Twitch connection box first.';
+  else if(ch.redeems) rw = 'Redeems cannot reach Hexcast yet: ' + sentence(ch.redeems.replace(/^redeems: /, ''));
+  else if(got && got.ok === false && hasRedeem) rw = 'Could not list your rewards (' + got.error + '). Type each reward\'s exact name instead.';
+  $('rw-note').hidden = !rw; $('rw-note').textContent = rw;
+  var chat = !ch ? 'Add your channel in the Twitch connection box first.' : ch.chat ? 'Chat: ' + sentence(ch.chat) : '';
+  ['cmd-note', 'bits-note'].forEach(function(id){ $(id).hidden = !chat; $(id).textContent = chat; });
+}
+
+function paintRecent(){
+  var rows = (STATUS && STATUS.recent) || [];
+  var icon = {redeem: '⭐', command: '⌨', bits: '◆', test: '▶'};
+  var showCh = multi();
+  $('recent').innerHTML = rows.length ? rows.map(function(e){
+    var what = e.what + (showCh && e.channel ? '  #' + e.channel : '');
+    var res = e.result === 'played' ? 'played ' + e.clip : e.result === 'failed' ? (e.clip ? e.clip + ': ' : '') + e.note : e.note;
+    return '<div class="ev"><span class="t">' + esc(clock(e.ts)) + '</span><span title="' + esc(e.kind) + '">' + (icon[e.kind] || '') + '</span>'
+      + '<span>' + esc(what) + '</span><span class="who">' + esc(e.user) + '</span>'
+      + '<span class="res ' + esc(e.result) + '">' + esc(res) + '</span></div>';
+  }).join('') : '<p class="empty">Nothing yet - redeem a reward, type a command or press Test.</p>';
+}
+
+/* ---------------------------------------------------------------- load, save, test */
+function loadClips(){
+  return fetch('/api/list').then(function(r){ return r.ok ? r.json() : null; }).then(function(d){
+    var next = d ? {audio: d.audio || [], video: d.video || []} : null;
+    var changed = JSON.stringify(next) !== JSON.stringify(CLIPS);
+    CLIPS = next;
+    if(changed && DRAFT) render();
+  }, function(){});
+}
+
+function load(){
+  return fetch('/redeems/api/config').then(function(r){ return r.json(); }).then(function(cfg){
+    SAVED = cfg; DRAFT = clone(cfg); TYPED = [];
+    var steps = $('steps');
+    try{ var pref = localStorage.getItem('bfr.steps'); steps.open = pref ? pref === 'open' : !cfg.triggers.length; }
+    catch(e){ steps.open = !cfg.triggers.length; }
+    render();
+  });
+}
+
+function save(){
+  document.querySelectorAll('.tr').forEach(readRow);
+  DRAFT.on = $('on').checked;
+  var body = {on: DRAFT.on, triggers: cleanRows(DRAFT.triggers)};
+  var unfinished = body.triggers.filter(function(t){
+    return !t.clips.length || (t.kind === 'redeem' && !t.reward && !t.reward_id) || (t.kind === 'command' && !t.command.trim());
+  }).length;
+  $('save').disabled = true;
+  return fetch('/redeems/api/config', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)})
+    .then(function(r){ return r.json().then(function(d){ return {ok: r.ok, d: d}; }); })
+    .then(function(res){
+      if(!res.ok){ toast(res.d.error || 'Not saved'); return false; }
+      SAVED = res.d.config; DRAFT = clone(SAVED); TYPED = []; render();
+      toast(unfinished ? 'Saved - a row with no reward, command or sound does not play' : 'Saved');
+      return true;
+    }, function(){ toast('Not saved - Hexcast did not answer'); })
+    .finally(function(){ $('save').disabled = false; });
+}
+
+function test(t, b){
+  var clips = t.clips.filter(function(c){ return c; });
+  if(!clips.length){ toast('Pick a sound first'); return; }
+  b.disabled = true;
+  fetch('/redeems/api/test', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({clips: clips})})
+    .then(function(r){ return r.json(); })
+    .then(function(d){ toast(d.ok ? 'Playing ' + d.clip + ' on the Soundboard overlay' : (d.error || 'Did not play')); },
+          function(){ toast('Hexcast did not answer'); })
+    .finally(function(){ b.disabled = false; });
+}
+
+document.addEventListener('input', function(e){
+  var card = e.target.closest('.tr');
+  if(card){ readRow(card); paintStatus(); }
+  markDirty();
+});
+document.addEventListener('change', function(e){
+  var card = e.target.closest('.tr');
+  if(e.target.id === 'on') DRAFT.on = e.target.checked;
+  if(card && e.target.classList.contains('r-reward-pick')){
+    var t = DRAFT.triggers[+card.dataset.i], v = e.target.value;
+    if(v === '__type'){ TYPED.push(t); t.reward_id = ''; render(); var inp = document.querySelector('.tr[data-i="' + card.dataset.i + '"] .r-reward'); if(inp) inp.focus(); return; }
+    if(v !== '__saved'){
+      var w = (REWARDS[rewardChannel(t)].rewards || []).filter(function(x){ return x.id === v; })[0];
+      t.reward_id = w ? w.id : ''; t.reward = w ? w.title : '';
+    }
+  }
+  else if(card){
+    var before = DRAFT.triggers[+card.dataset.i].channel;
+    readRow(card);
+    if(DRAFT.triggers[+card.dataset.i].channel !== before){ loadRewards(rewardChannel(DRAFT.triggers[+card.dataset.i])); render(); return; }
+  }
+  paintStatus();
+  markDirty();
+});
+document.addEventListener('click', function(e){
+  var b = e.target.closest('button'); if(!b) return;
+  var card = b.closest('.tr');
+  if(b.dataset.add){
+    if(DRAFT.triggers.length >= MAX_ROWS){ toast('At most ' + MAX_ROWS + ' rows'); return; }
+    var t = blank(b.dataset.add);
+    DRAFT.triggers.push(t);
+    if(t.kind === 'redeem') loadRewards(primary());
+    render();
+    var cards = document.querySelectorAll('#list-' + t.kind + ' .tr'), last = cards[cards.length - 1];
+    var first = last && last.querySelector('input:not([type=checkbox]),select');
+    if(first) first.focus();
+    return;
+  }
+  if(b.id === 'ov-copy'){
+    var txt = $('ov-url').textContent;
+    // (navigator.clipboard exists only on https or localhost: a tab opened as http://192.168.x.x:4747 has none)
+    (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject()).then(function(){ toast('Copied'); }, function(){
+      var ok = false;
+      try{
+        var ta = document.createElement('textarea');
+        ta.value = txt; ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+        document.body.appendChild(ta); ta.focus(); ta.select();
+        ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+      }catch(e){}
+      toast(ok ? 'Copied' : 'Select it and copy: ' + txt);
+    });
+    return;
+  }
+  if(b.id === 'rw-reload'){
+    var logins = {};
+    DRAFT.triggers.forEach(function(t){ if(t.kind === 'redeem') logins[rewardChannel(t)] = 1; });
+    logins[primary()] = 1;
+    Object.keys(logins).forEach(function(l){ loadRewards(l, true); });
+    return;
+  }
+  if(!card) return;
+  var t = DRAFT.triggers[+card.dataset.i];
+  if(b.classList.contains('r-del')){ DRAFT.triggers.splice(+card.dataset.i, 1); render(); toast('Removed - press Save to make it stick'); }
+  else if(b.classList.contains('r-test')){ readRow(card); test(t, b); }
+  else if(b.classList.contains('r-clip-add')){ readRow(card); t.clips.push(''); render(); }
+  else if(b.classList.contains('r-clip-x')){ readRow(card); t.clips.splice(+b.dataset.k, 1); render(); }
+  else if(b.classList.contains('r-pick')){ readRow(card); TYPED = TYPED.filter(function(x){ return x !== t; }); render(); }
+});
+$('steps').addEventListener('toggle', function(){ try{ localStorage.setItem('bfr.steps', $('steps').open ? 'open' : 'shut'); }catch(e){} });
+$('save').onclick = save;
+$('revert').onclick = function(){ DRAFT = clone(SAVED); TYPED = []; render(); toast('Back to what is saved'); };
+window.addEventListener('beforeunload', function(e){ if(isDirty()){ e.preventDefault(); e.returnValue = ''; } });
+window.addEventListener('focus', loadClips);      // (back from the Soundboard tab with new clips)
+$('ov-url').textContent = location.protocol + '//' + location.host + '/overlay';
+
+function connect(){
+  var ws = new WebSocket((location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + '/redeems/ws');
+  ws.onmessage = function(e){
+    var m; try{ m = JSON.parse(e.data); }catch(err){ return; }
+    if(m.type !== 'status') return;
+    var before = JSON.stringify(channels().map(function(c){ return c.login; }));
+    STATUS = m.status; SKEW = STATUS.now * 1000 - Date.now();
+    var now = JSON.stringify(channels().map(function(c){ return c.login; }));
+    if(DRAFT && before !== now){
+      loadRewards(primary());
+      render();
+    } else paintStatus();
+  };
+  ws.onclose = function(){ setTimeout(connect, 1500); };
+  ws.onerror = function(){ try{ ws.close(); }catch(err){} };
+}
+
+TwitchConnect.mount($('twitch-conn'), {back: '/redeems', label: 'Bot-Free Redeems', compact: true, optional: true,
+                                       needs: ['channel:read:redemptions']});
+loadClips().then(load).then(connect);
+setInterval(paintStatus, 15000);        // the "2 min ago"s
+</script>
+<script src="/static/hexbar.js?v=2"></script>
+</body></html>

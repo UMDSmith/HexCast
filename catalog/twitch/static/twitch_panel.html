@@ -1227,12 +1227,16 @@ var ALERT_LABEL = {
   raid:'Raid', redeem:'Channel points', hypetrain:'Hype train', online:'Stream online', offline:'Stream offline'
 };
 var MIN_LABEL = {cheer:'Smallest number of bits', subgift:'Smallest number of gifted subs', raid:'Smallest raid (viewers)'};
+var CLIP_TIP = {
+  redeem:'A HexCast clip name: plays with every redeem. A sound per reward: the Bot-Free Redeems plugin (+ tab) - a reward with a sound there plays only that one.',
+  cheer:'A HexCast clip name: plays with every cheer. A sound per bits amount: the Bot-Free Redeems plugin (+ tab) - a cheer with a sound there plays only that one.'
+};
 function alertFields(kind){
   var f = [
     ['title','Title',{t:'text'}],
     ['body','Text',{t:'text'}],
     ['duration','Seconds on screen',{t:'num',min:1,max:60,unit:'s'}],
-    ['clip','Soundboard clip',{t:'text',ph:'airhorn',tip:'A HexCast clip name: plays its sound or gif with the alert.'}]
+    ['clip','Soundboard clip',{t:'text',ph:'airhorn',tip:CLIP_TIP[kind] || 'A HexCast clip name: plays its sound or gif with the alert.'}]
   ];
   if(MIN_LABEL[kind]) f.push(['min_amount',MIN_LABEL[kind],{t:'num',min:1,max:1000000,tip:'Smaller ones show nothing.'}]);
   return f;

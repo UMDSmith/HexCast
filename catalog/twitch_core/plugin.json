@@ -1,8 +1,8 @@
 {
   "id": "twitch_core",
   "name": "Twitch connection",
-  "version": "1.1.0",
-  "description": "The Twitch sign-in, channels and chat/event connection that Twitch, Chat Timers and Giveaways share. No tab of its own - it is installed automatically with the plugins that need it, and each of their tabs shows its connection box.",
+  "version": "1.1.1",
+  "description": "The Twitch sign-in, channels and chat/event connection that Twitch, Bot-Free Redeems, Chat Timers and Giveaways share. No tab of its own - it is installed automatically with the plugins that need it, and each of their tabs shows its connection box.",
   "icon": "🔌",
   "color": "#a970ff",
   "category": "Libraries",

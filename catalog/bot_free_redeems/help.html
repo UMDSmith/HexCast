@@ -1,0 +1,97 @@
+<section id="bot_free_redeems">
+<div class="card">
+  <h2>Bot-Free Redeems <span class="tag">/redeems</span></h2>
+  <p class="hint">Plays a sound from your Soundboard when a viewer redeems a channel point reward, types a chat command
+    like <code>!airhorn</code>, or cheers bits - straight from Twitch to the Soundboard, with no bot or AI in between.
+    Everything is set up in the <b>Redeems</b> tab. It uses the shared <a href="/help/twitch_connection">Twitch
+    connection</a>, so it works with or without the Twitch plugin.</p>
+
+  <h3>Setting it up</h3>
+  <p class="hint"><b>1. The Soundboard overlay in OBS.</b> Every sound plays on the Soundboard overlay, the same one the
+    Twitch alerts and the games use. If you do not have it yet, add a <b>Browser</b> source in OBS with the URL
+    <code>http://localhost:4747/overlay</code> (use the Hexcast PC's address instead of <code>localhost</code> when OBS
+    runs on another PC), size 1920 &times; 1080. Untick <b>Shutdown source when not visible</b> and tick <b>Control audio
+    via OBS</b>, so its sound shows in the OBS mixer and goes to your stream.</p>
+  <p class="hint"><b>2. Your sounds.</b> Open the Soundboard tab and drop in sound files (mp3, wav, ogg...) or short
+    videos and GIFs. Each clip's name is what you pick in the Redeems tab. Its volume, trim, position and cooldown are set
+    on the Soundboard and apply to redeems too.</p>
+  <p class="hint"><b>3. Twitch.</b> In the Twitch connection box at the top of the Redeems tab, add your channel name and
+    save. That is all chat commands and bits need: Hexcast reads your chat without signing in. Channel point redeems also
+    need a sign-in <b>as the channel itself</b> (<b>Connect a Twitch account</b> while signed in to Twitch as your
+    channel): Twitch tells only a channel's own account about its redeems. The first time, the box walks you through
+    making a Twitch app (about two minutes). Sign in from a browser on the Hexcast PC: Twitch sends the sign-in back to
+    <code>http://localhost</code> (it takes plain http for no other address), so a tab opened as <code>192.168...</code>
+    or from another computer cannot finish it. Channel points are only for Affiliate and Partner channels.</p>
+  <p class="hint"><b>4. Your rewards, on Twitch.</b> Make each reward on Twitch as usual: Creator Dashboard &rarr;
+    <b>Viewer Rewards</b> &rarr; <b>Channel Points</b> &rarr; <b>Manage Rewards &amp; Challenges</b> &rarr; <b>Add New
+    Custom Reward</b>. Give it a name and a cost. Set its <b>cooldown</b> and limits (per stream, per viewer) there too:
+    Twitch checks them before the points are spent, so a viewer is never charged for a sound that is held back. Leave
+    <b>Require Viewer to Enter Text</b> off for a plain sound.</p>
+  <p class="hint"><b>5. The rows.</b> In the Redeems tab press <b>+ Add a redeem sound</b>, <b>+ Add a command</b> or
+    <b>+ Add a bits sound</b>, fill in the row, pick its sound and press <b>Save</b>. <b>&#9654; Test</b> plays the sound
+    on the overlay right away (it is on stream). Then try it for real: redeem the reward, or type the command in your
+    chat.</p>
+
+  <h3>Channel point redeems</h3>
+  <p class="hint">Pick the reward from the list (Hexcast asks Twitch for your rewards; <b>&#8635; Reload rewards</b>
+    after you add one on Twitch) and the sound. A row remembers the reward itself, so renaming it on Twitch keeps it
+    working; a reward deleted and made again with the same name is found by its name. When Hexcast cannot list your
+    rewards (not signed in as the channel, or not an Affiliate) you can type the reward's exact name instead. A redeem
+    always plays - there is no cooldown here, because the viewer has already spent the points; use the reward's own
+    cooldown on Twitch.</p>
+
+  <h3>Chat commands</h3>
+  <p class="hint">A chat line that <b>starts</b> with the command plays the sound: <code>!airhorn</code>, or
+    <code>!airhorn and some words</code>. Capitals do not matter, and a row can have a few commands
+    (<code>!airhorn !horn</code>). Typing <code>airhorn</code> in the box saves it as <code>!airhorn</code>.</p>
+  <p class="hint"><b>Who can use it:</b> everyone; subscribers, VIPs and mods; VIPs and mods; moderators; or only
+    you. <b>Cooldown</b> (30 seconds to begin with) holds the command for everyone after it plays; <b>Same viewer again
+    after</b> holds it for the viewer who used it (0 = off). You, the broadcaster, are never held up, so you can test
+    on stream. A command that is on cooldown or not allowed does nothing in chat - the Recent list says why.</p>
+
+  <h3>Bits</h3>
+  <p class="hint">A cheer of at least the amount plays the sound. With several amounts the biggest one the cheer
+    reaches wins: with 100 and 1000 set, 500 bits plays the 100 sound and 1500 bits the 1000 one. A cheer smaller than
+    every amount plays nothing. Bits come from your chat, so they need no sign-in either.</p>
+
+  <h3>Several sounds on one row</h3>
+  <p class="hint"><b>+ another sound</b> adds more sounds to a row: each time, one of them plays at random (never the same
+    one twice in a row). Handy for a "random fart noise" reward.</p>
+
+  <h3>The Recent list</h3>
+  <p class="hint">The bottom of the tab lists the last 40 redeems, commands, cheers and tests, newest first: who, what,
+    and what happened - <b>played</b> (and which sound), or why not: no sound set for that reward, on cooldown, only for
+    subscribers, the clip is not on the Soundboard, the Soundboard overlay is not open... Every row also says
+    <b>ready</b> or what stops it, and how many times it has played.</p>
+
+  <h3>With the Twitch plugin's alerts</h3>
+  <p class="hint">The Twitch tab's alerts can play one <b>Soundboard clip</b> for every redeem and one for every cheer.
+    When a redeem or a cheer has a sound here, only this sound plays: the alert still shows, but its own clip stays
+    quiet for it. Rewards with no row here still play the alert's clip. Switching Bot-Free Redeems off (<b>Sounds
+    on</b>) gives the alerts their clips back.</p>
+
+  <h3>Several channels</h3>
+  <p class="hint">Watching more than one channel (the Twitch connection box takes up to five), every row gets a
+    <b>Channel</b> setting: the primary channel (the default), every channel, or one of them.</p>
+
+  <h3>When a sound does not play</h3>
+  <p class="hint">Look at the <b>Recent</b> list first, then the row's own line.</p>
+  <p class="hint"><b>Nothing shows in Recent for a redeem.</b> Hexcast did not hear about it. The redeem card in the tab
+    says why when it knows (not signed in as the channel, Twitch refused the redeem events). Sign in as the channel's own
+    account in the Twitch connection box; an account signed in long ago may lack a permission, so <b>Connect a Twitch
+    account</b> again as that user. With the Twitch plugin installed, its Status tab lists every Twitch subscription
+    and why one failed.</p>
+  <p class="hint"><b>Recent says "nobody heard it".</b> The Soundboard overlay is not open: check the Browser source in OBS
+    (step 1), and that <b>Shutdown source when not visible</b> is off.</p>
+  <p class="hint"><b>Recent says "played" but there is no sound on stream.</b> The overlay plays it, OBS does not pass it
+    on: tick <b>Control audio via OBS</b> on the source and check its volume in the OBS mixer.</p>
+  <p class="hint"><b>"no sound set for this reward".</b> No row matches that reward: pick it in a row (or check the name
+    you typed), and press Save.</p>
+  <p class="hint"><b>"still in its Soundboard cooldown".</b> The clip has a cooldown of its own on the Soundboard. Lower it
+    there, or use the reward's cooldown on Twitch instead.</p>
+  <p class="hint"><b>The reward list says Affiliate or Partner.</b> Twitch has channel points only for those channels;
+    chat commands and bits work for everyone.</p>
+  <p class="hint"><b>A command does nothing.</b> It has to be the first word of the line. Check <b>Who can use it</b> and
+    the cooldowns (Recent says which one held it).</p>
+</div>
+</section>

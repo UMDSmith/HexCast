@@ -10,7 +10,7 @@ A Hexcast plugin (see plugin.py): install it from the + tab and it adds:
 Everything lives under /twitch/* so it cannot collide with existing routes.
 
 The connection to Twitch - the sign-in, the channels, EventSub and the anonymous chat fallback - is the
-shared twitch_core library (Chat Timers and Giveaways use it too). This module listens on it: chat lines go
+shared twitch_core library (Bot-Free Redeems, Chat Timers and Giveaways use it too). This module listens on it: chat lines go
 to the chat overlay (and the !so command), events become alerts in a queue the alert overlay plays.
 """
 
@@ -829,6 +829,24 @@ async def dispatch_alert(alert: dict | None, msg_id: str | None = None) -> None:
     await ALERT_QUEUE.enqueue(alert, msg_id)
 
 
+def sound_elsewhere(stype: str, ev: dict, ch: tc.ChannelRT) -> bool:
+    """Bot-Free Redeems plays a sound of its own for this redeem / cheer: the alert then keeps its clip quiet, so one
+    redeem never plays two sounds. An optional plugin: without it (or an older one) the alert's clip plays."""
+    claims = getattr(running_plugin("bot_free_redeems"), "claims", None)
+    if claims is None:
+        return False
+    try:
+        return bool(claims(stype, ev, ch.login))
+    except Exception:
+        return False
+
+
+def quiet_if_elsewhere(alert: dict | None, stype: str, ev: dict, ch: tc.ChannelRT) -> dict | None:
+    if alert and alert.get("clip") and sound_elsewhere(stype, ev, ch):
+        alert["clip"] = ""
+    return alert
+
+
 async def forward_chat(msg: dict) -> None:
     fwd = (CONFIG.get("forward_url") or "").strip()
     if not fwd:
@@ -1000,13 +1018,13 @@ async def on_event(stype: str, ev: dict, msg_id: str | None, ch: tc.ChannelRT) -
         ), msg_id)
 
     elif stype == "channel.cheer":
-        await dispatch_alert(build_alert(
+        await dispatch_alert(quiet_if_elsewhere(build_alert(
             "cheer",
             user="Anonymous" if ev.get("is_anonymous") else user,
             amount=str(ev.get("bits", 0)),
             message=ev.get("message", ""),
             ch=ch,
-        ), msg_id)
+        ), stype, ev, ch), msg_id)
 
     elif stype == "channel.raid":
         await dispatch_alert(build_alert(
@@ -1017,13 +1035,13 @@ async def on_event(stype: str, ev: dict, msg_id: str | None, ch: tc.ChannelRT) -
         ), msg_id)
 
     elif stype == "channel.channel_points_custom_reward_redemption.add":
-        await dispatch_alert(build_alert(
+        await dispatch_alert(quiet_if_elsewhere(build_alert(
             "redeem",
             user=user,
             reward=(ev.get("reward") or {}).get("title", ""),
             message=ev.get("user_input", ""),
             ch=ch,
-        ), msg_id)
+        ), stype, ev, ch), msg_id)
 
     elif stype == "channel.hype_train.begin":
         await dispatch_alert(build_alert("hypetrain", amount=str(ev.get("level", 1)), ch=ch), msg_id)

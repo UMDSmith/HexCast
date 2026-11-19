@@ -43,7 +43,7 @@ set of OBS browser-source overlays from a web control panel. **That is all you
 get on a fresh download** — one tab, **Soundboard**, and a **+** next to it.
 
 Everything else is a **plugin** you add with one click from that **+** tab:
-Twitch, Chat Timers, Giveaways, Music, Avatars, Discord, Clips, Countdown, Games and Ticker. Each is
+Twitch, Bot-Free Redeems, Chat Timers, Giveaways, Music, Avatars, Discord, Clips, Countdown, Games and Ticker. Each is
 self-contained, with its own overlay and settings panel, and gets its own tab in
 the top bar once installed. Add as many or as few as you like; none of them
 changes how the soundboard behaves, and a plugin you never install costs you
@@ -163,8 +163,19 @@ forward URL if you want your own bot or a model reacting to chat.
 See [docs/twitch.md](docs/twitch.md).
 
 The sign-in, the channels and the connection are the shared **Twitch connection**
-(no tab of its own): Twitch, Chat Timers and Giveaways each install it, and each
+(no tab of its own): Twitch, Bot-Free Redeems, Chat Timers and Giveaways each install it, and each
 tab shows the same box, so you set Twitch up once.
+
+### 📣 Bot-Free Redeems *(plugin)*
+
+**What it does.** Channel point redeems, chat commands (`!airhorn`) and bits play
+your soundboard clips - straight from Twitch, for streamers with **no bot or AI in
+between**. Pick a reward (from your channel's real list), a command or a bits
+amount and the sound it plays; commands get who-may-use-it and cooldowns, a row
+can hold several sounds (one plays at random), and a Recent list says what played
+and why something did not. Commands and bits need only your channel name; redeems
+need a sign-in as the channel. The sounds play on the soundboard overlay (`/overlay`).
+See [docs/bot_free_redeems.md](docs/bot_free_redeems.md).
 
 ### ⏲️ Chat Timers *(plugin)*
 
@@ -809,7 +820,7 @@ hexcast/
 ├── hexcast_core/              # the plugin system (manifest, installer, store API) + the Memory page's numbers
 ├── static/                    # the core's web files: control panel, top bar, the + store page, settings, memory, help
 ├── catalog/                   # every plugin that ships with Hexcast — what the + tab installs from
-│   ├── twitch/  twitch_core/  chat_timers/  giveaways/  music/  avatar/  discord/  clips/  countdown/  ticker/  ytdlp/
+│   ├── twitch/  twitch_core/  bot_free_redeems/  chat_timers/  giveaways/  music/  avatar/  discord/  clips/  countdown/  ticker/  ytdlp/
 │   └── games/  games_roulette/  games_craps/  games_russian/  games_trivia/  games_hexfall/  games_climb/  games_blackjack/  games_derby/
 │                              #   each: plugin.json, its Python, static/ (panel + overlay), help.html, requirements.txt
 ├── plugins/                   # the plugins you installed (a copy of their catalog folder; gitignored)
@@ -845,7 +856,7 @@ can hand-edit the JSON; the watcher ignores `.json` writes.
 
 - **Repository & downloads:** <https://github.com/UMDSmith/hexcast>
 - **Plugins:** [how plugins work & how to write one](docs/plugins.md)
-- **Plugin docs:** [Twitch](docs/twitch.md) · [Chat Timers](docs/chat_timers.md) · [Giveaways](docs/giveaways.md) · [Music](docs/music.md) · [Discord](docs/discord.md) · [Clips](docs/clips.md) · [Countdown](docs/countdown.md) · [Games & Roulette](docs/games.md) · [Craps](docs/craps.md) · [Russian Roulette](docs/russian_roulette.md) · [Trivia](docs/trivia.md) · [Hexfall](docs/hexfall.md) · [Soul Climb](docs/climb.md) · [Blackjack](docs/blackjack.md) · [Hellhound Derby](docs/derby.md) · [Ticker](docs/ticker.md)
+- **Plugin docs:** [Twitch](docs/twitch.md) · [Bot-Free Redeems](docs/bot_free_redeems.md) · [Chat Timers](docs/chat_timers.md) · [Giveaways](docs/giveaways.md) · [Music](docs/music.md) · [Discord](docs/discord.md) · [Clips](docs/clips.md) · [Countdown](docs/countdown.md) · [Games & Roulette](docs/games.md) · [Craps](docs/craps.md) · [Russian Roulette](docs/russian_roulette.md) · [Trivia](docs/trivia.md) · [Hexfall](docs/hexfall.md) · [Soul Climb](docs/climb.md) · [Blackjack](docs/blackjack.md) · [Hellhound Derby](docs/derby.md) · [Ticker](docs/ticker.md)
 - **License:** MIT — see [LICENSE](LICENSE)
 
 <p align="center">

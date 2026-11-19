@@ -608,7 +608,7 @@ def test_every_page_of_every_shipped_plugin_finds_its_assets(real_world):
     import re
     real_world.app.mount("/static", StaticFiles(directory=str(ROOT / "static")))          # what hexcast.py mounts
     for pid in ("games", "games_roulette", "games_craps", "games_russian", "games_trivia", "games_hexfall", "games_climb", "games_blackjack", "games_derby",
-                "countdown", "ticker", "twitch", "chat_timers", "giveaways", "clips", "discord", "music"):
+                "countdown", "ticker", "twitch", "bot_free_redeems", "chat_timers", "giveaways", "clips", "discord", "music"):
         real_world.installer.install(pid, packages=False)
     real_world.host.load_all()
     c = TestClient(real_world.app)

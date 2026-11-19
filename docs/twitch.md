@@ -10,8 +10,8 @@ routes. It is a plugin: add it from the **+** tab.
 The connection to Twitch itself - your Twitch app, the accounts you sign in with,
 the channels, EventSub and the anonymous chat fallback - is the shared **Twitch
 connection** (`twitch_core`), a plugin with no tab of its own that is installed
-with Twitch. [Chat Timers](chat_timers.md) and [Giveaways](giveaways.md) use the
-same one, so you set it up once and every tab shows the same **Twitch connection**
+with Twitch. [Bot-Free Redeems](bot_free_redeems.md), [Chat Timers](chat_timers.md) and
+[Giveaways](giveaways.md) use the same one, so you set it up once and every tab shows the same **Twitch connection**
 box.
 
 ---
@@ -76,10 +76,15 @@ The Status tab lists every EventSub subscription and why any of them failed —
 usually a missing scope, which means signing out and back in.
 
 **On redirect URLs.** Twitch allows plain `http` only for the host `localhost`;
-a LAN IP would need HTTPS. Use a `localhost` URL to do the pairing. Twitch also
-matches the value byte for byte, and treats `localhost` and `127.0.0.1` as
-different — the module normalises the loopback IP to `localhost` for you, so
-one registered entry covers both.
+a LAN IP (`192.168.x.x`) or `127.0.0.1` would need HTTPS. So over plain http
+the redirect URL is always `http://localhost:<port>/twitch/auth/callback`, even
+when the tab was opened by the PC's LAN address, and one registered entry covers
+them all (since twitch_core 1.1.1; before, a tab opened by its LAN address
+showed a LAN redirect URL that Twitch refuses). Twitch then sends the browser
+back to `localhost`, so **sign in from a browser on the Hexcast PC**; the box
+says so when it is opened by another address. Signing in from another computer
+needs Hexcast served over HTTPS (a reverse proxy): the redirect URL then keeps
+the real host. Twitch matches the value byte for byte.
 
 ---
 
@@ -388,6 +393,12 @@ The clip goes through the same `GET /api/play/{name}` endpoint the bot API uses,
 so a raid can trigger an airhorn and a gif in the same beat. It is
 fire-and-forget with a short timeout — a missing clip logs a failure and the
 alert still shows.
+
+The redeem and bits alerts have one clip for every redeem and every cheer. For a
+different sound per reward, per bits amount or per chat command, install
+[Bot-Free Redeems](bot_free_redeems.md). A redeem or cheer that has a sound there
+plays only that sound: the alert still shows, but its own clip stays quiet for it
+(from Twitch 1.3.2).
 
 ### Known gap
 

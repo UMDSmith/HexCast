@@ -1202,12 +1202,14 @@ STATE_SECONDS = 900
 
 
 def _redirect_uri(request: Request) -> str:
-    base = str(request.base_url).rstrip("/")
-    # Twitch only allows plain http for the literal host "localhost" — the
-    # loopback IP gets rejected, so normalise it before handing it over.
-    for loopback in ("://127.0.0.1", "://[::1]"):
-        base = base.replace(loopback, "://localhost")
-    return base + "/twitch/auth/callback"
+    """The OAuth redirect URL. Twitch takes plain http only for the literal host "localhost" (not 127.0.0.1, not a
+    LAN address like 192.168.x.x), so over http it is always localhost on the port the page was opened on: a tab
+    opened as http://192.168.1.20:4747 still gets the one URL Twitch accepts, and signing in works from a browser
+    on the Hexcast PC. Served over https (a reverse proxy), the real host is kept: Twitch takes any https URL."""
+    url = request.base_url
+    if url.scheme != "https":
+        url = url.replace(hostname="localhost")
+    return str(url).rstrip("/") + "/twitch/auth/callback"
 
 
 def _back(page: Any) -> str:

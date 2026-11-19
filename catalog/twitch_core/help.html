@@ -2,7 +2,7 @@
 <div class="card">
   <h2>Twitch connection <span class="tag">shared</span></h2>
   <p class="hint">The sign-in, the channels and the live connection to Twitch that every Twitch module uses -
-    Twitch (chat and alert overlays), Chat Timers and Giveaways. It has no tab of its own: it is installed with
+    Twitch (chat and alert overlays), Bot-Free Redeems, Chat Timers and Giveaways. It has no tab of its own: it is installed with
     whichever of them comes first, and each of their tabs shows the same <b>Twitch connection</b> box, so you set
     it up once. Your Twitch app, the accounts you signed in with and the channels are the same everywhere.</p>
   <table class="api">
@@ -19,6 +19,12 @@
     signed in) - which then needs to be a moderator there for anything beyond reading chat. With nobody signed in,
     chat is read anonymously. Channels are independent: editing one, or signing an account in or out, reconnects
     only the channels it concerns.</p>
+  <h3>Signing in</h3>
+  <p class="hint">Twitch takes a plain <code>http</code> redirect URL only for <code>localhost</code>, so the box always
+    shows <code>http://localhost:4747/twitch/auth/callback</code> (your port), even on a tab opened by the PC's address
+    (<code>192.168...</code>) - that is the one to register in your Twitch app. Twitch then sends you back to
+    <code>localhost</code>, so press <b>Connect a Twitch account</b> in a browser on the Hexcast PC. Signing in from
+    another computer needs Hexcast served over <code>https</code>.</p>
   <h3>Scopes</h3>
   <p class="hint">Hexcast asks Twitch for everything its modules use when you sign in. An account signed in before
     a module needed something new (<code>moderator:read:chatters</code> for Giveaways, say) is listed with what it
