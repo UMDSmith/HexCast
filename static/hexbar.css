@@ -80,6 +80,9 @@
 }
 .hb-dot.on{ background:var(--hb-good); box-shadow:0 0 7px -1px var(--hb-good); }
 .hb-dot.warn{ background:var(--hb-warn); }
+/* a page's own .on / .warn styles (a note with a left border, say) must not reach the dots */
+#hexbar .hb-dot{ padding:0; margin:0; border:0; font-size:0; }
+#hexbar .hb-nav{ padding:0; }                      /* (nor a page's own nav{} rule the bar's tabs) */
 
 .hb-spacer{ flex:1 1 auto; }
 
