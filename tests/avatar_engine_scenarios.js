@@ -363,4 +363,56 @@ const frames = (r, seconds) => { for (let i = 0; i < Math.round(seconds * 60); i
   lone._readColors(lone.cfg, true);
   out.pngLayer = [lone.pngTint('a'), lone.pngTint('b'), bare(HA).pngTint('a'), lone.pngAlpha('a'), lone.pngAlpha('b'), bare(HA).pngAlpha('a')];
 }
+{ // lights as the shader gets them: kind, strength (times the fade), blur, width / radius in page pixels, direction, a spot's place
+  const { HA } = load(file);
+  const pack = () => ({ A: new Float32Array(32), B: new Float32Array(32), C: new Float32Array(32), flash: 0, n: 0 });
+  const geo = { s: 0.5, M: { a: 1, b: 0, c: 0, d: 1, tx: 960, ty: 594 }, rx: 10, ry: 20, bw: 600, bh: 1080 };
+  const lt = { lights: [
+    { kind: 'key', color: '#ff0000', intensity: 0.8, angle: -90, blur: 50, preset: 'none' },
+    { kind: 'rim', color: '#00ff00', intensity: 1.0, angle: 0, width: 10, blur: 50, preset: 'none' },
+    { kind: 'spot', color: '#0000ff', intensity: 0.5, x: 50, y: 30, size: 25, blur: 60, preset: 'none', on: false },
+    { kind: 'spot', color: '#0000ff', intensity: 0.5, x: 50, y: 30, size: 25, blur: 60, preset: 'none' },
+    { kind: 'laser', intensity: 1 }] };
+  const p = HA.packLights(lt, 0.5, 100, 7, geo, pack());
+  const r = (v) => Math.round(v * 1000) / 1000;
+  out.lights = { n: p.n, key: Array.from(p.A.slice(0, 4)).map(r), keyDir: Array.from(p.C.slice(0, 2)).map(r), keyCol: Array.from(p.B.slice(0, 3)).map(r),
+                 rim: Array.from(p.A.slice(4, 8)).map(r), spot: Array.from(p.A.slice(8, 12)).map(r), spotAt: Array.from(p.C.slice(10, 12)).map(r),
+                 unused: Array.from(p.A.slice(12)).every((v) => v === 0) };
+  // storms are the same for every light (two strobes flash once, not twice as bright); police: the rim is the other colour
+  let most = 0, police = [];
+  for (let t = 0; t < 2; t += 0.01) {
+    const q = HA.packLights({ lights: [{ kind: 'key', preset: 'strobe', intensity: 0.5 }, { kind: 'rim', preset: 'strobe', intensity: 0.5 }] }, 1, t, 7, geo, pack());
+    most = Math.max(most, q.flash);
+  }
+  for (let t = 0; t < 1; t += 0.05) {
+    const k = HA.lightFrame({ kind: 'key', preset: 'police', intensity: 0.4 }, t, 7, 0), m = HA.lightFrame({ kind: 'rim', preset: 'police', intensity: 0.1 }, t, 7, 1);
+    police.push(k.col[0] > 0.5 ? (m.col[2] > 0.5 && m.k >= 0.8) : (m.col[0] > 0.5 && m.k >= 0.8));
+  }
+  out.lightStorms = { flash: r(most), policeOpposite: police.every(Boolean) };
+}
+{ // Spout output: a whole frame first, then only what changed (bands of rows, alike neighbours merged); nothing changed: nothing sent
+  const { HA } = load(file);
+  const P = new HA.SpoutPacker(8, 6, 2);
+  const px = (buf, x, y, v) => { new Uint32Array(buf.buffer)[y * 8 + x] = v; };
+  const msg = (m) => {
+    if (!m) return null;
+    const dv = new DataView(m.buffer, m.byteOffset, m.byteLength), n = dv.getUint16(4, true), rects = [];
+    for (let i = 0; i < n; i++) rects.push([0, 1, 2, 3].map((k) => dv.getUint16(8 + i * 8 + k * 2, true)));
+    return { magic: String.fromCharCode(m[0], m[1], m[2], m[3]), rects, bytes: m.byteLength };
+  };
+  let t = P.target(); px(t, 0, 0, 0xff0000ff); px(t, 7, 5, 0x11223344);
+  const first = msg(P.pack());
+  t = P.target(); t.set(P.sent);                                         // the next frame read back: the same picture
+  const same = msg(P.pack());
+  t = P.target(); t.set(P.sent); px(t, 5, 3, 7);                         // one pixel in the second band
+  const m1 = P.pack(), one = msg(m1);
+  const onePixel = Array.from(new Uint32Array(m1.slice(16).buffer).slice(0, 2));     // band rows 2-3 at x 5: (5,2) unchanged, (5,3) = 7
+  t = P.target(); t.set(P.sent); px(t, 1, 0, 9); px(t, 2, 1, 9); px(t, 1, 3, 9);       // bands 0 and 1 alike: one rectangle
+  const merged = msg(P.pack());
+  t = P.target(); t.set(P.sent); px(t, 0, 0, 1); px(t, 7, 2, 1);          // far apart columns: two rectangles
+  const apart = msg(P.pack());
+  P.forceFull(); t = P.target(); t.set(P.sent);
+  const forced = msg(P.pack());
+  out.spoutPacker = { first, same, one, onePixel, merged, apart, forced };
+}
 console.log(JSON.stringify(out));

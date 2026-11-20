@@ -19,13 +19,15 @@
    on its own. ?avatar=a,b narrows a source to some of its avatars.
    ?audio=0 keeps this source silent (another source plays the speech). ?note=1 shows problems
    (a missing runtime, a lost connection) on the overlay itself - off by default, so nothing but
-   avatars ever appears on stream. */
+   avatars ever appears on stream. ?spout=1&fps=30 is the hidden browser Hexcast starts for Spout
+   output: it draws the overlay into frames and sends them back to Hexcast instead of showing it. */
 (function () {
   var q = new URLSearchParams(location.search);
   var only = (q.get('avatar') || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean);
   var named = location.pathname.match(/\/overlay\/([^\/]+)\/?$/);
   var overlay = named ? decodeURIComponent(named[1]).toLowerCase() : 'main';
   var audio = q.get('audio') !== '0', showNote = q.get('note') === '1';
+  var spout = q.get('spout') === '1', spoutFps = Math.max(1, Math.min(60, parseInt(q.get('fps'), 10) || 30));
   var note = document.getElementById('note');
   function say(t) { if (showNote) { note.textContent = t; note.style.display = t ? 'block' : 'none'; } }
   if (!window.HexAvatar || !window.PIXI || !window.Live2DCubismCore) {
@@ -59,7 +61,7 @@
   }
   function connect() {
     var url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/avatar/ws/render?role=obs&overlay=' + encodeURIComponent(overlay) +
-      (only.length ? '&avatar=' + encodeURIComponent(only.join(',')) : '') + (audio ? '' : '&audio=0');
+      (only.length ? '&avatar=' + encodeURIComponent(only.join(',')) : '') + (audio ? '' : '&audio=0') + (spout ? '&via=spout' : '');
     ws = new WebSocket(url);
     ws.binaryType = 'arraybuffer';
     ws.onopen = function () { backoff = 500; say(''); };
@@ -74,8 +76,38 @@
     ready = true;
     queue.splice(0).forEach(handle);
     stage.listenClips();                                  // soundboard clips locked to an avatar here (its sound comes out of this source)
+    if (spout) startSpout();
   }).catch(function (e) { say('Avatars: ' + e.message); console.error(e); });
   connect();
+
+  /* Spout output: the frames go to Hexcast, which shares them (only while it asks for them - else this page is closed) */
+  function startSpout() {
+    var sw = null, wait = 500;
+    function open() {
+      sw = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/avatar/ws/spout?overlay=' + encodeURIComponent(overlay));
+      sw.binaryType = 'arraybuffer';
+      sw.onopen = function () { wait = 500; packer.forceFull(); sw.send(JSON.stringify({ type: 'hello', w: HexAvatar.W, h: HexAvatar.H, fps: spoutFps })); };
+      sw.onmessage = function (ev) { if (typeof ev.data === 'string' && ev.data.indexOf('"full"') >= 0) packer.forceFull(); };   // Hexcast lost track: a whole frame
+      sw.onclose = function () { sw = null; setTimeout(open, wait); wait = Math.min(8000, wait * 2); };
+    }
+    var packer = new HexAvatar.SpoutPacker(HexAvatar.W, HexAvatar.H), lastFull = 0;
+    open();
+    try {
+      stage.startCapture({ fps: spoutFps,
+        ready: function () { return !!(sw && sw.readyState === 1 && sw.bufferedAmount < 4e6); },    // (a frame still on its way: skip this one)
+        target: function () { return packer.target(); },
+        send: function () {
+          var now = Date.now();
+          if (now - lastFull > 5000) { packer.forceFull(); lastFull = now; }                     // a whole frame now and then, to be safe
+          var msg = packer.pack();
+          if (msg) sw.send(msg);
+        } });
+    } catch (e) {
+      console.error(e);
+      var tell = function () { if (sw && sw.readyState === 1) sw.send(JSON.stringify({ type: 'error', message: String(e && e.message || e) })); else setTimeout(tell, 1000); };
+      tell();
+    }
+  }
 })();
 </script>
 </body></html>

@@ -67,8 +67,9 @@ def av(real_world):
     import shutil
     shutil.rmtree(library.ROOT, ignore_errors=True)               # a fresh library for every test
     library.ensure_dirs()
-    avatar.CONFIG.update({"avatars": [], "overlays": ["main"], "stage": avatar.norm_stage({})})
+    avatar.CONFIG.update({"avatars": [], "overlays": ["main"], "stage": avatar.norm_stage({}), "spout": avatar.norm_spout({}, ["main"])})
     avatar.LIVE.clear()
+    avatar.SPOUT.clear()                                          # (no test ever starts a hidden browser: they fake the output)
     c = TestClient(real_world.app)
     c.mod, c.lib = avatar, library
     yield c
@@ -2018,3 +2019,287 @@ def test_motions_take_over_and_say_when_they_end(motion):
 
 def test_lipsync_switched_back_on_mid_line_picks_the_line_up_again(motion):
     assert motion["lipsync"] == [None, "analyser", None]                         # off, on again (not twice), off while loading
+
+
+# ---------------------------------------------------------------- light, outline, backgrounds, Spout (1.11)
+
+def test_a_light_saved_before_1_10_is_a_list_of_lights(av):
+    old = {"name": "x", "light": {"enabled": True, "preset": "police", "color": "#ff0000", "intensity": 0.8, "angle": 20,
+                                  "rim": "#00ff00", "rim_amount": 0, "speed": 2, "ambient": "#000000", "ambient_amount": 0.3}}
+    lt = av.mod.norm_avatar({}, old)["light"]
+    assert lt["enabled"] and lt["ambient"] == "#000000" and lt["ambient_amount"] == 0.3
+    assert [(x["name"], x["kind"], x["color"], x["angle"], x["preset"], x["speed"]) for x in lt["lights"]] == [
+        ("Key", "key", "#ff0000", 20, "police", 2), ("Rim", "rim", "#00ff00", 20, "police", 2)]       # police lit the rim even at 0
+    assert lt["lights"][0]["intensity"] == 0.8 and lt["lights"][1]["width"] == 10 and lt["lights"][1]["blur"] == 0
+    fire = av.mod.norm_avatar({}, {"name": "f", "light": {"preset": "fire", "angle": 20, "rim_amount": 0.5}})["light"]["lights"]
+    assert [(x["preset"], x["angle"]) for x in fire] == [("fire", 20), ("none", 90)]   # as the old fire looked: the rim its own colour, from below
+    plain = av.mod.norm_avatar({}, {"name": "y", "light": {"enabled": False, "color": "#123456", "rim_amount": 0}})["light"]
+    assert [x["kind"] for x in plain["lights"]] == ["key"] and plain["lights"][0]["color"] == "#123456"
+    assert "preset" not in plain and "rim" not in plain                       # the old keys are not kept
+    assert [x["kind"] for x in av.mod.norm_avatar({}, {"name": "z"})["light"]["lights"]] == ["key"]     # a new avatar: one key light
+
+
+def test_a_bot_that_speaks_the_old_light_steers_the_first_key_and_rim_light(av):
+    m = _upload(av)
+    _avatar(av, "a", model=m["id"])
+    av.post("/avatar/api/avatars/a/light", json={"lights": [{"name": "Front", "kind": "spot"}, {"name": "Top", "kind": "key", "angle": -90},
+                                                           {"name": "Side", "kind": "key"}], "save": True})
+    r = av.post("/avatar/api/avatars/a/light", json={"enabled": True, "preset": "fire", "color": "#ff0000", "intensity": 0.9, "rim_amount": 0.7, "angle": 10}).json()
+    lights = {x["name"]: x for x in r["light"]["lights"]}
+    assert r["light"]["enabled"] and list(lights) == ["Front", "Top", "Side", "Rim"]          # no rim light: one is made
+    assert lights["Top"]["color"] == "#ff0000" and lights["Top"]["intensity"] == 0.9 and lights["Side"]["color"] != "#ff0000"
+    assert lights["Rim"]["intensity"] == 0.7 and lights["Top"]["angle"] == 10
+    assert lights["Front"]["angle"] == -90                                    # a spot has no direction to change
+    assert {x["preset"] for n, x in lights.items() if n != "Rim"} == {"fire"}
+    assert (lights["Rim"]["preset"], lights["Rim"]["angle"]) == ("none", 90)  # the old fire: the rim keeps its colour, lit from below
+    assert _live(av, "light", "a") == r["light"]                              # for now ...
+    assert av.get("/avatar/api/avatars/a").json()["avatar"]["light"]["enabled"] is False     # ... the saved one is as it was
+
+
+def test_one_light_by_name(av):
+    m = _upload(av)
+    _avatar(av, "a", model=m["id"])
+    light = lambda body: av.post("/avatar/api/avatars/a/light", json=body)
+    r = light({"state": "on", "lights": [{"name": "Key", "kind": "key"}, {"name": "Back", "kind": "rim", "blur": 250}, {"name": "back", "kind": "rim"}]}).json()
+    assert [x["name"] for x in r["light"]["lights"]] == ["Key", "Back", "back 2"] and r["light"]["lights"][1]["blur"] == 100
+    r = light({"name": "BACK", "state": "toggle"}).json()
+    assert r["light"]["enabled"] and [x["on"] for x in r["light"]["lights"]] == [True, False, True]
+    r = light({"name": "Back", "intensity": 1.4, "color": "#0f0"}).json()["light"]["lights"][1]
+    assert r["intensity"] == 1.4 and r["color"] == "#00ff00" and r["on"] is False        # fields alone don't switch it
+    nope = light({"name": "Nope", "intensity": 1})
+    assert nope.status_code == 404 and "Key, Back, back 2" in nope.json()["error"] and "kind" in nope.json()["error"]
+    assert light({"name": "Laser", "kind": "laser"}).status_code == 400
+    r = light({"name": "Fill", "kind": "spot", "color": "#00ff00", "y": 70}).json()["light"]
+    assert r["lights"][-1]["name"] == "Fill" and r["lights"][-1]["on"] and r["lights"][-1]["y"] == 70
+    assert [x["name"] for x in light({"name": "fill", "remove": True}).json()["light"]["lights"]] == ["Key", "Back", "back 2"]
+    off = light({"state": "off"}).json()["light"]
+    assert not off["enabled"] and light({"name": "Key", "state": "on"}).json()["light"]["enabled"]   # one light on: the light goes on
+    many = light({"lights": [{"name": f"L{i}", "kind": "key"} for i in range(11)]}).json()["light"]["lights"]
+    assert len(many) == 8
+    assert light({"name": "Ninth", "kind": "spot"}).status_code == 400
+    assert light({"state": "flicker"}).status_code == 400
+    saved = light({"name": "L0", "color": "#abcdef", "save": True}).json()
+    assert saved["save"] and _live(av, "light", "a") is None
+    assert av.get("/avatar/api/avatars/a").json()["avatar"]["light"]["lights"][0]["color"] == "#abcdef"
+    light({"state": "off"})
+    r = light({"reset": True}).json()
+    assert r["reset"] and r["light"]["enabled"] and _live(av, "light", "a") is None
+
+
+def test_outline_on_off_and_its_numbers(av):
+    m = _upload(av)
+    a = _avatar(av, "a", model=m["id"])
+    assert a["outline"] == {"enabled": False, "color": "#ffffff", "width": 6, "blur": 0, "opacity": 1}
+    o = lambda body: av.post("/avatar/api/avatars/a/outline", json=body).json()
+    r = o({"state": "on", "color": "#f00", "width": 99, "blur": 12})
+    assert r["state"] == "on" and r["outline"] == {"enabled": True, "color": "#ff0000", "width": 60, "blur": 12, "opacity": 1}
+    assert o({"width": 4})["outline"]["enabled"] is True                      # a change keeps it on (and off stays off)
+    assert o({"state": "toggle"})["state"] == "off" and o({"color": "#00f"})["outline"]["enabled"] is False
+    assert av.get("/avatar/api/avatars/a").json()["avatar"]["outline"]["enabled"] is False      # all of it for now
+    assert o({"state": "on", "save": True})["save"] and av.get("/avatar/api/avatars/a").json()["avatar"]["outline"]["color"] == "#0000ff"
+    assert av.post("/avatar/api/avatars/a/outline", json={"state": "maybe"}).status_code == 400
+    assert av.post("/avatar/api/avatars/a", json={"outline": {"width": 9}}).json()["avatar"]["outline"]["width"] == 9
+
+
+def test_backgrounds_are_named_and_switched_like_scenes(av, renderers):
+    m = _upload(av)
+    _avatar(av, "a", model=m["id"])
+    obs = renderers("main")
+    bgs = [{"name": "Karaoke", "fill": {"kind": "gradient"}, "echo": {"style": "dots", "scale": 99, "size": 1}},
+           {"name": "karaoke", "echo": {"style": "laser"}}, {"name": "Shadow", "fill": {"kind": "wallpaper"}, "image": {"item": "Some Pic", "fit": "tile"}}]
+    a = av.post("/avatar/api/avatars/a", json={"backgrounds": bgs, "background": "KARAOKE"}).json()["avatar"]
+    assert [b["name"] for b in a["backgrounds"]] == ["Karaoke", "karaoke 2", "Shadow"] and a["background"] == "Karaoke"
+    k, k2, sh = a["backgrounds"]
+    assert k["echo"]["scale"] == 5 and k["echo"]["size"] == 4 and k["fill"]["kind"] == "gradient" and k["echo"]["weight"] == 0.6
+    assert k2["echo"]["style"] == "dots" and sh["fill"]["kind"] == "none" and sh["image"] == {"item": "some-pic", "fit": "cover", "opacity": 1}
+    assert len(av.post("/avatar/api/avatars/a", json={"backgrounds": [{"name": f"B{i}"} for i in range(20)]}).json()["avatar"]["backgrounds"]) == 16
+    av.post("/avatar/api/avatars/a", json={"backgrounds": bgs[:1] + bgs[2:], "background": "Karaoke"})
+    bg = lambda body: av.post("/avatar/api/avatars/a/background", json=body)
+    obs.ws.sent.clear()
+    r = bg({"name": "shadow"}).json()
+    assert r["background"] == "Shadow" and r["state"] == "on" and _live(av, "background", "a") == {"name": "Shadow"}
+    sent = [x for x in obs.ws.sent if isinstance(x, dict) and x.get("cmd") == "background"]
+    assert sent and sent[-1]["background"] == "Shadow" and not sent[-1]["save"]
+    assert bg({"name": "Shadow", "state": "toggle"}).json()["background"] == ""
+    assert bg({"name": "Shadow", "state": "toggle"}).json()["background"] == "Shadow"
+    assert bg({"name": "Karaoke", "state": "off"}).json()["background"] == "Shadow"   # (Karaoke was not the one on)
+    assert bg({"name": "none"}).json()["background"] == "" and bg({"state": "off"}).json()["background"] == ""
+    assert bg({}).status_code == 400
+    nope = bg({"name": "Disco"})
+    assert nope.status_code == 404 and "Karaoke, Shadow" in nope.json()["error"]
+    assert av.get("/avatar/api/avatars/a").json()["avatar"]["background"] == "Karaoke"        # the saved one is as it was
+    r = bg({"name": "Shadow", "save": True}).json()
+    assert r["save"] and av.get("/avatar/api/avatars/a").json()["avatar"]["background"] == "Shadow" and _live(av, "background", "a") is None
+    # the tab deletes the background a bot has on: it can't stay on, and the renderers hear so
+    bg({"name": "Karaoke"})
+    obs.ws.sent.clear()
+    av.post("/avatar/api/avatars/a", json={"backgrounds": bgs[2:]})
+    assert _live(av, "background", "a") is None
+    told = [x for x in obs.ws.sent if isinstance(x, dict) and x.get("cmd") == "background"]
+    assert told and told[-1]["reset"] and told[-1]["background"] == "Shadow"
+
+
+def test_a_change_in_the_tab_takes_over_from_a_light_or_outline_a_bot_holds(av, renderers):
+    m = _upload(av)
+    _avatar(av, "a", model=m["id"])
+    obs = renderers("main")
+    av.post("/avatar/api/avatars/a/light", json={"state": "on"})
+    av.post("/avatar/api/avatars/a/outline", json={"state": "on"})
+    obs.ws.sent.clear()
+    av.post("/avatar/api/avatars/a", json={"outline": {"width": 3}})
+    assert _live(av, "outline", "a") is None and _live(av, "light", "a") is not None          # only what was changed
+    told = [x for x in obs.ws.sent if isinstance(x, dict) and x.get("type") == "cmd"]
+    assert [(x["cmd"], x["reset"], x["outline"]["width"]) for x in told] == [("outline", True, 3)]
+    obs.ws.sent.clear()
+    av.post("/avatar/api/avatars/a", json={"outline": {"width": 4}})                          # nothing held: nothing to tell
+    assert not [x for x in obs.ws.sent if isinstance(x, dict) and x.get("type") == "cmd"]
+
+
+def test_the_look_commands_are_listed(av):
+    api = av.get("/avatar/api").json()
+    assert api["light_kinds"] == ["key", "rim", "spot"] and api["background_styles"] == ["dots", "lines", "solid", "glow"]
+    assert {"light", "outline", "background"} <= set(av.mod.COMMANDS)
+    assert any("/outline" in r for r in api["routes"]) and any("/background" in r for r in api["routes"])
+
+
+def test_the_renderer_packs_lights_for_the_shader(engine):
+    lt = engine["lights"]
+    assert lt["n"] == 3 and lt["unused"]                                      # a light switched off and an unknown kind take no slot
+    assert lt["key"] == [1, 0.4, 0.5, 0] and lt["keyDir"] == [0, -1] and lt["keyCol"] == [1, 0, 0]   # strength x the fade; from above
+    assert lt["rim"] == [2, 0.5, 3, 5]                                        # blur and width in page pixels (the stage at half size)
+    assert lt["spot"] == [3, 0.25, 0.6, 135] and lt["spotAt"] == [490, 209]  # on the avatar's box, where the page draws it
+    assert engine["lightStorms"] == {"flash": 0.35, "policeOpposite": True}  # two strobes flash once; police rims are the other colour
+
+
+def test_a_background_pattern_and_the_echo_in_the_models_colours(av):
+    a = av.mod.norm_avatar({"backgrounds": [{"name": "K", "pattern": {"kind": "dots", "size": 500, "fade": 3, "dir": 400, "color": "#0f0"},
+                                             "echo": {"art": 2}},
+                                            {"name": "L", "pattern": {"kind": "zigzag"}}]}, {"name": "x"})
+    k, l = a["backgrounds"]
+    assert k["pattern"]["kind"] == "dots" and k["pattern"]["size"] == 120 and k["pattern"]["fade"] == 1
+    assert k["pattern"]["dir"] == 180 and k["pattern"]["color"] == "#00ff00" and k["echo"]["art"] == 1
+    assert l["pattern"] == {**l["pattern"], "kind": "none", "opacity": 0.25, "weight": 0.5} and l["echo"]["art"] == 0
+
+
+def test_spout_frames_are_sent_whole_then_only_what_changed(engine):
+    p = engine["spoutPacker"]
+    assert p["first"] == {"magic": "HXS1", "rects": [[0, 0, 8, 6]], "bytes": 208}      # the first frame: all of it
+    assert p["same"] is None                                                            # nothing changed: nothing to send
+    assert p["one"]["rects"] == [[5, 2, 1, 2]] and p["one"]["bytes"] == 24 and p["onePixel"] == [0, 7]
+    assert p["merged"]["rects"] == [[1, 0, 2, 4]]                                      # two bands alike: one rectangle
+    assert p["apart"]["rects"] == [[0, 0, 1, 2], [7, 2, 1, 2]]                         # far apart: two
+    assert p["forced"]["rects"] == [[0, 0, 8, 6]]
+
+
+def _spout_msg(rects, extra=0):
+    head = b"HXS1" + len(rects).to_bytes(2, "little") + b"\0\0" + b"".join(v.to_bytes(2, "little") for r in rects for v in r)
+    return head + bytes(sum(r[2] * r[3] * 4 for r in rects) + extra)
+
+
+def test_spout_frame_messages_are_read_or_refused_whole(av):
+    sp = av.mod.spout
+    assert sp.parse_message(_spout_msg([(0, 0, 8, 6)]), 8, 6) == ([(0, 0, 8, 6, 16)], True)
+    assert sp.parse_message(_spout_msg([(1, 0, 2, 2), (7, 2, 1, 2)]), 8, 6) == ([(1, 0, 2, 2, 24), (7, 2, 1, 2, 40)], False)
+    for bad in (b"nope", b"HXS1\0\0\0\0", _spout_msg([(0, 0, 9, 6)]), _spout_msg([(0, 0, 8, 6)], extra=4), _spout_msg([(0, 0, 0, 6)])):
+        with pytest.raises(sp.SpoutError):
+            sp.parse_message(bad, 8, 6)
+
+
+class _FakeSender:
+    def __init__(self, name):
+        self.name, self.updates, self._fresh = name, [], True
+
+    @property
+    def fresh(self):
+        return self._fresh
+
+    def update(self, data, w, h, rects):
+        self.updates.append([r[:4] for r in rects])
+        self._fresh = False
+
+    def close(self):
+        pass
+
+
+def test_a_spout_output_applies_parts_of_frames_in_order_and_asks_for_a_whole_one_when_it_lost_track(av, monkeypatch):
+    sp = av.mod.spout
+    monkeypatch.setattr(sp, "Sender", _FakeSender)
+    o = sp.Output("main", "Hexcast Avatars")
+    o.enabled, o._thread = True, object()             # (no thread: the queue is worked here)
+    run = lambda: [o._apply(*o._queue.popleft()) for _ in range(len(o._queue))]
+    part, whole = _spout_msg([(1, 0, 2, 2)]), _spout_msg([(0, 0, 8, 6)])
+    o.push(part, 8, 6); run()                         # a part of a frame the sender never had: no use
+    assert o.sender.updates == [] and o.ask_full() and not o.ask_full()       # asked once (and again only after a while)
+    o.push(part, 8, 6)
+    assert not o._queue                               # parts wait for the whole frame
+    o.push(whole, 8, 6); o.push(part, 8, 6); run()
+    assert o.sender.updates == [[(0, 0, 8, 6)], [(1, 0, 2, 2)]] and not o.need_full and o.frames_out == 2
+    for _ in range(5):                                # the thread far behind: start again from a whole frame
+        o.push(part, 8, 6)
+    assert o.need_full and len(o._queue) == 0
+    o.push(b"junk", 8, 6)
+    assert o.error.startswith("the page")
+
+
+class _FakeOutput:
+    made: list = []
+
+    def __init__(self, overlay, name):
+        self.overlay, self.name, self.enabled, self.fps, self.audio = overlay, name, False, 30, True
+        self.error, self.url, self.pushed, self.stopped, self._full = "", None, [], 0, True
+        _FakeOutput.made.append(self)
+
+    def start(self, url, profile, browser):
+        self.enabled, self.url, self.profile = True, url, profile
+
+    async def stop(self):
+        self.enabled = False
+        self.stopped += 1
+
+    def push(self, data, w, h):
+        self.pushed.append((len(data), w, h))
+
+    def ask_full(self):
+        full, self._full = self._full, False
+        return full
+
+    def status(self):
+        return {"state": "running" if self.enabled else "off", "error": "", "fps": 30, "frames": len(self.pushed), "size": [1920, 1080], "browser": "chrome"}
+
+
+def test_spout_output_per_overlay_is_switched_saved_and_drawn_by_a_hidden_page(av, monkeypatch, renderers):
+    sp = av.mod.spout
+    monkeypatch.setattr(sp, "AVAILABLE", True)
+    monkeypatch.setattr(sp, "Output", _FakeOutput)
+    _FakeOutput.made = []
+    r = av.post("/avatar/api/spout/main", json={"state": "on", "fps": 60, "audio": False}).json()
+    assert r["enabled"] and r["fps"] == 60 and r["audio"] is False and r["name"] == "Hexcast Avatars" and r["state"] == "running"
+    out = av.mod.SPOUT["main"]
+    assert out.url == f"http://127.0.0.1:{av.mod.PORT}/avatar/overlay?spout=1&fps=60" and out.audio is False   # (the port Hexcast was asked on)
+    assert av.mod.CONFIG["spout"]["overlays"]["main"] == {"enabled": True, "fps": 60, "audio": False}
+    assert av.post("/avatar/api/spout/main", json={"fps": 45}).json()["fps"] == 30        # (30 or 60)
+    assert out.stopped == 1 and av.mod.SPOUT["main"].url.endswith("fps=30")                # a new frame rate: the page starts again
+    st = av.get("/avatar/api/spout").json()
+    assert st["available"] and st["overlays"]["main"]["enabled"] and "senders" in st
+    # the hidden page: frames go to the output; asked once for a whole frame; it is not an OBS source
+    with av.websocket_connect("/avatar/ws/spout?overlay=main") as ws:
+        ws.send_text(json.dumps({"type": "hello", "w": 1920, "h": 1080}))
+        ws.send_bytes(b"HXS1....")
+        assert json.loads(ws.receive_text()) == {"type": "full"}
+    assert av.mod.SPOUT["main"].pushed == [(8, 1920, 1080)]
+    page = renderers("main")
+    page.via = "spout"
+    assert av.get("/avatar/api/status").json()["by_overlay"]["main"] == 0 and av.get("/avatar/api/overlays").json()["overlays"][0]["sources"] == 0
+    # another overlay is its own sender; deleting the overlay ends it
+    _overlay(av, "guest")
+    av.post("/avatar/api/spout/guest", json={"state": "toggle"})
+    g = av.mod.SPOUT["guest"]
+    assert g.name == "Hexcast Avatars - guest" and g.url.startswith(f"http://127.0.0.1:{av.mod.PORT}/avatar/overlay/guest?spout=1")
+    av.post("/avatar/api/overlays/guest/delete")
+    assert "guest" not in av.mod.SPOUT and "guest" not in av.mod.CONFIG["spout"]["overlays"] and g.stopped == 1
+    assert av.post("/avatar/api/spout/main", json={"state": "off"}).json()["state"] == "off" and "main" not in av.mod.SPOUT
+    with av.websocket_connect("/avatar/ws/spout?overlay=main") as ws:         # switched off: its page is turned away
+        with pytest.raises(Exception):
+            ws.receive_text()
+    assert av.post("/avatar/api/spout", json={"browser": "C:/no/such/browser.exe"}).status_code == 400
+    assert av.post("/avatar/api/spout/nowhere", json={"state": "on"}).status_code == 404

@@ -13,6 +13,9 @@ Live2D avatars — and PNGtubers — that your AI drives through Hexcast's API �
 - [Items](#items)
 - [Colors](#colors)
 - [Light](#light)
+- [Outline](#outline)
+- [Backgrounds](#backgrounds)
+- [Spout output (Shoost and other apps, no OBS)](#spout-output-shoost-and-other-apps-no-obs)
 - [API](#api)
 - [Performance](#performance)
 - [Files](#files)
@@ -33,7 +36,7 @@ That source shows the avatars on the **main overlay** — all of them, until you
 - **The live preview** is the same renderer as OBS, so what you see is what is on stream. **Drag** an avatar to move it, **scroll** to zoom around the cursor, drag the **dot** above it to rotate, **double-click** to reset; hold **Shift** to snap. Items drag and scroll the same way. The bar above it shows the OBS source's frame rate and what each avatar costs.
 - **Avatars** are named slots — `main`, `guest`, `cat` … — each showing a model. The name is what your bot uses. There is no limit on how many; the same model can be on two avatars. Chips above the preview select one (the ones on the overlay you are looking at); **Bring forward** / **Send back** change which is in front of the others on its overlay.
 - **Overlays** are the row above the chips: one tab per OBS source, a green dot when that source is connected, **+ Overlay** to add one. The preview shows the selected overlay only.
-- **The inspector** (right) for the selected avatar: Placement · Face & Mood (emotion, expression, motion and gesture buttons, a look-at pad, the emotion table) · Mouth (lipsync source, meters, tuning, "learn this voice") · Idle · Parameters (every parameter of the model, live; drag one to take it over) · Items (props, and the model's **pin points**) · Clips (Soundboard GIFs locked to this avatar) · Colors · Light · API (ready-made calls for this avatar). **Placement** also holds **Hang from another avatar**.
+- **The inspector** (right) for the selected avatar: Placement · Face & Mood (emotion, expression, motion and gesture buttons, a look-at pad, the emotion table) · Mouth (lipsync source, meters, tuning, "learn this voice") · Idle · Parameters (every parameter of the model, live; drag one to take it over) · Items (props, and the model's **pin points**) · Clips (Soundboard GIFs locked to this avatar) · Colors · Light (lights and the outline) · Background · API (ready-made calls for this avatar). **Placement** also holds **Hang from another avatar**.
 - **Lock** an avatar so it can't be dragged by accident; untick **Visible** to take it off stream.
 - **Activity** at the bottom lists what bots asked for and what happened on stream (speech started / ended, motion finished, errors). A bot that streams `params` (or `release`) many times a second gets one line per avatar every few seconds — `x104 (26/s): MyHeadX, MyMouthOpen` — instead of one per message.
 
@@ -239,7 +242,41 @@ From bottom to top: the **avatar's own** colours (the tab), the **presets switch
 
 ## Light
 
-Per avatar: a coloured **key light** from a direction (0 = from the right, -90 = above, 180 = the left), a **rim light** on the edges facing it, and an **ambient tint**. **Presets** animate it: pulse, flicker, fire (flickering orange from below), police (red / blue), rainbow, strobe, lightning, neon. The API can change it for the moment (`light`) or for good (`"save": true`); `fade` blends.
+Per avatar, up to 8 lights, each with a name, a colour, a strength and a **blur** that softens it:
+
+- **Key light** — from a direction over the whole model (**From**: 0 = from the right, -90 = above, 180 = the left). Blur 0 is a hard line between the lit and the shaded side (cel shading); higher is softer (50 is how the single light of earlier versions looked).
+- **Rim light** — a line of light on the edges that face it. **Width** is how far in it reaches (pixels of the 1920×1080 overlay); blur softens the line.
+- **Spot** — a round pool of light at **X / Y** (% of the avatar's box: 50 / 30 is about the face) with a **Size** (its radius, % of the avatar's height); blur softens its edge. It moves with the avatar.
+
+Plus an **ambient tint** over all of it. **Presets** animate a light: pulse, flicker, fire (flickering orange from below), police (red / blue; a rim light takes the other colour), rainbow, strobe, lightning, neon — each at its own **speed**. Items on the avatar are lit too. The tab's **+ Key light / + Rim light / + Spot** add one, **Copy** duplicates it, the tick box switches it off without losing it.
+
+The API changes the light for the moment (`light`) or for good (`"save": true`); `fade` blends; `{"reset": true}` goes back to the saved one. A bot can switch one light by name (`{"name": "Rim", "state": "toggle"}`), change one (`{"name": "Rim", "color": "#ff0000"}`), add one (a new name with a `kind`) or remove one (`"remove": true`). Switching a light on switches the whole light on. The keys of the single light of earlier versions (`preset`, `color`, `intensity`, `angle`, `rim`, `rim_amount`, `speed`) still work: they steer the first key light and the first rim light (a rim light is added if there is none), `preset` and `speed` every light. A light saved by an earlier version becomes a key light (and a rim light if it had one).
+
+## Outline
+
+A line around the avatar's art and its items: a **colour**, an **opacity**, a **width** and a **blur** in pixels of the 1920×1080 overlay. Blur softens the line's edge — a wide blur on a thin (or no) line is a glow. It hugs the art as it moves. On the Light tab, or `outline` in the API (for the moment, or `"save": true`).
+
+## Backgrounds
+
+Named backgrounds an avatar can switch on and off like scenes — one at a time. A background is drawn on the avatar's overlay **behind every avatar on it**, and has up to four layers, bottom to top:
+
+- **Fill** — nothing (see-through), one colour, or a gradient (two colours and an angle) over the whole overlay.
+- **Picture** — a picture from the item library (Library → Items), covering the overlay, whole, or stretched.
+- **Pattern** — dots or lines over the whole overlay: two colours that run one way (**Running**: 90 = top to bottom), dots that get smaller (lines thinner) that way (**Fade**), the grid size, weight and angle, opacity, and a **drift**.
+- **Echo** — the avatar itself again, bigger and behind it, moving as it moves: the karaoke-stream backdrop. **Style**: dots (halftone), lines, a solid shape, or a soft glow; two **colours** (top → bottom), or the avatar's own colours (**Model's colours**: 1 = every dot in the colour of the art under it, 0 = the two colours, between = a mix); **Size** (against the avatar), **Move X / Y** (% of the overlay), the **grid** (pixels between dots / lines; the glow's reach) and its angle, the **weight** (how big a dot or how thick a line gets where the art is solid), **shading** (the art's dark parts make bigger dots), **fade down** (thinner towards the bottom), **drift** (the grid slides along) and **mirror**. A slightly bigger, offset solid shape is a drop shadow.
+
+On the Background tab: pick a kind (Karaoke dots, Comic lines, Shadow, Glow, Colour only, Picture) and press **+ Background** — it starts switched on. ● / ○ on a background switches it on or off (saved); its name opens it for editing. A bot switches them with `background`: `{"name": "Karaoke", "state": "on"|"off"|"toggle"}`, `{"name": "none"}` for none; for the moment, or `"save": true`; `{"reset": true}` goes back to the saved one. A background deleted in the tab can't stay on. Hiding the avatar hides its background too.
+
+## Spout output (Shoost and other apps, no OBS)
+
+An overlay can go straight into any Windows app that takes **Spout** — Shoost, VTube Studio's background, Resolume, TouchDesigner — with its transparency, without OBS. Tick **Spout output** under the overlay's address in the Avatars tab: the overlay becomes a Spout sender called **Hexcast Avatars** (`Hexcast Avatars - <overlay>` for the others). In **Shoost**: Settings → **Spout Capture** on, then add a **Spout Capture** layer and pick the sender.
+
+- Hexcast draws the overlay itself, in a hidden Chrome, Edge or Brave on the PC (the first it finds; `POST /avatar/api/spout {"browser": "C:/path/to/chrome.exe"}` picks another, or the `HEXCAST_BROWSER` environment variable). Nothing else to install: the Spout sender is part of the plugin. Windows only.
+- **30 or 60 fps**. After a first whole frame only what changed is sent, so an avatar on a see-through overlay easily keeps up; a background that moves all over (a drifting pattern) costs more.
+- **Play speech**: the speech the bot sends plays from that hidden browser, through the PC's default sound output (Spout carries no sound). Untick it when OBS (or another source) plays it already. Lipsync works either way.
+- It starts again by itself after a restart of Hexcast, and if the browser stops. The browser goes away with Hexcast, even if Hexcast is closed hard.
+- The tab shows what it is doing: *sending · 30 fps*, *starting the browser...*, or what went wrong (no browser found, a name another program uses ...).
+- An OBS browser source of the same overlay keeps working alongside.
 
 ## API
 
@@ -296,7 +333,11 @@ For values every frame (your own lipsync, head motion from a tracker of your own
 | `POST …/attach` | `{"to": "hex", "anchor": "head_top", "x": 50, "y": 20, "dx": 0, "dy": -45, "layer": "front"\|"back", "follow_angle": true, "mirror": false}` — hang this avatar from another on the same overlay (a mini model on a head); `anchor` is a pin point of the *parent's* model, else `x` / `y` are a spot in its box (% of it) and `dx` / `dy` nudge this avatar's centre (% of its own size). Later calls change only what they name; a new `to` starts afresh. Saved with the avatar. An unknown parent or pin point, itself, a loop or more than 4 deep is an error |
 | `POST …/detach` | `{}` lets go (back to its own `x` / `y`), or `{"x": 61, "y": 70, "scale": 0.4, "rotation": 0, "flip": false}` to put it somewhere |
 | `POST …/item_remove` · `…/items_clear` | `{"id": "halo1"}` |
-| `POST …/light` | `{"enabled": true, "preset": "fire", "color": "#ffd9a8", "intensity": 0.8, "angle": -35, "rim": "#7fb6ff", "rim_amount": 0.6, "ambient": "#ffffff", "ambient_amount": 0.2, "speed": 1, "fade": 0.6, "save": false}` or `{"reset": true}` |
+| `POST …/light` | The whole light: `{"state": "on"\|"off"\|"toggle", "ambient": "#ffffff", "ambient_amount": 0.2, "lights": [{"name": "Key", "kind": "key", "color": "#ffd9a8", "intensity": 0.8, "angle": -35, "blur": 50}, {"name": "Rim", "kind": "rim", "color": "#7fb6ff", "intensity": 1, "angle": 180, "width": 12, "blur": 20}, {"name": "Glow", "kind": "spot", "color": "#ff5fa2", "intensity": 0.5, "x": 50, "y": 30, "size": 25, "blur": 60, "preset": "pulse", "speed": 1}], "fade": 0.6, "save": false}` (`lights` replaces the list; `enabled` works too). One light: `{"name": "Rim", "state": "toggle"}`, `{"name": "Rim", "color": "#ff0000", "intensity": 1.4}`, `{"name": "Flash", "kind": "spot", …}` adds one, `{"name": "Flash", "remove": true}`. `kind` is `key`, `rim` or `spot`; `intensity` 0–3, `blur` 0–100, `width` 1–80 px, `x` / `y` % of the avatar's box, `size` % of its height. The old `{"preset", "color", "intensity", "angle", "rim", "rim_amount", "speed"}` steer the first key / rim light. `{"reset": true}` goes back to the saved light |
+| `POST …/outline` | `{"state": "on"\|"off"\|"toggle", "color": "#ffffff", "width": 6, "blur": 0, "opacity": 1, "fade": 0.4, "save": false}` — width and blur in pixels (0–60); a call without `state` keeps it on or off as it is; `{"reset": true}` |
+| `GET /avatar/api/spout` | Spout output: `available` (Windows), the browser it uses (`found`), the Spout senders on the PC, each overlay's output (`enabled`, `fps`, `audio`, `name`, `state`, `fps_now`, `error`) |
+| `POST /avatar/api/spout/<overlay>` | `{"state": "on"\|"off"\|"toggle", "fps": 30\|60, "audio": true}` — send that overlay out as a Spout sender (saved); `POST /avatar/api/spout {"browser": "…"}` picks the browser that draws it (`""` = the one found) |
+| `POST …/background` | `{"name": "Karaoke", "state": "on"\|"off"\|"toggle", "fade": 0.4, "save": false}` — one of the avatar's backgrounds (made on the Background tab, or with `backgrounds` in the settings); `{"name": "none"}` for none; `{"reset": true}`. The answer has `background` (what is on now, `""` for none) |
 | `POST …/reload` | load the model again |
 | `POST …/command` | `{"cmd": "<any of the above>", …}` |
 
@@ -320,7 +361,7 @@ Parameters and art meshes appear once the model has been drawn (by an overlay or
 | Call | Body |
 | --- | --- |
 | `POST /avatar/api/avatars` | `{"name": "guest", "model": "akari", "overlay": "guest"}` — create (`overlay` is optional: main; an overlay that doesn't exist is a 404) |
-| `POST /avatar/api/avatars/<name>` | any settings: `model`, `overlay`, `visible`, `locked`, `x`, `y`, `scale`, `rotation`, `flip`, `replace_expressions` (true: a new expression replaces the others; false: they stack), `idle {…}`, `mouth {…}` (`lipsync` true / false, `source` `speech` / `device` / `none`, `device`, `gain`, `cutoff`, `vowels`, `smoothing`, `delay_ms`, `open`; send only the keys you change: `{"mouth": {"lipsync": false}}`), `emotions {…}`, `colors {…}` (`{"all", "parts", "meshes"}` as above; replaces the saved set), `attach {…}` (as the `attach` call; `null` lets go; replaces the saved one), `light {…}` |
+| `POST /avatar/api/avatars/<name>` | any settings: `model`, `overlay`, `visible`, `locked`, `x`, `y`, `scale`, `rotation`, `flip`, `replace_expressions` (true: a new expression replaces the others; false: they stack), `idle {…}`, `mouth {…}` (`lipsync` true / false, `source` `speech` / `device` / `none`, `device`, `gain`, `cutoff`, `vowels`, `smoothing`, `delay_ms`, `open`; send only the keys you change: `{"mouth": {"lipsync": false}}`), `emotions {…}`, `colors {…}` (`{"all", "parts", "meshes"}` as above; replaces the saved set), `attach {…}` (as the `attach` call; `null` lets go; replaces the saved one), `light {…}` (`lights` replaces the list), `outline {…}`, `backgrounds [{name, fill: {kind: none\|color\|gradient, color, color2, angle, opacity}, image: {item, fit: cover\|contain\|stretch, opacity}, pattern: {kind: none\|dots\|lines, color, color2, dir, fade, size, weight, angle, opacity, speed}, echo: {enabled, style: dots\|lines\|solid\|glow, color, color2, art, scale, x, y, size, weight, angle, shade, fade, opacity, speed, mirror}}, …]` (up to 16; replaces the list), `background` (the name of the one that is on, `""` for none) |
 | `POST /avatar/api/avatars/<name>/rename` | `{"to": "host"}` |
 | `POST /avatar/api/avatars/<name>/delete` | |
 | `POST /avatar/api/overlays` | `{"name": "guest"}` — a new overlay, an OBS source at `/avatar/overlay/guest` |
@@ -495,7 +536,7 @@ Copy it into your bot and keep the `Avatar` class: `send()` waits for a command'
 
 | | |
 | --- | --- |
-| `config/avatar.json` | every avatar's settings (its overlay, placement, idle, mouth, emotions, items, colors, light), the list of overlays and the stage settings |
+| `config/avatar.json` | every avatar's settings (its overlay, placement, idle, mouth, emotions, items, colors, light, outline, backgrounds), the list of overlays and the stage settings |
 | `config/avatar_runtime/` | the downloaded Live2D runtime and when its license was accepted |
 | `media/avatars/models/<id>/` (PNGtuber) | its pictures and `pngtuber.json` (the rig: states, roles or layers, bounce ...) |
 | `media/avatars/models/<id>/` | a model as shipped, plus `hexcast.json` (Hexcast's settings for it: mappings, idle animation, physics), `hexcast.info.json` (its parameters, cached), `hexcast.colors.json` (its colour presets and which is the default) and `hexcast.anchors.json` (its pin points) - a PNGtuber has the last two too |

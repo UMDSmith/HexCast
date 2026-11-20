@@ -142,6 +142,14 @@
   .pchip button.pl,.pchip button.pm{font-size:11.5px;border-left:1px solid var(--line);color:var(--accent-soft)}
   .pchip button.pm{color:var(--muted)}
   .pchip button.pd{padding:4px 5px;font-size:13px} .pchip button.pd.is{color:#ffd23f}
+  /* light tab: a card per light */
+  .lcard{border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin:8px 0;background:#0e0e14}
+  .lcard.off{opacity:.55}
+  .lcard .hd{display:flex;gap:6px;align-items:center;margin-bottom:2px}
+  .lcard .hd input.nm{flex:1;min-width:0;font-weight:700}
+  .lcard .kchip{font:700 10.5px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--accent-soft);white-space:nowrap}
+  .lcard .f{grid-template-columns:86px minmax(0,1fr);margin:5px 0}
+  .pchip.sel{box-shadow:0 0 0 2px var(--accent-soft)}
   .ilist .it{display:grid;grid-template-columns:44px 1fr auto;gap:10px;align-items:center;border:1px solid var(--line);border-radius:9px;padding:8px;margin:6px 0;background:#0e0e14}
   .thumb{width:44px;height:44px;border-radius:7px;background:#0a0a0e center/contain no-repeat;border:1px solid var(--line)}
   .it .ctls{grid-column:1/-1;display:none}
@@ -267,6 +275,14 @@
       </div>
       <div class="url"><a id="u-ov" target="_blank" rel="noopener"></a><button class="sm" id="cp-ov">Copy</button><button class="sm danger" id="del-ov" style="display:none" title="Delete this overlay (its avatars move to main)">Delete overlay</button></div>
       <div class="dim" style="font-size:12px;margin-top:4px">OBS: Browser source, 1920&times;1080, tick <b>Control audio via OBS</b> (speech plays through it). Every overlay is its own source: scale, crop and move one in OBS without touching the others, so give an avatar its own overlay to size it on its own. Position inside an overlay is set by dragging in the preview.</div>
+      <div class="row" id="sp-row" style="margin-top:10px;gap:10px">
+        <label class="sw" title="Send this overlay straight to an app that takes Spout - Shoost, VTube Studio's background, Resolume ... - no OBS"><input type="checkbox" id="sp-on"> Spout output</label>
+        <span class="mono" id="sp-name" style="font-size:12px"></span>
+        <select id="sp-fps" title="Frames a second"><option value="30">30 fps</option><option value="60">60 fps</option></select>
+        <label class="sw" title="Speech plays from Hexcast's hidden browser (the PC's default sound output). Untick it if OBS plays it already."><input type="checkbox" id="sp-audio"> Play speech</label>
+        <span class="pill" id="sp-state"></span>
+      </div>
+      <div class="dim" id="sp-hint" style="font-size:12px;margin-top:4px">Spout: the overlay goes out as a Spout sender with its transparency, no OBS needed - Hexcast draws it in a hidden Chrome / Edge on this PC. In Shoost: <b>Settings &rarr; Spout Capture</b>, then add a <b>Spout Capture</b> layer and pick the sender.</div>
     </section>
 
     <!-- the selected avatar -->
@@ -299,6 +315,7 @@
           <button data-p="clips">Clips</button>
           <button data-p="colors">Colors</button>
           <button data-p="light">Light</button>
+          <button data-p="bg">Background</button>
           <button data-p="api">API</button>
         </div>
 
@@ -472,14 +489,67 @@
         </div>
 
         <div class="pane" data-p="light">
+          <p class="hint" style="margin-top:0">Light the avatar the way the scene is lit: any number of <b>key</b> lights (from a direction, over the whole model), <b>rim</b> lights (a line of light on the edges that face it) and <b>spots</b> (a round pool of light). <b>Blur</b> softens each one. Items on the avatar are lit too.</p>
           <div class="f"><span>Light</span><div class="ctl"><label class="sw"><input type="checkbox" data-k="light.enabled"> On</label></div></div>
-          <div class="f"><span>Preset</span><div class="ctl"><select data-k="light.preset" id="lt-preset" class="grow"></select></div></div>
-          <div class="f"><span>Key light</span><div class="ctl"><input type="color" data-k="light.color"><input type="range" min="0" max="2" step="0.01" data-k="light.intensity"><span class="val" data-v="light.intensity"></span></div></div>
-          <div class="f"><span>From</span><div class="ctl"><input type="range" min="-180" max="180" step="1" data-k="light.angle"><span class="val" data-v="light.angle"></span></div></div>
-          <div class="f"><span>Rim light</span><div class="ctl"><input type="color" data-k="light.rim"><input type="range" min="0" max="2" step="0.01" data-k="light.rim_amount"><span class="val" data-v="light.rim_amount"></span></div></div>
           <div class="f"><span>Ambient tint</span><div class="ctl"><input type="color" data-k="light.ambient"><input type="range" min="0" max="1" step="0.01" data-k="light.ambient_amount"><span class="val" data-v="light.ambient_amount"></span></div></div>
-          <div class="f"><span>Speed</span><div class="ctl"><input type="range" min="0.1" max="5" step="0.05" data-k="light.speed"><span class="val" data-v="light.speed"></span></div></div>
-          <p class="hint">"From" is where the light comes from: 0 = the right, -90 = above, 180 = the left. Presets animate it (fire flickers from below, police alternates red / blue ...).</p>
+          <div class="pill warn" id="lt-held" style="display:none;margin:4px 0 6px;white-space:normal"><span>A bot changed the light for now - what is here comes back when it lets go.</span><button class="sm ghost" id="lt-held-x" style="margin-left:6px">Let go</button></div>
+          <div id="lt-list"></div>
+          <div class="row" style="margin-top:8px"><button class="sm" data-add="key">+ Key light</button><button class="sm" data-add="rim">+ Rim light</button><button class="sm" data-add="spot">+ Spot</button><span class="dim" id="lt-count" style="font-size:12px"></span></div>
+          <p class="hint" style="margin-top:8px">"From" is where a light comes from: 0 = the right, -90 = above, 180 = the left. A spot sits at X / Y (% of the avatar's box: 50 / 30 is about the face). Presets animate a light (fire flickers from below, police alternates red / blue ...). A bot switches a light by its name: <span class="mono">light {"name": "Rim", "state": "toggle"}</span>.</p>
+
+          <h3>Outline</h3>
+          <div class="f"><span>Outline</span><div class="ctl"><label class="sw"><input type="checkbox" data-k="outline.enabled"> On</label></div></div>
+          <div class="f"><span>Colour</span><div class="ctl"><input type="color" data-k="outline.color"><input type="range" min="0" max="1" step="0.01" data-k="outline.opacity" title="Opacity"><span class="val" data-v="outline.opacity"></span></div></div>
+          <div class="f"><span>Width px</span><div class="ctl"><input type="range" min="0" max="60" step="0.5" data-k="outline.width"><input type="number" min="0" max="60" step="0.5" data-k="outline.width"></div></div>
+          <div class="f"><span>Blur px</span><div class="ctl"><input type="range" min="0" max="60" step="0.5" data-k="outline.blur"><input type="number" min="0" max="60" step="0.5" data-k="outline.blur"></div></div>
+          <div class="pill warn" id="ol-held" style="display:none;margin:4px 0 6px;white-space:normal"><span>A bot changed the outline for now.</span><button class="sm ghost" id="ol-held-x" style="margin-left:6px">Let go</button></div>
+          <p class="hint">A line around the art and its items, in pixels of the 1920x1080 overlay. Blur softens its edge - a wide blur on a thin line is a glow.</p>
+        </div>
+
+        <div class="pane" data-p="bg">
+          <p class="hint" style="margin-top:0">Backgrounds are drawn on this avatar's overlay, behind every avatar on it. An <b>echo</b> is the avatar itself again, bigger and behind it, in dots, lines, a flat shape or a glow - moving as it moves, like a karaoke stream's backdrop. A <b>pattern</b> of dots or lines can cover the whole background, and a <b>fill</b> (a colour or a gradient) and a <b>picture</b> from the item library can go under it. Click a background's name to switch it on or off; a bot switches them like scenes: <span class="mono">background {"name": "Karaoke", "state": "toggle"}</span>.</p>
+          <div class="row" id="bg-chips" style="gap:6px"></div>
+          <div class="row" style="margin-top:8px"><select id="bg-tpl"><option value="karaoke">Karaoke dots</option><option value="lines">Comic lines</option><option value="shadow">Shadow</option><option value="glow">Glow</option><option value="fill">Colour only</option><option value="picture">Picture</option></select><button class="sm" id="bg-add">+ Background</button><span class="dim" id="bg-count" style="font-size:12px"></span></div>
+          <div class="pill warn" id="bg-held" style="display:none;margin:8px 0 0;white-space:normal"><span id="bg-held-t"></span><button class="sm ghost" id="bg-held-x" style="margin-left:6px">Let go</button></div>
+          <div id="bg-edit" style="display:none;margin-top:10px">
+            <div class="row"><input id="bg-name" class="grow" maxlength="32" title="The name a bot uses"><button class="sm" id="bg-on" title="Switch this background on / off (saved)">Switch on</button><button class="sm ghost" id="bg-dup">Duplicate</button><button class="sm ghost danger" id="bg-del">Delete</button></div>
+            <h3>Echo</h3>
+            <div class="f"><span>Echo</span><div class="ctl"><label class="sw"><input type="checkbox" data-bk="echo.enabled"> The avatar again, behind it</label></div></div>
+            <div class="f"><span>Style</span><div class="ctl"><select data-bk="echo.style" class="grow"><option value="dots">Dots (halftone)</option><option value="lines">Lines</option><option value="solid">Solid shape</option><option value="glow">Soft glow</option></select></div></div>
+            <div class="f"><span>Colours</span><div class="ctl"><input type="color" data-bk="echo.color" title="At the top"><input type="color" data-bk="echo.color2" title="At the bottom"><span class="dim" style="font-size:12px">top &rarr; bottom</span></div></div>
+            <div class="f"><span>Model's colours</span><div class="ctl"><input type="range" min="0" max="1" step="0.01" data-bk="echo.art" title="0: the two colours above; 1: every dot / line in the avatar's own colour where it is"><span class="val" data-bv="echo.art"></span></div></div>
+            <div class="f"><span>Size</span><div class="ctl"><input type="range" min="0.3" max="5" step="0.01" data-bk="echo.scale"><span class="val" data-bv="echo.scale"></span></div></div>
+            <div class="f"><span>Move X %</span><div class="ctl"><input type="range" min="-100" max="100" step="0.5" data-bk="echo.x"><span class="val" data-bv="echo.x"></span></div></div>
+            <div class="f"><span>Move Y %</span><div class="ctl"><input type="range" min="-100" max="100" step="0.5" data-bk="echo.y"><span class="val" data-bv="echo.y"></span></div></div>
+            <div class="f"><span id="bg-size-l">Grid px</span><div class="ctl"><input type="range" min="4" max="80" step="1" data-bk="echo.size"><span class="val" data-bv="echo.size"></span></div></div>
+            <div class="f bg-dots"><span>Weight</span><div class="ctl"><input type="range" min="0.1" max="1" step="0.01" data-bk="echo.weight" title="How big a dot (or how thick a line) gets where the art is solid"><span class="val" data-bv="echo.weight"></span></div></div>
+            <div class="f bg-dots"><span>Grid angle</span><div class="ctl"><input type="range" min="-180" max="180" step="1" data-bk="echo.angle"><span class="val" data-bv="echo.angle"></span></div></div>
+            <div class="f bg-dots"><span>Shading</span><div class="ctl"><input type="range" min="0" max="1" step="0.01" data-bk="echo.shade" title="0: every dot the same; 1: the art's dark parts make bigger dots"><span class="val" data-bv="echo.shade"></span></div></div>
+            <div class="f bg-dots"><span>Drift px/s</span><div class="ctl"><input type="range" min="-200" max="200" step="1" data-bk="echo.speed" title="The grid slides along (0 = still)"><span class="val" data-bv="echo.speed"></span></div></div>
+            <div class="f"><span>Fade down</span><div class="ctl"><input type="range" min="0" max="1" step="0.01" data-bk="echo.fade" title="Thinner towards the bottom"><span class="val" data-bv="echo.fade"></span></div></div>
+            <div class="f"><span>Opacity</span><div class="ctl"><input type="range" min="0" max="1" step="0.01" data-bk="echo.opacity"><span class="val" data-bv="echo.opacity"></span></div></div>
+            <div class="f"><span>Mirror</span><div class="ctl"><label class="sw"><input type="checkbox" data-bk="echo.mirror"> Flip left-right</label></div></div>
+            <h3>Pattern</h3>
+            <div class="f"><span>Pattern</span><div class="ctl"><select data-bk="pattern.kind" class="grow"><option value="none">None</option><option value="dots">Dots over the whole overlay</option><option value="lines">Lines over the whole overlay</option></select></div></div>
+            <div class="f bg-pat"><span>Colours</span><div class="ctl"><input type="color" data-bk="pattern.color"><input type="color" data-bk="pattern.color2"><span class="dim" style="font-size:12px">first &rarr; second</span></div></div>
+            <div class="f bg-pat"><span>Running</span><div class="ctl"><input type="range" min="-180" max="180" step="1" data-bk="pattern.dir" title="Which way the colours run and the dots shrink: 90 = top to bottom, 0 = left to right"><span class="val" data-bv="pattern.dir"></span></div></div>
+            <div class="f bg-pat"><span>Fade</span><div class="ctl"><input type="range" min="0" max="1" step="0.01" data-bk="pattern.fade" title="Smaller dots / thinner lines towards the second colour (1: gone)"><span class="val" data-bv="pattern.fade"></span></div></div>
+            <div class="f bg-pat"><span>Grid px</span><div class="ctl"><input type="range" min="4" max="120" step="1" data-bk="pattern.size"><span class="val" data-bv="pattern.size"></span></div></div>
+            <div class="f bg-pat"><span>Weight</span><div class="ctl"><input type="range" min="0.05" max="1" step="0.01" data-bk="pattern.weight" title="How big a dot (how thick a line) is"><span class="val" data-bv="pattern.weight"></span></div></div>
+            <div class="f bg-pat"><span>Grid angle</span><div class="ctl"><input type="range" min="-180" max="180" step="1" data-bk="pattern.angle"><span class="val" data-bv="pattern.angle"></span></div></div>
+            <div class="f bg-pat"><span>Opacity</span><div class="ctl"><input type="range" min="0" max="1" step="0.01" data-bk="pattern.opacity"><span class="val" data-bv="pattern.opacity"></span></div></div>
+            <div class="f bg-pat"><span>Drift px/s</span><div class="ctl"><input type="range" min="-200" max="200" step="1" data-bk="pattern.speed" title="The grid slides along (0 = still)"><span class="val" data-bv="pattern.speed"></span></div></div>
+            <h3>Fill</h3>
+            <div class="f"><span>Fill</span><div class="ctl"><select data-bk="fill.kind" class="grow"><option value="none">None (see-through)</option><option value="color">A colour</option><option value="gradient">A gradient</option></select></div></div>
+            <div class="f bg-fill"><span>Colours</span><div class="ctl"><input type="color" data-bk="fill.color"><input type="color" data-bk="fill.color2" class="bg-grad"><span class="dim bg-grad" style="font-size:12px">first &rarr; second</span></div></div>
+            <div class="f bg-fill bg-grad"><span>Angle</span><div class="ctl"><input type="range" min="-180" max="180" step="1" data-bk="fill.angle" title="90: top to bottom"><span class="val" data-bv="fill.angle"></span></div></div>
+            <div class="f bg-fill"><span>Opacity</span><div class="ctl"><input type="range" min="0" max="1" step="0.01" data-bk="fill.opacity"><span class="val" data-bv="fill.opacity"></span></div></div>
+            <h3>Picture</h3>
+            <div class="f"><span>Picture</span><div class="ctl"><select data-bk="image.item" id="bg-item" class="grow"></select></div></div>
+            <div class="f bg-pic"><span>Fit</span><div class="ctl"><select data-bk="image.fit" class="grow"><option value="cover">Cover the overlay (cropped)</option><option value="contain">Whole picture</option><option value="stretch">Stretch</option></select></div></div>
+            <div class="f bg-pic"><span>Opacity</span><div class="ctl"><input type="range" min="0" max="1" step="0.01" data-bk="image.opacity"><span class="val" data-bv="image.opacity"></span></div></div>
+            <p class="hint">Pictures come from the item library (Library &rarr; Items). From the bottom up: the fill, the picture, the pattern, then the echo.</p>
+          </div>
         </div>
 
         <div class="pane" data-p="api">
@@ -577,6 +647,35 @@
   }
   $('dlg').addEventListener('keydown', function (e) { if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA') $('dlg-ok').click(); if (e.key === 'Escape') $('dlg-no').click(); });
 
+  /* ---------------------------------------------------------------- Spout output (per overlay) */
+  var SP = null;
+  async function loadSpout() {
+    var j = await fetch('/avatar/api/spout').then(function (r) { return r.json(); }).catch(function () { return null; });
+    if (j) { SP = j; renderSpout(); }
+  }
+  function renderSpout() {
+    var row = $('sp-row');
+    if (!SP || !SP.available) { row.style.display = 'none'; $('sp-hint').style.display = 'none'; return; }
+    var o = SP.overlays[S.ov] || { enabled: false, fps: 30, audio: true, state: 'off', name: '' };
+    if (document.activeElement !== $('sp-on')) $('sp-on').checked = !!o.enabled;
+    $('sp-fps').value = String(o.fps || 30);
+    $('sp-audio').checked = o.audio !== false;
+    $('sp-name').textContent = '"' + o.name + '"';
+    var st = $('sp-state'), txt = '', cls = '';
+    if (!o.enabled) txt = 'off';
+    else if (o.state === 'error') { txt = o.error || 'error'; cls = 'bad'; }
+    else if (o.fps_now > 0) { txt = 'sending \u00b7 ' + Math.round(o.fps_now) + ' fps'; cls = 'good'; }
+    else { txt = o.error || (SP.found ? 'starting the browser...' : 'no Chrome / Edge found'); cls = SP.found ? 'warn' : 'bad'; }
+    st.textContent = txt; st.className = 'pill ' + cls;
+    st.title = o.browser ? 'Drawn by ' + o.browser : '';
+  }
+  function spoutSet(body) { return api('POST', '/avatar/api/spout/' + encodeURIComponent(S.ov), body).then(function (r) { if (r) loadSpout(); }); }
+  $('sp-on').onchange = function () { spoutSet({ state: this.checked ? 'on' : 'off' }); };
+  $('sp-fps').onchange = function () { spoutSet({ fps: parseInt(this.value, 10) }); };
+  $('sp-audio').onchange = function () { spoutSet({ audio: this.checked }); };
+  setInterval(function () { if (SP && SP.available && Object.keys(SP.overlays).some(function (k) { return SP.overlays[k].enabled; })) loadSpout(); }, 2000);
+  loadSpout();
+
   $('cp-ov').onclick = function () { navigator.clipboard.writeText(location.origin + ovPath(S.ov)).then(function () { toast('Copied'); }); };
 
   /* ---------------------------------------------------------------- overlays */
@@ -594,7 +693,7 @@
     $('u-ov').textContent = url; $('u-ov').href = url;
     $('del-ov').style.display = S.ov === 'main' ? 'none' : '';
     $('f-overlay').style.display = list.length > 1 ? '' : 'none';
-    paintSources(); renderStats();
+    paintSources(); renderStats(); if (SP) renderSpout();
     if (stage) stage.setOverlay(S.ov);
     try { localStorage.setItem('hexcast.avatar.ov', S.ov); } catch (e) {}
   }
@@ -760,15 +859,16 @@
         case 'config': S.config = m.config; renderAll(true); break;
         case 'library': S.models = m.models; S.items = m.items; renderLibrary(); renderInspector(true); if (paneSel === 'png' && !PNG.dirty && !PNG.busy) loadPng(true); break;
         case 'runtime': location.reload(); break;
-        case 'stats': if (m.role === 'obs') { S.obsStats[m.overlay || 'main'] = m; renderStats(); paintSources(); } break;
+        case 'stats': if (m.role === 'obs' && m.via !== 'spout') { S.obsStats[m.overlay || 'main'] = m; renderStats(); paintSources(); } break;
+        case 'spout': loadSpout(); break;
         case 'activity': log('a', m.avatar, m.cmd + (m.summary ? '  ' + m.summary : '')); trackLive(m); break;
         case 'event': log(m.event === 'error' || m.event === 'speech_error' ? 'x' : 'e', m.avatar, m.event + (m.message ? '  ' + m.message : m.error ? '  ' + m.error : m.name ? '  ' + m.name : m.duration ? '  ' + m.duration + ' s' : '')); break;
       }
     };
     ws.onclose = function () { setTimeout(connectPanel, 1500); };
   }
-  function trackLive(m) { if (m.cmd === 'expression' || m.cmd === 'emotion' || m.cmd === 'clear_expressions' || m.cmd === 'color_preset' || m.cmd === 'clear_color_presets') refreshLive(); }
-  var refreshLive = debounce(async function () { var j = await fetch('/avatar/api/avatars').then(function (r) { return r.json(); }).catch(function () { return null; }); if (j) { S.live = j.live || {}; renderMood(); renderPresets(); } }, 150);
+  function trackLive(m) { if (/^(expression|emotion|clear_expressions|color_preset|clear_color_presets|light|outline|background)$/.test(m.cmd)) refreshLive(); }
+  var refreshLive = debounce(async function () { var j = await fetch('/avatar/api/avatars').then(function (r) { return r.json(); }).catch(function () { return null; }); if (j) { S.live = j.live || {}; renderMood(); renderPresets(); renderLight(); renderBg(); } }, 150);
 
   var logRows = [];
   function log(kind, avatar, text) {
@@ -850,7 +950,7 @@
       if (k === 'mouth.source') renderMouth();
     });
   });
-  if (document.querySelector('#insp [data-k="light.color"]')) {
+  {                                                       // a colour follows the picker while it is open
     document.querySelectorAll('#insp input[type=color][data-k]').forEach(function (el) { el.addEventListener('input', function () { el.dispatchEvent(new Event('change')); }); });
   }
   function fillFields(fromServer, except) {
@@ -897,7 +997,7 @@
       : "(the model's own - several can be on)";
     if (!isPng && paneSel === 'png') document.querySelector('#tabs [data-p=place]').click();
     if (isPng && paneSel === 'png') loadPng();
-    renderMood(); renderMouth(); renderItems(); renderAttach(); renderLight(); renderApi(); renderColors();
+    renderMood(); renderMouth(); renderItems(); renderAttach(); renderLight(); renderBg(); renderApi(); renderColors();
     if (paneSel === 'clips') { if (CL.index) renderClips(); else loadClips(); }
     if (paneSel === 'params' || (paneSel === 'colors' && !S.info[a.name])) loadInfo();
   }
@@ -2234,12 +2334,251 @@
   $('co-held-x').onclick = function () { cmd('release_colors', {}); };
 
   /* ---------------------------------------------------------------- light */
-  function renderLight() {
-    var sel = $('lt-preset'), a = cur(); if (!a) return;
-    var names = S.lightPresets.length ? S.lightPresets : ['none'];
-    if (sel.options.length !== names.length) sel.innerHTML = names.map(function (n) { return '<option value="' + n + '">' + (n === 'none' ? 'Steady' : n) + '</option>'; }).join('');
-    sel.value = (a.light || {}).preset || 'none';
+  var LT_KIND = { key: 'Key light', rim: 'Rim light', spot: 'Spot' };
+  var LT_NEW = {
+    key: { name: 'Key', kind: 'key', on: true, color: '#ffd9a8', intensity: 0.5, angle: -35, blur: 50, width: 10, x: 50, y: 30, size: 35, preset: 'none', speed: 1 },
+    rim: { name: 'Rim', kind: 'rim', on: true, color: '#7fb6ff', intensity: 0.6, angle: -35, blur: 0, width: 10, x: 50, y: 30, size: 35, preset: 'none', speed: 1 },
+    spot: { name: 'Spot', kind: 'spot', on: true, color: '#ffffff', intensity: 0.35, angle: -90, blur: 60, width: 10, x: 50, y: 30, size: 25, preset: 'none', speed: 1 }
+  };
+  var ltSig = '';
+  function lightList(a) { a.light = a.light || {}; a.light.lights = a.light.lights || []; return a.light.lights; }
+  function freeName(base, taken) {
+    var low = taken.map(function (n) { return String(n).toLowerCase(); }), n = base, i = 2;
+    while (low.indexOf(n.toLowerCase()) >= 0) n = base + ' ' + i++;
+    return n;
   }
+  // a change in the tab: the preview shows it at once, the server gets it a moment later
+  function previewAvatar(a) { if (stage && stage.avatars[a.name]) stage.avatars[a.name].setConfig(JSON.parse(JSON.stringify(a))); }
+  function lightChanged(a, rebuild) {
+    pending.light = JSON.parse(JSON.stringify(a.light));
+    previewAvatar(a);
+    saveSoon();
+    if (rebuild) { ltSig = ''; renderLight(); }
+  }
+  function renderLight() {
+    var a = cur(); if (!a) return;
+    var list = lightList(a), sig = a.name + '|' + list.map(function (l) { return l.kind + ':' + l.name; }).join(',') + '|' + S.lightPresets.length;
+    if (sig !== ltSig) {
+      ltSig = sig;
+      $('lt-list').innerHTML = list.length ? list.map(lightCard).join('') : '<div class="empty">No lights yet - add one below.</div>';
+    }
+    fillLights(a);
+    $('lt-count').textContent = list.length + ' of 8';
+    document.querySelectorAll('[data-add]').forEach(function (b) { b.disabled = list.length >= 8; });
+    var lv = S.live[a.name] || {};
+    $('lt-held').style.display = lv.light ? '' : 'none';
+    $('ol-held').style.display = lv.outline ? '' : 'none';
+  }
+  function lightCard(l, i) {
+    var presets = (S.lightPresets.length ? S.lightPresets : ['none']).map(function (n) { return '<option value="' + n + '">' + (n === 'none' ? 'Steady' : n) + '</option>'; }).join('');
+    function row(label, html) { return '<div class="f"><span>' + label + '</span><div class="ctl">' + html + '</div></div>'; }
+    function rng(k, min, max, step, title) {
+      return '<input type="range" min="' + min + '" max="' + max + '" step="' + step + '" data-lk="' + k + '"' + (title ? ' title="' + esc(title) + '"' : '') + '><span class="val" data-lv="' + k + '"></span>';
+    }
+    var h = '<div class="lcard" data-i="' + i + '">' +
+      '<div class="hd"><input type="checkbox" data-lk="on" title="On / off"><span class="kchip">' + LT_KIND[l.kind] + '</span>' +
+      '<input class="nm" data-lk="name" maxlength="24" title="Its name: what a bot calls it">' +
+      '<button class="sm ghost" data-la="dup" title="Duplicate">Copy</button><button class="sm ghost danger" data-la="del" title="Remove">&times;</button></div>' +
+      row('Colour', '<input type="color" data-lk="color">' + rng('intensity', 0, 3, 0.01, 'Strength'));
+    if (l.kind !== 'spot') h += row('From', rng('angle', -180, 180, 1, '0 = from the right, -90 = from above, 180 = from the left'));
+    if (l.kind === 'rim') h += row('Width px', rng('width', 1, 80, 0.5, 'How far in from the edge the light reaches'));
+    if (l.kind === 'spot') h += row('X %', rng('x', -50, 150, 0.5)) + row('Y %', rng('y', -50, 150, 0.5)) + row('Size', rng('size', 2, 200, 0.5, "Its radius, in % of the avatar's height"));
+    h += row('Blur', rng('blur', 0, 100, 1, l.kind === 'key' ? '0: a hard line between the lit and the shaded side' : l.kind === 'rim' ? '0: a crisp line of light' : '0: a hard edge'));
+    h += row('Preset', '<select data-lk="preset" class="grow">' + presets + '</select><input type="range" min="0.1" max="5" step="0.05" data-lk="speed" title="Speed" style="max-width:110px"><span class="val" data-lv="speed"></span>');
+    return h + '</div>';
+  }
+  function fillLights(a) {
+    var list = lightList(a);
+    document.querySelectorAll('#lt-list .lcard').forEach(function (card) {
+      var l = list[+card.dataset.i]; if (!l) return;
+      card.classList.toggle('off', l.on === false);
+      card.querySelectorAll('[data-lk]').forEach(function (el) {
+        if (el === document.activeElement && el.type !== 'range') return;
+        var v = l[el.dataset.lk];
+        if (el.type === 'checkbox') el.checked = v !== false; else if (v != null) el.value = v;
+      });
+      card.querySelectorAll('[data-lv]').forEach(function (el) { var v = l[el.dataset.lv]; el.textContent = v == null ? '' : fmt(v); });
+    });
+  }
+  function onLightField(e) {
+    var el = e.target, k = el.dataset.lk; if (!k) return;
+    var live = el.type === 'range' || el.type === 'color';                // these follow the drag; the rest wait for "change"
+    if ((e.type === 'change') === live) return;
+    var a = cur(); if (!a) return;
+    var card = el.closest('.lcard'), list = lightList(a), l = list[+card.dataset.i]; if (!l) return;
+    var v = el.type === 'checkbox' ? el.checked : el.type === 'range' ? parseFloat(el.value) : el.value;
+    if (k === 'name') {
+      v = String(v).trim();
+      if (!v) { el.value = l.name; return; }
+      v = freeName(v, list.filter(function (x) { return x !== l; }).map(function (x) { return x.name; }));
+    }
+    l[k] = v;
+    fillLights(a);
+    lightChanged(a, k === 'name');
+  }
+  $('lt-list').addEventListener('input', onLightField);
+  $('lt-list').addEventListener('change', onLightField);
+  $('lt-list').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-la]'); if (!b) return;
+    var a = cur(); if (!a) return;
+    var list = lightList(a), i = +b.closest('.lcard').dataset.i, l = list[i]; if (!l) return;
+    if (b.dataset.la === 'del') list.splice(i, 1);
+    else if (list.length < 8) {
+      var c = JSON.parse(JSON.stringify(l));
+      c.name = freeName(l.name.replace(/ \d+$/, ''), list.map(function (x) { return x.name; }));
+      list.splice(i + 1, 0, c);
+    }
+    lightChanged(a, true);
+  });
+  document.querySelectorAll('[data-add]').forEach(function (b) {
+    b.onclick = function () {
+      var a = cur(); if (!a) return;
+      var list = lightList(a); if (list.length >= 8) return;
+      var l = JSON.parse(JSON.stringify(LT_NEW[b.dataset.add]));
+      l.name = freeName(l.name, list.map(function (x) { return x.name; }));
+      list.push(l);
+      a.light.enabled = true;                                 // a light added is a light to see
+      fillFields();
+      lightChanged(a, true);
+    };
+  });
+  $('lt-held-x').onclick = function () { cmd('light', { reset: true }).then(refreshLive); };
+  $('ol-held-x').onclick = function () { cmd('outline', { reset: true }).then(refreshLive); };
+
+  /* ---------------------------------------------------------------- backgrounds */
+  var BG_BASE = {
+    name: 'Background',
+    fill: { kind: 'none', color: '#1b0f2e', color2: '#4a1838', angle: 90, opacity: 1 },
+    image: { item: '', fit: 'cover', opacity: 1 },
+    pattern: { kind: 'none', color: '#ffffff', color2: '#ff5fa2', size: 24, weight: 0.5, angle: 45, dir: 90, fade: 0.7, opacity: 0.25, speed: 0 },
+    echo: { enabled: true, style: 'dots', color: '#ff5fa2', color2: '#8a5cff', scale: 1.6, x: 0, y: -4, size: 14, weight: 0.6, angle: 45,
+            shade: 0, fade: 0.5, opacity: 0.85, speed: 0, mirror: false, art: 0 }
+  };
+  var BG_TPL = {
+    karaoke: { name: 'Karaoke', fill: { kind: 'gradient' }, pattern: { kind: 'dots', size: 26, weight: 0.55, fade: 0.85, opacity: 0.22 },
+               echo: { size: 12, weight: 0.75, fade: 0.3, opacity: 0.9, art: 1 } },
+    lines: { name: 'Comic', pattern: { kind: 'lines', color: '#40e0ff', color2: '#40e0ff', size: 18, weight: 0.25, angle: -20, fade: 0, opacity: 0.18 },
+             echo: { style: 'lines', color: '#40e0ff', color2: '#ff5fa2', scale: 1.8, size: 10, weight: 0.5, angle: -20, fade: 0.2, opacity: 0.8 } },
+    shadow: { name: 'Shadow', echo: { style: 'solid', color: '#000000', color2: '#000000', scale: 1.04, x: 1.2, y: 1, fade: 0, opacity: 0.45 } },
+    glow: { name: 'Glow', echo: { style: 'glow', color: '#ffd23f', color2: '#ff5fa2', scale: 1.12, y: 0, size: 26, fade: 0, opacity: 0.85 } },
+    fill: { name: 'Colour', fill: { kind: 'color', color: '#141420' }, echo: { enabled: false } },
+    picture: { name: 'Picture', echo: { enabled: false } }
+  };
+  var bgSel = 0;
+  function merged(base, over) {
+    var out = JSON.parse(JSON.stringify(base));
+    for (var k in over || {}) out[k] = over[k] && typeof over[k] === 'object' && !Array.isArray(over[k]) && out[k] && typeof out[k] === 'object' ? merged(out[k], over[k]) : over[k];
+    return out;
+  }
+  function pictureItems() { return (S.items || []).filter(function (it) { return it.ok !== false && /^(image|gif|sequence)$/.test(it.kind); }); }
+  function bgOn(a) { var lv = (S.live[a.name] || {}).background; return lv ? lv.name : a.background || ''; }
+  function bgChanged(a, rerender, alsoName) {
+    pending.backgrounds = JSON.parse(JSON.stringify(a.backgrounds));
+    if (alsoName) pending.background = a.background || '';
+    previewAvatar(a);
+    saveSoon();
+    if (rerender) renderBg();
+  }
+  function renderBg() {
+    var a = cur(); if (!a) return;
+    var list = a.backgrounds = a.backgrounds || [], on = bgOn(a), lv = (S.live[a.name] || {}).background;
+    if (bgSel >= list.length) bgSel = list.length - 1;
+    if (bgSel < 0 && list.length) bgSel = 0;
+    $('bg-chips').innerHTML = list.length ? list.map(function (b, i) {
+      var isOn = b.name === on;
+      return '<span class="pchip' + (isOn ? ' on' : '') + (i === bgSel ? ' sel' : '') + '"><button class="pd' + (isOn ? ' is' : '') + '" data-bt="' + i + '" title="' + (isOn ? 'On - click to switch it off' : 'Switch it on') + '">' + (isOn ? '&#9679;' : '&#9675;') + '</button>' +
+        '<button class="pt" data-bi="' + i + '" title="Edit it">' + esc(b.name) + '</button></span>';
+    }).join('') : '<div class="empty">No backgrounds yet - pick a kind and press + Background.</div>';
+    $('bg-count').textContent = list.length + ' of 16';
+    $('bg-add').disabled = list.length >= 16;
+    $('bg-held').style.display = lv ? '' : 'none';
+    $('bg-held-t').textContent = lv ? (lv.name ? 'A bot switched to "' + lv.name + '" for now.' : 'A bot switched the background off for now.') : '';
+    var b = list[bgSel];
+    $('bg-edit').style.display = b ? '' : 'none';
+    if (!b) return;
+    if (document.activeElement !== $('bg-name')) $('bg-name').value = b.name;
+    $('bg-on').textContent = b.name === a.background ? 'Switch off' : 'Switch on';
+    var items = pictureItems(), cur0 = (b.image || {}).item || '';
+    var opts = '<option value="">(none)</option>' + items.map(function (it) { return '<option value="' + esc(it.id) + '">' + esc(it.name) + ' (' + it.kind + ')</option>'; }).join('');
+    if (cur0 && !items.some(function (it) { return it.id === cur0; })) opts += '<option value="' + esc(cur0) + '">' + esc(cur0) + ' (missing)</option>';
+    if ($('bg-item').innerHTML !== opts) $('bg-item').innerHTML = opts;
+    document.querySelectorAll('#bg-edit [data-bk]').forEach(function (el) {
+      if (el === document.activeElement && el.type !== 'range') return;
+      var v = get(b, el.dataset.bk);
+      if (el.type === 'checkbox') el.checked = !!v; else if (v != null) el.value = v;
+    });
+    document.querySelectorAll('#bg-edit [data-bv]').forEach(function (el) { var v = get(b, el.dataset.bv); el.textContent = v == null ? '' : fmt(v); });
+    var st = (b.echo || {}).style, fk = (b.fill || {}).kind;
+    document.querySelectorAll('#bg-edit .bg-dots').forEach(function (r) { r.style.display = st === 'dots' || st === 'lines' ? '' : 'none'; });
+    $('bg-size-l').textContent = st === 'glow' ? 'Glow px' : st === 'lines' ? 'Line gap px' : 'Grid px';
+    $('bg-size-l').parentNode.style.display = st === 'solid' ? 'none' : '';
+    document.querySelectorAll('#bg-edit .bg-fill').forEach(function (r) { r.style.display = fk && fk !== 'none' ? '' : 'none'; });
+    document.querySelectorAll('#bg-edit .bg-grad').forEach(function (r) { r.style.display = fk === 'gradient' ? '' : 'none'; });
+    document.querySelectorAll('#bg-edit .bg-pic').forEach(function (r) { r.style.display = cur0 ? '' : 'none'; });
+    var pk = (b.pattern || {}).kind;
+    document.querySelectorAll('#bg-edit .bg-pat').forEach(function (r) { r.style.display = pk && pk !== 'none' ? '' : 'none'; });
+  }
+  function setBackgroundOn(a, name) {
+    a.background = name;
+    previewAvatar(a);
+    api('POST', '/avatar/api/avatars/' + encodeURIComponent(a.name), { background: name }).then(refreshLive);
+    renderBg();
+  }
+  $('bg-chips').addEventListener('click', function (e) {
+    var a = cur(); if (!a) return;
+    var t = e.target.closest('[data-bt]'), s = e.target.closest('[data-bi]');
+    if (t) { var b = a.backgrounds[+t.dataset.bt]; if (b) setBackgroundOn(a, bgOn(a) === b.name ? '' : b.name); }
+    if (s) { bgSel = +s.dataset.bi; renderBg(); }
+  });
+  $('bg-on').onclick = function () { var a = cur(), b = a && a.backgrounds[bgSel]; if (b) setBackgroundOn(a, a.background === b.name ? '' : b.name); };
+  $('bg-add').onclick = function () {
+    var a = cur(); if (!a) return;
+    var list = a.backgrounds = a.backgrounds || []; if (list.length >= 16) return;
+    var tpl = $('bg-tpl').value, b = merged(BG_BASE, BG_TPL[tpl] || {});
+    if (tpl === 'picture') { var pics = pictureItems(); b.image.item = pics.length ? pics[0].id : ''; if (!pics.length) toast('Add a picture to the item library first (Library → Items)'); }
+    b.name = freeName(b.name, list.map(function (x) { return x.name; }));
+    list.push(b);
+    bgSel = list.length - 1;
+    a.background = b.name;                                  // a background added is one to see
+    bgChanged(a, true, true);
+  };
+  $('bg-dup').onclick = function () {
+    var a = cur(), list = a && a.backgrounds, b = list && list[bgSel]; if (!b || list.length >= 16) return;
+    var c = JSON.parse(JSON.stringify(b));
+    c.name = freeName(b.name.replace(/ \d+$/, ''), list.map(function (x) { return x.name; }));
+    list.splice(bgSel + 1, 0, c); bgSel++;
+    bgChanged(a, true);
+  };
+  $('bg-del').onclick = function () {
+    var a = cur(), list = a && a.backgrounds, b = list && list[bgSel]; if (!b) return;
+    list.splice(bgSel, 1);
+    var was = a.background === b.name;
+    if (was) a.background = '';
+    bgChanged(a, true, was);
+  };
+  $('bg-name').addEventListener('change', function () {
+    var a = cur(), list = a && a.backgrounds, b = list && list[bgSel]; if (!b) return;
+    var v = this.value.trim();
+    if (!v) { this.value = b.name; return; }
+    v = freeName(v, list.filter(function (x) { return x !== b; }).map(function (x) { return x.name; }));
+    var was = a.background === b.name;
+    b.name = v; this.value = v;
+    if (was) a.background = v;                              // (the one that is on keeps being on)
+    bgChanged(a, true, was);
+  });
+  function onBgField(e) {
+    var el = e.target, k = el.dataset.bk; if (!k) return;
+    var live = el.type === 'range' || el.type === 'color';
+    if ((e.type === 'change') === live) return;
+    var a = cur(), b = a && a.backgrounds && a.backgrounds[bgSel]; if (!b) return;
+    var v = el.type === 'checkbox' ? el.checked : el.type === 'range' ? parseFloat(el.value) : el.value;
+    setPath(b, k, v);
+    bgChanged(a, false);
+    renderBg();
+  }
+  $('bg-edit').addEventListener('input', onBgField);
+  $('bg-edit').addEventListener('change', onBgField);
+  $('bg-held-x').onclick = function () { cmd('background', { reset: true }).then(refreshLive); };
 
   /* ---------------------------------------------------------------- API examples */
   function renderApi() {
@@ -2257,6 +2596,9 @@
       ['Recolour a part for 10 seconds (multiply / overlay / alpha; "meshes" and "all" too; null lets go; "save": true keeps it)', 'curl -X POST ' + b + '/colors -H "Content-Type: application/json" -d "{\\"parts\\": {\\"' + ((((S.info[a.name] || {}).parts || [])[0] || {}).id || 'PartHair') + '\\": {\\"multiply\\": \\"#ff8800\\", \\"overlay\\": \\"#202040\\", \\"alpha\\": 0.9}}, \\"for\\": 10}"'],
       ['Hide an art mesh (a prop, a hat ...)', 'curl -X POST ' + b + '/colors -H "Content-Type: application/json" -d "{\\"meshes\\": {\\"' + (((S.info[a.name] || {}).art_meshes || [])[0] || 'ArtMesh12') + '\\": {\\"alpha\\": 0}}}"'],
       ['Colour preset of the model, like a hotkey (on / off / toggle; several can be on)', 'curl -X POST ' + b + '/color_preset -H "Content-Type: application/json" -d "{\\"name\\": \\"' + ((S.models[a.model] || {}).color_presets || ['Night'])[0] + '\\", \\"state\\": \\"toggle\\"}"'],
+      ['Switch a background on, like a scene (state on / off / toggle; "none" for none; "save": true keeps it)', 'curl -X POST ' + b + '/background -H "Content-Type: application/json" -d "{\\"name\\": \\"' + (((a.backgrounds || [])[0] || {}).name || 'Karaoke') + '\\", \\"state\\": \\"toggle\\"}"'],
+      ['One light on / off (or change it: color, intensity, angle, blur, preset ...)', 'curl -X POST ' + b + '/light -H "Content-Type: application/json" -d "{\\"name\\": \\"' + ((((a.light || {}).lights || [])[0] || {}).name || 'Key') + '\\", \\"state\\": \\"toggle\\"}"'],
+      ['Outline (width and blur in pixels)', 'curl -X POST ' + b + '/outline -H "Content-Type: application/json" -d "{\\"state\\": \\"on\\", \\"color\\": \\"#ffffff\\", \\"width\\": 6, \\"blur\\": 0}"'],
       ['Slide in from the side', 'curl -X POST ' + b + '/transform -H "Content-Type: application/json" -d "{\\"x\\": ' + Math.round(a.x) + ', \\"duration\\": 1.2, \\"ease\\": \\"out\\"}"'],
       ['Lipsync on / off / toggle (the Lipsync tick box of the Mouth tab; WebSocket: {"cmd": "lipsync", "avatar": "' + a.name + '", "state": "toggle"})', 'curl -X POST ' + b + '/lipsync -H "Content-Type: application/json" -d "{\\"state\\": \\"toggle\\"}"']
     ];

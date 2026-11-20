@@ -16,11 +16,11 @@ avatars that must be sized and moved in OBS on their own go on their own overlay
 keeps a model alive by itself - blinking, breathing, idle sway, eyes that wander, head motion while
 talking - and the API steers it: any parameter, expressions, motions, emotions, gaze, gestures,
 placement, speech with lipsync (vowels, like VTube Studio's advanced lipsync), items, part colours
-(tints) and light. Items, other avatars (a mini model on a head) and soundboard clips can be glued
+(tints), lights, an outline and backgrounds (the avatar again behind it, as halftone dots ...). Items, other avatars (a mini model on a head) and soundboard clips can be glued
 to a spot on a model - a named pin point - and then move with that part of the art.
 
 The server holds what has to survive an OBS reload (settings, plus the "sticky" live state: held
-parameters, part opacities and colours, expressions, emotion, gaze, light, items) and relays
+parameters, part opacities and colours, expressions, emotion, gaze, light, outline, background, items) and relays
 everything else to the renderers.
 """
 
@@ -52,7 +52,7 @@ except ImportError:                                          # an older Hexcast:
 from hexcast_core.api import ApiError, check_same_origin
 from hexcast_core.staticfiles import RevalidatingStaticFiles
 
-from . import capture, library, runtime
+from . import capture, library, runtime, spout
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -123,13 +123,21 @@ AVATAR_DEFAULTS: dict[str, Any] = {
     "colors": {},
     # glued to another avatar on the same overlay (see norm_attach), or None
     "attach": None,
-    "light": {"enabled": False, "preset": "none", "color": "#ffd9a8", "intensity": 0.5, "angle": -35,
-              "ambient": "#ffffff", "ambient_amount": 0.0, "rim": "#7fb6ff", "rim_amount": 0.0, "speed": 1.0},
+    # any number of lights (see norm_light): {"enabled", "ambient", "ambient_amount", "lights": [{name, kind, ...}]}
+    "light": {"enabled": False, "ambient": "#ffffff", "ambient_amount": 0.0, "lights": None},
+    # a line around the art (see norm_outline): width and blur in stage pixels (the 1920x1080 overlay)
+    "outline": {"enabled": False, "color": "#ffffff", "width": 6.0, "blur": 0.0, "opacity": 1.0},
+    # named backgrounds drawn behind every avatar of the overlay (see norm_backgrounds); `background` is the one that is on
+    "backgrounds": [],
+    "background": "",
 }
 
 STAGE_DEFAULTS = {"fps": 60, "quality": "high", "show_fps": False}
 
-DEFAULT_CONFIG: dict[str, Any] = {"avatars": [], "overlays": [DEFAULT_OVERLAY], "stage": STAGE_DEFAULTS}
+# Spout output (Shoost, VTube Studio's background ...): per overlay, and the browser that draws it (empty: the one found)
+SPOUT_DEFAULTS: dict[str, Any] = {"browser": "", "overlays": {}}
+
+DEFAULT_CONFIG: dict[str, Any] = {"avatars": [], "overlays": [DEFAULT_OVERLAY], "stage": STAGE_DEFAULTS, "spout": SPOUT_DEFAULTS}
 
 
 # --------------------------------------------------------------------------------------------
@@ -352,7 +360,7 @@ def norm_attach(d: Any, own: str = "") -> dict | None:
 
 def norm_avatar(d: dict, existing: dict | None = None) -> dict:
     a = _deep_merge(AVATAR_DEFAULTS, existing or {})
-    a = _deep_merge(a, {k: v for k, v in (d or {}).items() if k not in ("emotions", "items", "colors", "attach")})
+    a = _deep_merge(a, {k: v for k, v in (d or {}).items() if k not in ("emotions", "items", "colors", "attach", "light", "backgrounds")})
     home = str(a.get("overlay") or "").strip().lower()
     out = {
         "name": str(a.get("name") or ""), "model": library.slug(str(a.get("model") or ""), "") if a.get("model") else "",
@@ -387,18 +395,185 @@ def norm_avatar(d: dict, existing: dict | None = None) -> dict:
     out["colors"] = norm_look(cols)
     att = d.get("attach") if d and "attach" in d else (existing or {}).get("attach")      # replaced as a whole, too
     out["attach"] = norm_attach(att, out["name"])
-    lt = a.get("light") or {}
-    out["light"] = {"enabled": bool(lt.get("enabled")),
-                    "preset": lt.get("preset") if lt.get("preset") in LIGHT_PRESETS else "none",
-                    "color": _color(lt.get("color"), "#ffd9a8"), "intensity": _num(lt.get("intensity"), 0, 2, 0.5),
-                    "angle": _num(lt.get("angle"), -180, 180, -35),
-                    "ambient": _color(lt.get("ambient"), "#ffffff"), "ambient_amount": _num(lt.get("ambient_amount"), 0, 1, 0),
-                    "rim": _color(lt.get("rim"), "#7fb6ff"), "rim_amount": _num(lt.get("rim_amount"), 0, 2, 0),
-                    "speed": _num(lt.get("speed"), 0.05, 10, 1)}
+    # light: the saved one with what is sent on top, key by key (its `lights` list is replaced as a whole)
+    lt_old, lt_new = (existing or {}).get("light"), (d or {}).get("light")
+    out["light"] = norm_light({**(lt_old if isinstance(lt_old, dict) else {}), **(lt_new if isinstance(lt_new, dict) else {})})
+    out["outline"] = norm_outline(a.get("outline"))
+    bgs = d.get("backgrounds") if d and "backgrounds" in d else (existing or {}).get("backgrounds")
+    out["backgrounds"] = norm_backgrounds(bgs)
+    out["background"] = _background_name(out["backgrounds"], a.get("background"))
     return out
 
 
 LIGHT_PRESETS = ["none", "pulse", "flicker", "fire", "police", "rainbow", "strobe", "lightning", "neon"]
+# key: a light from a direction over the whole model; rim: a line of light on the edges that face it; spot: a round pool of light
+LIGHT_KINDS = ["key", "rim", "spot"]
+MAX_LIGHTS = 8
+LIGHT_DEFAULTS = {
+    "key": {"name": "Key", "color": "#ffd9a8", "intensity": 0.5, "angle": -35.0, "blur": 50.0, "width": 10.0, "x": 50.0, "y": 30.0, "size": 35.0},
+    "rim": {"name": "Rim", "color": "#7fb6ff", "intensity": 0.6, "angle": -35.0, "blur": 0.0, "width": 10.0, "x": 50.0, "y": 30.0, "size": 35.0},
+    "spot": {"name": "Spot", "color": "#ffffff", "intensity": 0.35, "angle": -90.0, "blur": 60.0, "width": 10.0, "x": 50.0, "y": 30.0, "size": 25.0},
+}
+# the keys of the light before 1.11 (one key light, one rim light): still taken - from the saved config and from bots
+LEGACY_LIGHT_KEYS = ("preset", "color", "intensity", "angle", "rim", "rim_amount", "speed")
+
+
+def _norm_one_light(d: dict, kind: str | None = None) -> dict:
+    kind = kind or (d.get("kind") if d.get("kind") in LIGHT_KINDS else "key")
+    df = LIGHT_DEFAULTS[kind]
+    return {"name": str(d.get("name") or df["name"]).strip()[:24] or df["name"], "kind": kind, "on": bool(d.get("on", True)),
+            "color": _tint(d.get("color")) or df["color"], "intensity": _num(d.get("intensity"), 0, 3, df["intensity"]),
+            "angle": _num(d.get("angle"), -180, 180, df["angle"]),
+            # blur: how soft the light is (0 hard .. 100); width: how far a rim reaches in (stage pixels)
+            "blur": _num(d.get("blur"), 0, 100, df["blur"]), "width": _num(d.get("width"), 1, 80, df["width"]),
+            # a spot: where (% of the avatar's box, 0,0 its top left) and how big (its radius, % of the box's height)
+            "x": _num(d.get("x"), -50, 150, df["x"]), "y": _num(d.get("y"), -50, 150, df["y"]),
+            "size": _num(d.get("size"), 2, 200, df["size"]),
+            "preset": d.get("preset") if d.get("preset") in LIGHT_PRESETS else "none", "speed": _num(d.get("speed"), 0.05, 10, 1)}
+
+
+def _unique_names(rows: list[dict], key: str = "name") -> list[dict]:
+    seen: set[str] = set()
+    for r in rows:
+        base, n, i = r[key], r[key], 2
+        while n.lower() in seen:
+            n = f"{base[:20]} {i}"
+            i += 1
+        r[key] = n
+        seen.add(n.lower())
+    return rows
+
+
+def _old_rim_preset(preset: str, angle: Any) -> tuple[str, Any]:
+    """What the single light's preset did to its rim (before 1.11): fire and flicker left the rim's colour and strength
+    alone - fire only moved it below - where a rim light of its own with that preset is fire-coloured / flickers."""
+    if preset == "fire":
+        return "none", 90
+    return ("none" if preset == "flicker" else preset), angle
+
+
+def _legacy_lights(d: dict) -> list[dict]:
+    """The light of an avatar saved before 1.11 - one key light, a rim light on the side it faces - as a list."""
+    preset = d.get("preset") if d.get("preset") in LIGHT_PRESETS else "none"
+    out = [_norm_one_light({"color": d.get("color"), "intensity": d.get("intensity"), "angle": d.get("angle"),
+                            "preset": preset, "speed": d.get("speed")}, "key")]
+    rim = _num(d.get("rim_amount"), 0, 2, 0)
+    if rim > 0 or preset in ("police", "neon", "lightning"):        # (those presets lit the rim even when it was 0)
+        rim_preset, rim_angle = _old_rim_preset(preset, d.get("angle"))
+        out.append(_norm_one_light({"color": d.get("rim"), "intensity": rim, "angle": rim_angle, "width": 10, "blur": 0,
+                                    "preset": rim_preset, "speed": d.get("speed")}, "rim"))
+    return out
+
+
+def _apply_legacy_light(lights: list[dict], d: dict) -> list[dict]:
+    """A bot that speaks the old light (`color`, `intensity`, `rim`, `preset` ...) steers the first key light and the first rim
+    light (each made if there is none) - `preset` and `speed` every light, `angle` the key and the rim."""
+    lights = [dict(x) for x in lights]
+    if not lights:
+        lights = [_norm_one_light({}, "key")]
+    key = next((x for x in lights if x["kind"] == "key"), None)
+    if key is None and any(k in d for k in ("color", "intensity")):
+        key = _norm_one_light({"angle": d.get("angle")}, "key")
+        lights.insert(0, key)
+    rim = next((x for x in lights if x["kind"] == "rim"), None)
+    if rim is None and any(k in d for k in ("rim", "rim_amount")):
+        rim = _norm_one_light({"angle": (key or {}).get("angle", d.get("angle")), "intensity": 0}, "rim")
+        lights.append(rim)
+    if key is not None:
+        if "color" in d:
+            key["color"] = _tint(d["color"]) or key["color"]
+        if "intensity" in d:
+            key["intensity"] = _num(d["intensity"], 0, 3, key["intensity"])
+    if rim is not None:
+        if "rim" in d:
+            rim["color"] = _tint(d["rim"]) or rim["color"]
+        if "rim_amount" in d:
+            rim["intensity"] = _num(d["rim_amount"], 0, 3, rim["intensity"])
+    for x in lights:
+        if "angle" in d and x["kind"] in ("key", "rim"):
+            x["angle"] = _num(d["angle"], -180, 180, x["angle"])
+        if "preset" in d and d["preset"] in LIGHT_PRESETS:
+            x["preset"] = d["preset"]
+            if x is rim:                           # (the rim does what the single light's preset did to it)
+                x["preset"], x["angle"] = _old_rim_preset(d["preset"], x["angle"])
+        if "speed" in d:
+            x["speed"] = _num(d["speed"], 0.05, 10, x["speed"])
+    return lights[:MAX_LIGHTS]
+
+
+def norm_light(d: Any) -> dict:
+    """An avatar's light: `enabled`, an `ambient` tint (`ambient_amount` 0..1) and up to 8 `lights`, each {name, kind (key |
+    rim | spot), on, color, intensity, angle (where it comes from: 0 = the right, -90 = above), blur, width, x, y, size,
+    preset, speed}. The keys of the old single light are taken too (a config from before 1.11, a bot that sends them)."""
+    d = d if isinstance(d, dict) else {}
+    raw = d.get("lights")
+    if isinstance(raw, list):
+        lights = [_norm_one_light(x) for x in raw[:MAX_LIGHTS] if isinstance(x, dict)]
+    else:
+        lights = _legacy_lights(d)
+    if isinstance(raw, list) and any(k in d for k in LEGACY_LIGHT_KEYS):
+        lights = _apply_legacy_light(lights, d)
+    return {"enabled": bool(d.get("enabled")), "ambient": _tint(d.get("ambient")) or "#ffffff",
+            "ambient_amount": _num(d.get("ambient_amount"), 0, 1, 0), "lights": _unique_names(lights)}
+
+
+def norm_outline(d: Any) -> dict:
+    d = d if isinstance(d, dict) else {}
+    return {"enabled": bool(d.get("enabled")), "color": _tint(d.get("color")) or "#ffffff",
+            "width": _num(d.get("width"), 0, 60, 6), "blur": _num(d.get("blur"), 0, 60, 0), "opacity": _num(d.get("opacity"), 0, 1, 1)}
+
+
+# a background: drawn behind every avatar of its overlay while it is on - bottom to top: a colour or gradient `fill`, a picture
+# from the item library (`image`), a `pattern` of dots or lines over all of it, and an `echo`: the avatar itself again, bigger,
+# as dots / lines / a flat shape / a glow, moving with it (in its own colours, or two of yours)
+BACKGROUND_STYLES = ["dots", "lines", "solid", "glow"]
+PATTERN_KINDS = ["none", "dots", "lines"]
+MAX_BACKGROUNDS = 16
+
+
+def _norm_background(d: dict) -> dict:
+    f, im, e, pt = (d.get(k) if isinstance(d.get(k), dict) else {} for k in ("fill", "image", "echo", "pattern"))
+    return {
+        "name": str(d.get("name") or "Background").strip()[:32] or "Background",
+        "fill": {"kind": f.get("kind") if f.get("kind") in ("none", "color", "gradient") else "none",
+                 "color": _tint(f.get("color")) or "#1b0f2e", "color2": _tint(f.get("color2")) or "#4a1838",
+                 "angle": _num(f.get("angle"), -180, 180, 90), "opacity": _num(f.get("opacity"), 0, 1, 1)},
+        "image": {"item": library.slug(str(im.get("item") or ""), "") if im.get("item") else "",
+                  "fit": im.get("fit") if im.get("fit") in ("cover", "contain", "stretch") else "cover",
+                  "opacity": _num(im.get("opacity"), 0, 1, 1)},
+        # dots / lines over the whole overlay: a grid (stage px) at an angle; `dir` is the way the colours (color -> color2) run
+        # and the way the dots get smaller (`fade`); `speed` slides the grid along
+        "pattern": {"kind": pt.get("kind") if pt.get("kind") in PATTERN_KINDS else "none",
+                    "color": _tint(pt.get("color")) or "#ffffff", "color2": _tint(pt.get("color2")) or "#ff5fa2",
+                    "size": _num(pt.get("size"), 4, 120, 24), "weight": _num(pt.get("weight"), 0.05, 1, 0.5),
+                    "angle": _num(pt.get("angle"), -180, 180, 45), "dir": _num(pt.get("dir"), -180, 180, 90),
+                    "fade": _num(pt.get("fade"), 0, 1, 0.7), "opacity": _num(pt.get("opacity"), 0, 1, 0.25),
+                    "speed": _num(pt.get("speed"), -200, 200, 0)},
+        "echo": {"enabled": bool(e.get("enabled", True)),
+                 "style": e.get("style") if e.get("style") in BACKGROUND_STYLES else "dots",
+                 "color": _tint(e.get("color")) or "#ff5fa2", "color2": _tint(e.get("color2")) or "#8a5cff",
+                 # its size against the avatar's, and how far it sits from the avatar (% of the stage)
+                 "scale": _num(e.get("scale"), 0.3, 5, 1.6), "x": _num(e.get("x"), -100, 100, 0), "y": _num(e.get("y"), -100, 100, -4),
+                 # dots / lines: the grid (stage pixels) and its angle; shade: dots follow the art's dark parts; fade: smaller to the bottom
+                 "size": _num(e.get("size"), 4, 80, 14), "angle": _num(e.get("angle"), -180, 180, 45),
+                 "weight": _num(e.get("weight"), 0.1, 1, 0.6),
+                 "shade": _num(e.get("shade"), 0, 1, 0), "fade": _num(e.get("fade"), 0, 1, 0.5),
+                 "opacity": _num(e.get("opacity"), 0, 1, 0.85), "speed": _num(e.get("speed"), -200, 200, 0),
+                 "mirror": bool(e.get("mirror")),
+                 # 0: the two colours above; 1: each dot / line in the avatar's own colour where it is
+                 "art": _num(e.get("art"), 0, 1, 0)},
+    }
+
+
+def norm_backgrounds(d: Any) -> list[dict]:
+    rows = [_norm_background(x) for x in (d if isinstance(d, list) else [])[:MAX_BACKGROUNDS] if isinstance(x, dict)]
+    return _unique_names(rows)
+
+
+def _background_name(bgs: list[dict], name: Any) -> str:
+    """The background of that name (any case) as it is spelled in the list, or "" (none)."""
+    n = str(name or "").strip().lower()
+    return next((b["name"] for b in bgs if b["name"].lower() == n), "")
 
 
 def norm_stage(d: dict) -> dict:
@@ -434,7 +609,21 @@ def load_config() -> dict:
     for a in avatars:
         if a["overlay"] not in overlays:
             a["overlay"] = DEFAULT_OVERLAY
-    return {"avatars": avatars, "overlays": overlays, "stage": norm_stage(raw.get("stage") or {})}
+    return {"avatars": avatars, "overlays": overlays, "stage": norm_stage(raw.get("stage") or {}),
+            "spout": norm_spout(raw.get("spout"), overlays)}
+
+
+def norm_spout(d: Any, overlays: list[str]) -> dict:
+    """{browser, overlays: {overlay: {enabled, fps, audio}}} - an overlay that is gone loses its entry."""
+    d = d if isinstance(d, dict) else {}
+    outs = d.get("overlays") if isinstance(d.get("overlays"), dict) else {}
+    return {"browser": str(d.get("browser") or "").strip()[:400],
+            "overlays": {o: _norm_spout_out(v) for o, v in outs.items() if o in overlays and isinstance(v, dict)}}
+
+
+def _norm_spout_out(v: dict) -> dict:
+    return {"enabled": bool(v.get("enabled")), "fps": 60 if int(_num(v.get("fps"), 1, 60, 30)) > 45 else 30,
+            "audio": bool(v.get("audio", True))}
 
 
 def save_config() -> None:
@@ -474,7 +663,70 @@ def overlay_info(oid: str) -> dict:
     """What a bot or the tab needs to know about an overlay: where its OBS source points, what is on it."""
     return {"id": oid, "path": "/avatar/overlay" if oid == DEFAULT_OVERLAY else f"/avatar/overlay/{oid}",
             "avatars": [a["name"] for a in CONFIG["avatars"] if a["overlay"] == oid],
-            "sources": sum(1 for c in HUB.obs() if c.overlay == oid)}
+            "sources": sum(1 for c in HUB.obs() if c.overlay == oid and c.via != "spout")}
+
+
+# --------------------------------------------------------------------------------------------
+# Spout output: an overlay straight into Shoost (or any app that takes Spout) - no OBS
+# --------------------------------------------------------------------------------------------
+
+SPOUT: dict[str, spout.Output] = {}          # overlay -> its output (while it is on, or was)
+PORT = 4747                                  # where the hidden browser finds Hexcast (the plugin's port; a request corrects it)
+
+
+def spout_name(oid: str) -> str:
+    """The sender's name, as Shoost lists it."""
+    return "Hexcast Avatars" if oid == DEFAULT_OVERLAY else f"Hexcast Avatars - {oid}"
+
+
+def spout_status(oid: str) -> dict:
+    cfg = CONFIG.get("spout", SPOUT_DEFAULTS)["overlays"].get(oid) or _norm_spout_out({})
+    out = SPOUT.get(oid)
+    st = out.status() if out else {"state": "off", "error": "", "fps": 0, "frames": 0, "size": [0, 0], "browser": ""}
+    return {**cfg, "name": spout_name(oid), "state": st["state"] if cfg["enabled"] else "off", "error": st["error"] if cfg["enabled"] else "",
+            "fps_now": st["fps"], "frames": st["frames"], "size": st["size"], "browser": st["browser"]}
+
+
+def _spout_url(oid: str, cfg: dict) -> str:
+    path = "/avatar/overlay" if oid == DEFAULT_OVERLAY else f"/avatar/overlay/{quote(oid)}"
+    return f"http://127.0.0.1:{PORT}{path}?spout=1&fps={cfg['fps']}"
+
+
+async def sync_spout() -> None:
+    """Start the outputs that are switched on, stop the others (and one whose settings changed starts again)."""
+    if not spout.AVAILABLE:
+        return
+    conf = CONFIG.get("spout", SPOUT_DEFAULTS)
+    for oid in list(SPOUT):
+        want = conf["overlays"].get(oid)
+        out = SPOUT[oid]
+        if not want or not want["enabled"] or (out.enabled and (out.fps, out.audio, getattr(out, "_url", "")) != (want["fps"], want["audio"], _spout_url(oid, want))):
+            await out.stop()
+            if not want or not want["enabled"]:
+                SPOUT.pop(oid, None)
+    for oid, want in conf["overlays"].items():
+        if not want["enabled"] or oid not in CONFIG["overlays"]:
+            continue
+        out = SPOUT.get(oid) or SPOUT.setdefault(oid, spout.Output(oid, spout_name(oid)))
+        if not out.enabled:
+            out.fps, out.audio = want["fps"], want["audio"]
+            out._url = _spout_url(oid, want)
+            out.start(out._url, str(paths.CONFIG_DIR / "avatar_spout" / oid), conf["browser"])
+
+
+async def stop_spout() -> None:
+    for out in list(SPOUT.values()):
+        await out.stop()
+    SPOUT.clear()
+
+
+def _note_port(scope_server) -> None:
+    global PORT
+    try:
+        if scope_server and int(scope_server[1]) > 0:
+            PORT = int(scope_server[1])
+    except (TypeError, ValueError, IndexError):
+        pass
 
 
 def _targets(name: str) -> list[str]:
@@ -667,14 +919,15 @@ def suggest_emotions(model_id: str) -> dict:
 # --------------------------------------------------------------------------------------------
 
 # LIVE[name] = {"params": {key: cmd}, "expressions": {name: until}, "emotion": cmd | None,
-#               "face": cmd | None, "look": cmd | None, "light": dict | None, "transform": dict | None}
+#               "face": cmd | None, "look": cmd | None, "light": dict | None, "transform": dict | None,
+#               "outline": dict | None, "background": {"name": str} | None}    (None: the saved setting)
 LIVE: dict[str, dict] = {}
 
 
 def _live(name: str) -> dict:
     return LIVE.setdefault(name, {"params": {}, "parts": {}, "colors": {}, "color_presets": {}, "expressions": {},
                                   "emotion": None, "face": None, "look": None, "light": None, "transform": None,
-                                  "visible": None})
+                                  "visible": None, "outline": None, "background": None})
 
 
 def _expired(until: float | None, now: float) -> bool:
@@ -804,6 +1057,7 @@ class Client:
                  overlay: str | None = None):
         self.ws, self.kind, self.role, self.only, self.audio = ws, kind, role, only, audio
         self.overlay = overlay                    # an OBS source draws one overlay; None (the tab's preview) draws any
+        self.via = ""                             # "spout": the hidden browser of a Spout output (an OBS source in every other way)
         self.stats: dict = {}
         self.id = uuid.uuid4().hex[:8]
         self.pcm_busy = False                     # a block of device audio is on its way to this renderer
@@ -899,7 +1153,8 @@ def models_payload() -> dict:
 def snapshot() -> dict:
     return {"type": "snapshot", "config": CONFIG, "models": models_payload(), "items": library.list_items(),
             "live": live_snapshot(), "time": time.time(), "inputs": INPUTS, "gestures": GESTURES,
-            "light_presets": LIGHT_PRESETS, "face": list(FACE), "build": build()}
+            "light_presets": LIGHT_PRESETS, "light_kinds": LIGHT_KINDS, "background_styles": BACKGROUND_STYLES,
+            "pattern_kinds": PATTERN_KINDS, "face": list(FACE), "build": build()}
 
 
 async def broadcast_config() -> None:
@@ -1247,19 +1502,8 @@ async def _command_one(name: str, kind: str, cmd: dict, source: str) -> dict:
         out.update({k: cmd[k] for k in ("id", "url", "mime", "volume", "text", "interrupt") if k in cmd})
     elif kind == "stop_speaking":
         pass
-    elif kind == "light":
-        lt = norm_avatar({"light": {**a["light"], **(st["light"] or {}), **{k: v for k, v in cmd.items() if k != "cmd"}}})["light"]
-        if cmd.get("save"):
-            a["light"] = lt
-            st["light"] = None
-            save_config()
-            await broadcast_config()
-        elif cmd.get("reset"):
-            st["light"] = None
-            lt = a["light"]
-        else:
-            st["light"] = lt
-        out.update({"light": lt, "fade": _num(cmd.get("fade", 0.6), 0, 30, 0.6)})
+    elif kind in ("light", "outline", "background"):
+        out.update(await _look_command(a, st, kind, cmd))
     elif kind in ("item_add", "item_remove", "item_update", "items_clear"):
         out.update(await _items_command(a, kind, cmd))
     elif kind in ("attach", "detach"):
@@ -1313,6 +1557,124 @@ async def _items_command(a: dict, kind: str, cmd: dict) -> dict:
     save_config()
     await HUB.everyone({"type": "config", "config": CONFIG})
     return {"items": a["items"], "fade": _num(cmd.get("fade", 0.3), 0, 30, 0.3)}
+
+
+LIGHT_FIELDS = ("kind", "on", "color", "intensity", "angle", "blur", "width", "x", "y", "size", "preset", "speed")
+
+
+def _switch(cmd: dict, cur: bool) -> bool | None:
+    """`state`: on / off / toggle against `cur` - or `enabled` - else None (left as it is)."""
+    s = cmd.get("state")
+    if s is None:
+        return bool(cmd["enabled"]) if "enabled" in cmd else None
+    if s not in ("on", "off", "toggle"):
+        raise CommandError("state is 'on', 'off' or 'toggle'")
+    return (not cur) if s == "toggle" else s == "on"
+
+
+def _light_change(cur: dict, cmd: dict) -> dict:
+    """The light after a `light` call. With `name` the call is about that one light (its fields; `state` / `on` switch it;
+    `remove`; a name it doesn't have plus a `kind` adds one); without, `state` / `enabled` switch the whole light, `lights`
+    replaces the list and the old single-light keys steer the first key and rim light."""
+    lt = json.loads(json.dumps(cur))
+    for k in ("ambient", "ambient_amount"):
+        if k in cmd:
+            lt[k] = cmd[k]
+    if "lights" in cmd:
+        if not isinstance(cmd["lights"], list):
+            raise CommandError("`lights` is a list of lights: [{\"kind\": \"rim\", \"color\": \"#7fb6ff\", ...}]")
+        lt["lights"] = cmd["lights"]
+    name = str(cmd.get("name") or "").strip()
+    if name and "enabled" in cmd:
+        lt["enabled"] = bool(cmd["enabled"])
+    if not name:
+        on = _switch(cmd, bool(lt.get("enabled")))
+        if on is not None:
+            lt["enabled"] = on
+        lt.update({k: cmd[k] for k in LEGACY_LIGHT_KEYS if k in cmd})
+        return norm_light(lt)
+    rows = norm_light(lt)["lights"]
+    idx = next((i for i, x in enumerate(rows) if x["name"].lower() == name.lower()), None)
+    fields = {k: cmd[k] for k in LIGHT_FIELDS if k in cmd}
+    if cmd.get("remove"):
+        if idx is None:
+            raise CommandError(f"no light {name!r} (lights: {', '.join(x['name'] for x in rows) or 'none'})", 404)
+        rows.pop(idx)
+    elif idx is None:
+        if "kind" not in cmd:
+            raise CommandError(f"no light {name!r} (lights: {', '.join(x['name'] for x in rows) or 'none'}) - send a `kind` "
+                               f"({', '.join(LIGHT_KINDS)}) to add it", 404)
+        if cmd["kind"] not in LIGHT_KINDS:
+            raise CommandError(f"kind is one of: {', '.join(LIGHT_KINDS)}")
+        if len(rows) >= MAX_LIGHTS:
+            raise CommandError(f"an avatar has up to {MAX_LIGHTS} lights")
+        row = _norm_one_light({**fields, "name": name})
+        sw = _switch(cmd, True)
+        row["on"] = True if sw is None else sw
+        rows.append(row)
+        if row["on"]:
+            lt["enabled"] = True
+    else:
+        if "kind" in fields and fields["kind"] not in LIGHT_KINDS:
+            raise CommandError(f"kind is one of: {', '.join(LIGHT_KINDS)}")
+        row = _norm_one_light({**rows[idx], **fields})
+        sw = _switch({k: cmd[k] for k in ("state",) if k in cmd}, row["on"])
+        if sw is not None:
+            row["on"] = sw
+        rows[idx] = row
+        if sw:                                     # a light switched on shows: the whole light goes on with it
+            lt["enabled"] = True
+    lt["lights"] = rows
+    return norm_light(lt)
+
+
+async def _look_command(a: dict, st: dict, kind: str, cmd: dict) -> dict:
+    """`light`, `outline` and `background`: for now (until `reset`, a restart, or a change in the tab), or for good with
+    "save": true. The answer has what it is now."""
+    fade = _num(cmd.get("fade", 0.6 if kind == "light" else 0.4), 0, 30, 0.6 if kind == "light" else 0.4)
+    held = st.get(kind)
+    if cmd.get("reset"):
+        st[kind] = None
+        return {kind: a[kind], "fade": fade, "reset": True}
+    if kind == "light":
+        new = _light_change(held or a["light"], cmd)
+        res: dict = {}
+    elif kind == "outline":
+        cur = held or a["outline"]
+        new = norm_outline({**cur, **{k: cmd[k] for k in ("color", "width", "blur", "opacity") if k in cmd}})
+        on = _switch(cmd, cur["enabled"])
+        new["enabled"] = cur["enabled"] if on is None else on
+        res = {"state": "on" if new["enabled"] else "off"}
+    else:
+        bgs = a["backgrounds"]
+        cur = held["name"] if held is not None else a["background"]
+        raw = str(cmd.get("name") or "").strip()
+        state = cmd.get("state", "on")
+        if state not in ("on", "off", "toggle"):
+            raise CommandError("state is 'on', 'off' or 'toggle'")
+        if raw.lower() in ("", "none"):
+            if state != "off" and raw.lower() != "none":
+                raise CommandError(f"send the background `name` (this avatar has: {', '.join(b['name'] for b in bgs) or 'none - make them in the Background tab'})")
+            bg = ""
+        else:
+            bg = _background_name(bgs, raw)
+            if not bg:
+                raise CommandError(f"no background {raw!r} (this avatar has: {', '.join(b['name'] for b in bgs) or 'none - make them in the Background tab'})", 404)
+        if not bg:
+            new = ""
+        elif state == "toggle":
+            new = "" if cur == bg else bg
+        else:
+            new = bg if state == "on" else ("" if cur == bg else cur)
+        res = {"name": bg or "none", "state": "on" if new and new == bg else "off"}
+    if cmd.get("save"):
+        a[kind] = new
+        st[kind] = None
+        save_config()
+        await broadcast_config()
+    else:
+        st[kind] = {"name": new} if kind == "background" else new
+    return {kind: new, "fade": fade, "save": bool(cmd.get("save")), **res}
 
 
 ATTACH_FIELDS = ("to", "anchor", "pin", "x", "y", "dx", "dy", "layer", "follow_angle", "mirror")
@@ -1375,6 +1737,15 @@ def _summary(kind: str, out: dict) -> str:
         return "let go"
     if kind == "lipsync":
         return out["state"]
+    if kind == "light" and isinstance(out.get("light"), dict):
+        lt = out["light"]
+        lit = [x["name"] + ("" if x["preset"] == "none" else f" ({x['preset']})") for x in lt["lights"] if x["on"]]
+        return ("on: " + ", ".join(lit[:4]) if lt["enabled"] and lit else "off") + (" (saved)" if out.get("save") else "") + (" (reset)" if out.get("reset") else "")
+    if kind == "outline" and isinstance(out.get("outline"), dict):
+        o = out["outline"]
+        return (f"on, {o['width']:g} px" + (f", blur {o['blur']:g}" if o["blur"] else "") if o["enabled"] else "off") + (" (saved)" if out.get("save") else "")
+    if kind == "background":
+        return (out.get("background") or "none") + (" (saved)" if out.get("save") else "")
     if kind == "expression" and len(out.get("states") or {}) > 1:
         return ", ".join(f"{n} {s}" for n, s in out["states"].items())
     for k in ("name", "visible"):
@@ -1498,7 +1869,7 @@ async def on_render_message(c: Client, msg: dict) -> None:
     elif t == "stats":
         c.stats = {k: msg.get(k) for k in ("fps", "frame_ms", "avatars", "gpu", "w", "h")}
         c.stats["at"] = time.time()
-        await HUB.panels({"type": "stats", "client": c.id, "role": c.role, "overlay": c.overlay, **c.stats})
+        await HUB.panels({"type": "stats", "client": c.id, "role": c.role, "overlay": c.overlay, "via": c.via, **c.stats})
     elif t == "live_params":
         rid = str(msg.get("rid") or "")
         fut = WAITERS.get("live:" + rid)
@@ -1645,7 +2016,8 @@ async def _json(request: Request) -> dict:
 async def api_index():
     return {"name": "Hexcast Avatars API", "docs": "/help/avatar", "inputs": INPUTS, "gestures": GESTURES,
             "face": {k: list(v) for k, v in FACE.items()}, "emotions": list(DEFAULT_EMOTIONS),
-            "light_presets": LIGHT_PRESETS, "routes": API_ROUTES}
+            "light_presets": LIGHT_PRESETS, "light_kinds": LIGHT_KINDS, "background_styles": BACKGROUND_STYLES,
+            "routes": API_ROUTES}
 
 
 @router.get("/api/status")
@@ -1653,7 +2025,8 @@ async def api_status():
     st = runtime.status()
     obs = HUB.obs()
     return {"connected": bool(obs), "overlays": len(obs), "previews": len([c for c in HUB.of("render") if c.role != "obs"]),
-            "by_overlay": {o: sum(1 for c in obs if c.overlay == o) for o in CONFIG["overlays"]},     # OBS sources drawing each
+            "by_overlay": {o: sum(1 for c in obs if c.overlay == o and c.via != "spout") for o in CONFIG["overlays"]},   # OBS sources drawing each
+            "spout": {o: spout_status(o)["state"] for o in CONFIG["overlays"]},
             "controls": len(HUB.of("control")), "avatars": [a["name"] for a in CONFIG["avatars"]],
             "runtime": st["installed"], "stats": [c.stats for c in obs if c.stats],
             "capture": {"available": capture.AVAILABLE, "running": HUB.captures.status()}}
@@ -2161,8 +2534,15 @@ async def api_avatar_update(name: str, request: Request):
         _live(name)["transform"] = None
     if "visible" in body:
         _live(name)["visible"] = None
-    if "light" in body:
-        _live(name)["light"] = None
+    # the light, outline or background set here takes over from one a bot holds for now (a background deleted here can't stay on)
+    held_bg = _live(name).get("background")
+    for key, changed in (("light", "light" in body), ("outline", "outline" in body),
+                         ("background", "background" in body or bool(held_bg and held_bg["name"]
+                                                                     and not _background_name(new["backgrounds"], held_bg["name"])))):
+        if changed and _live(name).get(key) is not None:
+            _live(name)[key] = None
+            await HUB.renderers({"type": "cmd", "avatar": name, "source": "panel", "cmd": key, "reset": True, key: new[key],
+                                 "fade": 0.2}, name)
     save_config()
     await broadcast_config()
     return {"ok": True, "avatar": a}
@@ -2257,6 +2637,8 @@ async def api_overlay_delete(oid: str):
         if a["overlay"] == oid:
             a["overlay"] = DEFAULT_OVERLAY
     CONFIG["overlays"].remove(oid)
+    CONFIG["spout"]["overlays"].pop(oid, None)        # (its Spout output goes with it)
+    await sync_spout()
     save_config()
     await broadcast_config()
     return {"ok": True, "moved": moved}
@@ -2291,7 +2673,7 @@ async def api_avatar_live_params(name: str):
 
 # every command, also as its own route: POST /avatar/api/avatars/<name>/<command>
 COMMANDS = ["params", "release", "parts", "release_parts", "colors", "release_colors", "color_preset", "clear_color_presets", "expression", "clear_expressions", "motion", "stop_motion", "emotion", "face",
-            "look", "gesture", "transform", "visible", "stop_speaking", "lipsync", "light", "item_add", "item_remove",
+            "look", "gesture", "transform", "visible", "stop_speaking", "lipsync", "light", "outline", "background", "item_add", "item_remove",
             "item_update", "items_clear", "attach", "detach", "reload"]
 
 
@@ -2378,7 +2760,13 @@ API_ROUTES = [
     "POST /avatar/api/avatars/<name>/attach        {to, anchor, x, y, dx, dy, layer, follow_angle, mirror} - hang this avatar from another on the same overlay (a mini model on a head); it rides the pin point",
     "POST /avatar/api/avatars/<name>/detach        {x, y, scale, rotation, flip} - let go; back to its own spot unless you send another",
     "GET  /avatar/api/models/<id>/anchors          the model's pin points  |  POST {name, pin} saves one (the tab makes pins), POST .../<name>/delete",
-    "POST /avatar/api/avatars/<name>/light         {preset, color, intensity, angle, rim, ambient}",
+    "POST /avatar/api/avatars/<name>/light         {state:on|off|toggle, ambient, ambient_amount, lights:[...], fade, save, reset} - the whole light; "
+    "{name, state, kind, color, intensity, angle, blur, width, x, y, size, preset, speed, remove} - one light (a new name + kind adds it); "
+    "the old {preset, color, intensity, angle, rim, rim_amount} steer the first key / rim light",
+    "POST /avatar/api/avatars/<name>/outline       {state:on|off|toggle, color, width, blur, opacity, fade, save, reset} - a line around the art (stage pixels)",
+    "POST /avatar/api/avatars/<name>/background    {name, state:on|off|toggle, fade, save, reset} - one of the avatar's backgrounds (the Background tab makes them); {name: \"none\"} for none",
+    "GET  /avatar/api/spout                        Spout output (Shoost, VTube Studio ...): the browser that draws it, the senders, each overlay's output",
+    "POST /avatar/api/spout/<overlay>              {state:on|off|toggle, fps:30|60, audio} - send that overlay out as a Spout sender (\"Hexcast Avatars\"), no OBS needed; POST /avatar/api/spout {browser} picks the browser",
     "POST /avatar/api/avatars/<name>/command       {cmd: <any of the above>, ...}",
     "WS   /avatar/ws/control                       every command as JSON ({cmd, avatar, ..., rid}), plus speak, list, info and the REST calls by name: "
     "status, avatars, get, params_live, overlays, models, model, items, devices, color_presets, anchors, settings, create_avatar, "
@@ -2400,6 +2788,8 @@ SOCKET_CALLS: dict[str, tuple[str, str]] = {
     "get": ("GET", "/api/avatars/{avatar}"),
     "params_live": ("GET", "/api/avatars/{avatar}/params/live"),
     "overlays": ("GET", "/api/overlays"),
+    "spout": ("GET", "/api/spout"),
+    "spout_output": ("POST", "/api/spout/{overlay}"),
     "models": ("GET", "/api/models"),
     "model": ("GET", "/api/models/{model}"),
     "items": ("GET", "/api/items"),
@@ -2463,6 +2853,8 @@ async def ws_render(ws: WebSocket):
     role = "obs" if q.get("role", "obs") == "obs" else "preview"
     overlay = ((q.get("overlay") or "").strip().lower() or DEFAULT_OVERLAY) if role == "obs" else None
     c = Client(ws, "render", role, only, q.get("audio", "1") != "0", overlay)
+    c.via = "spout" if q.get("via") == "spout" else ""
+    _note_port(ws.scope.get("server"))
     HUB.loop = asyncio.get_running_loop()
     HUB.clients.add(c)
     HUB.sync_captures()
@@ -2498,9 +2890,89 @@ def _overlay_gone(c: Client) -> None:
             fut.set_result({"event": "speech_error", "id": sid, "error": "the OBS overlay disconnected"})
 
 
+@router.websocket("/ws/spout")
+async def ws_spout(ws: WebSocket):
+    """The hidden browser of a Spout output: {"type": "hello", "w", "h"}, then each frame as bytes (B, G, R, A, top row first)."""
+    await ws.accept()
+    oid = (ws.query_params.get("overlay") or DEFAULT_OVERLAY).strip().lower()
+    out = SPOUT.get(oid)
+    if out is None or not out.enabled:
+        await ws.close(1008)                      # (an output that was switched off: its page goes too)
+        return
+    size = (spout_w, spout_h) = (1920, 1080)
+    try:
+        while True:
+            m = await ws.receive()
+            if m.get("type") == "websocket.disconnect":
+                break
+            data = m.get("bytes")
+            if data is not None:
+                if not out.enabled:
+                    break
+                out.push(data, size[0], size[1])
+                if out.ask_full():                        # the sender lost track (or the page got too far ahead): a whole frame
+                    await ws.send_text('{"type": "full"}')
+            elif m.get("text"):
+                try:
+                    msg = json.loads(m["text"])
+                except ValueError:
+                    continue
+                if msg.get("type") == "hello":
+                    size = (int(_num(msg.get("w"), 16, 4096, spout_w)), int(_num(msg.get("h"), 16, 4096, spout_h)))
+                elif msg.get("type") == "error":
+                    out.error = f"the page: {str(msg.get('message') or '')[:200]}"
+    except (WebSocketDisconnect, RuntimeError):
+        pass
+
+
+@router.get("/api/spout")
+async def api_spout():
+    """Spout output: is it possible here, the browser that draws it, and each overlay's output."""
+    conf = CONFIG["spout"]
+    return {"available": spout.AVAILABLE, "browser": conf["browser"], "found": spout.find_browser(conf["browser"]) if spout.AVAILABLE else None,
+            "senders": spout.sender_names(), "overlays": {o: spout_status(o) for o in CONFIG["overlays"]}}
+
+
+@router.post("/api/spout")
+@guarded
+async def api_spout_settings(request: Request):
+    """{browser}: the path of the browser that draws Spout outputs ("" = the Chrome / Edge / Brave found on this PC)."""
+    body = await _json(request)
+    _note_port(request.scope.get("server"))
+    if "browser" in body:
+        path = str(body.get("browser") or "").strip().strip('"')
+        if path and not os.path.isfile(path):
+            raise CommandError(f"there is no file {path!r}")
+        CONFIG["spout"]["browser"] = path
+        save_config()
+        await stop_spout()                        # (they start again with that browser)
+        await sync_spout()
+    return await api_spout()
+
+
+@router.post("/api/spout/{oid}")
+@guarded
+async def api_spout_output(oid: str, request: Request):
+    """{state: on|off|toggle (or enabled), fps: 30|60, audio}: send this overlay out as a Spout sender (Shoost ...), saved."""
+    body = await _json(request)
+    oid = overlay_id(oid)
+    _note_port(request.scope.get("server"))
+    if not spout.AVAILABLE:
+        raise CommandError("Spout is Windows only")
+    cur = CONFIG["spout"]["overlays"].get(oid) or _norm_spout_out({})
+    on = _switch(body, cur["enabled"])
+    new = _norm_spout_out({**cur, **{k: body[k] for k in ("fps", "audio") if k in body}, "enabled": cur["enabled"] if on is None else on})
+    CONFIG["spout"]["overlays"][oid] = new
+    save_config()
+    await sync_spout()
+    await HUB.panels({"type": "spout"})
+    return {"ok": True, **spout_status(oid)}
+
+
 @router.websocket("/ws/panel")
 async def ws_panel(ws: WebSocket):
     await ws.accept()
+    _note_port(ws.scope.get("server"))
     c = Client(ws, "panel")
     HUB.clients.add(c)
     try:
@@ -2579,14 +3051,19 @@ def attach(ctx) -> None:
     library.ensure_dirs()
     STATIC_URL = str(ctx.static_url).rstrip("/")
     APP = ctx.app
+    global PORT
+    PORT = int(getattr(ctx, "port", PORT) or PORT)
     ctx.include_router(router)
     ctx.app.mount(library.URL, RevalidatingStaticFiles(directory=str(library.ROOT)), name="avatar-lib")
+    if hasattr(ctx, "when_serving"):
+        ctx.when_serving(sync_spout)               # the Spout outputs switched on: their hidden browsers
     print(f"  Avatars panel:       http://localhost:{ctx.port}/avatar", flush=True)
     print(f"  Avatars source:      http://localhost:{ctx.port}/avatar/overlay", flush=True)
 
 
 async def detach() -> None:
     HUB.captures.stop_all(wait=1.0)
+    await stop_spout()
     for fut in list(WAITERS.values()):
         if not fut.done():
             fut.cancel()

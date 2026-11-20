@@ -29,8 +29,18 @@ http://localhost:4747/avatar/overlay?audio=0         silent (another source play
     inspector has Placement, Face &amp; Mood (emotions, expressions, motions, gestures, a look-at pad, the
     emotion table), Mouth (lipsync source, meters, tuning, "learn this voice"), Idle, Parameters (every
     parameter live — drag one to take it over — and the mappings), Items (add, place, lock, pin to the model,
-    and the model's pin points), Clips (Soundboard GIFs locked to the avatar), Colors, Light and API
-    (ready-made calls for that avatar).</p>
+    and the model's pin points), Clips (Soundboard GIFs locked to the avatar), Colors, Light (up to 8 key, rim
+    and spot lights with a blur each, and an outline), Background (named backgrounds behind the overlay's
+    avatars: a fill, a picture, a pattern of dots or lines over all of it, and an <b>echo</b> - the avatar
+    again, bigger, in halftone dots, lines, a shape or a glow, in its own colours or yours, like a karaoke
+    stream) and API (ready-made calls for that avatar).</p>
+  <h3>Spout output - Shoost and other apps, no OBS</h3>
+  <p class="hint">Tick <b>Spout output</b> under an overlay's address and it goes out as a Spout sender
+    (<b>Hexcast Avatars</b>) with its transparency: Shoost (Settings &rarr; Spout Capture, then a Spout
+    Capture layer), VTube Studio's background, Resolume ... Hexcast draws it in a hidden Chrome / Edge /
+    Brave on the PC - nothing to install. 30 or 60 fps; <b>Play speech</b> plays the bot's speech from it
+    (untick it if OBS plays it). Windows only. API: <code>POST /avatar/api/spout/&lt;overlay&gt;
+    {"state": "on|off|toggle", "fps": 30, "audio": true}</code>, <code>GET /avatar/api/spout</code>.</p>
   <h3>Pin points, and gluing things to a model</h3>
   <p class="hint">A <b>pin point</b> is a named spot on a model's art (<code>head_top</code>, <code>left_hand</code>):
     on the Items tab type a name, press <b>Pick on the model</b> and click the spot. It is saved on the model.
@@ -94,7 +104,9 @@ http://localhost:4747/avatar/overlay?audio=0         silent (another source play
     <tr><td>lipsync</td><td><code>{"state": "on|off|toggle"}</code> — the Mouth tab's <b>Lipsync</b> tick box (saved, like ticking it); the answer has <code>state</code>, what it is now. Takes effect at once, also mid-line</td></tr>
     <tr><td>item_add · item_update · item_remove · items_clear</td><td><code>{"item": "halo", "id": "h1", "x": 50, "y": 5, "scale": 1, "layer": "front|back", "pin": null, "anchor": "head_top", "locked": false}</code> — <code>anchor</code> glues it to a pin point of the model (<code>anchors</code> in <code>/info</code>)</td></tr>
     <tr><td>attach · detach</td><td><code>{"to": "hex", "anchor": "head_top", "dx": 0, "dy": -45, "layer": "front|back", "follow_angle": true, "mirror": false}</code> — hang this avatar from another on the same overlay (a mini model on a head); it rides the parent's pin point. <code>x</code> / <code>y</code> (% of the parent's box) are the spot when there is no <code>anchor</code>; <code>dx</code> / <code>dy</code> nudge its centre (% of its own size). Saved with the avatar. <code>detach</code> lets go (<code>{"x": 61, "y": 70}</code> to put it elsewhere)</td></tr>
-    <tr><td>light</td><td><code>{"enabled": true, "preset": "fire", "color": "#ffd9a8", "intensity": 0.8, "angle": -35, "rim_amount": 0.6, "save": false}</code></td></tr>
+    <tr><td>light</td><td><code>{"state": "on|off|toggle", "lights": [{"name": "Key", "kind": "key|rim|spot", "color": "#ffd9a8", "intensity": 0.8, "angle": -35, "blur": 50, "width": 10, "x": 50, "y": 30, "size": 25, "preset": "fire", "speed": 1}], "ambient": "#ffffff", "ambient_amount": 0.2, "save": false}</code> — the whole light; or one by name: <code>{"name": "Rim", "state": "toggle"}</code>, <code>{"name": "Rim", "color": "#ff0000"}</code>, a new name with a <code>kind</code> adds one, <code>"remove": true</code>. The old <code>preset</code> / <code>color</code> / <code>intensity</code> / <code>angle</code> / <code>rim</code> / <code>rim_amount</code> steer the first key and rim light. <code>{"reset": true}</code></td></tr>
+    <tr><td>outline</td><td><code>{"state": "on|off|toggle", "color": "#ffffff", "width": 6, "blur": 0, "opacity": 1, "save": false}</code> — pixels of the 1920x1080 overlay; a wide blur is a glow. <code>{"reset": true}</code></td></tr>
+    <tr><td>background</td><td><code>{"name": "Karaoke", "state": "on|off|toggle", "save": false}</code> — one of the avatar's backgrounds (the Background tab makes them), <code>{"name": "none"}</code> for none, <code>{"reset": true}</code>; the answer has <code>background</code></td></tr>
     <tr><td>reload</td><td>load the model again</td></tr>
   </table>
   <h3>Reading and managing</h3>

@@ -134,6 +134,12 @@
     app.canvas.style.display = 'block';
     this.root = new PIXI.Container();
     app.stage.addChild(this.root);
+    this.backLayer = new PIXI.Container();         // backgrounds: behind every avatar of the overlay
+    this.backLayer.label = 'backgrounds';
+    this.backLayer.sortableChildren = true;
+    this.backLayer.zIndex = -1e6;
+    this.root.addChild(this.backLayer);
+    this.frameNo = 0;
     this.overlay = new PIXI.Graphics();            // selection outline etc. (preview only)
     app.stage.addChild(this.overlay);
     var self = this;
@@ -286,6 +292,7 @@
 
   Stage.prototype.tick = function (ticker) {
     var dt = Math.min(0.1, ticker.deltaMS / 1000), now = nowSec();
+    this.frameNo++;
     var order = this.updateOrder || this.order;
     for (var i = 0; i < order.length; i++) {
       var av = this.avatars[order[i]];
@@ -312,6 +319,138 @@
     var gx = (clientX - r.left) * (this.app.screen.width / r.width), gy = (clientY - r.top) * (this.app.screen.height / r.height);
     return { x: (gx - this.root.position.x) / this.scale, y: (gy - this.root.position.y) / this.scale, gx: gx, gy: gy };
   };
+
+  /* ------------------------------------------------------------------ Spout output */
+
+  /* A hidden browser that Hexcast starts draws the overlay for Spout (Shoost, VTube Studio's background ...): the stage is
+     drawn at its own 1920x1080 into a texture instead of the page, turned into what Spout shares (B, G, R, A with straight
+     alpha, the top row first), and read back without stalling the graphics card (the read finishes while the next frame is
+     drawn: a frame is handed over one or two frames after it was drawn). `send(bytes, width, height)` gets each frame. */
+  var SPOUT_FRAG = [
+    'in vec2 vTextureCoord;',
+    'out vec4 finalColor;',
+    'uniform sampler2D uTexture;',
+    'void main(void){',
+    '  vec4 c = texture(uTexture, vTextureCoord);',
+    '  finalColor = c.a > 0.0 ? vec4(c.b / c.a, c.g / c.a, c.r / c.a, c.a) : vec4(0.0);',
+    '}'
+  ].join('\n');
+
+  Stage.prototype.startCapture = function (opts) {
+    var app = this.app, r = app.renderer, gl = r.gl, self = this;
+    if (typeof WebGL2RenderingContext === 'undefined' || !(gl instanceof WebGL2RenderingContext)) throw new Error('Spout output needs WebGL 2');
+    var cap = this.cap = { fps: Math.max(1, opts.fps || 30), send: opts.send, ready: opts.ready || function () { return true; },
+                           target: opts.target || null, last: 0, w: W, h: H, pbo: [], fence: [null, null], next: 0,
+                           buf: new Uint8Array(W * H * 4), frames: 0 };
+    cap.rt = PIXI.RenderTexture.create({ width: W, height: H, resolution: 1, antialias: true });
+    cap.out = PIXI.RenderTexture.create({ width: W, height: H, resolution: 1 });
+    cap.sprite = new PIXI.Sprite(cap.rt);
+    cap.sprite.filters = [new PIXI.Filter({ glProgram: PIXI.GlProgram.from({ vertex: LOOK_VERT, fragment: SPOUT_FRAG, name: 'hexcast-spout' }),
+                                            resources: {}, resolution: 1 })];
+    for (var i = 0; i < 2; i++) {
+      cap.pbo[i] = gl.createBuffer();
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, cap.pbo[i]);
+      gl.bufferData(gl.PIXEL_PACK_BUFFER, W * H * 4, gl.STREAM_READ);
+    }
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+    // the stage at its own size whatever the page is, and the page itself draws nothing
+    this.fit = function () { self.scale = 1; if (self.root) { self.root.scale.set(1); self.root.position.set(0, 0); } };
+    this.fit();
+    app.ticker.remove(app.render, app);
+    app.ticker.add(this._captureTick, this, PIXI.UPDATE_PRIORITY.LOW);
+  };
+
+  Stage.prototype._captureTick = function () {
+    var cap = this.cap, r = this.app.renderer, gl = r.gl, k, j;
+    for (k = 0; k < 2; k++) {                                // the frames read back before: hand over those the GPU has finished, oldest first
+      j = (cap.next + k) % 2;
+      var f = cap.fence[j];
+      if (!f) continue;
+      var st = gl.clientWaitSync(f, 0, 0);
+      if (st === gl.TIMEOUT_EXPIRED) break;
+      gl.deleteSync(f);
+      cap.fence[j] = null;
+      if ((st === gl.ALREADY_SIGNALED || st === gl.CONDITION_SATISFIED) && cap.ready()) {     // (the socket still busy: this frame is skipped)
+        var into = cap.target ? cap.target() : cap.buf;
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, cap.pbo[j]);
+        gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, into);
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+        cap.frames++;
+        try { cap.send(into, cap.w, cap.h); } catch (e) { console.warn('spout send', e); }
+      }
+    }
+    var now = performance.now(), period = 1000 / cap.fps;
+    if (now < cap.last - 3) return;                          // (cap.last: when the next frame is due - kept on schedule, not by the last one)
+    cap.last = Math.max(cap.last + period, now - period / 2);
+    var i = cap.next;
+    if (cap.fence[i]) { gl.deleteSync(cap.fence[i]); cap.fence[i] = null; }     // (never read: a newer one takes its place)
+    r.render({ container: this.app.stage, target: cap.rt, clear: true });
+    r.render({ container: cap.sprite, target: cap.out, clear: true });
+    r.renderTarget.bind(cap.out, false);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, cap.pbo[i]);
+    gl.readPixels(0, 0, cap.w, cap.h, gl.RGBA, gl.UNSIGNED_BYTE, 0);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+    cap.fence[i] = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+    gl.flush();
+    cap.next = 1 - i;
+  };
+
+  /* What goes over the socket: after a first whole frame, only what changed since the last frame sent - the frame is cut into
+     bands of rows, each band's changed columns found, and neighbouring bands with about the same columns merged into one
+     rectangle. A message: "HXS1", the number of rectangles (u16) and 0 (u16), then x, y, w, h (u16 each) per rectangle, then
+     each rectangle's pixels (w x h x 4 bytes, rows top first), all little-endian. Nothing changed: no message. The packer owns
+     two frames - the one being read into (target) and the last one sent - so nothing is copied but what is sent. */
+  function SpoutPacker(w, h, band) {
+    this.w = w; this.h = h; this.band = band || 24;
+    this.work = new Uint8Array(w * h * 4);
+    this.sent = new Uint8Array(w * h * 4);
+    this.out = new ArrayBuffer(8 + 8 * Math.ceil(h / this.band) + w * h * 4);
+    this.full = true;
+  }
+  SpoutPacker.prototype.target = function () { return this.work; };
+  SpoutPacker.prototype.forceFull = function () { this.full = true; };
+  SpoutPacker.prototype.rects = function () {
+    var w = this.w, h = this.h, cur = new Uint32Array(this.work.buffer), old = new Uint32Array(this.sent.buffer), out = [];
+    if (this.full) return [[0, 0, w, h]];
+    for (var y0 = 0; y0 < h; y0 += this.band) {
+      var y1 = Math.min(h, y0 + this.band), lo = w, hi = -1;
+      for (var y = y0; y < y1; y++) {
+        var o = y * w, x;
+        for (x = 0; x < lo; x++) if (cur[o + x] !== old[o + x]) { lo = x; break; }
+        if (hi < 0 && x >= w) continue;                             // (nothing in this row)
+        for (x = w - 1; x > hi; x--) if (cur[o + x] !== old[o + x]) { hi = x; break; }
+      }
+      if (hi < 0) continue;
+      var last = out[out.length - 1];
+      if (last && last[1] + last[3] === y0) {                       // the band right under the last rectangle: one rectangle, if they are alike
+        var ux0 = Math.min(last[0], lo), ux1 = Math.max(last[0] + last[2], hi + 1);
+        if (ux1 - ux0 <= 1.3 * Math.max(last[2], hi + 1 - lo)) { last[0] = ux0; last[2] = ux1 - ux0; last[3] = y1 - last[1]; continue; }
+      }
+      out.push([lo, y0, hi + 1 - lo, y1 - y0]);
+    }
+    return out;
+  };
+  /* the message for the frame now in target(), or null when nothing changed; a message makes it the last frame sent */
+  SpoutPacker.prototype.pack = function () {
+    var rects = this.rects();
+    if (!rects.length) return null;
+    var dv = new DataView(this.out), u8 = new Uint8Array(this.out), w = this.w, p = 8 + 8 * rects.length, i, k;
+    dv.setUint8(0, 72); dv.setUint8(1, 88); dv.setUint8(2, 83); dv.setUint8(3, 49);              // "HXS1"
+    dv.setUint16(4, rects.length, true); dv.setUint16(6, 0, true);
+    for (i = 0; i < rects.length; i++) {
+      var r = rects[i];
+      for (k = 0; k < 4; k++) dv.setUint16(8 + i * 8 + k * 2, r[k], true);
+      for (var y = r[1]; y < r[1] + r[3]; y++) {
+        var a = (y * w + r[0]) * 4, n = r[2] * 4;
+        u8.set(this.work.subarray(a, a + n), p);
+        p += n;
+      }
+    }
+    var t = this.sent; this.sent = this.work; this.work = t;
+    this.full = false;
+    return new Uint8Array(this.out, 0, p);
+  };
+  HA.SpoutPacker = SpoutPacker;
 
   /* ------------------------------------------------------------------ soundboard clips glued to an avatar */
 
@@ -668,7 +807,7 @@
 
   /* ------------------------------------------------------------------ one avatar */
 
-  function emptyLive() { return { params: {}, expressions: {}, emotion: null, face: null, look: null, light: null, transform: null, visible: null }; }
+  function emptyLive() { return { params: {}, expressions: {}, emotion: null, face: null, look: null, light: null, transform: null, visible: null, outline: null, background: null }; }
 
   function Avatar(stage, cfg) {
     this.stage = stage;
@@ -726,9 +865,15 @@
     this.itemSig = '';
     this.mountParent = null;     // the avatar this one is glued to (cfg.attach), when it is on this stage (see Stage._mounts)
     this.mountDepth = 0;         // how many avatars it hangs from, one under the other
-    this.lightCfg = null;
-    this.light = null;
+    this.lightCfg = null;        // the look (see _lightTick): what is on, how far each is faded in
     this.lightW = 0;
+    this.outCfg = null;
+    this.outW = 0;
+    this.bgCfg = null;           // the background that is on (one of cfg.backgrounds), and what is drawn for it
+    this.bgW = 0;
+    this.bgName = '';
+    this.bg = null;
+    this.fx = null;              // the avatar's filter, while any of it is on
     this.env = { fast: 0, slow: 0 };
     this._readColors(cfg, true);
   }
@@ -736,6 +881,8 @@
   Avatar.prototype.destroy = function () {
     this.stopSpeaking(true);
     this._clearItems();
+    this._dropLook();
+    this._dropBg();
     if (this.model) { try { this.model.destroy(); } catch (e) {} }
     this.model = null;
     this.node.destroy({ children: true });
@@ -766,6 +913,8 @@
       this._applyIdleSettings();
     }
     if (!this.lightOverride) this.setLight(cfg.light, 0.5);
+    if (!this.outlineOverride) this.setOutline(cfg.outline, 0.4);
+    this.setBackground(this.bgOverride ? this.bgLive : cfg.background, 0.4);   // (a held name, against the new list)
     this._readColors(cfg, false);
     this._syncItems();
     if (this.speech.cur && cfg.mouth) {                 // lipsync switched off, or back on, in the middle of a line
@@ -1679,6 +1828,8 @@
     if (live.face) this.command(Object.assign({ cmd: 'face', fade: 0 }, live.face));
     if (live.look) this.command(Object.assign({ cmd: 'look' }, live.look));
     if (live.light) { this.lightOverride = true; this.setLight(live.light, 0); }
+    if (live.outline) { this.outlineOverride = true; this.setOutline(live.outline, 0); }
+    if (live.background) { this.bgOverride = true; this.bgLive = live.background.name; this.setBackground(this.bgLive, 0); }
     if (live.transform) {
       this.tr.override = live.transform;
       setTimeout(function () { self._tweenTo(live.transform, 0); if (live.transform.flip != null) self.tr.flip = live.transform.flip; }, 0);
@@ -1819,6 +1970,11 @@
       case 'speak': this.speak(c); break;
       case 'stop_speaking': this.stopSpeaking(); break;
       case 'light': this.lightOverride = !c.save && !c.reset; this.setLight(c.light, c.fade == null ? 0.6 : c.fade); break;
+      case 'outline': this.outlineOverride = !c.save && !c.reset; this.setOutline(c.outline, c.fade == null ? 0.4 : c.fade); break;
+      case 'background':
+        this.bgOverride = !c.save && !c.reset; this.bgLive = c.background || '';
+        this.setBackground(this.bgLive, c.fade == null ? 0.4 : c.fade);
+        break;
       case 'item_add': case 'item_remove': case 'item_update': case 'items_clear': case 'attach': case 'detach': case 'lipsync': break;   // arrives as config
       case 'reload': if (this.cfg.model) this.load(this.cfg.model); break;
     }
@@ -1987,23 +2143,31 @@
     this._load();
   }
 
+  /* a picture of the item library as something to draw: a sprite, an animated GIF, a frame sequence, a Live2D model */
+  async function loadDisplay(meta, fps) {
+    var disp = null;
+    if (meta.kind === 'image') {
+      disp = new PIXI.Sprite(await PIXI.Assets.load(meta.url));
+    } else if (meta.kind === 'gif') {
+      var res = await PIXI.Assets.load(meta.url);                  // @pixi/gif answers .gif with an AnimatedGIF
+      disp = res instanceof PIXI.Texture ? new PIXI.Sprite(res) : (res.clone ? res.clone() : res);
+      if (disp.play) disp.play();
+    } else if (meta.kind === 'sequence') {
+      var tex = await Promise.all(meta.frames.map(function (u) { return PIXI.Assets.load(u); }));
+      disp = new PIXI.AnimatedSprite(tex);
+      disp.animationSpeed = (fps || meta.fps || 12) / 60;
+      disp.play();
+    } else if (meta.kind === 'live2d') {
+      disp = await L.Live2DModel.from(meta.url, { autoUpdate: false, autoFocus: false, autoHitTest: false });
+    }
+    return disp;
+  }
+
   Item.prototype._load = async function () {
     var meta = this.meta, self = this, disp = null;
     try {
-      if (meta.kind === 'image') {
-        disp = new PIXI.Sprite(await PIXI.Assets.load(meta.url));
-      } else if (meta.kind === 'gif') {
-        var res = await PIXI.Assets.load(meta.url);                  // @pixi/gif answers .gif with an AnimatedGIF
-        disp = res instanceof PIXI.Texture ? new PIXI.Sprite(res) : (res.clone ? res.clone() : res);
-        if (disp.play) disp.play();
-      } else if (meta.kind === 'sequence') {
-        var tex = await Promise.all(meta.frames.map(function (u) { return PIXI.Assets.load(u); }));
-        disp = new PIXI.AnimatedSprite(tex);
-        disp.animationSpeed = (this.cfg.fps || meta.fps || 12) / 60;
-        disp.play();
-      } else if (meta.kind === 'live2d') {
-        this.l2d = disp = await L.Live2DModel.from(meta.url, { autoUpdate: false, autoFocus: false, autoHitTest: false });
-      }
+      disp = await loadDisplay(meta, this.cfg.fps);
+      if (meta.kind === 'live2d') this.l2d = disp;
     } catch (e) {
       this.av.stage.emit('event', { event: 'error', avatar: this.av.name, message: 'item ' + meta.id + ': ' + (e && e.message || e) });
       return;
@@ -2602,15 +2766,24 @@
     return (w ? w.a : 1) * (o ? o.a : 1);
   };
 
-  /* -------------------------------------------- light */
+  /* -------------------------------------------- the look: lights, outline, background echo */
 
-  // Pixi's filter vertex shader, plus the position inside the filter area and the texel size as
-  // varyings (a uniform used in both stages must match in precision, which fragment shaders don't)
-  var LIGHT_VERT = [
+  /* One filter on the avatar does all three, in a few passes over the picture of the avatar (the art, its items) that
+     Pixi draws for it each frame:
+       lights   any number (up to 8) of key lights (a direction over the whole model), rim lights (a line on the
+                edges that face them) and spots (a round pool) - each with a colour, strength, blur and preset
+       outline  a line around the art: the distance to the art in two passes (rows, then columns), at a lower
+                resolution the wider it is, then a colour wherever it is within the width (blur: a soft edge)
+       echo     the background's copy of the avatar: drawn from the same picture into a stage-sized texture that a
+                sprite at the back of the stage shows (behind every avatar of the overlay; it is one frame behind) */
+
+  var MAX_LIGHTS = 8, LIGHT_KIND = { key: 1, rim: 2, spot: 3 }, ECHO_STYLE = { dots: 0, lines: 1, solid: 2, glow: 3 };
+
+  // Pixi's filter vertex shader, plus the position inside the filter area
+  var LOOK_VERT = [
     'in vec2 aPosition;',
     'out vec2 vTextureCoord;',
     'out vec2 vPos;',
-    'out vec2 vTexel;',
     'uniform vec4 uInputSize;',
     'uniform vec4 uOutputFrame;',
     'uniform vec4 uOutputTexture;',
@@ -2621,91 +2794,618 @@
     '  gl_Position = vec4(position, 0.0, 1.0);',
     '  vTextureCoord = aPosition * (uOutputFrame.zw * uInputSize.zw);',
     '  vPos = aPosition;',
-    '  vTexel = uInputSize.zw;',
-    '}'
-  ].join('\n');
-  var LIGHT_FRAG = [
-    'in vec2 vTextureCoord;',
-    'in vec2 vPos;',
-    'in vec2 vTexel;',
-    'out vec4 finalColor;',
-    'uniform sampler2D uTexture;',
-    'uniform vec3 uKey;',
-    'uniform float uKeyAmt;',
-    'uniform vec2 uDir;',
-    'uniform vec3 uAmb;',
-    'uniform float uAmbAmt;',
-    'uniform vec3 uRim;',
-    'uniform float uRimAmt;',
-    'uniform float uFlash;',
-    'void main(void){',
-    '  vec4 c = texture(uTexture, vTextureCoord);',
-    '  if (c.a < 0.004) { finalColor = c; return; }',
-    '  vec3 rgb = c.rgb / c.a;',
-    '  vec2 p = vPos - 0.5;',
-    '  rgb = mix(rgb, rgb * uAmb, uAmbAmt);',
-    '  float g = clamp(dot(p, uDir) * 1.6 + 0.35, 0.0, 1.0);',
-    '  rgb = rgb * (1.0 - uKeyAmt * 0.35) + uKey * uKeyAmt * g * 0.75 * (0.35 + rgb);',
-    '  vec2 px = vTexel * 10.0;',
-    '  float ahead = texture(uTexture, vTextureCoord + uDir * px).a;',
-    '  float rim = clamp(c.a - ahead, 0.0, 1.0);',
-    '  rgb += uRim * rim * uRimAmt;',
-    '  rgb += vec3(uFlash);',
-    '  finalColor = vec4(clamp(rgb, 0.0, 1.0) * c.a, c.a);',
     '}'
   ].join('\n');
 
-  Avatar.prototype.setLight = function (lt, fade) {
-    this.lightCfg = lt && lt.enabled ? lt : null;
-    this.lightFade = Math.max(0.01, fade == null ? 0.5 : fade);
-    if (this.lightCfg && !this.light) {
-      try {
-        this.lightU = new PIXI.UniformGroup({
-          uKey: { value: new Float32Array([1, 0.9, 0.7]), type: 'vec3<f32>' }, uKeyAmt: { value: 0, type: 'f32' },
-          uDir: { value: new Float32Array([-0.7, -0.7]), type: 'vec2<f32>' },
-          uAmb: { value: new Float32Array([1, 1, 1]), type: 'vec3<f32>' }, uAmbAmt: { value: 0, type: 'f32' },
-          uRim: { value: new Float32Array([0.5, 0.7, 1]), type: 'vec3<f32>' }, uRimAmt: { value: 0, type: 'f32' },
-          uFlash: { value: 0, type: 'f32' }
-        });
-        this.light = new PIXI.Filter({ glProgram: PIXI.GlProgram.from({ vertex: LIGHT_VERT, fragment: LIGHT_FRAG, name: 'hexcast-light' }),
-                                       resources: { lightUniforms: this.lightU } });
-        this.light.padding = 12;
-        this.node.filters = [this.light];
-      } catch (e) { console.warn('light filter', e); this.light = null; }
+  // the lights and the outline, over the avatar. Positions are in the page's (logical) pixels.
+  var LOOK_FRAG = [
+    'in vec2 vTextureCoord;',
+    'in vec2 vPos;',
+    'out vec4 finalColor;',
+    'uniform sampler2D uTexture;',
+    'uniform sampler2D uDist;',
+    'uniform vec4 uGeo;',        // the filter area: its top left, its size
+    'uniform vec4 uUv;',         // uv per pixel (x, y), the area's far corner in uv
+    'uniform vec4 uBody;',       // the avatar's centre, its box (w, h)
+    'uniform vec4 uAmb;',        // ambient tint, amount
+    'uniform vec4 uMisc;',       // flash, any light (0/1)
+    'uniform vec4 uOutC;',       // outline colour, strength (0 = no outline)
+    'uniform vec4 uOutG;',       // outline width, blur, the distance the field reaches, -
+    'uniform vec4 uDistUv;',     // the distance field: uv per vPos
+    'uniform vec4 uLA[8];',      // kind (0 off, 1 key, 2 rim, 3 spot), strength, blur, width / radius
+    'uniform vec4 uLB[8];',      // colour
+    'uniform vec4 uLC[8];',      // from (a direction), the spot's centre
+    'float alphaAt(vec2 uv){',
+    '  if (uv.x < 0.0 || uv.y < 0.0 || uv.x > uUv.z || uv.y > uUv.w) return 0.0;',
+    '  return texture(uTexture, uv).a;',
+    '}',
+    'void main(void){',
+    '  vec4 c = texture(uTexture, vTextureCoord);',
+    '  vec2 g = uGeo.xy + vPos * uGeo.zw;',
+    '  vec4 lit = c;',
+    '  if (c.a > 0.004 && uMisc.y > 0.5) {',
+    '    vec3 base = c.rgb / c.a;',
+    '    base = mix(base, base * uAmb.rgb, uAmb.a);',
+    '    vec2 p = (g - uBody.xy) / max(uBody.zw, vec2(1.0));',
+    '    float keys = 0.0;',
+    '    vec3 lights = vec3(0.0);',
+    '    vec3 rims = vec3(0.0);',
+    '    for (int i = 0; i < 8; i++) {',
+    '      vec4 A = uLA[i];',
+    '      if (A.x < 0.5) continue;',
+    '      vec3 col = uLB[i].rgb;',
+    '      vec2 dir = uLC[i].xy;',
+    '      if (A.x < 1.5) {',
+    '        float x = dot(p, dir) * 1.6 + 0.35;',
+    '        float s = clamp((x - 0.5) / (2.0 * max(0.01, A.z)) + 0.5, 0.0, 1.0);',
+    '        keys += A.y;',
+    '        lights += col * A.y * s * 0.75;',
+    '      } else if (A.x < 2.5) {',
+    '        vec2 ahead = vTextureCoord + dir * A.w * uUv.xy;',
+    '        float a = 0.0;',
+    '        if (A.z < 0.5) a = alphaAt(ahead);',
+    '        else {',
+    '          for (int k = 0; k < 12; k++) {',
+    '            float fk = float(k);',
+    '            float r = sqrt((fk + 0.5) / 12.0) * A.z;',
+    '            float th = fk * 2.39996;',
+    '            a += alphaAt(ahead + vec2(cos(th), sin(th)) * r * uUv.xy);',
+    '          }',
+    '          a /= 12.0;',
+    '        }',
+    '        rims += col * clamp(c.a - a, 0.0, 1.0) * A.y;',
+    '      } else {',
+    '        float d = length(g - uLC[i].zw);',
+    '        float f = 1.0 - smoothstep(A.w * (1.0 - A.z) - 1.0, A.w, d);',
+    '        lights += col * A.y * f * 0.75;',
+    '      }',
+    '    }',
+    '    vec3 rgb = base * max(0.3, 1.0 - 0.35 * keys) + lights * (0.35 + base) + rims + vec3(uMisc.x);',
+    '    lit = vec4(clamp(rgb, 0.0, 1.0) * c.a, c.a);',
+    '  }',
+    '  if (uOutC.a > 0.0) {',
+    '    float d = texture(uDist, vPos * uDistUv.xy).r * uOutG.z;',
+    '    float cov = 1.0 - smoothstep(uOutG.x - uOutG.y * 0.5 - 0.75, uOutG.x + uOutG.y * 0.5 + 0.75, d);',
+    '    if (d > uOutG.z * 0.995) cov = 0.0;',
+    '    float oa = cov * uOutC.a;',
+    '    lit = lit + vec4(uOutC.rgb * oa, oa) * (1.0 - lit.a);',
+    '  }',
+    '  finalColor = lit;',
+    '}'
+  ].join('\n');
+
+  // the outline's distance field, pass 1: along the rows, how far the nearest bit of art is (0 = on the art)
+  var DIST_H_FRAG = [
+    'in vec2 vTextureCoord;',
+    'out vec4 finalColor;',
+    'uniform sampler2D uTexture;',
+    'uniform vec4 uD;',          // uv per step, steps each way, pixels per step, the reach (pixels)
+    'uniform vec4 uClip;',       // the area's far corner in uv
+    'float on(vec2 uv){',
+    '  if (uv.x < 0.0 || uv.y < 0.0 || uv.x > uClip.x || uv.y > uClip.y) return 0.0;',
+    '  return step(0.5, texture(uTexture, uv).a);',
+    '}',
+    'void main(void){',
+    '  float best = uD.w;',
+    '  if (on(vTextureCoord) > 0.5) best = 0.0;',
+    '  else for (int k = 1; k <= 32; k++) {',
+    '    if (float(k) > uD.y) break;',
+    '    vec2 o = vec2(float(k) * uD.x, 0.0);',
+    '    if (on(vTextureCoord + o) > 0.5 || on(vTextureCoord - o) > 0.5) { best = float(k) * uD.z; break; }',
+    '  }',
+    '  finalColor = vec4(min(1.0, best / uD.w), 0.0, 0.0, 1.0);',
+    '}'
+  ].join('\n');
+
+  // pass 2: down the columns - the nearest art anywhere (the rows' distances, and how far up / down they are)
+  var DIST_V_FRAG = [
+    'in vec2 vTextureCoord;',
+    'out vec4 finalColor;',
+    'uniform sampler2D uTexture;',
+    'uniform vec4 uD;',
+    'uniform vec4 uClip;',
+    'float row(vec2 uv){',
+    '  if (uv.x < 0.0 || uv.y < 0.0 || uv.x > uClip.x || uv.y > uClip.y) return uD.w;',
+    '  return texture(uTexture, uv).r * uD.w;',
+    '}',
+    'void main(void){',
+    '  float best = row(vTextureCoord);',
+    '  for (int k = 1; k <= 32; k++) {',
+    '    if (float(k) > uD.y) break;',
+    '    float dy = float(k) * uD.z;',
+    '    if (dy >= best) break;',
+    '    vec2 o = vec2(0.0, float(k) * uD.x);',
+    '    float dx = min(row(vTextureCoord + o), row(vTextureCoord - o));',
+    '    best = min(best, sqrt(dx * dx + dy * dy));',
+    '  }',
+    '  finalColor = vec4(min(1.0, best / uD.w), 0.0, 0.0, 1.0);',
+    '}'
+  ].join('\n');
+
+  // the echo: the part of its (stage-sized) texture it covers - uRect, in 0..1 of the texture (the rest is cleared)
+  var ECHO_VERT = [
+    'in vec2 aPosition;',
+    'out vec2 vPos;',
+    'uniform vec4 uRect;',
+    'void main(void){',
+    '  vec2 p = uRect.xy + aPosition * uRect.zw;',
+    '  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);',
+    '  vPos = p;',
+    '}'
+  ].join('\n');
+
+  var ECHO_FRAG = [
+    'in vec2 vPos;',
+    'out vec4 finalColor;',
+    'uniform sampler2D uTexture;',
+    'uniform vec4 uMap;',        // stage pixel -> uv of the avatar's picture: uv = s * uMap.xy + uMap.zw
+    'uniform vec4 uClip;',       // the picture's far corner in uv, the stage size
+    'uniform vec4 uEcho;',       // the avatar's centre (stage), the echo's scale, mirror (1 / -1)
+    'uniform vec4 uOff;',        // the echo's offset (stage), style, opacity
+    'uniform vec4 uMore;',       // weight (how big a dot / line gets where the art is solid), the art's own colours (0..1), -, -
+    'uniform vec4 uGrid;',       // cell (stage px), cos, sin of its angle, drift
+    'uniform vec4 uTone;',       // shade, fade, the echo's top and height (stage)
+    'uniform vec4 uCol1;',       // colour at the top, the edge's softness (stage px: about a pixel of the texture)
+    'uniform vec4 uCol2;',       // colour at the bottom
+    'vec4 pic(vec2 s){',
+    '  vec2 d = (s - uEcho.xy - uOff.xy) / uEcho.z;',
+    '  d.x *= uEcho.w;',
+    '  vec2 uv = (uEcho.xy + d) * uMap.xy + uMap.zw;',
+    '  if (uv.x < 0.0 || uv.y < 0.0 || uv.x > uClip.x || uv.y > uClip.y) return vec4(0.0);',
+    '  return texture(uTexture, uv);',
+    '}',
+    'float tone(vec4 c, float y){',
+    '  float t = c.a;',
+    '  if (t > 0.004 && uTone.x > 0.0) t *= mix(1.0, 1.0 - 0.85 * dot(c.rgb / c.a, vec3(0.299, 0.587, 0.114)), uTone.x);',
+    '  return t * (1.0 - uTone.y * clamp((y - uTone.z) / max(1.0, uTone.w), 0.0, 1.0));',
+    '}',
+    'void main(void){',
+    '  vec2 s = vPos * uClip.zw;',
+    '  float cell = uGrid.x, a = 0.0;',
+    '  vec4 src = vec4(0.0);',                                          // the art where a dot / line / the shape takes its colour
+    '  mat2 rot = mat2(uGrid.y, -uGrid.z, uGrid.z, uGrid.y);',          // stage -> grid
+    '  mat2 back = mat2(uGrid.y, uGrid.z, -uGrid.z, uGrid.y);',         // grid -> stage
+    '  int style = int(uOff.z + 0.5);',
+    '  if (style == 0) {',
+    '    vec2 q = rot * s / cell + vec2(uGrid.w / cell, 0.0);',
+    '    vec2 id = floor(q) + 0.5;',
+    '    vec2 cs = back * ((id - vec2(uGrid.w / cell, 0.0)) * cell);',
+    '    src = pic(cs);',
+    '    float t = tone(src, cs.y);',
+    '    float rad = 0.5 * cell * sqrt(t) * uMore.x * 1.42;',
+    '    float d = length(q - id) * cell;',
+    '    float aa = uCol1.w;',
+    '    a = rad < 0.25 ? 0.0 : 1.0 - smoothstep(rad - aa, rad + aa, d);',
+    '  } else if (style == 1) {',
+    '    vec2 q = rot * s / cell + vec2(0.0, uGrid.w / cell);',
+    '    float idy = floor(q.y) + 0.5;',
+    '    vec2 cs = back * (vec2(q.x, idy - uGrid.w / cell) * cell);',
+    '    src = pic(cs);',
+    '    float t = tone(src, cs.y);',
+    '    float half_ = 0.5 * cell * t * uMore.x;',
+    '    float d = abs(q.y - idy) * cell;',
+    '    float aa = uCol1.w;',
+    '    a = half_ < 0.2 ? 0.0 : 1.0 - smoothstep(half_ - aa, half_ + aa, d);',
+    '  } else if (style == 2) {',
+    '    src = pic(s);',
+    '    a = tone(src, s.y);',
+    '  } else {',
+    '    for (int k = 0; k < 16; k++) {',
+    '      float fk = float(k);',
+    '      float r = sqrt((fk + 0.5) / 16.0) * cell;',
+    '      float th = fk * 2.39996;',
+    '      vec2 o = vec2(cos(th), sin(th)) * r;',
+    '      vec4 c = pic(s + o);',
+    '      src += c;',
+    '      a += tone(c, s.y + o.y);',
+    '    }',
+    '    a /= 16.0;',
+    '    src /= 16.0;',
+    '  }',
+    '  vec3 col = mix(uCol1.rgb, uCol2.rgb, clamp((s.y - uTone.z) / max(1.0, uTone.w), 0.0, 1.0));',
+    '  if (uMore.y > 0.0 && src.a > 0.004) col = mix(col, src.rgb / src.a, uMore.y);',
+    '  a *= uOff.w;',
+    '  finalColor = vec4(col * a, a);',
+    '}'
+  ].join('\n');
+
+  // a background's pattern, over the whole stage (a sprite the size of the stage, this as its filter)
+  var PATTERN_FRAG = [
+    'in vec2 vPos;',
+    'out vec4 finalColor;',
+    'uniform vec4 uGeo;',        // the filter area on the page: top left, size
+    'uniform vec4 uRoot;',       // the stage's top left on the page, page pixels per stage pixel, the edge's softness (stage px)
+    'uniform vec4 uGrid;',       // cell (stage px), cos, sin of the grid's angle, drift (stage px)
+    'uniform vec4 uDir;',        // the way the colours run and the dots shrink: cos, sin; fade; kind (1 dots, 2 lines)
+    'uniform vec4 uCol1;',       // first colour, weight
+    'uniform vec4 uCol2;',       // second colour, opacity
+    'float along(vec2 p){',      // 0 .. 1 across the stage, the way `dir` points
+    '  vec2 c = vec2(960.0, 540.0);',
+    '  float half_ = 0.5 * (abs(uDir.x) * 1920.0 + abs(uDir.y) * 1080.0);',
+    '  return clamp(dot(p - c, uDir.xy) / max(1.0, half_) * 0.5 + 0.5, 0.0, 1.0);',
+    '}',
+    'void main(void){',
+    '  vec2 g = uGeo.xy + vPos * uGeo.zw;',
+    '  vec2 s = (g - uRoot.xy) / uRoot.z;',
+    '  float cell = uGrid.x, a = 0.0, aa = uRoot.w;',
+    '  mat2 rot = mat2(uGrid.y, -uGrid.z, uGrid.z, uGrid.y);',
+    '  mat2 back = mat2(uGrid.y, uGrid.z, -uGrid.z, uGrid.y);',
+    '  if (uDir.w < 1.5) {',
+    '    vec2 q = rot * s / cell + vec2(uGrid.w / cell, 0.0);',
+    '    vec2 id = floor(q) + 0.5;',
+    '    vec2 cs = back * ((id - vec2(uGrid.w / cell, 0.0)) * cell);',
+    '    float t = max(0.0, 1.0 - uDir.z * along(cs));',
+    '    float rad = 0.5 * cell * sqrt(t) * uCol1.w * 1.42;',
+    '    float d = length(q - id) * cell;',
+    '    a = rad < 0.25 ? 0.0 : 1.0 - smoothstep(rad - aa, rad + aa, d);',
+    '  } else {',
+    '    vec2 q = rot * s / cell + vec2(0.0, uGrid.w / cell);',
+    '    float idy = floor(q.y) + 0.5;',
+    '    vec2 cs = back * (vec2(q.x, idy - uGrid.w / cell) * cell);',
+    '    float t = max(0.0, 1.0 - uDir.z * along(cs));',
+    '    float half_ = 0.5 * cell * t * uCol1.w;',
+    '    float d = abs(q.y - idy) * cell;',
+    '    a = half_ < 0.2 ? 0.0 : 1.0 - smoothstep(half_ - aa, half_ + aa, d);',
+    '  }',
+    '  vec3 col = mix(uCol1.rgb, uCol2.rgb, along(s));',
+    '  a *= uCol2.w;',
+    '  finalColor = vec4(col * a, a);',
+    '}'
+  ].join('\n');
+
+  /* where a light is this moment, its preset played: {col, k, ang, flash}. `i` is its place in the list (the first one
+     moves like the single light before 1.11 did); storms (strobe, lightning) are the same for every light of the avatar */
+  function lightFrame(l, now, seed, i) {
+    var col = hexRgb(l.color), k = l.intensity || 0, ang = (l.angle || 0) * Math.PI / 180, flash = 0, rim = l.kind === 'rim';
+    var t = now * (l.speed || 1), sd = seed + (i || 0) * 131, ph, pn, r;
+    switch (l.preset) {
+      case 'pulse': k *= rim ? 0.6 + 0.4 * Math.sin(t * 2.4) : 0.55 + 0.45 * Math.sin(t * 2.4); break;
+      case 'flicker': k *= 0.75 + 0.25 * noise(sd, t * 9); break;
+      case 'fire': col = [1, 0.48 + 0.12 * noise(sd, t * 5), 0.12]; k *= 0.7 + 0.35 * fbm(sd, t * 7); ang = Math.PI / 2 + noise(sd + 5, t * 3) * 0.3; break;
+      case 'police': ph = Math.floor(t * 3) % 2; ang = ph ? 0 : Math.PI;
+        if (rim) { col = ph ? [0.2, 0.35, 1] : [1, 0.15, 0.15]; k = Math.max(k, 0.8); } else col = ph ? [1, 0.12, 0.12] : [0.15, 0.3, 1];
+        break;
+      case 'rainbow': col = rim ? hsv((t * 0.1 + 0.5) % 1, 0.8, 1) : hsv((t * 0.1) % 1, 0.75, 1); break;
+      case 'strobe': flash = (Math.floor(t * 8) % 2) ? 0.35 : 0; break;
+      case 'lightning': r = hash(seed, Math.floor(t * 4)); flash = r > 0.93 ? 0.55 * (1 - (t * 4 % 1)) : 0;
+        if (rim) { col = [0.7, 0.8, 1]; k = Math.max(k, flash * 2); }
+        break;
+      case 'neon': pn = 0.6 + 0.4 * Math.sin(t * 1.7);
+        if (rim) { col = [0.2, 0.95, 1]; k = Math.max(k, 0.9 * (1.4 - pn)); } else { col = [1, 0.25, 0.75]; k *= pn; }
+        break;
     }
+    return { col: col, k: k, ang: ang, flash: flash };
+  }
+
+  /* the lights as the shader takes them. geo: {s: page pixels per stage pixel, M: the avatar's matrix on the stage,
+     rx, ry: the stage's top left on the page, bw, bh: the avatar's box (its own units)}; w: how far it is faded in */
+  function packLights(lt, w, now, seed, geo, out) {
+    var A = out.A, B = out.B, C = out.C, flash = 0, n = 0, list = (lt && lt.lights) || [];
+    for (var j = 0; j < MAX_LIGHTS * 4; j++) A[j] = B[j] = C[j] = 0;
+    for (var i = 0; i < list.length && n < MAX_LIGHTS; i++) {
+      var l = list[i];
+      if (!l || l.on === false || !LIGHT_KIND[l.kind]) continue;
+      var f = lightFrame(l, now, seed, i), o = n * 4, blur = l.blur == null ? 50 : l.blur;
+      A[o] = LIGHT_KIND[l.kind]; A[o + 1] = f.k * w;
+      B[o] = f.col[0]; B[o + 1] = f.col[1]; B[o + 2] = f.col[2];
+      C[o] = Math.cos(f.ang); C[o + 1] = Math.sin(f.ang);
+      if (l.kind === 'key') A[o + 2] = blur / 100;
+      else if (l.kind === 'rim') { A[o + 2] = blur / 100 * Math.max(6, l.width || 10) * 1.2 * geo.s; A[o + 3] = (l.width || 10) * geo.s; }
+      else {
+        var M = geo.M, lx = ((l.x == null ? 50 : l.x) - 50) / 100 * geo.bw, ly = ((l.y == null ? 30 : l.y) - 50) / 100 * geo.bh;
+        var sx = M.a * lx + M.c * ly + M.tx, sy = M.b * lx + M.d * ly + M.ty;
+        C[o + 2] = geo.rx + sx * geo.s; C[o + 3] = geo.ry + sy * geo.s;
+        A[o + 2] = blur / 100; A[o + 3] = (l.size || 35) / 100 * geo.bh * Math.hypot(M.a, M.b) * geo.s;
+      }
+      flash = Math.max(flash, f.flash);
+      n++;
+    }
+    out.flash = flash * w;
+    out.n = n;
+    return out;
+  }
+  HA.lightFrame = lightFrame;
+  HA.packLights = packLights;
+
+  function lookUniforms(spec) {
+    var u = {};
+    for (var k in spec) u[k] = spec[k] === 8 ? { value: new Float32Array(32), type: 'vec4<f32>', size: 8 } : { value: new Float32Array(4), type: 'vec4<f32>' };
+    return new PIXI.UniformGroup(u);
+  }
+  function lookFilter(vert, frag, name, uniforms, extra) {
+    var res = { lookU: uniforms };
+    for (var k in extra || {}) res[k] = extra[k];
+    return new PIXI.Filter({ glProgram: PIXI.GlProgram.from({ vertex: vert, fragment: frag, name: name }), resources: res,
+                             resolution: 'inherit', padding: 2 });
+  }
+
+  /* the avatar's filter (made when something of the look is on, dropped when all of it has faded out) */
+  Avatar.prototype._makeLook = function () {
+    var fx = { frame: -1 };
+    fx.mainU = lookUniforms({ uGeo: 1, uUv: 1, uBody: 1, uAmb: 1, uMisc: 1, uOutC: 1, uOutG: 1, uDistUv: 1, uLA: 8, uLB: 8, uLC: 8 });
+    fx.main = lookFilter(LOOK_VERT, LOOK_FRAG, 'hexcast-look', fx.mainU, { uDist: PIXI.Texture.WHITE.source });
+    fx.hU = lookUniforms({ uD: 1, uClip: 1 });
+    fx.h = lookFilter(LOOK_VERT, DIST_H_FRAG, 'hexcast-dist-h', fx.hU);
+    fx.vU = lookUniforms({ uD: 1, uClip: 1 });
+    fx.v = lookFilter(LOOK_VERT, DIST_V_FRAG, 'hexcast-dist-v', fx.vU);
+    fx.echoU = lookUniforms({ uRect: 1, uMap: 1, uClip: 1, uEcho: 1, uOff: 1, uMore: 1, uGrid: 1, uTone: 1, uCol1: 1, uCol2: 1 });
+    fx.echo = lookFilter(ECHO_VERT, ECHO_FRAG, 'hexcast-echo', fx.echoU);
+    fx.lights = { A: fx.mainU.uniforms.uLA, B: fx.mainU.uniforms.uLB, C: fx.mainU.uniforms.uLC, flash: 0, n: 0 };
+    var self = this;
+    fx.main.apply = function (fm, input, output, clear) { self._applyLook(fm, input, output, clear); };
+    this.fx = fx;
+    this.node.filters = [fx.main];
+  };
+
+  Avatar.prototype._dropLook = function () {
+    var fx = this.fx;
+    if (!fx) return;
+    this.node.filters = null;
+    ['main', 'h', 'v', 'echo'].forEach(function (k) { try { fx[k].destroy(); } catch (e) {} });
+    this.fx = null;
+  };
+
+  /* every frame Pixi draws the avatar: the echo, the outline's distance field, then the avatar lit and outlined */
+  Avatar.prototype._applyLook = function (fm, input, output, clear) {
+    var fx = this.fx, st = this.stage, b = fm._activeFilterData && fm._activeFilterData.bounds;
+    var src = input.source, fw = input.frame.width, fh = input.frame.height;
+    var u = fx.mainU.uniforms, ox = b ? b.minX : 0, oy = b ? b.minY : 0;
+    u.uGeo[0] = ox; u.uGeo[1] = oy; u.uGeo[2] = fw; u.uGeo[3] = fh;
+    u.uUv[0] = 1 / src.width; u.uUv[1] = 1 / src.height; u.uUv[2] = fw / src.width; u.uUv[3] = fh / src.height;
+    var echo = fx.echoOn && this.bg && this.bg.tex;
+    if (echo) {
+      var e = fx.echoU.uniforms, s = st.scale, rp = st.root.position;
+      e.uMap[0] = s / src.width; e.uMap[1] = s / src.height; e.uMap[2] = (rp.x - ox) / src.width; e.uMap[3] = (rp.y - oy) / src.height;
+      e.uClip[0] = fw / src.width; e.uClip[1] = fh / src.height; e.uClip[2] = W; e.uClip[3] = H;
+      // where the echo can be: the picture's box (stage pixels), scaled and moved as the echo is, plus a dot / the glow
+      var cx = e.uEcho[0], cy = e.uEcho[1], es = e.uEcho[2] * e.uEcho[3], pad = e.uGrid[0] + 2;
+      var sx0 = (ox - rp.x) / s, sy0 = (oy - rp.y) / s, sx1 = sx0 + fw / s, sy1 = sy0 + fh / s;
+      var ax = cx + e.uOff[0] + (sx0 - cx) * es, bx = cx + e.uOff[0] + (sx1 - cx) * es;
+      var x0 = clamp(Math.min(ax, bx) - pad, 0, W), x1 = clamp(Math.max(ax, bx) + pad, 0, W);
+      var y0 = clamp(cy + e.uOff[1] + (sy0 - cy) * e.uEcho[2] - pad, 0, H), y1 = clamp(cy + e.uOff[1] + (sy1 - cy) * e.uEcho[2] + pad, 0, H);
+      e.uRect[0] = x0 / W; e.uRect[1] = y0 / H; e.uRect[2] = (x1 - x0) / W; e.uRect[3] = (y1 - y0) / H;
+      fm.applyFilter(fx.echo, input, this.bg.tex, true);
+      fx.frame = st.frameNo;
+    }
+    var pool = PIXI.TexturePool, t1 = null, t2 = null, R = fx.outR || 0;
+    if (u.uOutC[3] > 0 && R > 0 && pool) {
+      var ires = src._resolution || 1, steps = Math.min(32, Math.max(1, Math.ceil(R * ires))), step = R / steps;
+      var dres = Math.max(0.05, Math.min(ires, 1 / step));
+      t1 = pool.getOptimalTexture({ width: fw, height: fh, resolution: dres });
+      t2 = pool.getOptimalTexture({ width: fw, height: fh, resolution: dres });
+      var h = fx.hU.uniforms, v = fx.vU.uniforms;
+      h.uD[0] = step / src.width; h.uD[1] = steps; h.uD[2] = step; h.uD[3] = R;
+      h.uClip[0] = fw / src.width; h.uClip[1] = fh / src.height;
+      fm.applyFilter(fx.h, input, t1, true);
+      v.uD[0] = step / t1.source.height; v.uD[1] = steps; v.uD[2] = step; v.uD[3] = R;
+      v.uClip[0] = fw / t1.source.width; v.uClip[1] = fh / t1.source.height;
+      fm.applyFilter(fx.v, t1, t2, true);
+      fx.main.resources.uDist = t2.source;
+      u.uDistUv[0] = fw / t2.source.width; u.uDistUv[1] = fh / t2.source.height;
+    } else {
+      fx.main.resources.uDist = PIXI.Texture.WHITE.source;
+      u.uOutC[3] = 0;
+    }
+    fm.applyFilter(fx.main, input, output, clear);
+    if (t1) pool.returnTexture(t1);
+    if (t2) pool.returnTexture(t2);
+  };
+
+  Avatar.prototype.boxHeight = function () { return this.png ? this.png.box.h * this.baseScale : H; };
+
+  /* `light` (the config's, or one a bot holds for now): {enabled, ambient, ambient_amount, lights: [...]} */
+  Avatar.prototype.setLight = function (lt, fade) {
+    var on = lt && lt.enabled && ((lt.ambient_amount || 0) > 0 || (lt.lights || []).some(function (l) { return l && l.on !== false; }));
+    this.lightCfg = on ? lt : null;
+    if (on) this._lastLight = lt;
+    this.lightFade = Math.max(0.01, fade == null ? 0.5 : fade);
+  };
+
+  /* `outline`: {enabled, color, width, blur, opacity} */
+  Avatar.prototype.setOutline = function (o, fade) {
+    var on = o && o.enabled && (o.opacity == null || o.opacity > 0) && ((o.width || 0) > 0 || (o.blur || 0) > 0);
+    this.outCfg = on ? o : null;
+    if (on) this._lastOut = o;
+    this.outFade = Math.max(0.01, fade == null ? 0.4 : fade);
+  };
+
+  /* the background that is on: its name (one of the config's `backgrounds`), "" for none */
+  Avatar.prototype.setBackground = function (name, fade) {
+    var list = this.cfg.backgrounds || [], n = String(name || '').toLowerCase();
+    var bg = n ? list.filter(function (b) { return b.name.toLowerCase() === n; })[0] || null : null;
+    this.bgFade = Math.max(0.01, fade == null ? 0.4 : fade);
+    if (bg) { this.bgCfg = bg; this._lastBg = bg; }
+    else this.bgCfg = null;
+    this.bgName = bg ? bg.name : '';
   };
 
   Avatar.prototype._lightTick = function (dt, now) {
-    if (!this.light) return;
-    var on = !!this.lightCfg;
-    this.lightW = approach(this.lightW, on ? 1 : 0, dt, this.lightFade / 3);
-    if (!on && this.lightW < 0.004) { this.node.filters = null; this.light.destroy(); this.light = null; this.lightW = 0; return; }
-    var lt = this.lightCfg || this._lastLight || {}, w = this.lightW;
-    if (on) this._lastLight = lt;
-    var key = hexRgb(lt.color), amb = hexRgb(lt.ambient), rim = hexRgb(lt.rim);
-    var ki = lt.intensity || 0, ri = lt.rim_amount || 0, ai = lt.ambient_amount || 0, ang = (lt.angle || 0) * Math.PI / 180;
-    var sp = lt.speed || 1, t = now * sp, flash = 0, seed = this.seed;
-    switch (lt.preset) {
-      case 'pulse': ki *= 0.55 + 0.45 * Math.sin(t * 2.4); ri *= 0.6 + 0.4 * Math.sin(t * 2.4); break;
-      case 'flicker': ki *= 0.75 + 0.25 * noise(seed, t * 9); break;
-      case 'fire': key = [1, 0.48 + 0.12 * noise(seed, t * 5), 0.12]; ki *= 0.7 + 0.35 * fbm(seed, t * 7); ang = Math.PI / 2 + noise(seed + 5, t * 3) * 0.3; break;
-      case 'police': var ph = Math.floor(t * 3) % 2; key = ph ? [1, 0.12, 0.12] : [0.15, 0.3, 1]; ang = ph ? 0 : Math.PI; rim = ph ? [0.2, 0.35, 1] : [1, 0.15, 0.15]; ri = Math.max(ri, 0.8); break;
-      case 'rainbow': key = hsv((t * 0.1) % 1, 0.75, 1); rim = hsv((t * 0.1 + 0.5) % 1, 0.8, 1); break;
-      case 'strobe': flash = (Math.floor(t * 8) % 2) ? 0.35 : 0; break;
-      case 'lightning': var r = hash(seed, Math.floor(t * 4)); flash = r > 0.93 ? 0.55 * (1 - (t * 4 % 1)) : 0; rim = [0.7, 0.8, 1]; ri = Math.max(ri, flash * 2); break;
-      case 'neon': var pn = 0.6 + 0.4 * Math.sin(t * 1.7); key = [1, 0.25, 0.75]; rim = [0.2, 0.95, 1]; ki *= pn; ri = Math.max(ri, 0.9 * (1.4 - pn)); break;
+    this.lightW = approach(this.lightW || 0, this.lightCfg ? 1 : 0, dt, (this.lightFade || 0.5) / 3);
+    this.outW = approach(this.outW || 0, this.outCfg ? 1 : 0, dt, (this.outFade || 0.4) / 3);
+    this.bgW = approach(this.bgW || 0, this.bgCfg ? 1 : 0, dt, (this.bgFade || 0.4) / 3);
+    if (!this.lightCfg && this.lightW < 0.004) this.lightW = 0;
+    if (!this.outCfg && this.outW < 0.004) this.outW = 0;
+    if (!this.bgCfg && this.bgW < 0.004) this.bgW = 0;
+    var bg = this.bgCfg || (this.bgW ? this._lastBg : null);
+    var echoOn = !!(bg && bg.echo && bg.echo.enabled && this.bgW > 0);
+    this._bgTick(bg, now, echoOn);
+    if (!this.lightW && !this.outW && !echoOn) { this._dropLook(); return; }
+    if (!this.fx) {
+      try { this._makeLook(); } catch (e) { console.warn('avatar look', e); this._lookBroken = true; return; }
     }
-    var u = this.lightU.uniforms;
-    u.uKey[0] = key[0]; u.uKey[1] = key[1]; u.uKey[2] = key[2];
-    u.uKeyAmt = ki * w;
-    // the light comes from `angle` (0 = from the right, -90 = from above): the lit side faces it
-    u.uDir[0] = Math.cos(ang); u.uDir[1] = Math.sin(ang);
-    u.uAmb[0] = amb[0]; u.uAmb[1] = amb[1]; u.uAmb[2] = amb[2];
-    u.uAmbAmt = ai * w;
-    u.uRim[0] = rim[0]; u.uRim[1] = rim[1]; u.uRim[2] = rim[2];
-    u.uRimAmt = ri * w;
-    u.uFlash = flash * w;
+    var fx = this.fx, u = fx.mainU.uniforms, st = this.stage, rp = st.root.position, s = st.scale || 1;
+    var M = nodeMatrix(this.node), sc = Math.hypot(M.a, M.b);
+    var geo = { s: s, M: M, rx: rp.x, ry: rp.y, bw: this.boxWidth(), bh: this.boxHeight() };
+    u.uBody[0] = rp.x + M.tx * s; u.uBody[1] = rp.y + M.ty * s; u.uBody[2] = geo.bw * sc * s; u.uBody[3] = geo.bh * sc * s;
+    var lt = this.lightCfg || this._lastLight;
+    if (this.lightW > 0 && lt) {
+      packLights(lt, this.lightW, now, this.seed, geo, fx.lights);
+      var amb = hexRgb(lt.ambient);
+      u.uAmb[0] = amb[0]; u.uAmb[1] = amb[1]; u.uAmb[2] = amb[2]; u.uAmb[3] = (lt.ambient_amount || 0) * this.lightW;
+      u.uMisc[0] = fx.lights.flash; u.uMisc[1] = 1;
+    } else {
+      u.uMisc[0] = 0; u.uMisc[1] = 0;
+    }
+    var o = this.outCfg || this._lastOut;
+    if (this.outW > 0 && o) {
+      var oc = hexRgb(o.color), ow = Math.max(0, o.width || 0), ob = Math.max(0, o.blur || 0);
+      u.uOutC[0] = oc[0]; u.uOutC[1] = oc[1]; u.uOutC[2] = oc[2]; u.uOutC[3] = (o.opacity == null ? 1 : o.opacity) * this.outW;
+      u.uOutG[0] = ow * s; u.uOutG[1] = ob * s;
+      fx.outR = (ow + ob * 0.5) * s + 2;
+      u.uOutG[2] = fx.outR;
+    } else {
+      u.uOutC[3] = 0; fx.outR = 0;
+    }
+    fx.main.padding = Math.ceil(fx.outR || 0) + 2;
+    fx.echoOn = echoOn;
+    if (echoOn) {
+      var e = fx.echoU.uniforms, ec = bg.echo, c1 = hexRgb(ec.color), c2 = hexRgb(ec.color2), ang = (ec.angle || 0) * Math.PI / 180;
+      var cell = Math.max(2, ec.size || 14), drift = ((now * (ec.speed || 0)) % cell + cell) % cell;
+      var es = ec.scale || 1.6, eh = geo.bh * sc * es, offx = (ec.x || 0) / 100 * W, offy = (ec.y || 0) / 100 * H;
+      e.uEcho[0] = M.tx; e.uEcho[1] = M.ty; e.uEcho[2] = es; e.uEcho[3] = ec.mirror ? -1 : 1;
+      e.uOff[0] = offx; e.uOff[1] = offy; e.uOff[2] = ECHO_STYLE[ec.style] || 0; e.uOff[3] = ec.opacity == null ? 0.85 : ec.opacity;
+      e.uMore[0] = ec.weight == null ? 0.6 : ec.weight; e.uMore[1] = ec.art || 0;
+      e.uGrid[0] = cell; e.uGrid[1] = Math.cos(ang); e.uGrid[2] = Math.sin(ang); e.uGrid[3] = drift;
+      e.uTone[0] = ec.shade || 0; e.uTone[1] = ec.fade || 0; e.uTone[2] = M.ty + offy - eh / 2; e.uTone[3] = eh;
+      e.uCol1[0] = c1[0]; e.uCol1[1] = c1[1]; e.uCol1[2] = c1[2]; e.uCol1[3] = 0.7 / Math.max(0.1, (this.bg && this.bg.texRes) || 1);
+      e.uCol2[0] = c2[0]; e.uCol2[1] = c2[1]; e.uCol2[2] = c2[2];
+    }
   };
+
+  /* -------------------------------------------- backgrounds */
+
+  /* What is on the stage's back layer for this avatar while a background is on: a fill (a colour, a gradient), a
+     picture from the item library, and the echo (a sprite showing the texture the avatar's filter draws it into). */
+  Avatar.prototype._bgTick = function (bg, now, echoOn) {
+    var st = this.stage, B = this.bg;
+    if (!bg || !this.bgW) { if (B) this._dropBg(); return; }
+    if (!B) {
+      B = this.bg = { root: new PIXI.Container(), fill: null, fillSig: '', img: null, imgId: '', imgSeq: 0, echo: null, tex: null, texRes: 0, pat: null };
+      B.root.label = 'background:' + this.name;
+      B.root.sortableChildren = true;                                     // fill 0, picture 1, pattern 2, echo 3
+      st.backLayer.addChild(B.root);
+    }
+    B.root.zIndex = this.node.zIndex;
+    var av = this.node.visible ? this.alpha.cur : 0, w = this.bgW;
+    // the fill
+    var f = bg.fill || {}, sig = f.kind === 'none' ? '' : [f.kind, f.color, f.color2, f.angle].join('|');
+    if (sig !== B.fillSig) {
+      if (B.fill) { B.fill.destroy({ texture: true, textureSource: true }); B.fill = null; }
+      B.fillSig = sig;
+      if (sig) { B.fill = new PIXI.Sprite(fillTexture(f)); B.fill.width = W; B.fill.height = H; B.fill.zIndex = 0; B.root.addChild(B.fill); }
+    }
+    if (B.fill) B.fill.alpha = (f.opacity == null ? 1 : f.opacity) * w * av;
+    // the picture
+    var im = bg.image || {}, id = im.item || '', meta = id ? st.items[id] : null;
+    if (meta && meta.kind === 'live2d') meta = null;                     // (pictures only)
+    if (id !== B.imgId || (B.img && !meta)) {
+      if (B.img) { B.img.destroy(); B.img = null; }
+      B.imgId = id;
+      if (meta) this._loadBgImage(meta, ++B.imgSeq);
+    }
+    if (B.img) { fitPicture(B.img, im.fit); B.img.alpha = (im.opacity == null ? 1 : im.opacity) * w * av; }
+    // the pattern
+    var pt = bg.pattern || {};
+    if (pt.kind === 'dots' || pt.kind === 'lines') {
+      if (!B.pat) {
+        try { B.pat = makePattern(st); B.pat.zIndex = 2; B.root.addChild(B.pat); } catch (e) { console.warn('background pattern', e); B.pat = null; }
+      }
+      if (B.pat) {
+        var pu = B.pat.patU.uniforms, c1 = hexRgb(pt.color), c2 = hexRgb(pt.color2), ga = (pt.angle || 0) * Math.PI / 180, da = (pt.dir == null ? 90 : pt.dir) * Math.PI / 180;
+        var cell = Math.max(2, pt.size || 24), sc = st.scale || 1;
+        pu.uRoot[0] = st.root.position.x; pu.uRoot[1] = st.root.position.y; pu.uRoot[2] = sc;
+        pu.uRoot[3] = 0.7 / Math.max(0.1, sc * ((st.app && st.app.renderer && st.app.renderer.resolution) || 1));
+        pu.uGrid[0] = cell; pu.uGrid[1] = Math.cos(ga); pu.uGrid[2] = Math.sin(ga); pu.uGrid[3] = ((now * (pt.speed || 0)) % cell + cell) % cell;
+        pu.uDir[0] = Math.cos(da); pu.uDir[1] = Math.sin(da); pu.uDir[2] = pt.fade || 0; pu.uDir[3] = pt.kind === 'lines' ? 2 : 1;
+        pu.uCol1[0] = c1[0]; pu.uCol1[1] = c1[1]; pu.uCol1[2] = c1[2]; pu.uCol1[3] = pt.weight == null ? 0.5 : pt.weight;
+        pu.uCol2[0] = c2[0]; pu.uCol2[1] = c2[1]; pu.uCol2[2] = c2[2]; pu.uCol2[3] = (pt.opacity == null ? 0.25 : pt.opacity) * w * av;
+      }
+    } else if (B.pat) { dropPattern(B.pat); B.pat = null; }
+    // the echo
+    if (echoOn) {
+      var res = Math.max(0.1, Math.min(2, (st.scale || 1) * ((st.app && st.app.renderer && st.app.renderer.resolution) || 1)));
+      if (!B.tex || Math.abs(B.texRes - res) > 0.01) {
+        if (B.tex) B.tex.destroy(true);
+        B.tex = PIXI.RenderTexture.create({ width: W, height: H, resolution: res });
+        B.texRes = res;
+        if (B.echo) B.echo.texture = B.tex;
+      }
+      if (!B.echo) { B.echo = new PIXI.Sprite(B.tex); B.echo.zIndex = 3; B.root.addChild(B.echo); }
+      B.echo.width = W; B.echo.height = H;
+      B.echo.alpha = w;
+      // (it shows what the avatar's filter drew into it: not while the avatar is not drawn)
+      B.echo.visible = this.node.visible && !!this.fx && this.fx.frame >= 0 && st.frameNo - this.fx.frame <= 2;
+    } else if (B.echo) {
+      B.echo.destroy(); B.echo = null;
+      if (B.tex) { B.tex.destroy(true); B.tex = null; }
+    }
+  };
+
+  Avatar.prototype._loadBgImage = async function (meta, seq) {
+    var disp = null, B = this.bg;
+    try { disp = await loadDisplay(meta, 12); } catch (e) {
+      this.stage.emit('event', { event: 'error', avatar: this.name, message: 'background picture ' + meta.id + ': ' + (e && e.message || e) });
+      return;
+    }
+    if (!disp) return;
+    if (this.bg !== B || !B || B.imgSeq !== seq) { disp.destroy(); return; }
+    if (disp.anchor) disp.anchor.set(0.5);
+    B.img = disp;
+    disp.zIndex = 1;
+    B.root.addChild(disp);
+  };
+
+  Avatar.prototype._dropBg = function () {
+    var B = this.bg;
+    if (!B) return;
+    this.bg = null;
+    if (B.pat) dropPattern(B.pat);
+    try { B.root.destroy({ children: true }); } catch (e) {}
+    if (B.tex) { try { B.tex.destroy(true); } catch (e) {} }
+  };
+
+  /* a pattern: a white sprite the size of the stage whose filter draws the dots / lines (positions in stage pixels) */
+  function makePattern(st) {
+    var sp = new PIXI.Sprite(PIXI.Texture.WHITE);
+    sp.width = W; sp.height = H;
+    var u = lookUniforms({ uGeo: 1, uRoot: 1, uGrid: 1, uDir: 1, uCol1: 1, uCol2: 1 });
+    var f = lookFilter(LOOK_VERT, PATTERN_FRAG, 'hexcast-pattern', u);
+    f.apply = function (fm, input, output, clear) {
+      var b = fm._activeFilterData && fm._activeFilterData.bounds, g = u.uniforms.uGeo;
+      g[0] = b ? b.minX : 0; g[1] = b ? b.minY : 0; g[2] = input.frame.width; g[3] = input.frame.height;
+      fm.applyFilter(f, input, output, clear);
+    };
+    sp.filters = [f];
+    sp.patU = u;
+    return sp;
+  }
+  function dropPattern(sp) {
+    var f = sp.filters && sp.filters[0];
+    sp.filters = null;
+    try { sp.destroy(); if (f) f.destroy(); } catch (e) {}
+  }
+
+  // a fill: one colour, or a linear gradient from `color` to `color2` along `angle` (90 = top to bottom)
+  function fillTexture(f) {
+    var c = document.createElement('canvas'), x = c.getContext('2d');
+    c.width = 256; c.height = 144;
+    if (f.kind === 'gradient') {
+      var a = (f.angle == null ? 90 : f.angle) * Math.PI / 180, dx = Math.cos(a) * 128, dy = Math.sin(a) * 72;
+      var gr = x.createLinearGradient(128 - dx, 72 - dy, 128 + dx, 72 + dy);
+      gr.addColorStop(0, f.color || '#000000'); gr.addColorStop(1, f.color2 || '#000000');
+      x.fillStyle = gr;
+    } else x.fillStyle = f.color || '#000000';
+    x.fillRect(0, 0, 256, 144);
+    return PIXI.Texture.from(c);
+  }
+
+  // a background picture on the stage: cover (fills it, cropped), contain (whole, letterboxed) or stretch
+  function fitPicture(d, fit) {
+    var tw = (d.texture && d.texture.width) || d.width || 1, th = (d.texture && d.texture.height) || d.height || 1;
+    var sx = W / tw, sy = H / th, k = fit === 'contain' ? Math.min(sx, sy) : Math.max(sx, sy);
+    if (fit === 'stretch') d.scale.set(sx, sy); else d.scale.set(k);
+    d.position.set(W / 2, H / 2);
+  }
 
   /* -------------------------------------------- what the API can ask for */
 
