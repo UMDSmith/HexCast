@@ -61,7 +61,7 @@
   }
   function connect() {
     var url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/avatar/ws/render?role=obs&overlay=' + encodeURIComponent(overlay) +
-      (only.length ? '&avatar=' + encodeURIComponent(only.join(',')) : '') + (audio ? '' : '&audio=0') + (spout ? '&via=spout' : '');
+      (only.length ? '&avatar=' + encodeURIComponent(only.join(',')) : '') + (audio ? '' : '&audio=0') + (spout || q.get('via') === 'spout' ? '&via=spout' : '');
     ws = new WebSocket(url);
     ws.binaryType = 'arraybuffer';
     ws.onopen = function () { backoff = 500; say(''); };
@@ -80,32 +80,31 @@
   }).catch(function (e) { say('Avatars: ' + e.message); console.error(e); });
   connect();
 
-  /* Spout output: the frames go to Hexcast, which shares them (only while it asks for them - else this page is closed) */
+  /* Spout output: the frames go to Hexcast, which shares them (only while it asks for them - else this page is closed). This
+     page only draws and reads back; a worker compares, packs and sends (so the socket is fed while the next frame is drawn),
+     and the frame buffers go back and forth between the two without being copied. */
   function startSpout() {
-    var sw = null, wait = 500;
-    function open() {
-      sw = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/avatar/ws/spout?overlay=' + encodeURIComponent(overlay));
-      sw.binaryType = 'arraybuffer';
-      sw.onopen = function () { wait = 500; packer.forceFull(); sw.send(JSON.stringify({ type: 'hello', w: HexAvatar.W, h: HexAvatar.H, fps: spoutFps })); };
-      sw.onmessage = function (ev) { if (typeof ev.data === 'string' && ev.data.indexOf('"full"') >= 0) packer.forceFull(); };   // Hexcast lost track: a whole frame
-      sw.onclose = function () { sw = null; setTimeout(open, wait); wait = Math.min(8000, wait * 2); };
-    }
-    var packer = new HexAvatar.SpoutPacker(HexAvatar.W, HexAvatar.H), lastFull = 0;
-    open();
+    var url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/avatar/ws/spout?overlay=' + encodeURIComponent(overlay);
+    var worker = new Worker('{{STATIC}}/avatar_spout_worker.js?v=' + encodeURIComponent(window.HEXCAST_AVATAR_BUILD || ''));
+    var pool = [], made = 0, busy = true, size = HexAvatar.W * HexAvatar.H * 4;
+    worker.onmessage = function (ev) {
+      var m = ev.data;
+      if (m.type === 'buf') pool.push(m.buf);
+      else if (m.type === 'busy') busy = m.busy;
+    };
+    worker.postMessage({ type: 'open', url: url, w: HexAvatar.W, h: HexAvatar.H, fps: spoutFps });
     try {
       stage.startCapture({ fps: spoutFps,
-        ready: function () { return !!(sw && sw.readyState === 1 && sw.bufferedAmount < 4e6); },    // (a frame still on its way: skip this one)
-        target: function () { return packer.target(); },
-        send: function () {
-          var now = Date.now();
-          if (now - lastFull > 5000) { packer.forceFull(); lastFull = now; }                     // a whole frame now and then, to be safe
-          var msg = packer.pack();
-          if (msg) sw.send(msg);
-        } });
+        ready: function () {                                                // (the socket full, or no buffer free: this frame is skipped)
+          if (busy) return false;
+          if (!pool.length && made < 3) { pool.push(new Uint8Array(size)); made++; }
+          return pool.length > 0;
+        },
+        target: function () { return pool.pop(); },
+        send: function (buf) { worker.postMessage({ type: 'frame', buf: buf }, [buf.buffer]); } });
     } catch (e) {
       console.error(e);
-      var tell = function () { if (sw && sw.readyState === 1) sw.send(JSON.stringify({ type: 'error', message: String(e && e.message || e) })); else setTimeout(tell, 1000); };
-      tell();
+      worker.postMessage({ type: 'error', message: String(e && e.message || e) });
     }
   }
 })();

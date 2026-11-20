@@ -684,11 +684,18 @@ def spout_status(oid: str) -> dict:
     out = SPOUT.get(oid)
     st = out.status() if out else {"state": "off", "error": "", "fps": 0, "frames": 0, "size": [0, 0], "browser": ""}
     return {**cfg, "name": spout_name(oid), "state": st["state"] if cfg["enabled"] else "off", "error": st["error"] if cfg["enabled"] else "",
-            "fps_now": st["fps"], "frames": st["frames"], "size": st["size"], "browser": st["browser"]}
+            "engine": st.get("engine", "browser"),
+            "fps_now": st["fps"], "frames": st["frames"], "received": st.get("received", 0), "size": st["size"], "browser": st["browser"]}
 
 
-def _spout_url(oid: str, cfg: dict) -> str:
+def _engine_dir() -> str:
+    return str(paths.CONFIG_DIR / "avatar_electron")
+
+
+def _spout_url(oid: str, cfg: dict, engine: bool = False) -> str:
     path = "/avatar/overlay" if oid == DEFAULT_OVERLAY else f"/avatar/overlay/{quote(oid)}"
+    if engine:                                    # the fast engine shows the page as it is (and takes its frames itself)
+        return f"http://127.0.0.1:{PORT}{path}?via=spout" + ("" if cfg["audio"] else "&audio=0")
     return f"http://127.0.0.1:{PORT}{path}?spout=1&fps={cfg['fps']}"
 
 
@@ -711,7 +718,7 @@ async def sync_spout() -> None:
         if not out.enabled:
             out.fps, out.audio = want["fps"], want["audio"]
             out._url = _spout_url(oid, want)
-            out.start(out._url, str(paths.CONFIG_DIR / "avatar_spout" / oid), conf["browser"])
+            out.start(out._url, str(paths.CONFIG_DIR / "avatar_spout" / oid), conf["browser"], _engine_dir(), _spout_url(oid, want, True))
 
 
 async def stop_spout() -> None:
@@ -2766,6 +2773,7 @@ API_ROUTES = [
     "POST /avatar/api/avatars/<name>/outline       {state:on|off|toggle, color, width, blur, opacity, fade, save, reset} - a line around the art (stage pixels)",
     "POST /avatar/api/avatars/<name>/background    {name, state:on|off|toggle, fade, save, reset} - one of the avatar's backgrounds (the Background tab makes them); {name: \"none\"} for none",
     "GET  /avatar/api/spout                        Spout output (Shoost, VTube Studio ...): the browser that draws it, the senders, each overlay's output",
+    "POST /avatar/api/spout/engine                 {install:true} downloads the fast engine (Electron, ~158 MB: frames stay on the graphics card), {remove:true}",
     "POST /avatar/api/spout/<overlay>              {state:on|off|toggle, fps:30|60, audio} - send that overlay out as a Spout sender (\"Hexcast Avatars\"), no OBS needed; POST /avatar/api/spout {browser} picks the browser",
     "POST /avatar/api/avatars/<name>/command       {cmd: <any of the above>, ...}",
     "WS   /avatar/ws/control                       every command as JSON ({cmd, avatar, ..., rid}), plus speak, list, info and the REST calls by name: "
@@ -2930,6 +2938,7 @@ async def api_spout():
     """Spout output: is it possible here, the browser that draws it, and each overlay's output."""
     conf = CONFIG["spout"]
     return {"available": spout.AVAILABLE, "browser": conf["browser"], "found": spout.find_browser(conf["browser"]) if spout.AVAILABLE else None,
+            "engine": spout.engine_status(_engine_dir()),
             "senders": spout.sender_names(), "overlays": {o: spout_status(o) for o in CONFIG["overlays"]}}
 
 
@@ -2948,6 +2957,36 @@ async def api_spout_settings(request: Request):
         await stop_spout()                        # (they start again with that browser)
         await sync_spout()
     return await api_spout()
+
+
+@router.post("/api/spout/engine")
+@guarded
+async def api_spout_engine(request: Request):
+    """{install: true}: download the fast engine (Electron, ~158 MB) - frames then stay on the graphics card: 60 fps whatever
+    is drawn. {remove: true} takes it off again (the hidden browser draws Spout outputs then). GET /avatar/api/spout: progress."""
+    body = await _json(request)
+    check_same_origin(request)                    # (a download onto this PC: not for other web pages to start)
+    if not spout.AVAILABLE:
+        raise CommandError("Spout is Windows only")
+    folder = _engine_dir()
+    if body.get("remove"):
+        await stop_spout()
+        await asyncio.to_thread(spout.remove_engine, folder)
+        await sync_spout()
+    elif body.get("install") and not spout.INSTALL["busy"]:
+        async def run() -> None:
+            await asyncio.to_thread(spout.install_engine, folder)
+            if spout.find_engine(folder):         # the outputs start again, on the engine
+                await stop_spout()
+                await sync_spout()
+            await HUB.panels({"type": "spout"})
+        task = asyncio.get_running_loop().create_task(run())
+        _SPOUT_TASKS.add(task)
+        task.add_done_callback(_SPOUT_TASKS.discard)
+    return {"ok": True, "engine": spout.engine_status(folder)}
+
+
+_SPOUT_TASKS: set = set()
 
 
 @router.post("/api/spout/{oid}")

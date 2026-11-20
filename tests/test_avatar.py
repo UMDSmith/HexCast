@@ -2184,8 +2184,10 @@ def test_a_background_pattern_and_the_echo_in_the_models_colours(av):
 def test_spout_frames_are_sent_whole_then_only_what_changed(engine):
     p = engine["spoutPacker"]
     assert p["first"] == {"magic": "HXS1", "rects": [[0, 0, 8, 6]], "bytes": 208}      # the first frame: all of it
-    assert p["same"] is None                                                            # nothing changed: nothing to send
+    assert p["firstFree"] is None                                                       # (it keeps that frame to compare with)
+    assert p["same"] is None and p["sameFree"]                                          # nothing changed: nothing to send, the frame back
     assert p["one"]["rects"] == [[5, 2, 1, 2]] and p["one"]["bytes"] == 24 and p["onePixel"] == [0, 7]
+    assert p["oneFree"]                                                                 # the first frame is free again
     assert p["merged"]["rects"] == [[1, 0, 2, 4]]                                      # two bands alike: one rectangle
     assert p["apart"]["rects"] == [[0, 0, 1, 2], [7, 2, 1, 2]]                         # far apart: two
     assert p["forced"]["rects"] == [[0, 0, 8, 6]]
@@ -2249,8 +2251,8 @@ class _FakeOutput:
         self.error, self.url, self.pushed, self.stopped, self._full = "", None, [], 0, True
         _FakeOutput.made.append(self)
 
-    def start(self, url, profile, browser):
-        self.enabled, self.url, self.profile = True, url, profile
+    def start(self, url, profile, browser, engine_dir="", engine_url=""):
+        self.enabled, self.url, self.profile, self.engine_url = True, url, profile, engine_url
 
     async def stop(self):
         self.enabled = False
@@ -2281,6 +2283,8 @@ def test_spout_output_per_overlay_is_switched_saved_and_drawn_by_a_hidden_page(a
     assert out.stopped == 1 and av.mod.SPOUT["main"].url.endswith("fps=30")                # a new frame rate: the page starts again
     st = av.get("/avatar/api/spout").json()
     assert st["available"] and st["overlays"]["main"]["enabled"] and "senders" in st
+    assert st["engine"]["installed"] is False and st["engine"]["size_mb"] == 158          # the fast engine: a download the streamer asks for
+    assert av.mod.SPOUT["main"].engine_url == f"http://127.0.0.1:{av.mod.PORT}/avatar/overlay?via=spout&audio=0"   # what it would show
     # the hidden page: frames go to the output; asked once for a whole frame; it is not an OBS source
     with av.websocket_connect("/avatar/ws/spout?overlay=main") as ws:
         ws.send_text(json.dumps({"type": "hello", "w": 1920, "h": 1080}))

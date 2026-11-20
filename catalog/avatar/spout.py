@@ -24,7 +24,12 @@ from __future__ import annotations
 import asyncio
 import collections
 import ctypes
+import hashlib
+import json
 import logging
+import shutil
+import socket
+import zipfile
 import mmap
 import os
 import subprocess
@@ -40,6 +45,8 @@ MAX_SENDERS = 64                  # the SDK's default (HKCU\Software\Leading Edg
 NAME_LEN = 256
 INFO_SIZE = 280
 DXGI_FORMAT_B8G8R8A8_UNORM = 87
+DXGI_FORMAT_R8G8B8A8_UNORM = 28
+FORMATS = {"bgra": DXGI_FORMAT_B8G8R8A8_UNORM, "rgba": DXGI_FORMAT_R8G8B8A8_UNORM}
 
 if AVAILABLE:
     _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -49,6 +56,9 @@ if AVAILABLE:
     _k32.WaitForSingleObject.restype = wt.DWORD
     _k32.ReleaseMutex.argtypes = [wt.HANDLE]
     _k32.CloseHandle.argtypes = [wt.HANDLE]
+    _k32.GetCurrentProcess.restype = wt.HANDLE
+    _k32.DuplicateHandle.argtypes = [wt.HANDLE, wt.HANDLE, wt.HANDLE, ctypes.POINTER(wt.HANDLE), wt.DWORD, wt.BOOL, wt.DWORD]
+    _k32.DuplicateHandle.restype = wt.BOOL
 
 
 class SpoutError(Exception):
@@ -82,10 +92,13 @@ class _Tex2DDesc(ctypes.Structure):
 
 
 IID_IDXGIResource = _GUID.of("035f3ab4-482e-4e50-b41f-8a7f8bd8960b")
+IID_ID3D11Device1 = _GUID.of("a04bfb29-08ef-43d6-a49c-a9bdbdcbe686")
+IID_ID3D11Texture2D = _GUID.of("6f15aaf2-d208-4e89-9ab4-489535d34f9c")
 
-# vtable slots: IUnknown 0-2; ID3D11Device CreateTexture2D 5; IDXGIResource GetSharedHandle 8;
-# ID3D11DeviceContext UpdateSubresource 48, Flush 111
+# vtable slots: IUnknown 0-2; ID3D11Device CreateTexture2D 5; ID3D11Device1 OpenSharedResource1 48; IDXGIResource
+# GetSharedHandle 8; ID3D11DeviceContext CopyResource 47, UpdateSubresource 48, Flush 111
 _QI, _RELEASE, _CREATE_TEX2D, _GET_SHARED_HANDLE, _UPDATE_SUBRESOURCE, _FLUSH = 0, 2, 5, 8, 48, 111
+_OPEN_SHARED1, _COPY_RESOURCE = 48, 47
 
 
 def _call(obj: ctypes.c_void_p, slot: int, restype, argtypes: list, *args):
@@ -124,13 +137,31 @@ class _Device:
                 break
         _check(hr, "D3D11CreateDevice")
         self.tex = ctypes.c_void_p()
+        self.dev1 = ctypes.c_void_p()
         self.handle = 0
         self.width = self.height = 0
+        self.format = DXGI_FORMAT_B8G8R8A8_UNORM
         self.frames_written = 0
 
-    def texture(self, width: int, height: int) -> None:
+    def copy_from(self, nt_handle: int) -> None:
+        """Another program's texture (its NT handle, already this process's) copied into the shared one, on the graphics card."""
+        if not self.dev1:
+            _check(_call(self.dev, _QI, ctypes.c_long, [ctypes.POINTER(_GUID), ctypes.POINTER(ctypes.c_void_p)],
+                         ctypes.byref(IID_ID3D11Device1), ctypes.byref(self.dev1)), "QueryInterface(ID3D11Device1)")
+        src = ctypes.c_void_p()
+        _check(_call(self.dev1, _OPEN_SHARED1, ctypes.c_long, [ctypes.c_void_p, ctypes.POINTER(_GUID), ctypes.POINTER(ctypes.c_void_p)],
+                     ctypes.c_void_p(nt_handle), ctypes.byref(IID_ID3D11Texture2D), ctypes.byref(src)), "OpenSharedResource1")
+        try:
+            _call(self.ctx, _COPY_RESOURCE, None, [ctypes.c_void_p, ctypes.c_void_p], self.tex, src)
+            _call(self.ctx, _FLUSH, None, [])
+        finally:
+            _release(src)
+        self.frames_written += 1
+
+    def texture(self, width: int, height: int, fmt: int = DXGI_FORMAT_B8G8R8A8_UNORM) -> None:
         self.free_texture()
-        desc = _Tex2DDesc(width, height, 1, 1, DXGI_FORMAT_B8G8R8A8_UNORM, _SampleDesc(1, 0),
+        self.format = fmt
+        desc = _Tex2DDesc(width, height, 1, 1, fmt, _SampleDesc(1, 0),
                           0, 0x8 | 0x20, 0, 0x2)                    # default usage; shader resource + render target; shared
         _check(_call(self.dev, _CREATE_TEX2D, ctypes.c_long, [ctypes.POINTER(_Tex2DDesc), ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)],
                      ctypes.byref(desc), None, ctypes.byref(self.tex)), "CreateTexture2D")
@@ -163,6 +194,8 @@ class _Device:
 
     def close(self) -> None:
         self.free_texture()
+        _release(self.dev1)
+        self.dev1 = ctypes.c_void_p()
         _release(self.ctx)
         _release(self.dev)
         self.ctx = self.dev = ctypes.c_void_p()
@@ -187,6 +220,16 @@ class _Mutex:
         if self.h:
             _k32.CloseHandle(self.h)
             self.h = None
+
+
+def _mapping_exists(name: str) -> bool:
+    """Does some running program still hold shared memory of that name (a sender's info block)?"""
+    _k32.OpenFileMappingW.restype = wt.HANDLE
+    _k32.OpenFileMappingW.argtypes = [wt.DWORD, wt.BOOL, wt.LPCWSTR]
+    h = _k32.OpenFileMappingW(0x0004, False, name)                      # FILE_MAP_READ
+    if h:
+        _k32.CloseHandle(h)
+    return bool(h)
 
 
 def _name_bytes(name: str) -> bytes:
@@ -243,7 +286,9 @@ class Sender:
         with self._names_mutex:
             names = _read_names(self._names)
             if self.key in names:
-                raise SpoutError(f"there is already a Spout sender called {self.name!r}")
+                if _mapping_exists(self.name):
+                    raise SpoutError(f"there is already a Spout sender called {self.name!r}")
+                names.remove(self.key)                                  # (left by a program that was closed hard: its name is free)
             if len(names) >= MAX_SENDERS:
                 raise SpoutError("too many Spout senders on this PC")
             _write_names(self._names, names + [self.key])
@@ -257,7 +302,7 @@ class Sender:
         d = self._dev
         exe = os.path.abspath(sys.executable).encode("utf-8")[:255]
         block = bytearray(INFO_SIZE)
-        block[0:20] = b"".join(int(v).to_bytes(4, "little") for v in (d.handle, d.width, d.height, DXGI_FORMAT_B8G8R8A8_UNORM, 0))
+        block[0:20] = b"".join(int(v).to_bytes(4, "little") for v in (d.handle, d.width, d.height, d.format, 0))
         block[20:20 + len(exe)] = exe                                   # (the SDK keeps the sender's program there)
         self._info[:INFO_SIZE] = bytes(block)
 
@@ -275,12 +320,30 @@ class Sender:
                 raise SpoutError("the sender is closed")
             if self._dev is None:
                 self._dev = _Device()
-            if (self._dev.width, self._dev.height) != (width, height):
+            if (self._dev.width, self._dev.height, self._dev.format) != (width, height, DXGI_FORMAT_B8G8R8A8_UNORM):
                 with self._access:
                     self._dev.texture(width, height)
                     self._write_info()
             with self._access:
                 self._dev.write(data, rects)
+            self.frames += 1
+
+    def share(self, nt_handle: int, width: int, height: int, fmt: str = "bgra") -> None:
+        """A frame that is a texture already (the fast engine's): copied on the graphics card, no pixels through here."""
+        f = FORMATS.get(fmt)
+        if f is None:
+            raise SpoutError(f"a {fmt} frame can't be shared")
+        with self._lock:
+            if self._info is None:
+                raise SpoutError("the sender is closed")
+            if self._dev is None:
+                self._dev = _Device()
+            if (self._dev.width, self._dev.height, self._dev.format) != (width, height, f):
+                with self._access:
+                    self._dev.texture(width, height, f)
+                    self._write_info()
+            with self._access:
+                self._dev.copy_from(nt_handle)
             self.frames += 1
 
     @property
@@ -345,6 +408,78 @@ BROWSERS = [
     r"%ProgramFiles%\BraveSoftware\Brave-Browser\Application\brave.exe",
     r"%LocalAppData%\BraveSoftware\Brave-Browser\Application\brave.exe",
 ]
+
+
+# The fast engine: Electron, which can hand over each frame as a texture on the graphics card (no copy out of the browser).
+# Not part of the plugin (158 MB): downloaded when the streamer asks for it, into config/avatar_electron/.
+ENGINE = {"version": "45.4.1", "size": 158296013,
+          "url": "https://github.com/electron/electron/releases/download/v45.4.1/electron-v45.4.1-win32-x64.zip",
+          "sha256": "2ba6223afa9121f42831fefe92c434334907540165294fc56697449d12e7cfe9"}
+ENGINE_APP = os.path.join(os.path.dirname(os.path.abspath(__file__)), "electron")
+INSTALL = {"busy": False, "progress": 0.0, "error": ""}
+
+
+def find_engine(folder: str) -> str | None:
+    """electron.exe of the downloaded engine, if it is there (whole)."""
+    exe = os.path.join(folder, "electron.exe")
+    return exe if AVAILABLE and os.path.isfile(exe) and os.path.isfile(os.path.join(folder, "engine.json")) else None
+
+
+def engine_status(folder: str) -> dict:
+    ver = ""
+    try:
+        with open(os.path.join(folder, "engine.json"), encoding="utf-8") as f:
+            ver = str(json.load(f).get("version") or "")
+    except (OSError, ValueError):
+        pass
+    return {"installed": bool(find_engine(folder)), "version": ver, "latest": ENGINE["version"], "size_mb": round(ENGINE["size"] / 1e6),
+            "busy": INSTALL["busy"], "progress": round(INSTALL["progress"], 3), "error": INSTALL["error"]}
+
+
+def install_engine(folder: str) -> None:
+    """Download and unpack the engine (blocking: run it in a thread). INSTALL has the progress and what went wrong."""
+    import urllib.request
+    if INSTALL["busy"]:
+        return
+    INSTALL.update(busy=True, progress=0.0, error="")
+    tmp_zip, tmp_dir = folder + ".zip.part", folder + ".new"
+    try:
+        os.makedirs(os.path.dirname(folder) or ".", exist_ok=True)
+        h, got = hashlib.sha256(), 0
+        req = urllib.request.Request(ENGINE["url"], headers={"User-Agent": "hexcast"})
+        with urllib.request.urlopen(req, timeout=60) as r, open(tmp_zip, "wb") as out:
+            while True:
+                chunk = r.read(1 << 20)
+                if not chunk:
+                    break
+                out.write(chunk)
+                h.update(chunk)
+                got += len(chunk)
+                INSTALL["progress"] = min(0.95, 0.95 * got / ENGINE["size"])
+        if h.hexdigest() != ENGINE["sha256"]:
+            raise SpoutError("the download is not the file it should be (checksum) - try again")
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        with zipfile.ZipFile(tmp_zip) as z:
+            z.extractall(tmp_dir)
+        with open(os.path.join(tmp_dir, "engine.json"), "w", encoding="utf-8") as f:
+            json.dump({"version": ENGINE["version"]}, f)
+        shutil.rmtree(folder, ignore_errors=True)
+        os.replace(tmp_dir, folder)
+        INSTALL["progress"] = 1.0
+    except Exception as exc:
+        INSTALL["error"] = str(exc)[:300]
+        log.warning("spout engine install: %s", exc)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        try:
+            os.remove(tmp_zip)
+        except OSError:
+            pass
+        INSTALL["busy"] = False
+
+
+def remove_engine(folder: str) -> None:
+    shutil.rmtree(folder, ignore_errors=True)
 
 
 def find_browser(custom: str = "") -> str | None:
@@ -441,6 +576,7 @@ class Output:
         self.enabled = False
         self.state, self.error = "off", ""
         self.browser = ""
+        self.engine = "browser"               # "electron": the fast engine draws it (frames stay on the graphics card)
         self.proc: subprocess.Popen | None = None
         self.task: asyncio.Task | None = None
         self.sender: Sender | None = None
@@ -538,32 +674,102 @@ class Output:
         if self.enabled and state == "running" and not live:
             state = "starting"
         return {"overlay": self.overlay, "name": self.name, "enabled": self.enabled, "state": state, "error": self.error,
-                "fps": round(self.rate, 1) if live else 0, "frames": self.frames_out, "size": list(self.size),
-                "browser": self.browser, "audio": self.audio, "target_fps": self.fps}
+                "fps": round(self.rate, 1) if live else 0, "frames": self.frames_out, "received": self.frames_in, "size": list(self.size),
+                "browser": self.browser, "audio": self.audio, "target_fps": self.fps, "engine": self.engine}
+
+    # -- the fast engine's frames: textures of its process, copied into Spout's on the graphics card (a thread per engine run)
+    def _engine_frames(self, proc: subprocess.Popen, srv: socket.socket) -> None:
+        me = _k32.GetCurrentProcess()
+        try:
+            srv.settimeout(30)
+            conn, _ = srv.accept()                                     # the engine calls in once it is up
+        except OSError:
+            self.error = "the engine did not start"
+            return
+        finally:
+            srv.close()
+        conn.settimeout(None)
+        with conn, conn.makefile("rb") as lines:
+            self._engine_lines(proc, conn, lines, me)
+        if self.sender is not None and self.engine == "electron":
+            self.sender.close()
+            self.sender = None
+
+    def _engine_lines(self, proc: subprocess.Popen, conn: socket.socket, lines, me) -> None:
+        for raw in lines:
+            try:
+                m = json.loads(raw)
+            except ValueError:
+                continue
+            if m.get("t") == "error":
+                self.error = f"the engine: {str(m.get('message') or '')[:200]}"
+                continue
+            if m.get("t") != "frame":
+                continue
+            self.frames_in += 1
+            dup = wt.HANDLE()
+            try:
+                if not _k32.DuplicateHandle(wt.HANDLE(int(proc._handle)), wt.HANDLE(int(m["handle"])), me, ctypes.byref(dup), 0, False, 2):
+                    raise SpoutError(f"the frame's texture could not be taken over (error {ctypes.get_last_error()})")
+                if self.sender is None:
+                    self.sender = Sender(self.name)
+                self.sender.share(dup.value, int(m["w"]), int(m["h"]), str(m.get("format") or "bgra"))
+                self.frames_out += 1
+                self._rate_n += 1
+                self.size = (int(m["w"]), int(m["h"]))
+                self.last_frame = time.time()
+                if self.error.startswith("Spout:"):
+                    self.error = ""
+            except Exception as exc:
+                self.error = f"Spout: {exc}"
+                if self.sender is not None:
+                    self.sender.close()
+                    self.sender = None
+                time.sleep(1)
+            if dup.value:
+                _k32.CloseHandle(dup)
+            try:                                                       # (lets go of the frame over there)
+                conn.sendall(f"{m.get('id')}\n".encode())
+            except OSError:
+                break
 
     # -- the browser
-    def start(self, url: str, profile: str, browser_path: str) -> None:
+    def start(self, url: str, profile: str, browser_path: str, engine_dir: str = "", engine_url: str = "") -> None:
         self.enabled = True
         if self.state in ("off", ""):
             self.state = "starting"
         if self.task is None or self.task.done():
-            self.task = asyncio.get_running_loop().create_task(self._supervise(url, profile, browser_path))
+            self.task = asyncio.get_running_loop().create_task(self._supervise(url, profile, browser_path, engine_dir, engine_url))
 
-    async def _supervise(self, url: str, profile: str, browser_path: str) -> None:
+    async def _supervise(self, url: str, profile: str, browser_path: str, engine_dir: str = "", engine_url: str = "") -> None:
         global _JOB
         wait = 2.0
         while self.enabled:
-            browser = find_browser(browser_path)
+            engine = find_engine(engine_dir) if engine_dir and engine_url else None
+            browser = engine or find_browser(browser_path)
             if not browser:
                 self.state, self.error = "error", "no Chrome, Edge or Brave found on this PC - install one, or give its path"
                 await asyncio.sleep(10)
                 continue
             self.browser = browser
+            self.engine = "electron" if engine else "browser"
             os.makedirs(profile, exist_ok=True)
             try:
-                self.proc = subprocess.Popen(browser_args(browser, url, profile, self.audio), stdin=subprocess.DEVNULL,
-                                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                if engine:
+                    srv = socket.socket()                               # the engine's line to here (frames in, answers out)
+                    srv.bind(("127.0.0.1", 0))
+                    srv.listen(1)
+                    cmd = [engine, ENGINE_APP, f"--fps={self.fps}", f"--user-data-dir={profile}-engine"]
+                    # (the address in the environment: Electron stops when an argument looks like a URL)
+                    env = {**os.environ, "HEXCAST_SPOUT_URL": engine_url, "HEXCAST_SPOUT_PORT": str(srv.getsockname()[1])}
+                    env.pop("ELECTRON_RUN_AS_NODE", None)
+                    self.proc = subprocess.Popen(cmd + ([] if self.audio else ["--mute"]), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                                 stderr=subprocess.DEVNULL, env=env, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                    threading.Thread(target=self._engine_frames, args=(self.proc, srv), name=f"spout-engine-{self.overlay}", daemon=True).start()
+                else:
+                    self.proc = subprocess.Popen(browser_args(browser, url, profile, self.audio), stdin=subprocess.DEVNULL,
+                                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             except OSError as exc:
                 self.state, self.error = "error", f"the browser would not start: {exc}"
                 await asyncio.sleep(10)

@@ -325,7 +325,9 @@
   /* A hidden browser that Hexcast starts draws the overlay for Spout (Shoost, VTube Studio's background ...): the stage is
      drawn at its own 1920x1080 into a texture instead of the page, turned into what Spout shares (B, G, R, A with straight
      alpha, the top row first), and read back without stalling the graphics card (the read finishes while the next frame is
-     drawn: a frame is handed over one or two frames after it was drawn). `send(bytes, width, height)` gets each frame. */
+     drawn: a frame is handed over one or two frames after it was drawn). opts: `ready()` - may a frame be handed over now
+     (else it is skipped), `target()` - the buffer to read it into, `send(buffer, width, height)` - here it is. The page passes
+     the buffers on to a worker (avatar_spout_worker.js) that sends what changed. */
   var SPOUT_FRAG = [
     'in vec2 vTextureCoord;',
     'out vec4 finalColor;',
@@ -394,63 +396,6 @@
     gl.flush();
     cap.next = 1 - i;
   };
-
-  /* What goes over the socket: after a first whole frame, only what changed since the last frame sent - the frame is cut into
-     bands of rows, each band's changed columns found, and neighbouring bands with about the same columns merged into one
-     rectangle. A message: "HXS1", the number of rectangles (u16) and 0 (u16), then x, y, w, h (u16 each) per rectangle, then
-     each rectangle's pixels (w x h x 4 bytes, rows top first), all little-endian. Nothing changed: no message. The packer owns
-     two frames - the one being read into (target) and the last one sent - so nothing is copied but what is sent. */
-  function SpoutPacker(w, h, band) {
-    this.w = w; this.h = h; this.band = band || 24;
-    this.work = new Uint8Array(w * h * 4);
-    this.sent = new Uint8Array(w * h * 4);
-    this.out = new ArrayBuffer(8 + 8 * Math.ceil(h / this.band) + w * h * 4);
-    this.full = true;
-  }
-  SpoutPacker.prototype.target = function () { return this.work; };
-  SpoutPacker.prototype.forceFull = function () { this.full = true; };
-  SpoutPacker.prototype.rects = function () {
-    var w = this.w, h = this.h, cur = new Uint32Array(this.work.buffer), old = new Uint32Array(this.sent.buffer), out = [];
-    if (this.full) return [[0, 0, w, h]];
-    for (var y0 = 0; y0 < h; y0 += this.band) {
-      var y1 = Math.min(h, y0 + this.band), lo = w, hi = -1;
-      for (var y = y0; y < y1; y++) {
-        var o = y * w, x;
-        for (x = 0; x < lo; x++) if (cur[o + x] !== old[o + x]) { lo = x; break; }
-        if (hi < 0 && x >= w) continue;                             // (nothing in this row)
-        for (x = w - 1; x > hi; x--) if (cur[o + x] !== old[o + x]) { hi = x; break; }
-      }
-      if (hi < 0) continue;
-      var last = out[out.length - 1];
-      if (last && last[1] + last[3] === y0) {                       // the band right under the last rectangle: one rectangle, if they are alike
-        var ux0 = Math.min(last[0], lo), ux1 = Math.max(last[0] + last[2], hi + 1);
-        if (ux1 - ux0 <= 1.3 * Math.max(last[2], hi + 1 - lo)) { last[0] = ux0; last[2] = ux1 - ux0; last[3] = y1 - last[1]; continue; }
-      }
-      out.push([lo, y0, hi + 1 - lo, y1 - y0]);
-    }
-    return out;
-  };
-  /* the message for the frame now in target(), or null when nothing changed; a message makes it the last frame sent */
-  SpoutPacker.prototype.pack = function () {
-    var rects = this.rects();
-    if (!rects.length) return null;
-    var dv = new DataView(this.out), u8 = new Uint8Array(this.out), w = this.w, p = 8 + 8 * rects.length, i, k;
-    dv.setUint8(0, 72); dv.setUint8(1, 88); dv.setUint8(2, 83); dv.setUint8(3, 49);              // "HXS1"
-    dv.setUint16(4, rects.length, true); dv.setUint16(6, 0, true);
-    for (i = 0; i < rects.length; i++) {
-      var r = rects[i];
-      for (k = 0; k < 4; k++) dv.setUint16(8 + i * 8 + k * 2, r[k], true);
-      for (var y = r[1]; y < r[1] + r[3]; y++) {
-        var a = (y * w + r[0]) * 4, n = r[2] * 4;
-        u8.set(this.work.subarray(a, a + n), p);
-        p += n;
-      }
-    }
-    var t = this.sent; this.sent = this.work; this.work = t;
-    this.full = false;
-    return new Uint8Array(this.out, 0, p);
-  };
-  HA.SpoutPacker = SpoutPacker;
 
   /* ------------------------------------------------------------------ soundboard clips glued to an avatar */
 

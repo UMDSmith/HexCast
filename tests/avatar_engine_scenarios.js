@@ -390,29 +390,27 @@ const frames = (r, seconds) => { for (let i = 0; i < Math.round(seconds * 60); i
   }
   out.lightStorms = { flash: r(most), policeOpposite: police.every(Boolean) };
 }
-{ // Spout output: a whole frame first, then only what changed (bands of rows, alike neighbours merged); nothing changed: nothing sent
-  const { HA } = load(file);
-  const P = new HA.SpoutPacker(8, 6, 2);
+{ // Spout output (avatar_spout_worker.js): a whole frame first, then only what changed (bands of rows, alike neighbours merged);
+  // nothing changed: nothing sent. The packer keeps the frame it sent and gives back the one it no longer needs.
+  const { SpoutPacker } = require(require('path').resolve(require('path').dirname(file), 'avatar_spout_worker.js'));
+  const P = new SpoutPacker(8, 6, 2);
+  const frame = (from) => { const f = new Uint8Array(8 * 6 * 4); if (from) f.set(from); return f; };
   const px = (buf, x, y, v) => { new Uint32Array(buf.buffer)[y * 8 + x] = v; };
-  const msg = (m) => {
+  const msg = (r) => {
+    const m = r.msg;
     if (!m) return null;
     const dv = new DataView(m.buffer, m.byteOffset, m.byteLength), n = dv.getUint16(4, true), rects = [];
     for (let i = 0; i < n; i++) rects.push([0, 1, 2, 3].map((k) => dv.getUint16(8 + i * 8 + k * 2, true)));
     return { magic: String.fromCharCode(m[0], m[1], m[2], m[3]), rects, bytes: m.byteLength };
   };
-  let t = P.target(); px(t, 0, 0, 0xff0000ff); px(t, 7, 5, 0x11223344);
-  const first = msg(P.pack());
-  t = P.target(); t.set(P.sent);                                         // the next frame read back: the same picture
-  const same = msg(P.pack());
-  t = P.target(); t.set(P.sent); px(t, 5, 3, 7);                         // one pixel in the second band
-  const m1 = P.pack(), one = msg(m1);
-  const onePixel = Array.from(new Uint32Array(m1.slice(16).buffer).slice(0, 2));     // band rows 2-3 at x 5: (5,2) unchanged, (5,3) = 7
-  t = P.target(); t.set(P.sent); px(t, 1, 0, 9); px(t, 2, 1, 9); px(t, 1, 3, 9);       // bands 0 and 1 alike: one rectangle
-  const merged = msg(P.pack());
-  t = P.target(); t.set(P.sent); px(t, 0, 0, 1); px(t, 7, 2, 1);          // far apart columns: two rectangles
-  const apart = msg(P.pack());
-  P.forceFull(); t = P.target(); t.set(P.sent);
-  const forced = msg(P.pack());
-  out.spoutPacker = { first, same, one, onePixel, merged, apart, forced };
+  let f = frame(); px(f, 0, 0, 0xff0000ff); px(f, 7, 5, 0x11223344);
+  let r = P.pack(f); const first = msg(r), firstFree = r.free;
+  let g = frame(P.sent); r = P.pack(g); const same = msg(r), sameFree = r.free === g;          // nothing changed: the frame comes back
+  g = frame(P.sent); px(g, 5, 3, 7); r = P.pack(g);
+  const one = msg(r), onePixel = Array.from(new Uint32Array(r.msg.slice(16).buffer).slice(0, 2)), oneFree = r.free === f;
+  g = frame(P.sent); px(g, 1, 0, 9); px(g, 2, 1, 9); px(g, 1, 3, 9); const merged = msg(P.pack(g));
+  g = frame(P.sent); px(g, 0, 0, 1); px(g, 7, 2, 1); const apart = msg(P.pack(g));
+  P.forceFull(); g = frame(P.sent); const forced = msg(P.pack(g));
+  out.spoutPacker = { first, firstFree, same, sameFree, one, onePixel, oneFree, merged, apart, forced };
 }
 console.log(JSON.stringify(out));

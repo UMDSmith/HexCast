@@ -283,6 +283,11 @@
         <span class="pill" id="sp-state"></span>
       </div>
       <div class="dim" id="sp-hint" style="font-size:12px;margin-top:4px">Spout: the overlay goes out as a Spout sender with its transparency, no OBS needed - Hexcast draws it in a hidden Chrome / Edge on this PC. In Shoost: <b>Settings &rarr; Spout Capture</b>, then add a <b>Spout Capture</b> layer and pick the sender.</div>
+      <div class="row" id="sp-eng" style="margin-top:6px;gap:8px;font-size:12px">
+        <span class="dim" id="sp-eng-t"></span>
+        <button class="sm" id="sp-eng-get" style="display:none" title="Downloads Electron (about 158 MB) into config/avatar_electron. Frames then stay on the graphics card instead of being copied out of the browser: 60 fps whatever is on the overlay, and far less processor use.">Get the fast engine (158 MB)</button>
+        <button class="sm ghost danger" id="sp-eng-del" style="display:none" title="Delete the fast engine: the hidden browser draws Spout outputs again">Remove</button>
+      </div>
     </section>
 
     <!-- the selected avatar -->
@@ -655,7 +660,14 @@
   }
   function renderSpout() {
     var row = $('sp-row');
-    if (!SP || !SP.available) { row.style.display = 'none'; $('sp-hint').style.display = 'none'; return; }
+    if (!SP || !SP.available) { row.style.display = 'none'; $('sp-hint').style.display = 'none'; $('sp-eng').style.display = 'none'; return; }
+    var en = SP.engine || {};
+    $('sp-eng-t').textContent = en.busy ? 'Downloading the fast engine... ' + Math.round((en.progress || 0) * 100) + '%'
+      : en.installed ? 'Fast engine installed (Electron ' + en.version + '): frames stay on the graphics card.'
+      : en.error ? 'The fast engine did not download: ' + en.error
+      : 'Dropping frames with a busy background? The fast engine keeps every frame on the graphics card.';
+    $('sp-eng-get').style.display = en.installed || en.busy ? 'none' : '';
+    $('sp-eng-del').style.display = en.installed && !en.busy ? '' : 'none';
     var o = SP.overlays[S.ov] || { enabled: false, fps: 30, audio: true, state: 'off', name: '' };
     if (document.activeElement !== $('sp-on')) $('sp-on').checked = !!o.enabled;
     $('sp-fps').value = String(o.fps || 30);
@@ -664,7 +676,7 @@
     var st = $('sp-state'), txt = '', cls = '';
     if (!o.enabled) txt = 'off';
     else if (o.state === 'error') { txt = o.error || 'error'; cls = 'bad'; }
-    else if (o.fps_now > 0) { txt = 'sending \u00b7 ' + Math.round(o.fps_now) + ' fps'; cls = 'good'; }
+    else if (o.fps_now > 0) { txt = 'sending \u00b7 ' + Math.round(o.fps_now) + ' fps' + (o.engine === 'electron' ? ' \u00b7 fast engine' : ''); cls = o.fps_now < o.fps * 0.9 ? 'warn' : 'good'; }
     else { txt = o.error || (SP.found ? 'starting the browser...' : 'no Chrome / Edge found'); cls = SP.found ? 'warn' : 'bad'; }
     st.textContent = txt; st.className = 'pill ' + cls;
     st.title = o.browser ? 'Drawn by ' + o.browser : '';
@@ -673,7 +685,9 @@
   $('sp-on').onchange = function () { spoutSet({ state: this.checked ? 'on' : 'off' }); };
   $('sp-fps').onchange = function () { spoutSet({ fps: parseInt(this.value, 10) }); };
   $('sp-audio').onchange = function () { spoutSet({ audio: this.checked }); };
-  setInterval(function () { if (SP && SP.available && Object.keys(SP.overlays).some(function (k) { return SP.overlays[k].enabled; })) loadSpout(); }, 2000);
+  $('sp-eng-get').onclick = function () { api('POST', '/avatar/api/spout/engine', { install: true }).then(loadSpout); };
+  $('sp-eng-del').onclick = function () { api('POST', '/avatar/api/spout/engine', { remove: true }).then(loadSpout); };
+  setInterval(function () { if (SP && SP.available && ((SP.engine || {}).busy || Object.keys(SP.overlays).some(function (k) { return SP.overlays[k].enabled; }))) loadSpout(); }, 2000);
   loadSpout();
 
   $('cp-ov').onclick = function () { navigator.clipboard.writeText(location.origin + ovPath(S.ov)).then(function () { toast('Copied'); }); };
