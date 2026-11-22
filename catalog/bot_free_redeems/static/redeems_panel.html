@@ -67,6 +67,8 @@
   .clip{display:flex;gap:6px;align-items:center}
   .clip button{padding:7px 10px}
   .clips .hint{font-size:12px;color:var(--dim)}
+  .tr-say{margin-top:12px}
+  .tr-say .hint{font-size:12px;color:var(--dim);margin-top:4px;text-transform:none;letter-spacing:0;font-weight:400}
   .tr-st{margin-top:10px;font:12.5px/1.7 var(--mono);color:var(--dim)}
   .tr-st .ok{color:var(--good)} .tr-st .bad{color:var(--warn)}
   .empty{color:var(--dim);font-size:14px;margin:0 0 6px}
@@ -102,7 +104,8 @@
       <summary>How to set it up</summary>
       <p class="hint" style="margin-top:10px">Bot-Free Redeems plays a sound from your Soundboard when a viewer redeems a
         channel point reward, types a chat command like <code>!airhorn</code>, or cheers bits - straight from Twitch, with
-        no bot or AI in between. Five steps, once:</p>
+        no bot or AI in between. A row can also answer in chat: <code>!discord</code> posts your Discord address.
+        Five steps, once:</p>
       <ol class="how">
         <li><b>Put the Soundboard overlay in OBS.</b> Every sound plays there. Add a <b>Browser</b> source with this URL,
           1920 &times; 1080, untick <i>Shutdown source when not visible</i> and tick <i>Control audio via OBS</i> (so you
@@ -115,12 +118,14 @@
         <li><b>Connect Twitch</b> in the box below: add your channel name. That is all <b>chat commands</b> and
           <b>bits</b> need. <b>Channel point redeems</b> also need you to sign in as the channel itself
           (<i>Connect a Twitch account</i>), because Twitch only tells a channel's own account about its redeems - and
-          channel points are only for Affiliate and Partner channels.</li>
+          channel points are only for Affiliate and Partner channels. A row that <b>says something in chat</b> needs a
+          sign-in too (any account - the line is posted as that account).</li>
         <li><b>Make your rewards on Twitch</b> (for redeems): Creator Dashboard &rarr; <i>Viewer Rewards</i> &rarr;
           <i>Channel Points</i> &rarr; <i>Manage Rewards &amp; Challenges</i> &rarr; <i>Add New Custom Reward</i>. Set the
           cost there, and the cooldown and limits too - Twitch checks them before the points are spent, so a viewer is
           never charged for a sound that does not play. Skip <i>Require Viewer to Enter Text</i> for a plain sound.</li>
-        <li><b>Add a row below</b> for each reward, command or bits amount, pick its sound, press <b>Save</b>. Press
+        <li><b>Add a row below</b> for each reward, command or bits amount, pick its sound - or type a chat message,
+          or both - and press <b>Save</b>. Press
           <b>&#9654; Test</b> to hear it on stream, then try it for real from your chat. The <b>Recent</b> list at the
           bottom shows every redeem, command and cheer, and why one did not play.</li>
       </ol>
@@ -135,24 +140,25 @@
   <div class="card">
     <div class="head"><h2>Bot-Free Redeems</h2><span class="sp"></span>
       <label class="sw"><input type="checkbox" id="on"> Sounds on</label></div>
-    <p class="hint" style="margin:8px 0 0">The switch for everything below. Off, nothing plays (handy for a quiet stream) and
-      the Twitch alerts play their own clips again.</p>
+    <p class="hint" style="margin:8px 0 0">The switch for everything below. Off, nothing plays and nothing is said in chat
+      (handy for a quiet stream), and the Twitch alerts play their own clips again.</p>
   </div>
 
   <div class="card">
     <div class="head"><h2>Channel point redeems</h2><span class="sp"></span>
       <button class="sec" id="rw-reload" title="Ask Twitch for your rewards again (after adding one there)">&#8635; Reload rewards</button></div>
-    <p class="hint" style="margin-top:8px">Pick a reward and the sound it plays. A redeem always plays: its cost, cooldown and
-      limits are the reward's own settings on Twitch.</p>
+    <p class="hint" style="margin-top:8px">Pick a reward and the sound it plays, the line it says in chat, or both. A redeem
+      always plays: its cost, cooldown and limits are the reward's own settings on Twitch.</p>
     <div id="rw-note" class="warnline" hidden></div>
     <div id="list-redeem"></div>
-    <div class="row" style="margin-top:4px"><button class="sec" data-add="redeem">+ Add a redeem sound</button></div>
+    <div class="row" style="margin-top:4px"><button class="sec" data-add="redeem">+ Add a redeem</button></div>
   </div>
 
   <div class="card">
     <h2>Chat commands</h2>
     <p class="hint">A chat line that starts with the command plays the sound - <code>!airhorn</code>, or several on one row
-      (<code>!airhorn !horn</code>). Choose who may use it; the cooldown holds it for everyone and the second one for the same
+      (<code>!airhorn !horn</code>) - or answers in chat: <code>!discord</code> with your Discord address in
+      <i>Say in chat</i> and no sound. Choose who may use it; the cooldown holds it for everyone and the second one for the same
       viewer. You, the broadcaster, are never held up, so you can test.</p>
     <div id="cmd-note" class="warnline" hidden></div>
     <div id="list-command"></div>
@@ -161,11 +167,11 @@
 
   <div class="card">
     <h2>Bits</h2>
-    <p class="hint">A cheer of at least this many bits plays the sound. With several amounts the biggest one it reaches wins:
+    <p class="hint">A cheer of at least this many bits plays the sound (and says the chat line, if the row has one). With several amounts the biggest one it reaches wins:
       with 100 and 1000 set, a 500-bit cheer plays the 100 sound.</p>
     <div id="bits-note" class="warnline" hidden></div>
     <div id="list-bits"></div>
-    <div class="row" style="margin-top:4px"><button class="sec" data-add="bits">+ Add a bits sound</button></div>
+    <div class="row" style="margin-top:4px"><button class="sec" data-add="bits">+ Add a bits amount</button></div>
   </div>
 
   <div class="card">
@@ -201,14 +207,19 @@ var TYPED = [];              // rows whose reward is typed by name instead of pi
 
 function clone(o){ return JSON.parse(JSON.stringify(o)); }
 function cleanRows(rows){
-  return rows.map(function(t){ var c = clone(t); c.clips = c.clips.filter(function(x){ return x; }); return c; });
+  return rows.map(function(t){
+    var c = clone(t);
+    c.clips = c.clips.filter(function(x){ return x; });
+    c.message = String(c.message || '').replace(/\s+/g, ' ').trim();
+    return c;
+  });
 }
 function isDirty(){
   return SAVED && DRAFT && JSON.stringify(SAVED) !== JSON.stringify({on: DRAFT.on, triggers: cleanRows(DRAFT.triggers)});
 }
 function markDirty(){ $('dirty').textContent = isDirty() ? 'Not saved yet' : ''; }
 function blank(kind){
-  return {id: '', kind: kind, on: true, reward_id: '', reward: '', command: '', bits: 100, clips: [''],
+  return {id: '', kind: kind, on: true, reward_id: '', reward: '', command: '', bits: 100, clips: [''], message: '',
           who: 'everyone', cooldown: 30, user_cooldown: 0, channel: 'primary'};
 }
 
@@ -300,12 +311,17 @@ function rowHtml(t, i){
     more += '<label class="f">Same viewer again after (seconds)<input type="number" class="r-ucooldown" min="0" max="86400" value="' + esc(t.user_cooldown) + '"></label>';
   }
   if(multi()) more += '<label class="f">Channel<select class="r-channel">' + channelOptions(t.channel) + '</select></label>';
+  var words = '{user}, {channel}, {uptime}' + (t.kind === 'bits' ? ', {bits}' : t.kind === 'redeem' ? ', {reward}' : '');
+  var say = '<div class="tr-say"><label class="f">Say in chat (optional)<input class="r-message" maxlength="500" value="' + esc(t.message || '')
+    + '" placeholder="' + esc(t.kind === 'command' ? 'e.g. Join the Discord: https://discord.gg/your-invite' : t.kind === 'bits' ? 'e.g. Thanks for the {bits} bits, {user}!' : 'e.g. {user} redeemed {reward}!')
+    + '" title="A line Hexcast posts in your Twitch chat, as the account it is signed in as. Leave the sound empty for a text-only answer. Filled in for you: ' + words + '"></label></div>';
   return '<div class="tr' + (t.on ? ' is-on' : '') + '" data-i="' + i + '" data-id="' + esc(t.id || '') + '">'
     + '<div class="tr-line' + (t.kind === 'command' ? ' cmd' : '') + '">' + head + trigger + '<span class="arrow">&rarr;</span>'
     +   '<div class="tr-sound">' + clipsField(t) + '</div>'
-    +   '<div class="tr-btns"><button class="sec r-test" title="Play the sound now, on the Soundboard overlay (on stream)">&#9654; Test</button>'
+    +   '<div class="tr-btns"><button class="sec r-test" title="Play the sound now on the Soundboard overlay, and post the chat message in your chat (both are on stream)">&#9654; Test</button>'
     +   '<button class="sec r-del" title="Delete this row">&times;</button></div>'
     + '</div>'
+    + say
     + (more ? '<div class="tr-more">' + more + '</div>' : '')
     + '<div class="tr-st"></div></div>';
 }
@@ -315,7 +331,7 @@ function render(){
   KINDS.forEach(function(kind){
     var html = '';
     DRAFT.triggers.forEach(function(t, i){ if(t.kind === kind) html += rowHtml(t, i); });
-    $('list-' + kind).innerHTML = html || '<p class="empty">' + {redeem: 'No redeem sounds yet.', command: 'No commands yet.', bits: 'No bits sounds yet.'}[kind] + '</p>';
+    $('list-' + kind).innerHTML = html || '<p class="empty">' + {redeem: 'No redeems yet.', command: 'No commands yet.', bits: 'No bits rows yet.'}[kind] + '</p>';
   });
   paintStatus();
   markDirty();
@@ -331,6 +347,7 @@ function readRow(card){
   if(q('.r-cooldown')) t.cooldown = Math.max(0, +q('.r-cooldown').value || 0);
   if(q('.r-ucooldown')) t.user_cooldown = Math.max(0, +q('.r-ucooldown').value || 0);
   if(q('.r-channel')) t.channel = q('.r-channel').value;
+  if(q('.r-message')) t.message = q('.r-message').value;
   t.clips = Array.prototype.map.call(card.querySelectorAll('.r-clip'), function(s){ return s.value; });
   card.classList.toggle('is-on', t.on);
 }
@@ -361,7 +378,7 @@ function paintStatus(){
     if(!d.on) html = '<div>switched off</div>';
     else if(s.problem) html = '<div class="bad">' + esc(s.problem) + '</div>';
     else html = '<div class="ok">ready</div>';
-    if(s.played) html += '<div>played ' + s.played + ' time' + (s.played === 1 ? '' : 's') + ', last ' + esc(ago(s.last)) + (s.by ? ' by ' + esc(s.by) : '') + '</div>';
+    if(s.played) html += '<div>used ' + s.played + ' time' + (s.played === 1 ? '' : 's') + ', last ' + esc(ago(s.last)) + (s.by ? ' by ' + esc(s.by) : '') + '</div>';
     if(JSON.stringify(cleanRows([d])[0]) !== JSON.stringify(saved)) html += '<div>(changed - save to use it)</div>';
     st.innerHTML = html;
   });
@@ -388,7 +405,8 @@ function paintRecent(){
   var showCh = multi();
   $('recent').innerHTML = rows.length ? rows.map(function(e){
     var what = e.what + (showCh && e.channel ? '  #' + e.channel : '');
-    var res = e.result === 'played' ? 'played ' + e.clip : e.result === 'failed' ? (e.clip ? e.clip + ': ' : '') + e.note : e.note;
+    var did = [e.clip ? 'played ' + e.clip : '', e.said ? 'said it in chat' : ''].filter(function(x){ return x; }).join(' + ');
+    var res = e.result === 'played' ? did + (e.note ? ' (' + e.note + ')' : '') : e.result === 'failed' ? (e.clip ? e.clip + ': ' : '') + e.note : e.note;
     return '<div class="ev"><span class="t">' + esc(clock(e.ts)) + '</span><span title="' + esc(e.kind) + '">' + (icon[e.kind] || '') + '</span>'
       + '<span>' + esc(what) + '</span><span class="who">' + esc(e.user) + '</span>'
       + '<span class="res ' + esc(e.result) + '">' + esc(res) + '</span></div>';
@@ -420,7 +438,7 @@ function save(){
   DRAFT.on = $('on').checked;
   var body = {on: DRAFT.on, triggers: cleanRows(DRAFT.triggers)};
   var unfinished = body.triggers.filter(function(t){
-    return !t.clips.length || (t.kind === 'redeem' && !t.reward && !t.reward_id) || (t.kind === 'command' && !t.command.trim());
+    return (!t.clips.length && !t.message) || (t.kind === 'redeem' && !t.reward && !t.reward_id) || (t.kind === 'command' && !t.command.trim());
   }).length;
   $('save').disabled = true;
   return fetch('/redeems/api/config', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)})
@@ -428,19 +446,21 @@ function save(){
     .then(function(res){
       if(!res.ok){ toast(res.d.error || 'Not saved'); return false; }
       SAVED = res.d.config; DRAFT = clone(SAVED); TYPED = []; render();
-      toast(unfinished ? 'Saved - a row with no reward, command or sound does not play' : 'Saved');
+      toast(unfinished ? 'Saved - a row with no reward or command, or with neither a sound nor a chat message, does nothing' : 'Saved');
       return true;
     }, function(){ toast('Not saved - Hexcast did not answer'); })
     .finally(function(){ $('save').disabled = false; });
 }
 
 function test(t, b){
-  var clips = t.clips.filter(function(c){ return c; });
-  if(!clips.length){ toast('Pick a sound first'); return; }
+  var clips = t.clips.filter(function(c){ return c; }), message = String(t.message || '').trim();
+  if(!clips.length && !message){ toast('Pick a sound or type a chat message first'); return; }
   b.disabled = true;
-  fetch('/redeems/api/test', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({clips: clips})})
+  fetch('/redeems/api/test', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({clips: clips, message: message, channel: t.channel})})
     .then(function(r){ return r.json(); })
-    .then(function(d){ toast(d.ok ? 'Playing ' + d.clip + ' on the Soundboard overlay' : (d.error || 'Did not play')); },
+    .then(function(d){
+      var did = [d.clip ? 'Playing ' + d.clip + ' on the Soundboard overlay' : '', d.said ? (d.clip ? 'said it in chat' : 'Said it in chat') : ''].filter(function(x){ return x; }).join(', ');
+      toast(d.ok ? did : (did ? did + ' - but: ' : '') + (d.error || 'Did not play')); },
           function(){ toast('Hexcast did not answer'); })
     .finally(function(){ b.disabled = false; });
 }

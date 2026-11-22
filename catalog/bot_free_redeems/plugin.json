@@ -1,8 +1,8 @@
 {
   "id": "bot_free_redeems",
   "name": "Bot-Free Redeems",
-  "version": "1.0.0",
-  "description": "Twitch channel point redeems, chat commands (!airhorn) and bits play your soundboard clips directly - no bot or AI in between. Pick a reward, command or bits amount and a sound; who may use a command and cooldowns are set per row.",
+  "version": "1.1.0",
+  "description": "Twitch channel point redeems, chat commands (!airhorn) and bits play your soundboard clips directly - no bot or AI in between - and can answer in chat (!discord posts your Discord address). Pick a reward, command or bits amount and a sound, a chat message or both; who may use a command and cooldowns are set per row.",
   "icon": "📣",
   "color": "#9146ff",
   "category": "Integrations",

@@ -170,11 +170,12 @@ tab shows the same box, so you set Twitch up once.
 
 **What it does.** Channel point redeems, chat commands (`!airhorn`) and bits play
 your soundboard clips - straight from Twitch, for streamers with **no bot or AI in
-between**. Pick a reward (from your channel's real list), a command or a bits
-amount and the sound it plays; commands get who-may-use-it and cooldowns, a row
+between**. A row can also answer in chat: `!discord` posts your Discord address,
+`!uptime` how long you have been live. Pick a reward (from your channel's real list), a command or a bits
+amount and the sound it plays, the line it says, or both; commands get who-may-use-it and cooldowns, a row
 can hold several sounds (one plays at random), and a Recent list says what played
 and why something did not. Commands and bits need only your channel name; redeems
-need a sign-in as the channel. The sounds play on the soundboard overlay (`/overlay`).
+need a sign-in as the channel, and a line said in chat needs a sign-in too. The sounds play on the soundboard overlay (`/overlay`).
 See [docs/bot_free_redeems.md](docs/bot_free_redeems.md).
 
 ### ⏲️ Chat Timers *(plugin)*
@@ -424,6 +425,7 @@ plain English if something's missing.
 1. **Install Python** (one time). Open <https://www.python.org/downloads/>, click **Download Python**, run the installer, and on the first screen **tick "Add python.exe to PATH"** before clicking **Install Now**.
 2. **Get Hexcast.** On [the GitHub page](https://github.com/UMDSmith/hexcast), click **`< > Code` → Download ZIP**, then right-click → **Extract All…** to a permanent spot like your Documents folder. *(Prefer git? `git clone https://github.com/UMDSmith/hexcast.git` makes updating a one-liner.)*
 3. **Run it.** Double-click **`start.bat`**. First launch takes a minute while it sets up; later launches start in seconds. When the window shows `Control panel: http://localhost:4747/`, open that address in your browser.
+4. **Next time, use the desktop icon.** The first launch puts a **Hexcast** icon on your desktop: double-click it to start Hexcast. (Delete it if you don't want it - it is not made again unless you move the Hexcast folder.)
 
    > If **Windows SmartScreen** appears, click **More info → Run anyway** — it's a plain-text launcher you can open in Notepad.
 

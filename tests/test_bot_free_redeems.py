@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parent.parent
 STATIC = ROOT / "catalog" / "bot_free_redeems" / "static"
 CONFIGS = ("bot_free_redeems.json", "twitch_core.json", "twitch_secrets.json", "twitch.json", "twitch_queue.json")
 SCOPES = ["user:read:chat", "channel:read:redemptions", "bits:read"]
+CHATTY = SCOPES + ["user:write:chat"]
 REDEEM = "channel.channel_points_custom_reward_redemption.add"
 
 
@@ -73,6 +74,17 @@ def rd(world, monkeypatch):
     monkeypatch.setattr(mod, "soundboard", mod.board.call)
     mod.clock = Clock()
     monkeypatch.setattr(mod, "time", types.SimpleNamespace(time=mod.clock.time))
+    mod.said, mod.refuse = [], ""
+
+    async def send_chat(text, channel=""):                                  # Twitch's chat, faked: `said` lists the lines
+        mod.tc.acting_account(mod.tc.channel_for(channel), "user:write:chat")
+        if mod.refuse:
+            raise mod.tc.TwitchError(mod.refuse)
+        mod.said.append((channel, text))
+        return {"ok": True}
+    monkeypatch.setattr(mod.tc, "send_chat", send_chat)
+    for d in (mod.RECENT, mod.SENT, mod.STATS, mod.LAST_USED, mod.LAST_BY):
+        d.clear()
     return mod
 
 
@@ -256,6 +268,86 @@ def test_rows_listen_in_their_own_channel(rd):
     assert rd.board.played == ["airhorn", "ding", "bonk", "ding"]
 
 
+# ---------------------------------------------------------------- a line said in chat
+
+def test_a_command_answers_in_chat(rd):
+    watch(rd.tc, scopes=CHATTY)
+    rows(rd, {"kind": "command", "command": "!discord", "message": "  Hi {user}:   https://discord.gg/x  (#{channel}, {nope}) "},
+         {"kind": "command", "command": "!both", "clips": ["airhorn"], "message": "honk"})
+    assert rd.CONFIG["triggers"][0]["message"] == "Hi {user}: https://discord.gg/x (#{channel}, {nope})"
+    chat(rd, "!discord", who="ann", mid="1")
+    assert rd.said == [("hexacore_ai", "Hi Ann: https://discord.gg/x (#hexacore_ai, {nope})")] and rd.board.played == []
+    assert last(rd)["result"] == "played" and last(rd)["said"] and last(rd)["clip"] == ""
+    chat(rd, "!discord", who="bob", mid="2")                                  # a text-only answer starts the cooldown too
+    assert len(rd.said) == 1 and "on cooldown" in last(rd)["note"]
+    chat(rd, "!both", mid="3")
+    assert rd.board.played == ["airhorn"] and rd.said[-1] == ("hexacore_ai", "honk")
+    assert last(rd)["clip"] == "airhorn" and last(rd)["said"] and last(rd)["note"] == ""
+    assert run(rd.status())["triggers"][0]["problem"] == ""
+    with pytest.raises(rd.Problem):
+        rd.clean_trigger({"kind": "command", "command": "!x", "message": "x" * 501})
+
+
+def test_redeems_and_cheers_say_their_line(rd):
+    watch(rd.tc, scopes=CHATTY)
+    rows(rd, {"kind": "redeem", "reward": "Hydrate", "message": "{user} redeemed {reward}!"},
+         {"kind": "bits", "bits": 100, "message": "{bits} bits from {user}"})
+    redeem(rd, "r1", "Hydrate", rid="a", who="Ann")
+    chat(rd, "cheer250", who="bob", bits=250, mid="9")
+    assert [t for _, t in rd.said] == ["Ann redeemed Hydrate!", "250 bits from Bob"]
+    # a row that only talks plays no sound: the Twitch alert keeps its own clip
+    assert not rd.claims(REDEEM, {"reward": {"id": "r1", "title": "Hydrate"}}, "hexacore_ai")
+    assert not rd.claims("channel.cheer", {"bits": 250}, "hexacore_ai")
+    rows(rd, {"kind": "bits", "bits": 100, "message": "ty", "clips": ["ding"]})
+    assert rd.claims("channel.cheer", {"bits": 250}, "hexacore_ai")
+
+
+def test_hexcasts_own_line_does_not_set_the_command_off_again(rd):
+    watch(rd.tc, scopes=CHATTY)
+    rows(rd, {"kind": "command", "command": "!discord", "message": "!discord is https://discord.gg/x", "cooldown": 0})
+    chat(rd, "!discord", who="ann", mid="1")
+    chat(rd, "!discord is https://discord.gg/x", who="hexacore_ai", mid="2", broadcaster=True)     # the answer, coming back
+    assert len(rd.said) == 1
+    chat(rd, "!discord", who="hexacore_ai", mid="3", broadcaster=True)        # the streamer typing it is a real use
+    assert len(rd.said) == 2
+    rd.clock.now += 60
+    chat(rd, "!discord is https://discord.gg/x", who="hexacore_ai", mid="4", broadcaster=True)     # (typed by hand, later)
+    assert len(rd.said) == 3
+
+
+def test_a_chat_message_needs_a_sign_in(rd):
+    watch(rd.tc, account="")                                                  # anonymous chat: reads, cannot post
+    rows(rd, {"kind": "command", "command": "!a", "message": "hi"},
+         {"kind": "command", "command": "!b", "message": "hi", "clips": ["bonk"], "cooldown": 0})
+    got = [t["problem"] for t in run(rd.status())["triggers"]]
+    assert got[0] == got[1] == "chat message: not signed in to Twitch - connect an account in the Twitch connection box"
+    chat(rd, "!a", mid="1")
+    assert last(rd)["result"] == "failed" and "not signed in" in last(rd)["note"]
+    chat(rd, "!a", mid="2")                                                   # nothing went out: no cooldown
+    assert "not signed in" in last(rd)["note"]
+    chat(rd, "!b", mid="3")                                                   # the sound still plays
+    assert rd.board.played == ["bonk"] and last(rd)["result"] == "played" and not last(rd)["said"]
+    assert "not signed in" in last(rd)["note"]
+    watch(rd.tc)                                                              # signed in long ago, without the permission
+    assert "user:write:chat" in run(rd.status())["triggers"][0]["problem"]
+    watch(rd.tc, scopes=CHATTY)
+    rd.refuse = "Twitch dropped the chat message: blocked term"
+    chat(rd, "!a", mid="4")
+    assert last(rd)["note"] == "chat message: Twitch dropped the chat message: blocked term"
+
+
+def test_the_test_button_says_the_line_too(world, rd):
+    watch(rd.tc, scopes=CHATTY)
+    c = TestClient(world.app)
+    assert c.post("/redeems/api/test", json={"clips": ["wow"], "message": "hi {user}"}).json() == {"ok": True, "clip": "wow", "said": True}
+    assert rd.said == [("hexacore_ai", "hi hexacore_ai")]
+    assert c.post("/redeems/api/test", json={"message": "only words"}).json() == {"ok": True, "clip": "", "said": True}
+    assert c.post("/redeems/api/test", json={"clips": []}).status_code == 400
+    watch(rd.tc, account="")
+    r = c.post("/redeems/api/test", json={"clips": ["wow"], "message": "hi"})
+    assert r.status_code == 400 and r.json()["clip"] == "wow" and "not signed in" in r.json()["error"]
+
+
 # ---------------------------------------------------------------- what the tab shows
 
 def test_the_status_says_what_stops_a_row(rd):
@@ -270,7 +362,7 @@ def test_the_status_says_what_stops_a_row(rd):
     got = [t["problem"] for t in run(rd.status())["triggers"]]
     assert got[0] == ""                                                         # commands need no sign-in
     assert "a row above uses the same command" in got[1]
-    assert got[2].startswith("type a command") and got[3] == "pick a sound"
+    assert got[2].startswith("type a command") and got[3] == "pick a sound or type a chat message"
     assert "not on the Soundboard" in got[4] and "gone" in got[4]
     assert got[5] == "pick a reward" and got[6] == "redeems: not signed in to Twitch - connect an account in the Twitch connection box"
     watch(rd.tc, account="somebody_else")
@@ -296,7 +388,7 @@ def test_the_tabs_routes(world, rd):
     assert c.get("/redeems/api/config").json()["triggers"][0]["clips"] == ["airhorn"]
     assert (world.config / "bot_free_redeems.json").is_file()
     assert c.post("/redeems/api/config", json={"triggers": [{"kind": "raid"}]}).status_code == 400
-    assert c.post("/redeems/api/test", json={"clips": ["wow"]}).json() == {"ok": True, "clip": "wow"}
+    assert c.post("/redeems/api/test", json={"clips": ["wow"]}).json() == {"ok": True, "clip": "wow", "said": False}
     assert rd.board.played == ["wow"] and last(rd)["kind"] == "test"
     assert c.post("/redeems/api/test", json={"clips": []}).status_code == 400
     rd.board.reply = (200, {"delivered": 0})

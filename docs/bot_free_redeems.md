@@ -2,7 +2,8 @@
 
 For streamers with **no bot or AI** in between: a viewer redeems a channel point reward, types a chat command like
 `!airhorn`, or cheers bits, and Hexcast plays a sound from your Soundboard. It runs straight from Twitch to the
-Soundboard, and everything is set up in the **Redeems** tab.
+Soundboard, and everything is set up in the **Redeems** tab. A row can also answer in the Twitch chat: `!discord`
+posts your Discord address (see [A line in chat](#a-line-in-chat)).
 
 It is a plugin. Add it from the **+** tab. The Twitch connection it uses (`twitch_core`, the same sign-in and
 channels as the Twitch plugin) comes with it, so it works with or without the Twitch plugin installed. The sounds
@@ -47,6 +48,8 @@ tabs. If Twitch is already set up there, it says so and stays folded.
 - **Sign in on the Hexcast PC.** Twitch takes a plain `http` redirect only for `localhost`, so the sign-in always
   comes back to `http://localhost:4747` (your port), even from a tab opened as `192.168...`. From another computer it
   cannot come back unless Hexcast is served over `https`.
+- **A line said in chat** needs a sign-in too: Hexcast posts it as the account it is signed in as (any account, it
+  does not have to be the channel's own). The scope is `user:write:chat`, also asked for at sign-in.
 - Twitch has channel points only for **Affiliate and Partner** channels. Commands and bits work for everyone.
 
 ### 4. Make your rewards on Twitch (for redeems)
@@ -60,9 +63,9 @@ that is held back. Leave *Require Viewer to Enter Text* off for a plain sound.
 
 ### 5. Add the rows
 
-In the Redeems tab press **+ Add a redeem sound**, **+ Add a command** or **+ Add a bits sound**. Fill in the row,
-pick its sound and press **Save**. **▶ Test** plays the sound right away on the Soundboard overlay, so it is on
-stream. Then try it for real: redeem the reward, or type the command in your chat. The **Recent** list at the bottom
+In the Redeems tab press **+ Add a redeem**, **+ Add a command** or **+ Add a bits amount**. Fill in the row,
+pick its sound, or type what it says in chat, or both, and press **Save**. **▶ Test** plays the sound right away on
+the Soundboard overlay and posts the chat line in your chat, so both are on stream. Then try it for real: redeem the reward, or type the command in your chat. The **Recent** list at the bottom
 shows each one.
 
 ---
@@ -73,6 +76,7 @@ shows each one.
 | --- | --- |
 | **Reward** | picked from your channel's rewards. Hexcast asks Twitch for them; press **↻ Reload rewards** after you add one on Twitch. Rewards switched off or paused on Twitch are marked |
 | **Sound** | the soundboard clip it plays |
+| **Say in chat** | optional: a line posted in your chat (see [A line in chat](#a-line-in-chat)) |
 
 The row remembers the reward itself, so renaming the reward on Twitch keeps it working. A reward deleted and made
 again with the same name is found by its name.
@@ -92,13 +96,14 @@ hears about it. Use the reward's own cooldown on Twitch.
 | **Who can use it** | everyone · subscribers, VIPs and mods · VIPs and mods · moderators only · only you (the broadcaster) |
 | **Cooldown (seconds)** | after it plays, nobody can use it again for this long (30 to begin with; 0 = no cooldown) |
 | **Same viewer again after (seconds)** | the viewer who used it waits this long (0 = off) |
+| **Say in chat** | optional: the command's answer in chat (see [A line in chat](#a-line-in-chat)) |
 
 The command has to be the **first word** of the chat line (`!airhorn lol` plays, `lol !airhorn` does not). A reply
 to someone (`@name !airhorn`) counts too.
 
 You, the broadcaster, are never held up by a cooldown, so you can test on stream. A command that is on cooldown or
 not allowed does nothing in chat. The Recent list says why it did not play. A sound nobody heard (the clip is gone,
-the overlay is closed) does not start the cooldown.
+the overlay is closed) does not start the cooldown, unless the row's chat line went out.
 
 ## Bits
 
@@ -110,6 +115,39 @@ With several amounts, the biggest one the cheer reaches wins. With 100 and 1000 
 sound and a 1500-bit cheer the 1000 one. A cheer smaller than every amount plays nothing. Cheers are read from the
 chat, so bits need no sign-in either.
 
+## A line in chat
+
+Every row has a **Say in chat** box. What you type there is posted in your Twitch chat when the row is used, by the
+account Hexcast is signed in as. Leave the sound empty and the row only talks:
+
+| Command | Say in chat |
+| --- | --- |
+| `!discord` | `Join the Discord: https://discord.gg/your-invite` |
+| `!socials !links` | `Find me on https://example.com/me` |
+| `!uptime` | `{channel} has been live for {uptime}` |
+
+A row with a sound and a line does both. These words are filled in:
+
+| | |
+| --- | --- |
+| `{user}` | the viewer who redeemed, typed the command or cheered |
+| `{channel}` | the channel's name |
+| `{uptime}` | how long the stream has been live (`1h 05m`), or `offline` |
+| `{bits}` | on a bits row: how many bits were cheered |
+| `{reward}` | on a redeem row: the reward's name |
+
+Anything else in `{...}` stays as typed. A line is at most 500 characters, which is what Twitch takes.
+
+- It needs a **sign-in** in the Twitch connection box (step 3). With only a channel name Hexcast can read the chat but
+  not write in it; the row's status line says so. A sound on the same row still plays.
+- The line is posted in the channel where the row was used.
+- A command's cooldowns hold its answer too, so viewers cannot flood your chat with it. Redeems and cheers are never
+  held back.
+- An answer that itself starts with a command (`!discord is ...`) does not set that command off again.
+- With the Twitch plugin's alerts: a redeem or bits row that only talks plays no sound, so the alert keeps its own
+  clip.
+- Want a line posted every so often instead, without anyone asking? That is the **Chat Timers** plugin.
+
 ## Several sounds on one row
 
 **+ another sound** adds more sounds to a row (up to 10). Each time the row plays, one of them is picked at random,
@@ -118,7 +156,7 @@ never the same one twice in a row. Handy for a "random fart noise" reward.
 ## The Recent list and the row status
 
 The bottom of the tab lists the last 40 redeems, commands, cheers and tests, newest first: the time, who, what, and
-what happened. It is **played** (and which sound), or why not:
+what happened. It is **played** (and which sound) and/or **said it in chat**, or why not:
 
 - no sound set for this reward
 - on cooldown (and how long is left), or the same viewer has to wait
@@ -127,18 +165,21 @@ what happened. It is **played** (and which sound), or why not:
 - the clip is not on the Soundboard
 - the clip is still in its Soundboard cooldown
 - nobody heard it: the Soundboard overlay is not open in OBS
+- chat message: not signed in, the sign-in lacks the permission (connect the account again), or Twitch dropped the
+  line (and its reason, e.g. a blocked term)
 
 The Recent list is kept in memory only, so a restart clears it.
 
-Every row also has a status line. It says **ready**, or what stops the row (no reward, command or sound picked; a
+Every row also has a status line. It says **ready**, or what stops the row (no reward or command picked; neither a
+sound nor a chat line; no sign-in for a chat line; a
 sound that is no longer on the Soundboard; a row above with the same command or reward, which wins; redeems not
-reaching Hexcast and why). It also says how many times the row has played, and when and by whom last.
+reaching Hexcast and why). It also says how many times the row has been used, and when and by whom last.
 
-The dot on the **Redeems** tab in the top bar is grey when nothing is set up and amber when a row cannot play.
+The dot on the **Redeems** tab in the top bar is grey when nothing is set up and amber when a row cannot run.
 
 ## The master switch
 
-**Sounds on** switches everything off and on. Off, nothing plays (handy for a quiet stream). The Twitch alerts then
+**Sounds on** switches everything off and on. Off, nothing plays and nothing is said in chat (handy for a quiet stream). The Twitch alerts then
 play their own clips again (see below).
 
 ## With the Twitch plugin's alerts
@@ -184,6 +225,12 @@ press **Save**.
 
 **"still in its Soundboard cooldown".** The clip has a cooldown of its own on the Soundboard. Lower it there, or use
 the reward's cooldown on Twitch instead.
+
+**"chat message: ..." on a row or in Recent.** Hexcast could not post the line. *Not signed in*: connect a Twitch
+account in the Twitch connection box (a channel name alone only reads chat). *Does not allow user:write:chat*: the
+account was signed in before Hexcast asked for that permission; press **Connect a Twitch account** again as that
+user. *Twitch dropped the chat message*: Twitch refused the line itself and gives its reason (a blocked term in your
+AutoMod settings, the same line sent twice in a row, followers-only chat for an account that does not follow).
 
 **"not on the Soundboard".** The clip was renamed or deleted on the Soundboard. Pick it again in the row.
 

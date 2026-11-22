@@ -2,7 +2,8 @@
 <div class="card">
   <h2>Bot-Free Redeems <span class="tag">/redeems</span></h2>
   <p class="hint">Plays a sound from your Soundboard when a viewer redeems a channel point reward, types a chat command
-    like <code>!airhorn</code>, or cheers bits - straight from Twitch to the Soundboard, with no bot or AI in between.
+    like <code>!airhorn</code>, or cheers bits - straight from Twitch to the Soundboard, with no bot or AI in between. A row can
+    also answer in chat: <code>!discord</code> posts your Discord address.
     Everything is set up in the <b>Redeems</b> tab. It uses the shared <a href="/help/twitch_connection">Twitch
     connection</a>, so it works with or without the Twitch plugin.</p>
 
@@ -21,15 +22,17 @@
     channel): Twitch tells only a channel's own account about its redeems. The first time, the box walks you through
     making a Twitch app (about two minutes). Sign in from a browser on the Hexcast PC: Twitch sends the sign-in back to
     <code>http://localhost</code> (it takes plain http for no other address), so a tab opened as <code>192.168...</code>
-    or from another computer cannot finish it. Channel points are only for Affiliate and Partner channels.</p>
+    or from another computer cannot finish it. A row that <b>says a line in chat</b> needs a sign-in as well (any
+    account: the line is posted as that account). Channel points are only for Affiliate and Partner channels.</p>
   <p class="hint"><b>4. Your rewards, on Twitch.</b> Make each reward on Twitch as usual: Creator Dashboard &rarr;
     <b>Viewer Rewards</b> &rarr; <b>Channel Points</b> &rarr; <b>Manage Rewards &amp; Challenges</b> &rarr; <b>Add New
     Custom Reward</b>. Give it a name and a cost. Set its <b>cooldown</b> and limits (per stream, per viewer) there too:
     Twitch checks them before the points are spent, so a viewer is never charged for a sound that is held back. Leave
     <b>Require Viewer to Enter Text</b> off for a plain sound.</p>
-  <p class="hint"><b>5. The rows.</b> In the Redeems tab press <b>+ Add a redeem sound</b>, <b>+ Add a command</b> or
-    <b>+ Add a bits sound</b>, fill in the row, pick its sound and press <b>Save</b>. <b>&#9654; Test</b> plays the sound
-    on the overlay right away (it is on stream). Then try it for real: redeem the reward, or type the command in your
+  <p class="hint"><b>5. The rows.</b> In the Redeems tab press <b>+ Add a redeem</b>, <b>+ Add a command</b> or
+    <b>+ Add a bits amount</b>, fill in the row, pick its sound - or type what it says in chat, or both - and press
+    <b>Save</b>. <b>&#9654; Test</b> plays the sound on the overlay and posts the chat line right away (both are on
+    stream). Then try it for real: redeem the reward, or type the command in your
     chat.</p>
 
   <h3>Channel point redeems</h3>
@@ -54,13 +57,25 @@
     reaches wins: with 100 and 1000 set, 500 bits plays the 100 sound and 1500 bits the 1000 one. A cheer smaller than
     every amount plays nothing. Bits come from your chat, so they need no sign-in either.</p>
 
+  <h3>A line in chat</h3>
+  <p class="hint">Every row has a <b>Say in chat</b> box: what you type there is posted in your Twitch chat when the row
+    is used, by the account Hexcast is signed in as. Leave the sound empty and the row only talks - a
+    <code>!discord</code> command with <code>Join the Discord: https://discord.gg/your-invite</code>, a
+    <code>!uptime</code> command with <code>{channel} has been live for {uptime}</code>. A row with a sound and a line
+    does both.</p>
+  <p class="hint">Filled in for you: <code>{user}</code> (the viewer), <code>{channel}</code>, <code>{uptime}</code>, and
+    <code>{bits}</code> on a bits row, <code>{reward}</code> on a redeem row. A line is at most 500 characters. It needs
+    a <b>sign-in</b> in the Twitch connection box - with only a channel name Hexcast reads the chat but cannot write in
+    it, and the row says so. A command's cooldowns hold its answer too, so viewers cannot flood your chat with it. For a
+    line posted every so often without anyone asking, use the Chat Timers plugin.</p>
+
   <h3>Several sounds on one row</h3>
   <p class="hint"><b>+ another sound</b> adds more sounds to a row: each time, one of them plays at random (never the same
     one twice in a row). Handy for a "random fart noise" reward.</p>
 
   <h3>The Recent list</h3>
   <p class="hint">The bottom of the tab lists the last 40 redeems, commands, cheers and tests, newest first: who, what,
-    and what happened - <b>played</b> (and which sound), or why not: no sound set for that reward, on cooldown, only for
+    and what happened - <b>played</b> (and which sound), <b>said it in chat</b>, or why not: no sound set for that reward, on cooldown, only for
     subscribers, the clip is not on the Soundboard, the Soundboard overlay is not open... Every row also says
     <b>ready</b> or what stops it, and how many times it has played.</p>
 
@@ -91,6 +106,9 @@
     there, or use the reward's cooldown on Twitch instead.</p>
   <p class="hint"><b>The reward list says Affiliate or Partner.</b> Twitch has channel points only for those channels;
     chat commands and bits work for everyone.</p>
+  <p class="hint"><b>"chat message: ...".</b> Hexcast could not post the line: not signed in (connect a Twitch account -
+    a channel name alone only reads chat), a sign-in from before the permission existed (connect the account again), or
+    Twitch dropped the line and says why (a blocked term, the same line twice in a row).</p>
   <p class="hint"><b>A command does nothing.</b> It has to be the first word of the line. Check <b>Who can use it</b> and
     the cooldowns (Recent says which one held it).</p>
 </div>

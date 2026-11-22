@@ -6,6 +6,9 @@ Twitch channel point redeems, chat commands (`!airhorn`) and bits play soundboar
 the soundboard, with no bot or AI in between. For a streamer who has no bot of their own: everything is set up in
 the tab, and the clips play on the Soundboard overlay (/overlay) like any other soundboard clip.
 
+A row can also (or only) say a line in the Twitch chat: `!discord` answers with the Discord address. That line is
+posted by the account Hexcast is signed in as, so it needs a sign-in.
+
     http://localhost:4747/redeems     -> the tab
 
 The connection to Twitch is the shared twitch_core library (the same sign-in and channels as the Twitch plugin).
@@ -54,6 +57,7 @@ REDEEM = "channel.channel_points_custom_reward_redemption.add"
 MAX_TRIGGERS = 200
 MAX_CLIPS = 10                  # sounds on one row (one of them plays, at random)
 MAX_WORDS = 5                   # commands on one row ("!airhorn !horn")
+MAX_MESSAGE = 500               # a chat line, as long as Twitch takes one
 KINDS = ("redeem", "command", "bits")
 WHO = ("everyone", "subs", "vips", "mods", "broadcaster")
 RANK = {w: i for i, w in enumerate(WHO)}
@@ -68,6 +72,7 @@ TRIGGER_DEFAULTS: dict[str, Any] = {
     "command": "",              # command: "!airhorn", or a few at once: "!airhorn !horn"
     "bits": 100,                # bits: a cheer of at least this many (the biggest row that fits wins)
     "clips": [],                # soundboard clip names; with several, one at random
+    "message": "",              # a line said in the Twitch chat ({user}, {channel}, {uptime}, {bits}, {reward})
     "who": "everyone",          # command: who may use it (everyone | subs | vips | mods | broadcaster)
     "cooldown": 30,             # command: seconds before anyone can use it again
     "user_cooldown": 0,         # command: seconds before the same viewer can use it again
@@ -152,6 +157,10 @@ def clean_trigger(raw: Any, base: dict | None = None) -> dict:
             t[key] = _int(raw[key], key)
     if "clips" in raw:
         t["clips"] = clean_clips(raw["clips"])
+    if "message" in raw:
+        t["message"] = " ".join(str(raw["message"] if raw["message"] is not None else "").split())
+    if len(t["message"]) > MAX_MESSAGE:
+        raise Problem(f"a chat message is at most {MAX_MESSAGE} characters")
     if "who" in raw:
         t["who"] = str(raw["who"] or "everyone").strip().lower()
     if t["who"] not in WHO:
@@ -223,10 +232,11 @@ def _here(t: dict, login: str) -> bool:
 
 
 def _live_rows(kind: str, login: str) -> list[dict]:
-    """The rows of a kind that can play in a channel right now: switched on, with a sound."""
+    """The rows of a kind that can play in a channel right now: switched on, with a sound or a chat message."""
     if not CONFIG["on"]:
         return []
-    return [t for t in CONFIG["triggers"] if t["kind"] == kind and t["on"] and t["clips"] and _here(t, login)]
+    return [t for t in CONFIG["triggers"]
+            if t["kind"] == kind and t["on"] and (t["clips"] or t["message"]) and _here(t, login)]
 
 
 def match_redeem(reward_id: str, title: str, login: str) -> dict | None:
@@ -283,16 +293,18 @@ def rank(msg: dict, login: str) -> int:
 
 def claims(kind: str, ev: dict, login: str) -> bool:
     """For the Twitch plugin: does this redeem / cheer play a sound here? Then its alert's own clip stays quiet, so
-    one redeem never plays two sounds. `kind` is the EventSub type, `ev` the event as Twitch sent it."""
+    one redeem never plays two sounds. `kind` is the EventSub type, `ev` the event as Twitch sent it. (A row that
+    only says a line in chat plays no sound: the alert keeps its clip.)"""
+    t = None
     try:
         if kind == REDEEM:
             reward = ev.get("reward") or {}
-            return match_redeem(str(reward.get("id") or ""), str(reward.get("title") or ""), login) is not None
-        if kind == "channel.cheer":
-            return match_bits(int(ev.get("bits") or 0), login) is not None
+            t = match_redeem(str(reward.get("id") or ""), str(reward.get("title") or ""), login)
+        elif kind == "channel.cheer":
+            t = match_bits(int(ev.get("bits") or 0), login)
     except (TypeError, ValueError, AttributeError):
         pass
-    return False
+    return bool(t and t["clips"])
 
 
 # --------------------------------------------------------------------------
@@ -393,29 +405,85 @@ def _forget_old_viewers(now: float) -> None:
 
 
 def log(kind: str, what: str, user: str, login: str, result: str, note: str = "", t: dict | None = None,
-        clip: str = "") -> dict:
-    """One line of the tab's Recent list. result: played | skipped | failed."""
+        clip: str = "", said: bool = False) -> dict:
+    """One line of the tab's Recent list. result: played | skipped | failed. `clip` is the sound (played, or the
+    one that failed), `said` whether its chat message went out."""
     entry = {"ts": time.time(), "kind": kind, "what": what, "user": user, "channel": login, "result": result,
-             "note": note, "trigger": t["id"] if t else "", "clip": clip}
+             "note": note, "trigger": t["id"] if t else "", "clip": clip, "said": said}
     RECENT.append(entry)
     return entry
 
 
-async def fire(t: dict, kind: str, what: str, user: str, login: str) -> str:
-    """Play a row's sound and note it. '' when it played, else why nobody heard it."""
-    clip = pick(t)
-    LAST_CLIP[t["id"]] = clip
-    err = await play(clip)
-    if err:
-        log(kind, what, user, login, "failed", err, t, clip)
-        tc.note(f"bot-free redeems: {what} in #{login}: {err}")
+def _uptime(login: str) -> str:
+    ch = tc.STATE.channel(login)
+    if not ch or ch.live is not True or not ch.live_since:
+        return "offline"
+    mins = int((time.time() - ch.live_since) // 60)
+    return f"{mins // 60}h {mins % 60:02d}m" if mins >= 60 else f"{mins}m"
+
+
+def fill(text: str, login: str, **values: Any) -> str:
+    """{user}, {channel}, {uptime} (and {bits}, {reward} where there is one) filled in; any other {...} is left
+    as it is typed."""
+    values = {"channel": login, "uptime": _uptime(login), **{k: str(v) for k, v in values.items()}}
+    return re.sub(r"\{(\w+)\}", lambda m: values.get(m.group(1).lower(), m.group(0)), text)
+
+
+SENT: deque[tuple[str, str, float]] = deque(maxlen=20)    # (channel, text, when): the lines posted a moment ago
+ECHO_FOR = 30.0
+
+
+def own_echo(msg: dict, login: str) -> bool:
+    """A chat line that is one Hexcast just posted itself, coming back from Twitch like anyone's: a message that
+    starts with a command ("!discord is ...") must not set that command off again."""
+    if str((msg.get("user") or {}).get("login") or "").lower() not in tc.own_logins():
+        return False
+    text, now = " ".join(str(msg.get("text") or "").split()), time.time()
+    return any(c == login and s == text and now - ts < ECHO_FOR for c, s, ts in SENT)
+
+
+async def say(text: str, login: str) -> str:
+    """Post a line in a channel's chat. '' when Twitch took it, else why not."""
+    text = " ".join(text.split())[:tc.CHAT_LIMIT]
+    if not text:
+        return "the chat message is empty"
+    SENT.append((login, text, time.time()))
+    try:
+        await tc.send_chat(text, login)
+    except tc.TwitchError as exc:
+        return f"chat message: {exc}"
+    except httpx.HTTPError as exc:
+        return f"chat message: Twitch did not answer ({exc})"
+    return ""
+
+
+async def fire(t: dict, kind: str, what: str, user: str, login: str, **values: Any) -> str:
+    """Play a row's sound and say its chat message, and note it. '' when either went out, else why not."""
+    clip, played, said, errs = "", False, False, []
+    if t["clips"]:
+        clip = pick(t)
+        LAST_CLIP[t["id"]] = clip
+        err = await play(clip)
+        played = not err
+        if err:
+            errs.append(err)
+    if t["message"]:
+        err = await say(fill(t["message"], login, user=user, **values), login)
+        said = not err
+        if err:
+            errs.append(err)
+    note = "; ".join(errs)
+    if errs:
+        tc.note(f"bot-free redeems: {what} in #{login}: {note}")
+    if not (played or said):
+        log(kind, what, user, login, "failed", note, t, clip)
     else:
-        log(kind, what, user, login, "played", "", t, clip)
+        log(kind, what, user, login, "played", note, t, clip if played else "", said)
         s = STATS.setdefault(t["id"], {"played": 0, "last": 0.0, "by": ""})
         s["played"] += 1
         s["last"], s["by"] = time.time(), user
     await HUB.status()
-    return err
+    return "" if played or said else note
 
 
 def _secs(n: float) -> str:
@@ -438,12 +506,12 @@ async def on_chat(msg: dict, ch: tc.ChannelRT) -> None:
     if bits > 0 and SEEN.first(f"cheer:{mid}"):
         t = match_bits(bits, login)
         if t is not None:
-            await fire(t, "bits", f"{bits} bits", name, login)
+            await fire(t, "bits", f"{bits} bits", name, login, bits=bits)
         elif _live_rows("bits", login):
             log("bits", f"{bits} bits", name, login, "skipped", "less than the smallest bits sound")
             await HUB.status()
     t = match_command(str(msg.get("text") or ""), login)
-    if t is None or not SEEN.first(f"chat:{mid}"):
+    if t is None or own_echo(msg, login) or not SEEN.first(f"chat:{mid}"):
         return
     word = command_word(str(msg.get("text") or ""))
     standing = rank(msg, login)
@@ -485,7 +553,7 @@ async def on_event(kind: str, ev: dict, msg_id: str | None, ch: tc.ChannelRT) ->
         log("redeem", title, name, ch.login, "skipped", "no sound set for this reward")
         await HUB.status()
         return
-    await fire(t, "redeem", title, name, ch.login)
+    await fire(t, "redeem", title, name, ch.login, reward=title)
 
 
 async def on_status() -> None:
@@ -535,21 +603,34 @@ def where(t: dict) -> list[str]:
     return [t["channel"]]
 
 
+def _say_problem(login: str) -> str:
+    """Why Hexcast cannot post in a channel's chat, or ''."""
+    ch = tc.STATE.channel(login)
+    if ch is None:
+        return f"#{login} is not a channel Hexcast watches - add it in the Twitch connection box"
+    try:
+        tc.acting_account(ch, "user:write:chat")
+    except tc.TwitchError as exc:
+        return f"chat message: {exc}"
+    return ""
+
+
 def problem(t: dict, earlier: list[dict], clips: list[str] | None) -> str:
     """What stops a row from playing, said for the streamer, or ''."""
     if t["kind"] == "redeem" and not (t["reward_id"] or t["reward"]):
         return "pick a reward"
     if t["kind"] == "command" and not t["command"]:
         return "type a command, like !airhorn"
-    if not t["clips"]:
-        return "pick a sound"
+    if not t["clips"] and not t["message"]:
+        return "pick a sound or type a chat message"
     if clips is not None:
         names = {c.lower() for c in clips}
         gone = [c for c in t["clips"] if c.lower() not in names]
         if gone:
             return "not on the Soundboard (renamed or deleted?): " + ", ".join(gone)
     for e in earlier:                               # the same trigger on a row above wins
-        if e["kind"] != t["kind"] or not e["on"] or not e["clips"] or not set(where(e)) & set(where(t)):
+        if (e["kind"] != t["kind"] or not e["on"] or not (e["clips"] or e["message"])
+                or not set(where(e)) & set(where(t))):
             continue
         if t["kind"] == "command" and set(e["command"].split()) & set(t["command"].split()):
             return "a row above uses the same command - that one plays"
@@ -562,6 +643,8 @@ def problem(t: dict, earlier: list[dict], clips: list[str] | None) -> str:
     if not logins:
         return "no channel - add yours in the Twitch connection box"
     why = _redeem_problem(logins[0]) if t["kind"] == "redeem" else _chat_problem(logins[0])
+    if not why and t["message"]:
+        why = next((w for w in map(_say_problem, logins) if w), "")
     return why
 
 
@@ -688,20 +771,36 @@ async def api_rewards(channel: str = ""):
 
 @router.post("/api/test")
 async def api_test(request: Request):
-    """{"clips": [...]} - play one of them now, on the Soundboard overlay, the way a redeem would."""
+    """{"clips": [...], "message": "...", "channel": "primary"} - play one of the clips now on the Soundboard
+    overlay, and post the message in the channel's chat, the way a redeem would."""
     try:
-        clips = clean_clips((await _body(request)).get("clips"))
+        t = clean_trigger({k: v for k, v in (await _body(request)).items() if k in ("clips", "message", "channel")})
     except Problem as exc:
         return _bad(exc)
-    if not clips:
-        return _bad(Problem("pick a sound first"))
-    clip = random.choice(clips)
-    err = await play(clip)
-    log("test", clip, "you (Test button)", tc.primary_login(), "failed" if err else "played", err, clip=clip)
+    if not t["clips"] and not t["message"]:
+        return _bad(Problem("pick a sound or type a chat message first"))
+    logins = where(t)
+    login = logins[0] if logins else tc.primary_login()
+    clip, said, errs = "", False, []
+    if t["clips"]:
+        clip = random.choice(t["clips"])
+        err = await play(clip)
+        if err:
+            errs.append(err)
+            clip = ""
+    if t["message"]:
+        err = await say(fill(t["message"], login, user=login, bits=100, reward="a reward"), login) if login \
+            else "chat message: add your channel in the Twitch connection box first"
+        said = not err
+        if err:
+            errs.append(err)
+    note = "; ".join(errs)
+    log("test", clip or t["message"][:40], "you (Test button)", login, "played" if clip or said else "failed", note,
+        clip=clip, said=said)
     await HUB.status()
-    if err:
-        return JSONResponse({"ok": False, "error": err, "clip": clip}, status_code=400)
-    return {"ok": True, "clip": clip}
+    if errs:
+        return JSONResponse({"ok": False, "error": note, "clip": clip, "said": said}, status_code=400)
+    return {"ok": True, "clip": clip, "said": said}
 
 
 @router.websocket("/ws")

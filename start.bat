@@ -104,7 +104,16 @@ if errorlevel 1 (
 )
 
 REM ---------------------------------------------------------------------------
-REM 6. Launch.
+REM 6. The first time (and again if this folder is moved): put a Hexcast icon
+REM    on the desktop, so it starts with a double-click from there. It is made
+REM    once - delete the icon and it stays gone.
+REM ---------------------------------------------------------------------------
+set "HEXCAST_DIR=%~dp0"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$d = $env:HEXCAST_DIR; $mark = Join-Path $d '.venv\shortcut.done'; if ((Test-Path -LiteralPath $mark) -and ((Get-Content -LiteralPath $mark -Raw).Trim() -eq $d)) { exit 1 }; $s = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) 'Hexcast.lnk')); $s.TargetPath = Join-Path $d 'start.bat'; $s.WorkingDirectory = $d; $s.IconLocation = (Join-Path $d 'static\hexcast.ico') + ',0'; $s.Description = 'Start Hexcast'; $s.Save(); Set-Content -LiteralPath $mark -Value $d" >nul 2>&1
+if not errorlevel 1 echo  Added a Hexcast icon to your desktop - next time, just double-click it.
+
+REM ---------------------------------------------------------------------------
+REM 7. Launch.
 REM ---------------------------------------------------------------------------
 echo(
 echo  Starting Hexcast - leave this window open while you stream.

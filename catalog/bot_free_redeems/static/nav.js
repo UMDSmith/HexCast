@@ -4,7 +4,7 @@
   if (!s.on) return { on: false, warn: true, title: 'Bot-Free Redeems - switched off' };
   var rows = (s.triggers || []).filter(function (t) { return t.on; });
   var bad = rows.filter(function (t) { return t.problem; }).length;
-  if (!rows.length) return { on: false, warn: false, title: 'Bot-Free Redeems - no sound set up yet' };
-  if (bad) return { on: false, warn: true, title: 'Bot-Free Redeems - ' + bad + ' of ' + rows.length + ' cannot play (open the tab)' };
-  return { on: true, warn: false, title: 'Bot-Free Redeems - ' + rows.length + ' sound' + (rows.length === 1 ? '' : 's') + ' ready' };
+  if (!rows.length) return { on: false, warn: false, title: 'Bot-Free Redeems - nothing set up yet' };
+  if (bad) return { on: false, warn: true, title: 'Bot-Free Redeems - ' + bad + ' of ' + rows.length + ' cannot run (open the tab)' };
+  return { on: true, warn: false, title: 'Bot-Free Redeems - ' + rows.length + ' row' + (rows.length === 1 ? '' : 's') + ' ready' };
 };
