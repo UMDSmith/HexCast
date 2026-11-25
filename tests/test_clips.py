@@ -59,7 +59,7 @@ def queued(api):
 
 def test_the_manifest_version_was_bumped():
     manifest = json.loads((ROOT / "catalog" / "clips" / "plugin.json").read_text(encoding="utf-8"))
-    assert manifest["version"] == "1.1.4"
+    assert manifest["version"] == "1.2.0"
 
 
 def test_a_rename_is_what_the_queue_and_the_player_show(api, clips, entry):
@@ -337,6 +337,8 @@ def shout(clips, monkeypatch):
     monkeypatch.setattr(clips.HUB, "overlay", {obs})
     monkeypatch.setattr(clips, "_SO_LOCK", asyncio.Lock())
     monkeypatch.setitem(clips.settings(), "level_enabled", False)
+    monkeypatch.setattr(clips, "SHOUTOUTS", [])
+    monkeypatch.setitem(clips.STORE, "shoutout_counts", {})
     yield obs
     clips._drop_pending_shoutouts()
     clips.EPHEMERAL.clear()
@@ -360,7 +362,9 @@ def test_a_second_shoutout_waits_for_the_first_instead_of_cutting_it_off(clips, 
         c = await clips.play_shoutout("@Alice", 2)                      # another mod, same channel
         assert a["ok"] and not a["queued"] and b["ok"] and b["queued"] and b["ahead"] == 2
         assert c["ok"] and c["already"] and c["clips"] == []
-        assert played(shout) == ["aliceClip0"] and clips.status_snapshot()["shoutouts_waiting"] == 3
+        status = clips.status_snapshot()
+        assert played(shout) == ["aliceClip0"] and status["shoutout_clips_waiting"] == 3
+        assert status["shoutouts_waiting"] == 1                         # bob; alice is on screen
         for _ in range(3):
             await end_current(clips, shout)
         assert played(shout) == ["aliceClip0", "aliceClip1", "bobClip0", "bobClip1"]
@@ -429,6 +433,78 @@ def test_a_waiting_clip_that_cannot_play_is_skipped(clips, shout, monkeypatch):
         assert played(shout) == ["aliceClip0", "bobClip0"]              # the line did not stall on the bad clip
 
     asyncio.run(go())
+
+
+def rows(clips):
+    return [(s["channel"], s["state"], s["started"], s["left"], s["count"]) for s in clips.shoutouts_snapshot()["shoutouts"]]
+
+
+def test_the_shoutout_list_follows_the_line_and_counts_each_channel(clips, shout, api):
+    async def go():
+        await clips.play_shoutout("alice", 2)
+        await clips.play_shoutout("bob", 1)
+        await clips.play_shoutout("alice", 2)                           # a repeat while it plays: no row, no count
+        assert rows(clips) == [("alice", "playing", 1, 1, 1), ("bob", "waiting", 0, 1, 0)]
+        await end_current(clips, shout)
+        await end_current(clips, shout)
+        assert rows(clips) == [("alice", "played", 2, 0, 1), ("bob", "playing", 1, 0, 1)]
+        await end_current(clips, shout)
+        await clips.play_shoutout("alice", 1)                           # shouted out again later: counted again
+        assert rows(clips)[-1] == ("alice", "playing", 1, 0, 2)
+        assert clips.shoutouts_snapshot()["counts"] == [["alice", 2], ["bob", 1]]
+        assert shout.sent[-1]["type"] == "play"
+
+    asyncio.run(go())
+    saved = json.loads(clips.STORE_PATH.read_text(encoding="utf-8"))
+    assert saved["shoutout_counts"] == {"alice": 2, "bob": 1}           # the counts outlive a restart
+    assert clips.load_store()["shoutout_counts"] == {"alice": 2, "bob": 1}
+    assert api.get("/clips/api/shoutouts").json()["counts"] == [["alice", 2], ["bob", 1]]
+
+
+def test_a_cleared_shoutout_is_listed_as_not_played_and_not_counted(clips, shout):
+    async def go():
+        await clips.play_shoutout("alice", 2)
+        await clips.play_shoutout("bob", 1)
+        await clips.stop_playback()
+        assert rows(clips) == [("alice", "played", 1, 0, 1), ("bob", "skipped", 0, 0, 0)]
+
+    asyncio.run(go())
+
+
+def test_a_waiting_shoutout_can_be_removed_and_the_list_cleared(clips, shout):
+    async def go():
+        await clips.play_shoutout("alice", 2)
+        await clips.play_shoutout("bob", 1)
+        await clips.play_shoutout("carol", 1)
+        bob = clips.shoutouts_snapshot()["shoutouts"][1]["id"]
+        assert (await clips.api_shoutout_remove(bob))["ok"]
+        assert [r[0] for r in rows(clips)] == ["alice", "carol"]
+        for _ in range(2):
+            await end_current(clips, shout)
+        assert played(shout) == ["aliceClip0", "aliceClip1", "carolClip0"]
+
+    asyncio.run(go())
+
+
+def test_clearing_keeps_the_line_and_only_zeroes_counts_when_asked(clips, shout, api):
+    async def go():
+        await clips.play_shoutout("alice", 1)
+        await end_current(clips, shout)
+        await clips.play_shoutout("bob", 1)
+        await clips.play_shoutout("carol", 1)
+
+    asyncio.run(go())
+    assert api.post("/clips/api/shoutouts/clear").json()["ok"]
+    assert [r[:2] for r in rows(clips)] == [("bob", "playing"), ("carol", "waiting")]
+    assert clips.STORE["shoutout_counts"] == {"alice": 1, "bob": 1}
+    assert api.post("/clips/api/shoutouts/clear", json={"counts": True}).json()["ok"]
+    assert clips.STORE["shoutout_counts"] == {} and len(rows(clips)) == 2
+    assert api.post("/clips/api/shoutouts/remove/nope").status_code == 404
+
+
+def test_the_page_lists_the_shoutouts():
+    html = (STATIC / "clips_panel.html").read_text(encoding="utf-8")
+    assert 'id="solist"' in html and "m.type==='shoutouts'" in html and "/clips/api/shoutouts/clear" in html
 
 
 # ---------------------------------------------------------------- the browser scripts (checked with node when it is installed)

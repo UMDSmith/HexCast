@@ -173,6 +173,9 @@ def load_store() -> dict:
         "seq": int(raw.get("seq") or 0),
         "queue": [e for e in (raw.get("queue") or [])
                   if isinstance(e, dict) and e.get("id")],
+        # how many times each channel has been shouted out, all-time
+        "shoutout_counts": {str(k): int(v) for k, v in (raw.get("shoutout_counts") or {}).items()
+                            if isinstance(v, int) and v > 0},
     }
 
 
@@ -268,7 +271,8 @@ def status_snapshot() -> dict:
         "queued": sum(1 for e in q if e.get("status") == "queued"),
         "played": sum(1 for e in q if e.get("status") == "played"),
         "total": len(q),
-        "shoutouts_waiting": len(SHOUTOUT_PENDING),
+        "shoutouts_waiting": sum(1 for s in SHOUTOUTS if _shoutout_state(s) == "waiting"),
+        "shoutout_clips_waiting": len(SHOUTOUT_PENDING),
         "cookies_browser": settings().get("cookies_browser", ""),
         "signin": signin_readiness(),
         "log": STATE.log[-25:],
@@ -313,6 +317,9 @@ class Hub:
     async def broadcast_queue(self) -> None:
         await self.to_panel({"type": "queue",
                              "queue": [public_entry(e) for e in STORE["queue"]]})
+
+    async def broadcast_shoutouts(self) -> None:
+        await self.to_panel({"type": "shoutouts", **shoutouts_snapshot()})
 
     async def broadcast_player(self) -> None:
         await self.to_panel({"type": "player", "player": player_snapshot()})
@@ -426,6 +433,61 @@ _SO_TASK: asyncio.Task | None = None
 # A shoutout clip whose end was never reported (a frozen overlay) stops holding
 # the line this long after it should have finished.
 SO_STUCK_GRACE = 45.0
+# What the Clips page lists: the shoutouts since Hexcast started, oldest first -
+# waiting, playing and done. Not saved; only the per-channel counts are.
+SHOUTOUTS: list[dict] = []
+SHOUTOUTS_KEEP = 60
+
+
+def _shoutout_state(so: dict) -> str:
+    """waiting | playing | played | skipped (cleared or unplayable before any clip of it ran)."""
+    if PLAYER["state"] != "idle" and PLAYER["item_id"] in so["ids"]:
+        return "playing"
+    if any(e["id"] in so["ids"] for e in SHOUTOUT_PENDING):
+        return "playing" if so["started"] else "waiting"    # between two of its clips it is still the one playing
+    return "played" if so["started"] else "skipped"
+
+
+def shoutouts_snapshot() -> dict:
+    counts = STORE["shoutout_counts"]
+    rows = []
+    for so in SHOUTOUTS:
+        rows.append({
+            "id": so["id"], "channel": so["channel"], "ts": so["ts"],
+            "clips": len(so["ids"]), "started": so["started"],
+            "left": sum(1 for e in SHOUTOUT_PENDING if e["id"] in so["ids"]),
+            "state": _shoutout_state(so),
+            "count": counts.get(so["channel"], 0),
+        })
+    return {
+        "shoutouts": rows,
+        "counts": sorted(([c, n] for c, n in counts.items()), key=lambda x: (-x[1], x[0])),
+    }
+
+
+def _note_shoutout(channel: str, entries: list[dict]) -> dict:
+    so = {"id": f"s{secrets.token_hex(3)}", "channel": channel, "ts": time.time(),
+          "ids": {e["id"] for e in entries}, "started": 0}
+    SHOUTOUTS.append(so)
+    spare = len(SHOUTOUTS) - SHOUTOUTS_KEEP
+    for old in list(SHOUTOUTS):
+        if spare <= 0:
+            break
+        if _shoutout_state(old) in ("played", "skipped"):
+            SHOUTOUTS.remove(old)
+            spare -= 1
+    return so
+
+
+def _note_shoutout_clip_started(entry: dict) -> None:
+    for so in SHOUTOUTS:
+        if entry["id"] in so["ids"]:
+            so["started"] += 1
+            if so["started"] == 1:      # a shoutout counts once, when its first clip goes on screen
+                counts = STORE["shoutout_counts"]
+                counts[so["channel"]] = counts.get(so["channel"], 0) + 1
+                save_store()
+            return
 
 
 def entry_by_id(eid: str) -> dict | None:
@@ -949,6 +1011,7 @@ async def finish_current(mark_played: bool) -> None:
     PLAYER.update(state="idle", item_id="", mode="", position=0.0, duration=0.0)
     await HUB.broadcast_queue()
     await HUB.broadcast_player()
+    await HUB.broadcast_shoutouts()
     _kick_shoutouts()
 
 
@@ -981,11 +1044,13 @@ async def _next_shoutout() -> dict | None:
             nxt = SHOUTOUT_PENDING.pop(0)
             _SO_STARTED = time.monotonic()
             if (await play_entry(nxt)).get("ok"):
+                _note_shoutout_clip_started(nxt)
                 return nxt
             EPHEMERAL.pop(nxt["id"], None)
         return None
     finally:
         _SO_STARTING = False
+        await HUB.broadcast_shoutouts()
 
 
 def _kick_shoutouts() -> None:
@@ -1005,6 +1070,7 @@ async def stop_playback() -> dict:
     PLAYER.update(state="idle", item_id="", mode="", position=0.0, duration=0.0)
     await HUB.to_overlay({"type": "stop"})
     await HUB.broadcast_player()
+    await HUB.broadcast_shoutouts()
     return {"ok": True, "was_playing": playing}
 
 
@@ -1178,7 +1244,9 @@ async def api_play(ref: str):
         return JSONResponse({"ok": False, "error": f"no queue item matches '{ref}'"},
                             status_code=404)
     _drop_pending_shoutouts()   # a manual play outranks a shoutout chain
-    return await play_entry(entry)
+    result = await play_entry(entry)
+    await HUB.broadcast_shoutouts()
+    return result
 
 
 @router.api_route("/api/pause", methods=["GET", "POST"])
@@ -1383,6 +1451,7 @@ async def play_shoutout(channel: str, count: int = 2) -> dict:
             _drop_pending_shoutouts()   # nothing is showing them, so nothing to wait behind
         ahead = len(SHOUTOUT_PENDING)
         SHOUTOUT_PENDING.extend(entries)
+        _note_shoutout(channel, entries)
         wait = _shoutout_on_screen() is not None or _SO_STARTING
         if not wait:
             _SO_STARTING = True         # this shoutout starts the line; set before the lock is let go
@@ -1390,6 +1459,7 @@ async def play_shoutout(channel: str, count: int = 2) -> dict:
     clips = [e["url"] for e in entries]
     if wait:
         STATE.note(f"shoutout: {len(entries)} clip(s) for {channel} waiting behind {ahead + 1} shoutout clip(s)")
+        await HUB.broadcast_shoutouts()
         return {"ok": True, "queued": True, "ahead": ahead + 1, "channel": channel, "clips": clips}
 
     STATE.note(f"shoutout: {len(entries)} clip(s) for {channel}")
@@ -1406,6 +1476,42 @@ async def api_shoutout(channel: str, count: int = 2):
         code = 400 if result.get("error") == "bad channel name" else 404
         return JSONResponse(result, status_code=code)
     return result
+
+
+@router.get("/api/shoutouts")
+async def api_shoutouts():
+    return {"ok": True, **shoutouts_snapshot()}
+
+
+@router.api_route("/api/shoutouts/remove/{so_id}", methods=["GET", "POST"])
+async def api_shoutout_remove(so_id: str):
+    """Take a shoutout out of the line. The clip on screen is left alone: one that is already
+    playing only loses the clips of it that have not started."""
+    so = next((s for s in SHOUTOUTS if s["id"] == so_id), None)
+    if so is None:
+        return JSONResponse({"ok": False, "error": f"no shoutout '{so_id}'"}, status_code=404)
+    for e in [e for e in SHOUTOUT_PENDING if e["id"] in so["ids"]]:
+        SHOUTOUT_PENDING.remove(e)
+        EPHEMERAL.pop(e["id"], None)
+    if _shoutout_state(so) == "skipped":
+        SHOUTOUTS.remove(so)
+    await HUB.broadcast_shoutouts()
+    return {"ok": True}
+
+
+@router.post("/api/shoutouts/clear")
+async def api_shoutouts_clear(request: Request):
+    """Empty the list of finished shoutouts; {"counts": true} also zeroes the per-channel counts."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    SHOUTOUTS[:] = [s for s in SHOUTOUTS if _shoutout_state(s) in ("waiting", "playing")]
+    if isinstance(body, dict) and body.get("counts"):
+        STORE["shoutout_counts"].clear()
+        save_store()
+    await HUB.broadcast_shoutouts()
+    return {"ok": True}
 
 
 @router.post("/api/update_ytdlp")
@@ -1514,6 +1620,7 @@ async def ws_panel(ws: WebSocket):
         await ws.send_text(json.dumps({"type": "queue",
                                        "queue": [public_entry(e) for e in STORE["queue"]]}))
         await ws.send_text(json.dumps({"type": "player", "player": player_snapshot()}))
+        await ws.send_text(json.dumps({"type": "shoutouts", **shoutouts_snapshot()}))
         while True:
             await ws.receive_text()
     except (WebSocketDisconnect, Exception):

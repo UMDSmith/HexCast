@@ -20,6 +20,9 @@
     <tr><td>POST /clips/api/title</td><td>rename an item: <code>{"ref": "7", "title": "My title"}</code>; an empty title restores the original</td></tr>
     <tr><td>POST /clips/api/reset_numbers</td><td>renumber the queue 1..N and restart the counter</td></tr>
     <tr><td>GET /clips/api/shoutout/{channel}?count=2</td><td>play random clips from a Twitch channel back to back, ephemerally (never put in the clip queue or saved). A shoutout asked for while another is on screen waits its turn (the answer then has <code>"queued": true</code>); the same channel is not lined up twice; Stop, or playing a queue item by hand, clears the ones waiting</td></tr>
+    <tr><td>GET /clips/api/shoutouts</td><td>the shoutouts since Hexcast started (<code>waiting</code>, <code>playing</code>, <code>played</code>, <code>skipped</code>) and <code>counts</code>: how many times each channel has been shouted out, all-time</td></tr>
+    <tr><td>POST /clips/api/shoutouts/remove/{id}</td><td>take a waiting shoutout out of the line (the clip on screen is left alone)</td></tr>
+    <tr><td>POST /clips/api/shoutouts/clear</td><td>empty the list of finished shoutouts; <code>{"counts": true}</code> also zeroes the counts</td></tr>
   </table>
   <p class="hint">Numbers are never reused, so a bot's <code>!playclip 7</code> can't fire the
     wrong thing after removals — that's why the counter only climbs until you reset it.

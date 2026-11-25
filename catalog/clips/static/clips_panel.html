@@ -93,6 +93,19 @@
   .badge.errb{color:var(--warn);border-color:#4d3a10}
   .badge.renamed{color:var(--ink);border-color:#3a3a4a}
 
+  /* shoutouts: the same rows, not draggable */
+  #solist{display:flex;flex-direction:column;gap:8px}
+  .qrow.so{cursor:default}
+  .qrow.so.skipped{opacity:.45}
+  .qrow.so.skipped .meta .t{text-decoration:line-through}
+  .badge.st-waiting{color:var(--warn);border-color:#4d3a10}
+  .badge.st-playing{color:var(--clips);border-color:#164d43}
+  .badge.st-played{color:var(--good);border-color:#1d4d33}
+  #socounts{margin-top:14px;color:var(--dim);font-size:13px}
+  #socounts summary{cursor:pointer}
+  #socounts div{font:12.5px/1.9 var(--mono);margin-top:8px;max-height:220px;overflow:auto}
+  #socounts b{color:var(--ink)}
+
   code{color:var(--good);font:12.5px var(--mono)}
   table.api{width:100%;border-collapse:collapse;font-size:13px}
   table.api td{padding:6px 8px;border-top:1px solid var(--line);vertical-align:top}
@@ -147,6 +160,21 @@
         <button class="sec" id="np-stop">Stop</button>
       </div>
     </div>
+  </div>
+
+  <div class="card">
+    <h2>Shoutouts <span class="pill" id="so-pill" style="display:none"></span></h2>
+    <p class="hint"><code>!so</code> clips play outside the queue below. One asked for while another is on
+      screen waits its turn here; played ones stay in the list, dimmed, until you clear them or Hexcast restarts.
+      Stop clears the ones waiting.</p>
+    <div id="solist"><p class="hint">No shoutouts yet.</p></div>
+    <div class="row">
+      <button class="sec" id="so-clear">Clear finished</button>
+    </div>
+    <details id="socounts" style="display:none"><summary>Shoutouts per channel, all-time</summary>
+      <div id="socounts-list"></div>
+      <div class="row"><button class="sec danger" id="so-reset">Reset counts</button></div>
+    </details>
   </div>
 
   <div class="card">
@@ -372,6 +400,55 @@ function renderQueue(force){
   if(!QUEUE.length){ c.innerHTML='<p class="hint">Queue is empty.</p>'; return; }
   c.innerHTML=QUEUE.map(rowHtml).join('');
 }
+
+/* ---- shoutouts ---------------------------------------------------------- */
+var SHOUT={shoutouts:[],counts:[]};
+function soRowHtml(s){
+  var label={waiting:'waiting',playing:'playing',played:'played',skipped:'did not play'}[s.state]||s.state;
+  var clips = s.state==='played' && s.started<s.clips ? (s.started+' of '+s.clips+' clips') :
+              (s.clips+(s.clips===1?' clip':' clips'));
+  if(s.state==='playing' && s.left) clips += ', '+s.left+' to go';
+  var when=new Date(s.ts*1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+  var times = s.count ? ('shouted out '+s.count+(s.count===1?' time':' times')) : 'not shouted out yet';
+  return '<div class="qrow so '+s.state+'" data-id="'+s.id+'">'
+    + '<span class="num">SO</span>'
+    + '<div class="meta"><div class="t"><a href="https://www.twitch.tv/'+encodeURIComponent(s.channel)
+    + '" target="_blank" rel="noopener">'+esc(s.channel)+'</a></div>'
+    + '<div class="s"><span class="badge st-'+s.state+'">'+label+'</span> '+clips+' &middot; '+when+' &middot; '+times+'</div></div>'
+    + '<div class="btns">'+(s.left ? '<button class="sec" data-so-remove="'+s.id+'">'
+    + (s.state==='playing'?'Drop the rest':'Remove')+'</button>' : '')+'</div></div>';
+}
+function renderShoutouts(){
+  var list=SHOUT.shoutouts||[], rank={playing:0,waiting:1};
+  // the line first, in the order it will play; then what is done, newest on top
+  var live=list.filter(function(s){ return s.state in rank; })
+               .sort(function(a,b){ return rank[a.state]-rank[b.state]; });
+  var done=list.filter(function(s){ return !(s.state in rank); }).reverse();
+  $('solist').innerHTML = list.length ? live.concat(done).map(soRowHtml).join('')
+                                      : '<p class="hint">No shoutouts yet.</p>';
+  var waiting=list.filter(function(s){ return s.state==='waiting'; }).length, pill=$('so-pill');
+  pill.style.display = waiting ? '' : 'none';
+  pill.textContent = waiting+' waiting';
+  pill.className = 'pill'+(waiting?' on':'');
+  var counts=SHOUT.counts||[];
+  $('socounts').style.display = counts.length ? '' : 'none';
+  $('socounts-list').innerHTML = counts.map(function(c){ return '<b>'+c[1]+'</b> &times; '+esc(c[0]); }).join('<br>');
+}
+$('solist').onclick=function(e){
+  var b=e.target.closest('[data-so-remove]');
+  if(b) fetch('/clips/api/shoutouts/remove/'+encodeURIComponent(b.dataset.soRemove), {method:'POST'});
+};
+function soClear(counts){
+  return fetch('/clips/api/shoutouts/clear', {method:'POST', headers:{'Content-Type':'application/json'},
+                                              body:JSON.stringify({counts:!!counts})});
+}
+$('so-clear').onclick=function(){ soClear(false); };
+$('so-reset').onclick=function(){
+  var b=$('so-reset');
+  if(b.dataset.sure){ delete b.dataset.sure; b.textContent='Reset counts'; soClear(true); return; }
+  b.dataset.sure='1'; b.textContent='Really reset every count?';
+  setTimeout(function(){ delete b.dataset.sure; b.textContent='Reset counts'; }, 4000);
+};
 
 /* rename a queue item */
 function startEdit(id){
@@ -720,6 +797,7 @@ function connect(){
     if(m.type==='config'){ CFG=m.config; paintConfig(); }
     else if(m.type==='queue'){ QUEUE=m.queue||[]; renderQueue(); cookieHint(); }
     else if(m.type==='player'){ PLAYER=m.player||{state:'idle'}; playerAt=performance.now(); paintPlayer(); }
+    else if(m.type==='shoutouts'){ SHOUT=m; renderShoutouts(); }
   };
   ws.onclose=function(){ setTimeout(connect, 1500); };
 }
