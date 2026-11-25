@@ -181,7 +181,7 @@ def test_notifications_are_routed_to_the_channel_they_came_from(tw, monkeypatch)
     async def noop(*a, **k):
         pass
 
-    async def command(login, text, is_bc, is_mod, ch):
+    async def command(login, text, is_bc, is_mod, ch, flags=None, user_id=""):
         commands.append((login, text, ch.login))
 
     monkeypatch.setattr(tw.ALERT_QUEUE, "enqueue", enqueue)
@@ -365,6 +365,94 @@ def test_a_command_is_handled_for_the_channel_it_was_typed_in(tw, monkeypatch):
 
     run(go())
     assert seen == [("somestreamer", "hexacoreai"), ("third_one", "hexacore_ai")]
+
+
+@pytest.fixture
+def shouts(tw, monkeypatch):
+    """Who gets a shoutout through: the targets that reached _do_shoutout, and the follower lookups made."""
+    setup(tw, [PRIMARY])
+    seen, asked = [], []
+
+    async def shoutout(target, ch):
+        seen.append(target)
+
+    async def followed_at(user_id, channel=""):
+        asked.append(user_id)
+        if user_id == "boom":
+            raise tw.tc.TwitchError("Twitch would not say who follows")
+        return 1.0 if user_id == "follower-id" else None
+
+    monkeypatch.setattr(tw, "_do_shoutout", shoutout)
+    monkeypatch.setattr(tw.tc, "followed_at", followed_at)
+    monkeypatch.setattr(tw, "_SO_LAST", {})
+    monkeypatch.setattr(tw, "_SO_FOLLOWS", {})
+    monkeypatch.setitem(tw.CONFIG["shoutout"], "cooldown", 0)
+
+    def say(who, target, *, flags=None, user_id="", broadcaster=False, mod=False):
+        async def go():
+            await tw.handle_command(who, f"!so {target}", broadcaster, mod, tw.tc.STATE.channel("hexacore_ai"),
+                                    flags=flags or {}, user_id=user_id)
+            for _ in range(3):
+                await asyncio.sleep(0)
+
+        run(go())
+
+    return tw, seen, asked, say
+
+
+def test_each_setting_of_who_may_shout_out_lets_in_everyone_before_it(shouts, monkeypatch):
+    tw, seen, asked, say = shouts
+    people = [("boss", dict(broadcaster=True)), ("mod", dict(mod=True)), ("vip", dict(flags={"vip": True})),
+              ("sub", dict(flags={"sub": True})), ("follower", dict(user_id="follower-id")),
+              ("stranger", dict(user_id="stranger-id"))]
+    expected = {"broadcaster": 1, "mods": 2, "vips": 3, "subs": 4, "followers": 5, "anyone": 6, "nonsense": 1}
+    for who, count in expected.items():
+        monkeypatch.setitem(tw.CONFIG["shoutout"], "who", who)
+        seen.clear()
+        for name, kw in people:
+            say(name, name + "_target", **kw)
+        assert seen == [name + "_target" for name, _ in people[:count]], who
+    assert set(asked) == {"follower-id", "stranger-id"}                 # only "followers" asks Twitch, and only for viewers
+
+
+def test_a_follower_check_that_fails_shouts_nobody_out_and_a_yes_is_remembered(shouts, monkeypatch):
+    tw, seen, asked, say = shouts
+    monkeypatch.setitem(tw.CONFIG["shoutout"], "who", "followers")
+    say("oops", "chan_a", user_id="boom")
+    say("noid", "chan_b")                                                    # a chat line without the chatter's id
+    assert seen == [] and "could not check whether oops follows" in tw.tc.STATE.log[-1]
+    say("follower", "chan_c", user_id="follower-id")
+    say("follower", "chan_d", user_id="follower-id")
+    assert seen == ["chan_c", "chan_d"] and asked == ["boom", "follower-id"]      # asked once, then remembered
+
+
+def test_a_viewer_waits_between_shoutouts_and_mods_never_do(shouts, monkeypatch):
+    tw, seen, asked, say = shouts
+    monkeypatch.setitem(tw.CONFIG["shoutout"], "who", "anyone")
+    monkeypatch.setitem(tw.CONFIG["shoutout"], "cooldown", 60)
+    say("viewer", "chan_a")
+    say("viewer", "chan_b")                                                  # too soon
+    say("other", "chan_c")                                                   # someone else is not held up
+    say("mod", "chan_d", mod=True)
+    say("mod", "chan_e", mod=True)
+    assert seen == ["chan_a", "chan_c", "chan_d", "chan_e"]
+    monkeypatch.setitem(tw._SO_LAST, ("hexacore_ai", "viewer"), tw.time.monotonic() - 61)
+    say("viewer", "chan_f")
+    assert seen[-1] == "chan_f"
+
+
+def test_the_chat_line_hands_the_command_the_chatters_badges_and_id(tw, monkeypatch):
+    setup(tw, [PRIMARY])
+    got = []
+
+    async def command(login, text, is_broadcaster, is_mod, ch, flags=None, user_id=""):
+        got.append((login, is_mod, flags.get("vip"), user_id))
+
+    monkeypatch.setattr(tw, "handle_command", command)
+    msg = {"type": "chat", "user": {"id": "42", "login": "vee", "name": "Vee"}, "text": "!so x",
+           "flags": {"broadcaster": False, "mod": False, "vip": True, "sub": False}}
+    run(tw.on_chat(msg, tw.tc.STATE.channel("hexacore_ai")))
+    assert got == [("vee", False, True, "42")]
 
 
 def test_channels_already_up_get_their_emotes_when_twitch_starts_after_the_connection(tw, monkeypatch):

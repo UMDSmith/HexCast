@@ -59,7 +59,7 @@ def queued(api):
 
 def test_the_manifest_version_was_bumped():
     manifest = json.loads((ROOT / "catalog" / "clips" / "plugin.json").read_text(encoding="utf-8"))
-    assert manifest["version"] == "1.2.0"
+    assert manifest["version"] == "1.2.1"
 
 
 def test_a_rename_is_what_the_queue_and_the_player_show(api, clips, entry):
@@ -500,6 +500,14 @@ def test_clearing_keeps_the_line_and_only_zeroes_counts_when_asked(clips, shout,
     assert api.post("/clips/api/shoutouts/clear", json={"counts": True}).json()["ok"]
     assert clips.STORE["shoutout_counts"] == {} and len(rows(clips)) == 2
     assert api.post("/clips/api/shoutouts/remove/nope").status_code == 404
+
+
+def test_the_settings_tab_has_the_shoutout_settings_of_the_twitch_plugin():
+    html = (STATIC / "clips_panel.html").read_text(encoding="utf-8")
+    card = html[html.index('id="so-settings"'):html.index("<h2>Playback</h2>")]
+    assert 'style="display:none"' in card.split(">")[0]                 # hidden until the Twitch plugin answers
+    assert re.findall(r'<option value="(\w+)"', card) == ["broadcaster", "mods", "vips", "subs", "followers", "anyone"]
+    assert "fetch('/twitch/api/config'" in html and 'id="so-clip_count" min="1" max="5"' in card
 
 
 def test_the_page_lists_the_shoutouts():

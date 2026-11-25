@@ -304,7 +304,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "shoutout": {
         "on": True,
         "command": "!so",
-        "who": "mods",              # broadcaster | mods (broadcaster always may)
+        # broadcaster | mods | vips | subs | followers | anyone - each one also lets in everyone before it
+        "who": "mods",
+        # seconds a viewer (anyone below a mod) waits between two shoutouts of their own
+        "cooldown": 60,
         "native": True,             # attempt the official /shoutout banner
         "message": "Go show {name} some love at {url} - they're worth the follow!",
         "clip": True,               # play random clips from their channel
@@ -869,7 +872,66 @@ def _where(ch: tc.ChannelRT) -> str:
     return tc.where(ch)
 
 
-async def handle_command(login: str, text: str, is_broadcaster: bool, is_mod: bool, ch: tc.ChannelRT) -> None:
+# Who may use !so, widest last: each setting also lets in everyone before it.
+SHOUTOUT_WHO = ("broadcaster", "mods", "vips", "subs", "followers", "anyone")
+_SO_LAST: dict[tuple[str, str], float] = {}         # (channel, chatter) -> when their last shoutout was taken
+_SO_FOLLOWS: dict[tuple[str, str], float] = {}      # (channel, chatter id) -> when Twitch last said they follow
+SO_FOLLOW_TTL = 600.0
+
+
+def _shoutout_allowed(so: dict, is_broadcaster: bool, is_mod: bool, flags: dict) -> bool | None:
+    """True, False, or None when only Twitch can tell (does this chatter follow the channel?)."""
+    who = so.get("who", "mods")
+    level = SHOUTOUT_WHO.index(who) if who in SHOUTOUT_WHO else 0
+    if is_broadcaster or (level >= 1 and is_mod) or (level >= 2 and flags.get("vip")) \
+            or (level >= 3 and flags.get("sub")) or level >= 5:
+        return True
+    return None if level == 4 else False
+
+
+def _shoutout_cooling(so: dict, ch: tc.ChannelRT, login: str) -> float:
+    """Seconds this viewer still has to wait, 0 when they may go."""
+    try:
+        cooldown = max(0.0, float(so.get("cooldown") or 0))
+    except (TypeError, ValueError):
+        cooldown = 0.0
+    last = _SO_LAST.get((ch.login, login))
+    left = cooldown - (time.monotonic() - last) if last is not None else 0.0
+    return max(0.0, left)
+
+
+async def _follows(ch: tc.ChannelRT, user_id: str) -> bool:
+    key = (ch.login, user_id)
+    if time.monotonic() - _SO_FOLLOWS.get(key, -SO_FOLLOW_TTL) < SO_FOLLOW_TTL:
+        return True
+    if await tc.followed_at(user_id, ch.login) is None:
+        return False
+    if len(_SO_FOLLOWS) > 2000:
+        _SO_FOLLOWS.clear()
+    _SO_FOLLOWS[key] = time.monotonic()
+    return True
+
+
+async def _viewer_shoutout(login: str, user_id: str, target: str, ch: tc.ChannelRT, check_follow: bool) -> None:
+    where = _where(ch)
+    if check_follow:
+        try:
+            if not user_id or not await _follows(ch, user_id):
+                return
+        except Exception as exc:
+            tc.note(f"shoutout{where}: could not check whether {login} follows ({exc}) - not shouting out")
+            return
+        if _shoutout_cooling(CONFIG.get("shoutout") or {}, ch, login):   # they sent another while Twitch answered
+            return
+    if len(_SO_LAST) > 2000:
+        _SO_LAST.clear()
+    _SO_LAST[(ch.login, login)] = time.monotonic()
+    tc.note(f"shoutout{where}: {login} -> {target}")
+    await _do_shoutout(target, ch)
+
+
+async def handle_command(login: str, text: str, is_broadcaster: bool, is_mod: bool, ch: tc.ChannelRT,
+                         flags: dict | None = None, user_id: str = "") -> None:
     """Called for every raw chat line (both sources), even ones the overlay hides as commands, with the
     channel it was typed in. Cheap parse; the real work runs as a task."""
     so = CONFIG.get("shoutout") or {}
@@ -878,13 +940,19 @@ async def handle_command(login: str, text: str, is_broadcaster: bool, is_mod: bo
     parts = (text or "").strip().split()
     if len(parts) < 2 or parts[0].lower() != str(so.get("command") or "!so").lower():
         return
-    if not (is_broadcaster or (so.get("who", "mods") == "mods" and is_mod)):
+    allowed = _shoutout_allowed(so, is_broadcaster, is_mod, flags or {})
+    if allowed is False:
         return
     target = parts[1].strip().lstrip("@").rstrip(",").lower()
     if not SHOUTOUT_TARGET.match(target):
         return
-    tc.note(f"shoutout{_where(ch)}: {login} -> {target}")
-    asyncio.create_task(_do_shoutout(target, ch))
+    if is_broadcaster or is_mod:
+        tc.note(f"shoutout{_where(ch)}: {login} -> {target}")
+        asyncio.create_task(_do_shoutout(target, ch))
+        return
+    if _shoutout_cooling(so, ch, login):
+        return                                      # a viewer, too soon after their last one
+    asyncio.create_task(_viewer_shoutout(login, user_id, target, ch, check_follow=allowed is None))
 
 
 async def _do_shoutout(target: str, ch: tc.ChannelRT) -> None:
@@ -955,7 +1023,11 @@ async def _do_shoutout(target: str, ch: tc.ChannelRT) -> None:
             return
         try:
             d = await play_shoutout(target, int(so.get("clip_count") or 2))
-            if d.get("ok"):
+            if d.get("already"):
+                tc.note(f"shoutout{where}: {display} is already on the Clips overlay or waiting for it")
+            elif d.get("queued"):
+                tc.note(f"shoutout{where}: {len(d.get('clips') or [1])} random {display} clip(s) waiting their turn")
+            elif d.get("ok"):
                 tc.note(f"shoutout{where}: playing {len(d.get('clips') or [1])} random {display} clip(s)")
             else:
                 tc.note(f"shoutout{where}: clip playback skipped ({d.get('error')})")
@@ -971,8 +1043,10 @@ async def on_chat(msg: dict, ch: tc.ChannelRT) -> None:
     """Every chat line of every watched channel. Commands are looked for on the raw line, before the overlay
     drops "!" lines (when it hides commands)."""
     flags = msg.get("flags") or {}
-    await handle_command((msg.get("user") or {}).get("login", ""), msg.get("text", ""),
-                         bool(flags.get("broadcaster")), bool(flags.get("mod")), ch)
+    user = msg.get("user") or {}
+    await handle_command(user.get("login", ""), msg.get("text", ""),
+                         bool(flags.get("broadcaster")), bool(flags.get("mod")), ch,
+                         flags=flags, user_id=str(user.get("id") or ""))
     line = overlay_line(msg, ch)
     if line:
         await HUB.to_chat(line)
