@@ -400,24 +400,38 @@ def shouts(tw, monkeypatch):
     return tw, seen, asked, say
 
 
-def test_each_setting_of_who_may_shout_out_lets_in_everyone_before_it(shouts, monkeypatch):
+def test_only_the_ticked_groups_may_shout_out(shouts, monkeypatch):
     tw, seen, asked, say = shouts
     people = [("boss", dict(broadcaster=True)), ("mod", dict(mod=True)), ("vip", dict(flags={"vip": True})),
               ("sub", dict(flags={"sub": True})), ("follower", dict(user_id="follower-id")),
               ("stranger", dict(user_id="stranger-id"))]
-    expected = {"broadcaster": 1, "mods": 2, "vips": 3, "subs": 4, "followers": 5, "anyone": 6, "nonsense": 1}
-    for who, count in expected.items():
+    everyone = [name for name, _ in people]
+    expected = [
+        ([], ["boss"]),                                                 # the broadcaster always may
+        (["mods"], ["boss", "mod"]),
+        (["subs"], ["boss", "sub"]),                                    # a mod who does not subscribe is left out
+        (["mods", "subs"], ["boss", "mod", "sub"]),
+        (["vips", "followers"], ["boss", "vip", "follower"]),
+        (["anyone"], everyone),
+        ("mods", ["boss", "mod"]),                                      # the older single word
+        ("broadcaster", ["boss"]),
+        (["nonsense"], ["boss"]), (None, ["boss"]),
+    ]
+    for who, allowed in expected:
         monkeypatch.setitem(tw.CONFIG["shoutout"], "who", who)
         seen.clear()
+        asked.clear()
         for name, kw in people:
             say(name, name + "_target", **kw)
-        assert seen == [name + "_target" for name, _ in people[:count]], who
-    assert set(asked) == {"follower-id", "stranger-id"}                 # only "followers" asks Twitch, and only for viewers
+        assert seen == [name + "_target" for name in allowed], who
+        # Twitch is only asked about followers, and only for people no ticked badge already let in
+        assert asked == (["follower-id", "stranger-id"] if who == ["vips", "followers"] else []), who
+    assert tw.DEFAULT_CONFIG["shoutout"]["who"] == ["mods"]
 
 
 def test_a_follower_check_that_fails_shouts_nobody_out_and_a_yes_is_remembered(shouts, monkeypatch):
     tw, seen, asked, say = shouts
-    monkeypatch.setitem(tw.CONFIG["shoutout"], "who", "followers")
+    monkeypatch.setitem(tw.CONFIG["shoutout"], "who", ["followers"])
     say("oops", "chan_a", user_id="boom")
     say("noid", "chan_b")                                                    # a chat line without the chatter's id
     assert seen == [] and "could not check whether oops follows" in tw.tc.STATE.log[-1]
@@ -428,7 +442,7 @@ def test_a_follower_check_that_fails_shouts_nobody_out_and_a_yes_is_remembered(s
 
 def test_a_viewer_waits_between_shoutouts_and_mods_never_do(shouts, monkeypatch):
     tw, seen, asked, say = shouts
-    monkeypatch.setitem(tw.CONFIG["shoutout"], "who", "anyone")
+    monkeypatch.setitem(tw.CONFIG["shoutout"], "who", ["mods", "anyone"])
     monkeypatch.setitem(tw.CONFIG["shoutout"], "cooldown", 60)
     say("viewer", "chan_a")
     say("viewer", "chan_b")                                                  # too soon
@@ -439,6 +453,10 @@ def test_a_viewer_waits_between_shoutouts_and_mods_never_do(shouts, monkeypatch)
     monkeypatch.setitem(tw._SO_LAST, ("hexacore_ai", "viewer"), tw.time.monotonic() - 61)
     say("viewer", "chan_f")
     assert seen[-1] == "chan_f"
+    monkeypatch.setitem(tw.CONFIG["shoutout"], "who", ["anyone"])       # mods not ticked: a mod is a viewer like any other
+    say("mod", "chan_a", mod=True)
+    say("mod", "chan_b", mod=True)
+    assert seen[-2:] == ["chan_f", "chan_a"]
 
 
 def test_the_chat_line_hands_the_command_the_chatters_badges_and_id(tw, monkeypatch):

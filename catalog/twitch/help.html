@@ -55,8 +55,9 @@
     (the Twitch panel log says exactly which piece did what).</p>
   <p class="hint">Settings: <code>config/twitch.json</code> → <code>"shoutout"</code> —
     <code>on</code>, <code>command</code> (default <code>!so</code>), <code>who</code>
-    (<code>broadcaster</code>, <code>mods</code>, <code>vips</code>, <code>subs</code>, <code>followers</code> or
-    <code>anyone</code> — each also lets in everyone before it), <code>cooldown</code> (seconds a viewer waits
+    (a list of the groups allowed besides you: any of <code>mods</code>, <code>vips</code>, <code>subs</code>,
+    <code>followers</code>, <code>anyone</code>; only the groups listed are let in, so <code>["subs"]</code> alone
+    leaves out a mod who does not subscribe), <code>cooldown</code> (seconds a viewer waits
     between their own shoutouts; you and mods never wait), <code>native</code>, <code>message</code>,
     <code>clip</code>, <code>clip_count</code> (1–5). Who may use it, the cooldown and the clip count are also on the
     Clips page under Settings. <code>followers</code> asks Twitch whether the chatter follows, which needs the

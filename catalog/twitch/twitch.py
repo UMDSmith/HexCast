@@ -304,9 +304,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "shoutout": {
         "on": True,
         "command": "!so",
-        # broadcaster | mods | vips | subs | followers | anyone - each one also lets in everyone before it
-        "who": "mods",
-        # seconds a viewer (anyone below a mod) waits between two shoutouts of their own
+        # the groups that may use it, any of: mods, vips, subs, followers, anyone. The broadcaster always may.
+        # (The older single word still reads: "mods", or "broadcaster" for nobody else.)
+        "who": ["mods"],
+        # seconds a viewer waits between two shoutouts of their own (the broadcaster and ticked mods never wait)
         "cooldown": 60,
         "native": True,             # attempt the official /shoutout banner
         "message": "Go show {name} some love at {url} - they're worth the follow!",
@@ -872,21 +873,30 @@ def _where(ch: tc.ChannelRT) -> str:
     return tc.where(ch)
 
 
-# Who may use !so, widest last: each setting also lets in everyone before it.
-SHOUTOUT_WHO = ("broadcaster", "mods", "vips", "subs", "followers", "anyone")
+# The groups that can be let use !so, besides the broadcaster (who always may).
+SHOUTOUT_GROUPS = ("mods", "vips", "subs", "followers", "anyone")
 _SO_LAST: dict[tuple[str, str], float] = {}         # (channel, chatter) -> when their last shoutout was taken
 _SO_FOLLOWS: dict[tuple[str, str], float] = {}      # (channel, chatter id) -> when Twitch last said they follow
 SO_FOLLOW_TTL = 600.0
 
 
+def shoutout_groups(so: dict) -> set[str]:
+    """The groups ticked in the settings. `who` is a list of them; the older single word means that one group."""
+    who = so.get("who", ["mods"])
+    if isinstance(who, str):
+        who = [who]
+    if not isinstance(who, (list, tuple, set)):
+        return set()
+    return {g for g in who if g in SHOUTOUT_GROUPS}
+
+
 def _shoutout_allowed(so: dict, is_broadcaster: bool, is_mod: bool, flags: dict) -> bool | None:
     """True, False, or None when only Twitch can tell (does this chatter follow the channel?)."""
-    who = so.get("who", "mods")
-    level = SHOUTOUT_WHO.index(who) if who in SHOUTOUT_WHO else 0
-    if is_broadcaster or (level >= 1 and is_mod) or (level >= 2 and flags.get("vip")) \
-            or (level >= 3 and flags.get("sub")) or level >= 5:
+    groups = shoutout_groups(so)
+    if is_broadcaster or ("mods" in groups and is_mod) or ("vips" in groups and flags.get("vip")) \
+            or ("subs" in groups and flags.get("sub")) or "anyone" in groups:
         return True
-    return None if level == 4 else False
+    return None if "followers" in groups else False
 
 
 def _shoutout_cooling(so: dict, ch: tc.ChannelRT, login: str) -> float:
@@ -946,7 +956,7 @@ async def handle_command(login: str, text: str, is_broadcaster: bool, is_mod: bo
     target = parts[1].strip().lstrip("@").rstrip(",").lower()
     if not SHOUTOUT_TARGET.match(target):
         return
-    if is_broadcaster or is_mod:
+    if is_broadcaster or (is_mod and "mods" in shoutout_groups(so)):
         tc.note(f"shoutout{_where(ch)}: {login} -> {target}")
         asyncio.create_task(_do_shoutout(target, ch))
         return

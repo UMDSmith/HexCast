@@ -211,19 +211,18 @@
   <div class="card" id="so-settings" style="display:none">
     <h2>Shoutouts <span class="tag" style="text-transform:none">!so</span></h2>
     <p class="hint">Who may type <code>!so channelname</code> in your Twitch chat, and how many random clips of
-      that channel play. Each choice also lets in everyone above it in the list. These are the Twitch plugin's
-      settings, shown here because the clips play on this overlay.</p>
-    <div class="grid">
-      <label class="f sw"><input type="checkbox" id="so-on">The !so command is on</label>
-      <label class="f">Who can shout out
-        <select id="so-who">
-          <option value="broadcaster">Only me (the channel owner)</option>
-          <option value="mods">Mods</option>
-          <option value="vips">VIPs</option>
-          <option value="subs">Subscribers</option>
-          <option value="followers">Followers</option>
-          <option value="anyone">Anyone in chat</option>
-        </select></label>
+      that channel play. Only the groups you tick can use it - a mod who is not a subscriber needs
+      <b>Mods</b> ticked. These are the Twitch plugin's settings, shown here because the clips play on this overlay.</p>
+    <label class="f sw"><input type="checkbox" id="so-on">The !so command is on</label>
+    <div class="grid" style="margin-top:14px">
+      <label class="f sw"><input type="checkbox" checked disabled>You (the channel owner)</label>
+      <label class="f sw"><input type="checkbox" class="so-who" value="mods">Mods</label>
+      <label class="f sw"><input type="checkbox" class="so-who" value="vips">VIPs</label>
+      <label class="f sw"><input type="checkbox" class="so-who" value="subs">Subscribers</label>
+      <label class="f sw"><input type="checkbox" class="so-who" value="followers">Followers</label>
+      <label class="f sw"><input type="checkbox" class="so-who" value="anyone">Anyone in chat</label>
+    </div>
+    <div class="grid" style="margin-top:14px">
       <label class="f">Clips per shoutout
         <input type="number" id="so-clip_count" min="1" max="5" step="1"></label>
       <label class="f">Viewer wait between shoutouts (seconds)
@@ -651,20 +650,25 @@ $('save-cfg').onclick=async function(){
 };
 
 /* ---- shoutout settings (the Twitch plugin's; the card stays hidden without it) ---- */
+function soWho(){
+  return [].slice.call(document.querySelectorAll('.so-who')).filter(function(b){ return b.checked; })
+           .map(function(b){ return b.value; });
+}
 function soWhoHint(){
-  var who=$('so-who').value, t='';
-  if(who==='followers') t='Followers: Hexcast asks Twitch whether the chatter follows you, which needs the "read followers" permission on the Twitch sign-in.';
-  else if(who==='anyone') t='Anyone: every chatter can make Hexcast post a shoutout line and play clips. The wait below is what keeps one person from flooding it.';
-  if(who!=='broadcaster' && who!=='mods') t+=(t?' ':'')+'You and your mods never wait.';
-  $('so-who-hint').textContent=t; $('so-who-hint').style.display=t?'':'none';
+  var who=soWho(), t=[];
+  if(who.indexOf('anyone')>=0) t.push('Anyone: every chatter can make Hexcast post a shoutout line and play clips, whatever else is ticked. The wait is what keeps one person from flooding it.');
+  else if(who.indexOf('followers')>=0) t.push('Followers: Hexcast asks Twitch whether the chatter follows you, which needs the "read followers" permission on the Twitch sign-in.');
+  if(who.some(function(g){ return g!=='mods'; })) t.push(who.indexOf('mods')>=0 ? 'You and your mods never wait.' : 'You never wait.');
+  if(!who.length) t.push('Nothing ticked: only you can shout out.');
+  $('so-who-hint').textContent=t.join(' '); $('so-who-hint').style.display=t.length?'':'none';
 }
 function paintShoutoutSettings(cfg){
   var so=cfg && cfg.shoutout;
   if(!so) return;
   $('so-settings').style.display='';
   $('so-on').checked=!!so.on;
-  $('so-who').value=so.who||'mods';
-  if(!$('so-who').value) $('so-who').value='broadcaster';
+  var who=typeof so.who==='string' ? [so.who] : (so.who||[]);     // an older Twitch plugin: one word
+  document.querySelectorAll('.so-who').forEach(function(b){ b.checked=who.indexOf(b.value)>=0; });
   $('so-clip_count').value=so.clip_count||2;
   $('so-cooldown').value=so.cooldown==null?60:so.cooldown;
   soWhoHint();
@@ -675,13 +679,13 @@ async function loadShoutoutSettings(){
     if(r.ok) paintShoutoutSettings(await r.json());
   }catch(e){}
 }
-$('so-who').onchange=soWhoHint;
+document.querySelectorAll('.so-who').forEach(function(b){ b.onchange=soWhoHint; });
 $('so-save').onclick=async function(){
   var n=Math.max(1,Math.min(5,parseInt($('so-clip_count').value,10)||2));
   var wait=Math.max(0,parseFloat($('so-cooldown').value)||0);
   try{
     var r=await fetch('/twitch/api/config',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({shoutout:{on:$('so-on').checked, who:$('so-who').value, clip_count:n, cooldown:wait}})});
+      body:JSON.stringify({shoutout:{on:$('so-on').checked, who:soWho(), clip_count:n, cooldown:wait}})});
     var d=await r.json();
     if(!r.ok){ toast(d.error||'Could not save'); return; }
     paintShoutoutSettings(d.config); toast('Saved');

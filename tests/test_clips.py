@@ -506,7 +506,8 @@ def test_the_settings_tab_has_the_shoutout_settings_of_the_twitch_plugin():
     html = (STATIC / "clips_panel.html").read_text(encoding="utf-8")
     card = html[html.index('id="so-settings"'):html.index("<h2>Playback</h2>")]
     assert 'style="display:none"' in card.split(">")[0]                 # hidden until the Twitch plugin answers
-    assert re.findall(r'<option value="(\w+)"', card) == ["broadcaster", "mods", "vips", "subs", "followers", "anyone"]
+    assert re.findall(r'class="so-who" value="(\w+)"', card) == ["mods", "vips", "subs", "followers", "anyone"]
+    assert "who:soWho()" in html                                        # saved as the list of ticked groups
     assert "fetch('/twitch/api/config'" in html and 'id="so-clip_count" min="1" max="5"' in card
 
 
