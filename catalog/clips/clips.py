@@ -268,6 +268,7 @@ def status_snapshot() -> dict:
         "queued": sum(1 for e in q if e.get("status") == "queued"),
         "played": sum(1 for e in q if e.get("status") == "played"),
         "total": len(q),
+        "shoutouts_waiting": len(SHOUTOUT_PENDING),
         "cookies_browser": settings().get("cookies_browser", ""),
         "signin": signin_readiness(),
         "log": STATE.log[-25:],
@@ -413,9 +414,18 @@ def extract_links(text: str) -> list[dict]:
 
 # Shoutout clips play through the overlay without ever touching the queue.
 EPHEMERAL: dict[str, dict] = {}
-# Remaining shoutout clips, chained automatically as each one ends. Cleared
-# by Stop and by any manual play.
+# Shoutout clips waiting their turn, chained automatically as each one ends:
+# the rest of the shoutout on screen, then every shoutout asked for while it
+# played, in the order they were asked for. Cleared by Stop and by any manual play.
 SHOUTOUT_PENDING: list[dict] = []
+# Shoutouts are looked up one at a time, so two typed at once keep their order.
+_SO_LOCK = asyncio.Lock()
+_SO_STARTING = False        # the next waiting clip is being started right now
+_SO_STARTED = 0.0           # when the shoutout clip on screen was started (monotonic)
+_SO_TASK: asyncio.Task | None = None
+# A shoutout clip whose end was never reported (a frozen overlay) stops holding
+# the line this long after it should have finished.
+SO_STUCK_GRACE = 45.0
 
 
 def entry_by_id(eid: str) -> dict | None:
@@ -939,15 +949,50 @@ async def finish_current(mark_played: bool) -> None:
     PLAYER.update(state="idle", item_id="", mode="", position=0.0, duration=0.0)
     await HUB.broadcast_queue()
     await HUB.broadcast_player()
-    if SHOUTOUT_PENDING:
-        nxt = SHOUTOUT_PENDING.pop(0)
-        asyncio.create_task(play_entry(nxt))
+    _kick_shoutouts()
 
 
 def _drop_pending_shoutouts() -> None:
     for e in SHOUTOUT_PENDING:
         EPHEMERAL.pop(e["id"], None)
     SHOUTOUT_PENDING.clear()
+
+
+def _shoutout_on_screen() -> dict | None:
+    """The shoutout clip playing now, when a new shoutout should wait for it."""
+    entry = EPHEMERAL.get(PLAYER["item_id"])
+    if entry is None or PLAYER["state"] == "idle":
+        return None
+    if not HUB.overlay:
+        return None             # no overlay is connected: nothing will ever report its end
+    if PLAYER["state"] != "paused":
+        length = float(PLAYER["duration"] or entry.get("duration") or 60.0)
+        if time.monotonic() - _SO_STARTED > length + SO_STUCK_GRACE:
+            return None         # its end was never reported
+    return entry
+
+
+async def _next_shoutout() -> dict | None:
+    """Start the first waiting shoutout clip that will play; returns it."""
+    global _SO_STARTING, _SO_STARTED
+    _SO_STARTING = True
+    try:
+        while SHOUTOUT_PENDING:
+            nxt = SHOUTOUT_PENDING.pop(0)
+            _SO_STARTED = time.monotonic()
+            if (await play_entry(nxt)).get("ok"):
+                return nxt
+            EPHEMERAL.pop(nxt["id"], None)
+        return None
+    finally:
+        _SO_STARTING = False
+
+
+def _kick_shoutouts() -> None:
+    global _SO_TASK, _SO_STARTING
+    if SHOUTOUT_PENDING and not _SO_STARTING:
+        _SO_STARTING = True     # before the task first runs, so nothing else starts one too
+        _SO_TASK = asyncio.create_task(_next_shoutout())
 
 
 async def stop_playback() -> dict:
@@ -1287,54 +1332,71 @@ async def _random_channel_clips(channel: str, count: int = 1) -> list[str]:
 
 async def play_shoutout(channel: str, count: int = 2) -> dict:
     """Play random clips from someone's channel through the overlay without
-    queueing them - they chain back to back as each ends. The Twitch module's
-    !so command calls this directly; /clips/api/shoutout exposes it to bots."""
+    putting them in the clip queue - they chain back to back as each ends. A
+    shoutout asked for while another is on screen waits its turn instead of
+    cutting it off. The Twitch module's !so command calls this directly;
+    /clips/api/shoutout exposes it to bots."""
+    global _SO_STARTING
     await ensure_started()
     channel = channel.strip().lstrip("@").lower()
     if not TWITCH_LOGIN.match(channel):
         return {"ok": False, "error": "bad channel name"}
     count = max(1, min(int(count or 1), 5))
 
-    urls = await _random_channel_clips(channel, count)
-    if not urls:
-        return {"ok": False, "error": f"no clips found for {channel}"}
+    async with _SO_LOCK:
+        on_screen = _shoutout_on_screen()
+        playing_them = bool(on_screen and on_screen.get("channel") == channel)
+        if playing_them or any(e.get("channel") == channel for e in SHOUTOUT_PENDING):
+            # two mods shouting the same channel out: once is enough
+            STATE.note(f"shoutout: {channel} is already {'playing' if playing_them else 'waiting'}")
+            return {"ok": True, "queued": True, "already": True, "channel": channel, "clips": []}
 
-    _drop_pending_shoutouts()
-    entries = []
-    for url in urls:
-        links = extract_links(url)
-        link = links[0] if links else {"kind": "media", "slug": channel, "start": 0.0, "url": url}
-        entry = {
-            "id": f"so{secrets.token_hex(3)}",
-            "num": "SO",
-            "url": link["url"],
-            "kind": link["kind"],
-            "slug": link["slug"],
-            "start": link["start"],
-            "title": "",
-            "channel": channel,
-            "credit": f"twitch.tv/{channel}",
-            "duration": None,
-            "thumbnail": "",
-            "status": "queued",
-            "error": "",
-            "added_ts": time.time(),
-            "source": "shoutout",
-        }
-        EPHEMERAL[entry["id"]] = entry
-        entries.append(entry)
+        urls = await _random_channel_clips(channel, count)
+        if not urls:
+            return {"ok": False, "error": f"no clips found for {channel}"}
+
+        entries = []
+        for url in urls:
+            links = extract_links(url)
+            link = links[0] if links else {"kind": "media", "slug": channel, "start": 0.0, "url": url}
+            entry = {
+                "id": f"so{secrets.token_hex(3)}",
+                "num": "SO",
+                "url": link["url"],
+                "kind": link["kind"],
+                "slug": link["slug"],
+                "start": link["start"],
+                "title": "",
+                "channel": channel,
+                "credit": f"twitch.tv/{channel}",
+                "duration": None,
+                "thumbnail": "",
+                "status": "queued",
+                "error": "",
+                "added_ts": time.time(),
+                "source": "shoutout",
+            }
+            EPHEMERAL[entry["id"]] = entry
+            entries.append(entry)
+
+        if not HUB.overlay:
+            _drop_pending_shoutouts()   # nothing is showing them, so nothing to wait behind
+        ahead = len(SHOUTOUT_PENDING)
+        SHOUTOUT_PENDING.extend(entries)
+        wait = _shoutout_on_screen() is not None or _SO_STARTING
+        if not wait:
+            _SO_STARTING = True         # this shoutout starts the line; set before the lock is let go
+
+    clips = [e["url"] for e in entries]
+    if wait:
+        STATE.note(f"shoutout: {len(entries)} clip(s) for {channel} waiting behind {ahead + 1} shoutout clip(s)")
+        return {"ok": True, "queued": True, "ahead": ahead + 1, "channel": channel, "clips": clips}
+
     STATE.note(f"shoutout: {len(entries)} clip(s) for {channel}")
-
-    result: dict = {"ok": False, "error": "no playable clips"}
-    for i, entry in enumerate(entries):
-        result = await play_entry(entry)
-        if result.get("ok"):
-            SHOUTOUT_PENDING.extend(entries[i + 1:])
-            break
-        EPHEMERAL.pop(entry["id"], None)
-    result["channel"] = channel
-    result["clips"] = [e["url"] for e in entries]
-    return result
+    started = await _next_shoutout()
+    if started is None or not any(e["id"] in EPHEMERAL for e in entries):
+        return {"ok": False, "error": "no playable clips", "channel": channel, "clips": clips}
+    return {"ok": True, "queued": False, "channel": channel, "clips": clips}
 
 
 @router.api_route("/api/shoutout/{channel}", methods=["GET", "POST"])

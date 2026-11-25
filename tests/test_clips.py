@@ -59,7 +59,7 @@ def queued(api):
 
 def test_the_manifest_version_was_bumped():
     manifest = json.loads((ROOT / "catalog" / "clips" / "plugin.json").read_text(encoding="utf-8"))
-    assert manifest["version"] == "1.1.3"
+    assert manifest["version"] == "1.1.4"
 
 
 def test_a_rename_is_what_the_queue_and_the_player_show(api, clips, entry):
@@ -317,6 +317,118 @@ def test_the_overlay_reports_sound_without_a_picture(clips):
     html = (STATIC / "clips_overlay.html").read_text(encoding="utf-8")
     check = html[html.index("addEventListener('loadedmetadata', function(){\n      if (!v.videoWidth"):]
     assert "fail(id" in check.split("\n")[1] and "kind !== 'media'" in html
+
+
+# ---------------------------------------------------------------- shoutouts wait their turn
+
+@pytest.fixture
+def shout(clips, monkeypatch):
+    """Shoutouts with no yt-dlp: every channel has clips, every clip plays. One overlay is connected."""
+    async def random_clips(channel, count=1):
+        return [f"https://clips.twitch.tv/{channel}Clip{i}" for i in range(count)]
+
+    async def build_source(e):
+        return {"mode": "mp4", "url": "https://cdn.example/" + e["slug"] + ".mp4", "start": 0.0}
+
+    obs = Overlay()
+    monkeypatch.setattr(clips, "_random_channel_clips", random_clips)
+    monkeypatch.setattr(clips, "build_source", build_source)
+    monkeypatch.setattr(clips.STATE, "started", True)                  # no yt-dlp startup (network)
+    monkeypatch.setattr(clips.HUB, "overlay", {obs})
+    monkeypatch.setattr(clips, "_SO_LOCK", asyncio.Lock())
+    monkeypatch.setitem(clips.settings(), "level_enabled", False)
+    yield obs
+    clips._drop_pending_shoutouts()
+    clips.EPHEMERAL.clear()
+    clips.PLAYER.update(state="idle", item_id="", mode="")
+
+
+def played(obs):
+    return [m["item"]["slug"] for m in obs.sent if m["type"] == "play"]
+
+
+async def end_current(clips, obs):
+    await clips._handle_overlay_msg({"type": "ended", "id": clips.PLAYER["item_id"]}, obs)
+    await asyncio.sleep(0)                                              # the next clip is started by a task
+    await asyncio.sleep(0)
+
+
+def test_a_second_shoutout_waits_for_the_first_instead_of_cutting_it_off(clips, shout):
+    async def go():
+        a = await clips.play_shoutout("alice", 2)
+        b = await clips.play_shoutout("bob", 2)
+        c = await clips.play_shoutout("@Alice", 2)                      # another mod, same channel
+        assert a["ok"] and not a["queued"] and b["ok"] and b["queued"] and b["ahead"] == 2
+        assert c["ok"] and c["already"] and c["clips"] == []
+        assert played(shout) == ["aliceClip0"] and clips.status_snapshot()["shoutouts_waiting"] == 3
+        for _ in range(3):
+            await end_current(clips, shout)
+        assert played(shout) == ["aliceClip0", "aliceClip1", "bobClip0", "bobClip1"]
+        await end_current(clips, shout)
+        assert clips.PLAYER["state"] == "idle" and not clips.SHOUTOUT_PENDING and not clips.EPHEMERAL
+
+    asyncio.run(go())
+
+
+def test_shoutouts_typed_at_once_keep_their_order(clips, shout, monkeypatch):
+    async def slow_then_fast(channel, count=1):
+        await asyncio.sleep(0.05 if channel == "alice" else 0)
+        return [f"https://clips.twitch.tv/{channel}Clip{i}" for i in range(count)]
+
+    monkeypatch.setattr(clips, "_random_channel_clips", slow_then_fast)
+
+    async def go():
+        a, b = await asyncio.gather(clips.play_shoutout("alice", 2), clips.play_shoutout("bob", 1))
+        assert not a["queued"] and b["queued"]
+        for _ in range(2):
+            await end_current(clips, shout)
+        assert played(shout) == ["aliceClip0", "aliceClip1", "bobClip0"]
+
+    asyncio.run(go())
+
+
+def test_stop_and_a_manual_play_clear_the_waiting_shoutouts(clips, shout, entry):
+    async def go():
+        await clips.play_shoutout("alice", 2)
+        await clips.play_shoutout("bob", 2)
+        await clips.stop_playback()
+        assert not clips.SHOUTOUT_PENDING and not clips.EPHEMERAL and clips.PLAYER["state"] == "idle"
+        d = await clips.play_shoutout("carol", 1)                       # nothing to wait behind any more
+        assert not d["queued"] and played(shout) == ["aliceClip0", "carolClip0"]
+
+    asyncio.run(go())
+
+
+def test_a_shoutout_does_not_wait_behind_one_that_nothing_will_end(clips, shout, monkeypatch):
+    async def go():
+        await clips.play_shoutout("alice", 1)
+        monkeypatch.setattr(clips, "_SO_STARTED", clips._SO_STARTED - 60 - clips.SO_STUCK_GRACE - 1)
+        d = await clips.play_shoutout("bob", 1)                         # the overlay never said alice's clip ended
+        assert not d["queued"] and played(shout) == ["aliceClip0", "bobClip0"]
+        monkeypatch.setattr(clips.HUB, "overlay", set())                # and with no overlay connected at all
+        d = await clips.play_shoutout("carol", 1)
+        assert not d["queued"] and clips.PLAYER["item_id"] in clips.EPHEMERAL
+        assert clips.EPHEMERAL[clips.PLAYER["item_id"]]["channel"] == "carol"
+
+    asyncio.run(go())
+
+
+def test_a_waiting_clip_that_cannot_play_is_skipped(clips, shout, monkeypatch):
+    async def build_source(e):
+        if e["slug"] == "aliceClip1":
+            raise RuntimeError("no playable format found")
+        return {"mode": "mp4", "url": "https://cdn.example/x.mp4", "start": 0.0}
+
+    monkeypatch.setattr(clips, "build_source", build_source)
+    monkeypatch.setitem(clips.settings(), "iframe_fallback", False)
+
+    async def go():
+        await clips.play_shoutout("alice", 2)
+        await clips.play_shoutout("bob", 1)
+        await end_current(clips, shout)
+        assert played(shout) == ["aliceClip0", "bobClip0"]              # the line did not stall on the bad clip
+
+    asyncio.run(go())
 
 
 # ---------------------------------------------------------------- the browser scripts (checked with node when it is installed)
